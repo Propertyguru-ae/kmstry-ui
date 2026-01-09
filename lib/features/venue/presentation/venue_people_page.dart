@@ -22,7 +22,13 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
   @override
   void initState() {
     super.initState();
-    _future = _repo.getWhoIsHere(widget.venue.id);
+    _loadCheckins();
+  }
+
+  void _loadCheckins() {
+    setState(() {
+      _future = _repo.getWhoIsHere(widget.venue.id);
+    });
   }
 
   @override
@@ -150,7 +156,50 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
 
                 if (snapshot.hasError) {
                   debugPrint('❌ VenuePeople error: ${snapshot.error}');
-                  return const Center(child: Text('Failed to load people'));
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Failed to load people',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _getErrorMessage(snapshot.error),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: _loadCheckins,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
                 }
 
                 final people = snapshot.data!;
@@ -191,5 +240,34 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
         ],
       ),
     );
+  }
+
+  String _getErrorMessage(Object? error) {
+    final errorString = error.toString();
+    if (errorString.contains('UnAuth')) {
+      return 'Authentication required. Please log in again.';
+    } else if (errorString.contains('timeout')) {
+      return 'Request timed out. Please check your connection.';
+    } else if (errorString.contains('SocketException') || 
+               errorString.contains('Failed host lookup')) {
+      return 'Network error. Please check your internet connection.';
+    } else if (errorString.contains('statusCode')) {
+      // Extract status code from error message
+      final match = RegExp(r'\((\d+)\)').firstMatch(errorString);
+      if (match != null) {
+        final statusCode = match.group(1);
+        if (statusCode == '401') {
+          return 'Unauthorized. Please log in again.';
+        } else if (statusCode == '403') {
+          return 'Access denied.';
+        } else if (statusCode == '404') {
+          return 'Venue not found.';
+        } else if (statusCode == '500') {
+          return 'Server error. Please try again later.';
+        }
+        return 'Error $statusCode: ${errorString.split(':').last.trim()}';
+      }
+    }
+    return errorString;
   }
 }

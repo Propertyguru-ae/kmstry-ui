@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/checkin_photo_model.dart';
 import 'package:kmstry_frontend/features/venue/data/ping_response.dart';
 import 'venue_checkin_model.dart';
@@ -10,22 +13,55 @@ class VenueCheckinRepository {
   Future<List<VenueCheckin>> getWhoIsHere(String venueId) async {
     final accessToken = await SecureStorage.getAccessToken();
     if (accessToken == null) {
-      throw Exception('UnAuth');
+      throw Exception('UnAuth: No access token available');
     }
-    final res = await http.get(
-      Uri.parse('${AppConfig.baseUrl}/venues/$venueId/checkins'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${accessToken}',
-      },
-    );
+    
+    try {
+      final res = await http.get(
+        Uri.parse('${AppConfig.baseUrl}/venues/$venueId/checkins'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${accessToken}',
+        },
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Request timeout: Failed to load venue checkins');
+        },
+      );
 
-    if (res.statusCode >= 400) {
-      throw Exception('Failed to load venue checkins');
+      if (res.statusCode >= 400) {
+        final errorBody = res.body.isNotEmpty 
+            ? res.body 
+            : 'No error details provided';
+        throw Exception(
+          'Failed to load venue checkins (${res.statusCode}): $errorBody',
+        );
+      }
+
+      if (res.body.isEmpty) {
+        return [];
+      }
+
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is! List) {
+          throw Exception(
+            'Invalid response format: Expected List, got ${decoded.runtimeType}',
+          );
+        }
+        
+        final List data = decoded;
+        return data.map((e) => VenueCheckin.fromJson(e as Map<String, dynamic>)).toList();
+      } catch (e) {
+        throw Exception('Failed to parse venue checkins response: $e');
+      }
+    } catch (e) {
+      if (e is Exception) {
+        rethrow;
+      }
+      throw Exception('Failed to load venue checkins: $e');
     }
-
-    final List data = jsonDecode(res.body);
-    return data.map((e) => VenueCheckin.fromJson(e)).toList();
   }
 
   Future<List<CheckinPhoto>> getProfilePhotos(String checkinId) async {
@@ -58,5 +94,131 @@ class VenueCheckinRepository {
     }
 
     return PingResponse.fromJson(jsonDecode(res.body));
+  }
+
+  /// Gets the current user's active check-in.
+  /// Tries multiple approaches:
+  /// 1. Checks /auth/me response for active_checkin field
+  /// 2. Falls back to /checkins/active or /users/me/checkins/active endpoint
+  /// Returns null if no active check-in exists.
+  Future<ActiveCheckin?> getActiveCheckin() async {
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) {
+      throw Exception('UnAuth: No access token available');
+    }
+
+    try {
+      // Approach 1: Check /auth/me for active_checkin field
+      try {
+        final me = await AuthRepository().getMe();
+        debugPrint('🔍 DEBUG getActiveCheckin: /auth/me response keys = ${me.keys}');
+        debugPrint('🔍 DEBUG getActiveCheckin: me[active_checkin] = ${me['active_checkin']}');
+        
+        if (me['active_checkin'] != null) {
+          final activeCheckinData = me['active_checkin'] as Map<String, dynamic>;
+          debugPrint('🔍 DEBUG getActiveCheckin: activeCheckinData = $activeCheckinData');
+          debugPrint('🔍 DEBUG getActiveCheckin: activeCheckinData keys = ${activeCheckinData.keys}');
+          
+          // Check if it's actually active (not expired)
+          final checkin = ActiveCheckin.fromJson(activeCheckinData);
+          debugPrint('🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}');
+          debugPrint('🔍 DEBUG getActiveCheckin: checkin.isActive = ${checkin.isActive}');
+          
+          if (checkin.isActive) {
+            debugPrint('✅ DEBUG getActiveCheckin: Returning checkin from /auth/me');
+            return checkin;
+          } else {
+            debugPrint('⚠️ DEBUG getActiveCheckin: Check-in found but expired');
+          }
+        } else {
+          debugPrint('⚠️ DEBUG getActiveCheckin: /auth/me does not have active_checkin field');
+        }
+      } catch (e) {
+        // If /auth/me doesn't have active_checkin, continue to next approach
+        debugPrint('⚠️ /auth/me does not include active_checkin: $e');
+      }
+
+      // Approach 2: Try dedicated endpoint /checkins/active
+      try {
+        final res = await http.get(
+          Uri.parse('${AppConfig.baseUrl}/checkins/active'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${accessToken}',
+          },
+        ).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            throw Exception('Request timeout');
+          },
+        );
+
+        if (res.statusCode == 404) {
+          // No active check-in
+          return null;
+        }
+
+        if (res.statusCode >= 400) {
+          // Try alternative endpoint
+          throw Exception('Failed to get active checkin (${res.statusCode})');
+        }
+
+        if (res.body.isEmpty) {
+          return null;
+        }
+
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        debugPrint('🔍 DEBUG getActiveCheckin: /checkins/active response = $data');
+        final checkin = ActiveCheckin.fromJson(data);
+        debugPrint('🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}');
+        return checkin.isActive ? checkin : null;
+      } catch (e) {
+        // Approach 3: Try /users/me/checkins/active
+        try {
+          final res = await http.get(
+            Uri.parse('${AppConfig.baseUrl}/users/me/checkins/active'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${accessToken}',
+            },
+          ).timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw Exception('Request timeout');
+            },
+          );
+
+          if (res.statusCode == 404) {
+            return null;
+          }
+
+          if (res.statusCode >= 400) {
+            return null; // No active check-in or endpoint doesn't exist
+          }
+
+          if (res.body.isEmpty) {
+            return null;
+          }
+
+          final data = jsonDecode(res.body) as Map<String, dynamic>;
+          debugPrint('🔍 DEBUG getActiveCheckin: /users/me/checkins/active response = $data');
+          final checkin = ActiveCheckin.fromJson(data);
+          debugPrint('🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}');
+          return checkin.isActive ? checkin : null;
+        } catch (e2) {
+          // Both endpoints failed, assume no active check-in
+          debugPrint('⚠️ Could not fetch active check-in from any endpoint: $e2');
+          debugPrint('🔍 DEBUG getActiveCheckin: All approaches failed, returning null');
+          return null;
+        }
+      }
+    } catch (e) {
+      // If all approaches fail, return null (no active check-in)
+      debugPrint('⚠️ Error fetching active check-in: $e');
+      debugPrint('🔍 DEBUG getActiveCheckin: Outer catch, returning null');
+      return null;
+    }
+    debugPrint('🔍 DEBUG getActiveCheckin: Reached end, returning null');
+    return null;
   }
 }

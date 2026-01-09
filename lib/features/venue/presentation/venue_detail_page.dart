@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 
@@ -13,7 +14,7 @@ class VenueDetailPage extends StatefulWidget {
 }
 
 class _VenueDetailPageState extends State<VenueDetailPage> {
-  /// 🔑 BACKEND’DEN GELECEK STATE
+  final _repo = VenueCheckinRepository();
   String? _activeCheckinVenueId;
   bool _loadingActiveCheckin = true;
 
@@ -23,25 +24,31 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _loadActiveCheckin();
   }
 
-  /// ⛔ ŞİMDİLİK FAKE
-  /// ✅ BACKEND GELİNCE SADECE BURASI DEĞİŞECEK
   Future<void> _loadActiveCheckin() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    setState(() {
-      // TEST SENARYOLARI (TEK TEK AÇIP DENE)
-
-      // 1️⃣ Aktif check-in YOK
-      _activeCheckinVenueId = null;
-
-      // 2️⃣ BU MEKANDA aktif check-in VAR
-      // _activeCheckinVenueId = widget.venue.id;
-
-      // 3️⃣ BAŞKA MEKANDA aktif check-in VAR
-      // _activeCheckinVenueId = 'another-venue-id';
-
-      _loadingActiveCheckin = false;
-    });
+    try {
+      final activeCheckin = await _repo.getActiveCheckin();
+      
+      debugPrint('🔍 DEBUG: activeCheckin = $activeCheckin');
+      debugPrint('🔍 DEBUG: activeCheckin?.venueId = ${activeCheckin?.venueId}');
+      debugPrint('🔍 DEBUG: widget.venue.id = ${widget.venue.id}');
+      debugPrint('🔍 DEBUG: venue.id type = ${widget.venue.id.runtimeType}');
+      debugPrint('🔍 DEBUG: venueId type = ${activeCheckin?.venueId.runtimeType}');
+      
+      setState(() {
+        _activeCheckinVenueId = activeCheckin?.venueId;
+        _loadingActiveCheckin = false;
+      });
+      
+      debugPrint('🔍 DEBUG: _activeCheckinVenueId = $_activeCheckinVenueId');
+      debugPrint('🔍 DEBUG: hasActiveCheckinHere = ${_activeCheckinVenueId == widget.venue.id}');
+    } catch (e) {
+      // On error, assume no active check-in
+      debugPrint('⚠️ Error loading active check-in: $e');
+      setState(() {
+        _activeCheckinVenueId = null;
+        _loadingActiveCheckin = false;
+      });
+    }
   }
 
   @override
@@ -175,8 +182,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 child: ElevatedButton(
                   onPressed: _loadingActiveCheckin || hasActiveCheckinHere
                       ? null
-                      : () {
-                          Navigator.push(
+                      : () async {
+                          await Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => CheckInPage(
@@ -184,6 +191,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                               ),
                             ),
                           );
+                          // Refresh check-in state after returning from check-in page
+                          _loadActiveCheckin();
                         },
                   child: Text(
                     _loadingActiveCheckin
@@ -210,20 +219,28 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               const SizedBox(height: 12),
 
-              /// WHO’S HERE
+              /// WHO'S HERE
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            VenuePeoplePage(venue: widget.venue),
-                      ),
-                    );
-                  },
-                  child: const Text("Who's here?"),
+                  onPressed: hasActiveCheckinHere
+                      ? () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  VenuePeoplePage(venue: widget.venue),
+                            ),
+                          );
+                        }
+                      : null,
+                  child: Text(
+                    _loadingActiveCheckin
+                        ? "Loading..."
+                        : hasActiveCheckinHere
+                            ? "Who's here?"
+                            : "Who's here? (Check in first)",
+                  ),
                 ),
               ),
             ],
