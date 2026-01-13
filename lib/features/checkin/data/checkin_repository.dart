@@ -70,4 +70,24 @@ class CheckinRepository {
 
     return CheckinProfile.fromJson(data);
   }
+
+  Future<void> sendFeedAction({
+    required String targetUserId,
+    required String venueId,
+    required String checkinId,
+    required String action,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.post(
+      '/feed/actions',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'target_user_id': targetUserId,
+        'venue_id': venueId,
+        'checkin_id': checkinId,
+        'action': action,
+      },
+    );
+  }
 }

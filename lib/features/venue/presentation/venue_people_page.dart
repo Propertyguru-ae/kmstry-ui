@@ -226,8 +226,10 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                ProfilePreviewPage(checkinId: person.id),
+                            builder: (_) => ProfilePreviewPage(
+                              checkinId: person.id,
+                              venueId: widget.venue.id,
+                            ),
                           ),
                         );
                       },
