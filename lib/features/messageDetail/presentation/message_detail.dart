@@ -1,0 +1,463 @@
+import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+
+class MessageDetailPage extends StatefulWidget {
+  /// When null, this is a new conversation; first send will create the chat.
+  final String? chatId;
+  final String otherUserId;
+  final String otherName;
+  final String otherPhotoUrl;
+
+  const MessageDetailPage({
+    super.key,
+    this.chatId,
+    required this.otherUserId,
+    required this.otherName,
+    required this.otherPhotoUrl,
+  });
+
+  @override
+  State<MessageDetailPage> createState() => _MessageDetailPageState();
+}
+
+class _MessageDetailPageState extends State<MessageDetailPage> {
+  final ChatRepository _repo = ChatRepository();
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+
+  ChatDetail? _chat;
+  /// Effective chat id: widget.chatId or set after createChat on first send.
+  String? _chatId;
+  bool _loading = true;
+  String? _error;
+  String? _currentUserId;
+  bool _sending = false;
+  bool _loadingMore = false;
+  bool _hasReachedEndOfMessages = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _chatId = widget.chatId;
+    _loadCurrentUser();
+    if (widget.chatId != null) {
+      _loadChat();
+    } else {
+      setState(() => _loading = false);
+    }
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages) return;
+    if (_scrollController.offset <= 100 && _scrollController.hasClients) {
+      _loadMoreMessages();
+    }
+  }
+
+  Future<void> _loadCurrentUser() async {
+    try {
+      final me = await AuthRepository().getMe();
+      if (!mounted) return;
+      setState(() {
+        _currentUserId = me['id'] as String?;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadChat() async {
+    final cid = _chatId;
+    if (cid == null) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final detail = await _repo.getChat(cid, markRead: true);
+      if (!mounted) return;
+      setState(() {
+        _chat = detail;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ getChat error: $e');
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  /// Pagination: load older messages when user scrolls to top using before_id.
+  Future<void> _loadMoreMessages() async {
+    final cid = _chatId;
+    if (cid == null || _loadingMore || _chat == null || _hasReachedEndOfMessages) return;
+    final messages = _chat!.messages;
+    if (messages.isEmpty) {
+      _hasReachedEndOfMessages = true;
+      return;
+    }
+    final ordered = List<ChatMessage>.from(messages)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final oldestId = ordered.first.id;
+
+    setState(() => _loadingMore = true);
+    try {
+      final detail = await _repo.getChat(
+        cid,
+        markRead: false,
+        beforeId: oldestId,
+        take: 30,
+      );
+      if (!mounted) return;
+      final existingIds = messages.map((m) => m.id).toSet();
+      final older = detail.messages.where((m) => !existingIds.contains(m.id)).toList();
+      if (older.isEmpty) {
+        if (mounted) setState(() {
+          _hasReachedEndOfMessages = true;
+          _loadingMore = false;
+        });
+        return;
+      }
+      final merged = [...older, ..._chat!.messages];
+      if (mounted) {
+        setState(() {
+          _chat = ChatDetail(
+            id: _chat!.id,
+            messages: merged,
+            otherUser: _chat!.otherUser,
+            participants: _chat!.participants,
+          );
+          _loadingMore = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty || _sending) return;
+  // 🔐 Chat yoksa mesaj atılamaz
+  if (_chatId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Chat is not ready yet')),
+    );
+    return;
+  }
+    setState(() => _sending = true);
+    _messageController.clear();
+
+    try {   
+
+      final sent = await _repo.sendMessage(
+        _chatId!,
+         messageType: 'text',
+         text: text,
+      );
+      if (!mounted) return;
+      if (_chat != null) {
+        setState(() {
+          _chat = ChatDetail(
+            id: _chat!.id,
+            messages: [..._chat!.messages, sent],
+            otherUser: _chat!.otherUser,
+            participants: _chat!.participants,
+          );
+          _sending = false;
+        });
+      } else {
+        await _loadChat();
+        if (mounted) setState(() => _sending = false);
+      }
+    } catch (e) {
+      debugPrint('❌ sendMessage error: $e');
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = _chat?.displayOtherUser?.fullName ?? widget.otherName;
+    final photoUrl = _chat?.displayOtherUser?.photo ?? widget.otherPhotoUrl;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0.5,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.black, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundImage: NetworkImage(photoUrl),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Text(
+                  'Online',
+                  style: TextStyle(color: Colors.green, fontSize: 12),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.videocam_outlined, color: Colors.black),
+            onPressed: () {},
+          ),
+          IconButton(
+            icon: const Icon(Icons.call_outlined, color: Colors.black),
+            onPressed: () {},
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _buildMessageList(),
+          ),
+          _buildMessageInput(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageList() {
+    if (_loading && _chat == null && _chatId != null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _chat == null && _chatId != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Could not load chat',
+                style: TextStyle(color: Colors.grey[700]),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _loadChat,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final messages = _chat?.messages ?? [];
+    final ordered = List<ChatMessage>.from(messages)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: ordered.length + (_loadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (_loadingMore && index == 0) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(child: SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+          );
+        }
+        final msgIndex = _loadingMore ? index - 1 : index;
+        final msg = ordered[msgIndex];
+        final isMe = msg.isSentByMe(_currentUserId);
+        final time = _formatTime(msg.createdAt);
+        final content = msg.messageType == 'image' && msg.imageUrl != null
+            ? msg.imageUrl!
+            : (msg.text ?? '');
+        if (msg.messageType == 'image' && msg.imageUrl != null) {
+          return _buildImageBubble(msg.imageUrl!, isMe, time);
+        }
+        return _buildMessageBubble(
+          message: content,
+          isMe: isMe,
+          time: time,
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageBubble({
+    required String message,
+    required bool isMe,
+    required String time,
+  }) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isMe ? const Color(0xFF2D5BD0) : Colors.grey[100],
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 0),
+            bottomRight: Radius.circular(isMe ? 0 : 16),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message,
+              style: TextStyle(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              time,
+              style: TextStyle(
+                color: isMe ? Colors.white70 : Colors.grey,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageBubble(String imageUrl, bool isMe, String time) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                imageUrl,
+                width: 200,
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              time,
+              style: TextStyle(color: Colors.grey, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour;
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  Widget _buildMessageInput() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
+              onPressed: () {},
+            ),
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                decoration: InputDecoration(
+                  hintText: 'Type a message...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                ),
+                onSubmitted: (_) => _sendMessage(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            CircleAvatar(
+              backgroundColor: const Color(0xFF2D5BD0),
+              child: IconButton(
+                icon: _sending
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.send, color: Colors.white, size: 20),
+                onPressed: _sending ? null : _sendMessage,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -60,6 +60,29 @@ class CheckinRepository {
     }
   }
 
+  /// Logged-in user's check-in photos (for own profile moments list).
+  /// Tries GET /users/me/checkin-photos; response: list of { url } or list of url strings.
+  Future<List<String>> getMyCheckinPhotos() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return [];
+
+    try {
+      final data = await _api.get(
+        '/users/me/checkin-photos',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (data is! List) return [];
+      final list = data as List;
+      return list.map((e) {
+        if (e is String) return e;
+        if (e is Map && e['url'] != null) return e['url'] as String;
+        return null;
+      }).whereType<String>().toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   Future<CheckinProfile> getCheckinProfile(String checkinId) async {
     final token = await SecureStorage.getAccessToken();
 

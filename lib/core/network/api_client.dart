@@ -121,4 +121,43 @@ class ApiClient {
       rethrow;
     }
   }
+
+  Future<dynamic> delete(
+    String path, {
+    Map<String, String>? headers,
+  }) async {
+    final url = Uri.parse('${AppConfig.baseUrl}$path');
+
+    print('🌐 [HTTP] DELETE $url');
+
+    try {
+      final response = await _client
+          .delete(url, headers: {'Content-Type': 'application/json', ...?headers})
+          .timeout(const Duration(seconds: 10));
+
+      print('🌐 [HTTP] statusCode = ${response.statusCode}');
+      print('🌐 [HTTP] raw response = ${response.body}');
+
+      if (response.body.isEmpty) {
+        return null;
+      }
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode >= 400) {
+        throw ApiException(statusCode: response.statusCode, data: data);
+      }
+
+      return data;
+    } on SocketException catch (e) {
+      print('❌ [HTTP] SocketException: $e');
+      rethrow;
+    } on TimeoutException catch (e) {
+      print('⏱️ [HTTP] TimeoutException: $e');
+      rethrow;
+    } catch (e) {
+      print('❌ [HTTP] DELETE error: $e');
+      rethrow;
+    }
+  }
 }

@@ -3,6 +3,7 @@ class CheckinProfile {
   final CheckinProfileCheckin checkin;
   final List<CheckinProfilePhoto> photos;
   final bool isMatched;
+  final String? chatId; 
   final String? feedAction; // "interested" | "pass" | null (deprecated, use myActionAtThisVenue)
   final String? myActionAtThisVenue; // "interested" | "pass" | null
   final String? theirActionAtThisVenue; // "interested" | "pass" | null
@@ -14,6 +15,7 @@ class CheckinProfile {
     required this.checkin,
     required this.photos,
     required this.isMatched,
+    this.chatId,
     this.feedAction,
     this.myActionAtThisVenue,
     this.theirActionAtThisVenue,
@@ -55,6 +57,7 @@ class CheckinProfile {
           .map((e) => CheckinProfilePhoto.fromJson(e))
           .toList(),
       isMatched: json['is_matched'] as bool? ?? false,
+      chatId: json['chat_id'] as String?,
       feedAction: json['feed_action'] as String?,
       myActionAtThisVenue: myAction ?? json['feed_action'] as String?,
       theirActionAtThisVenue: theirAction ?? json['their_action_at_this_venue'] as String?,

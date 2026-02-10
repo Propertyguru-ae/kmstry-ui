@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 
 enum ProfileActionState {
@@ -28,6 +31,7 @@ class ProfilePreviewPage extends StatefulWidget {
 
 class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
+  final _chatRepo = ChatRepository();
 
   CheckinProfile? _profile;
   bool _loading = true;
@@ -43,6 +47,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     try {
       final profile = await _repo.getCheckinProfile(widget.checkinId);
       if (!mounted) return;
+ // 🔍 DEBUG: chat geliyor mu?
+    debugPrint('🧪 PROFILE DEBUG');
+    debugPrint('isMatched: ${profile.isMatched}');
+    debugPrint('chatId: ${profile.chatId}');
 
       setState(() {
         _profile = profile;
@@ -143,9 +151,40 @@ if (myAction == 'interested') {
     }
   }
 
-  void _openChat() {
-    // Placeholder for chat functionality
-    debugPrint('Open chat with ${_profile?.user.id}');
+ Future<void> _openChat() async {
+  final profile = _profile;
+  if (profile == null) return;
+
+  debugPrint('🧪 OPEN CHAT → chatId = ${profile.chatId}');
+
+  if (profile.chatId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('ChatId gelmedi (backend kontrol et)')),
+    );
+    return;
+  }
+
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => MessageDetailPage(
+        chatId: profile.chatId!,
+        otherUserId: profile.user.id,
+        otherName: profile.user.fullName,
+        otherPhotoUrl: profile.photos.first.url,
+      ),
+    ),
+  );
+}
+
+
+  void _showNoChatYetSnackbar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Henüz mesaj yok. Önce mesajlar listesinden sohbet başlatın.'),
+        duration: Duration(seconds: 4),
+      ),
+    );
   }
 
   @override

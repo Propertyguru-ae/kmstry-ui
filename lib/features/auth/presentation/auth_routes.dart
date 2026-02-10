@@ -9,7 +9,9 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.da
 import 'login_page.dart';
 import 'signup_page.dart';
 import 'forgot_password_page.dart';
-
+import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
+import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
+import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
 class AuthRoutes {
   static const login = '/login';
   static const signup = '/signup';
@@ -21,6 +23,9 @@ class AuthRoutes {
   static const onboardingGender = '/onboarding/gender';
   static const onboardingPhoto = '/onboarding/photo';
   static const appShell = '/app-shell';
+  static const people = '/people';
+  static const messages = '/messages';
+  static const notifications = '/notifications';
 
   static Map<String, WidgetBuilder> routes = {
     login: (_) => const LoginPage(),
@@ -29,6 +34,9 @@ class AuthRoutes {
     home: (_) => const VenueHomePage(),
     authGate: (_) => const AuthGatePage(),
     profile: (_) => const ProfilePage(),
+    messages: (_) => const DmListPage(),
+    notifications: (_) => const NotificationPage(),
+    people: (_) => const PeoplePage(),
     onboardingPhoto: (context) => const PhotoOnboardingPage(),
     appShell: (context) => const AppShell(),
   };
