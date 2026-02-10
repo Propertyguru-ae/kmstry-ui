@@ -19,7 +19,7 @@ class _CheckInPageState extends State<CheckInPage> {
 
   // Birden fazla fotoğrafı tutmak için liste yapısı
   final List<XFile> _photos = [];
-  final int _maxPhotos = 2;
+  final int _maxPhotos = 6;
   final _repo = CheckinRepository();
   bool _isSubmitting = false;
 

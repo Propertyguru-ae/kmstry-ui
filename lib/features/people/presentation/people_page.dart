@@ -225,16 +225,7 @@ class _PeoplePageState extends State<PeoplePage> {
                     color: Color(0xFF0F172A),
                   ),
                 ),
-                subtitle: const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    'Match',
-                    style: TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
+              
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [

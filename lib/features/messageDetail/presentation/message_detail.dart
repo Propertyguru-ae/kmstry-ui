@@ -29,6 +29,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   final ScrollController _scrollController = ScrollController();
 
   ChatDetail? _chat;
+
   /// Effective chat id: widget.chatId or set after createChat on first send.
   String? _chatId;
   bool _loading = true;
@@ -60,7 +61,8 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   }
 
   void _onScroll() {
-    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages) return;
+    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages)
+      return;
     if (_scrollController.offset <= 100 && _scrollController.hasClients) {
       _loadMoreMessages();
     }
@@ -103,7 +105,11 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   /// Pagination: load older messages when user scrolls to top using before_id.
   Future<void> _loadMoreMessages() async {
     final cid = _chatId;
-    if (cid == null || _loadingMore || _chat == null || _hasReachedEndOfMessages) return;
+    if (cid == null ||
+        _loadingMore ||
+        _chat == null ||
+        _hasReachedEndOfMessages)
+      return;
     final messages = _chat!.messages;
     if (messages.isEmpty) {
       _hasReachedEndOfMessages = true;
@@ -123,12 +129,15 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       );
       if (!mounted) return;
       final existingIds = messages.map((m) => m.id).toSet();
-      final older = detail.messages.where((m) => !existingIds.contains(m.id)).toList();
+      final older = detail.messages
+          .where((m) => !existingIds.contains(m.id))
+          .toList();
       if (older.isEmpty) {
-        if (mounted) setState(() {
-          _hasReachedEndOfMessages = true;
-          _loadingMore = false;
-        });
+        if (mounted)
+          setState(() {
+            _hasReachedEndOfMessages = true;
+            _loadingMore = false;
+          });
         return;
       }
       final merged = [...older, ..._chat!.messages];
@@ -151,22 +160,21 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
-  // 🔐 Chat yoksa mesaj atılamaz
-  if (_chatId == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Chat is not ready yet')),
-    );
-    return;
-  }
+    // 🔐 Chat yoksa mesaj atılamaz
+    if (_chatId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Chat is not ready yet')));
+      return;
+    }
     setState(() => _sending = true);
     _messageController.clear();
 
-    try {   
-
+    try {
       final sent = await _repo.sendMessage(
         _chatId!,
-         messageType: 'text',
-         text: text,
+        messageType: 'text',
+        text: text,
       );
       if (!mounted) return;
       if (_chat != null) {
@@ -188,16 +196,37 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       if (!mounted) return;
       setState(() => _sending = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}')),
+        SnackBar(
+          content: Text(
+            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+          ),
+        ),
       );
     }
+  }
+
+  Color _avatarColor(String seed) {
+    final colors = <Color>[
+      const Color(0xFF4F46E5),
+      const Color(0xFF0EA5E9),
+      const Color(0xFF10B981),
+      const Color(0xFFF59E0B),
+      const Color(0xFFEF4444),
+      const Color(0xFF8B5CF6),
+      const Color(0xFF14B8A6),
+    ];
+
+    final index = seed.hashCode.abs() % colors.length;
+    return colors[index];
   }
 
   @override
   Widget build(BuildContext context) {
     final name = _chat?.displayOtherUser?.fullName ?? widget.otherName;
     final photoUrl = _chat?.displayOtherUser?.photo ?? widget.otherPhotoUrl;
-
+    final avatarSeed = name.isNotEmpty ? name : widget.otherUserId;
+    final avatarColor = _avatarColor(avatarSeed);
+    final hasPhoto = photoUrl.isNotEmpty;
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -211,8 +240,20 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundImage: NetworkImage(photoUrl),
+              backgroundColor: avatarColor.withOpacity(0.15),
+              backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+              child: !hasPhoto
+                  ? Text(
+                      avatarSeed[0].toUpperCase(),
+                      style: TextStyle(
+                        color: avatarColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    )
+                  : null,
             ),
+
             const SizedBox(width: 10),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,9 +287,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       ),
       body: Column(
         children: [
-          Expanded(
-            child: _buildMessageList(),
-          ),
+          Expanded(child: _buildMessageList()),
           _buildMessageInput(),
         ],
       ),
@@ -271,10 +310,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 style: TextStyle(color: Colors.grey[700]),
               ),
               const SizedBox(height: 12),
-              TextButton(
-                onPressed: _loadChat,
-                child: const Text('Retry'),
-              ),
+              TextButton(onPressed: _loadChat, child: const Text('Retry')),
             ],
           ),
         ),
@@ -293,7 +329,13 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         if (_loadingMore && index == 0) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
-            child: Center(child: SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+            child: Center(
+              child: SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           );
         }
         final msgIndex = _loadingMore ? index - 1 : index;
@@ -306,11 +348,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         if (msg.messageType == 'image' && msg.imageUrl != null) {
           return _buildImageBubble(msg.imageUrl!, isMe, time);
         }
-        return _buildMessageBubble(
-          message: content,
-          isMe: isMe,
-          time: time,
-        );
+        return _buildMessageBubble(message: content, isMe: isMe, time: time);
       },
     );
   }
@@ -370,7 +408,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -379,14 +419,12 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 width: 200,
                 height: 200,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48),
+                errorBuilder: (_, __, ___) =>
+                    const Icon(Icons.broken_image, size: 48),
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              time,
-              style: TextStyle(color: Colors.grey, fontSize: 10),
-            ),
+            Text(time, style: TextStyle(color: Colors.grey, fontSize: 10)),
           ],
         ),
       ),

@@ -113,178 +113,174 @@ class _SignupPageState extends State<SignupPage> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Create Account',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Create Account',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 18),
+                        const SizedBox(height: 18),
 
-                      TextFormField(
-                        controller: _emailCtrl,
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.mail_outline),
-                          hintText: 'Email',
-                          border: OutlineInputBorder(),
+                        TextFormField(
+                          controller: _emailCtrl,
+                          decoration: const InputDecoration(
+                            prefixIcon: Icon(Icons.mail_outline),
+                            hintText: 'Email',
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (v) {
+                            final x = (v ?? '').trim();
+                            if (x.isEmpty) return 'Email is required';
+                            if (!x.contains('@')) return 'Invalid email';
+                            return null;
+                          },
                         ),
-                        validator: (v) {
-                          final x = (v ?? '').trim();
-                          if (x.isEmpty) return 'Email is required';
-                          if (!x.contains('@')) return 'Invalid email';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
 
-                      TextFormField(
-                        controller: _passCtrl,
-                        obscureText: _obscure,
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          hintText: 'Password',
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            onPressed: () =>
-                                setState(() => _obscure = !_obscure),
-                            icon: Icon(
-                              _obscure
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
+                        TextFormField(
+                          controller: _passCtrl,
+                          obscureText: _obscure,
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            hintText: 'Password',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              onPressed: () =>
+                                  setState(() => _obscure = !_obscure),
+                              icon: Icon(
+                                _obscure
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
                             ),
                           ),
+                          validator: (v) {
+                            if ((v ?? '').isEmpty)
+                              return 'Password is required';
+                            return null;
+                          },
                         ),
-                        validator: (v) {
-                          if ((v ?? '').isEmpty) return 'Password is required';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
 
-                      TextFormField(
-                        controller: _confirmCtrl,
-                        obscureText: _obscure2,
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          hintText: 'Confirm password',
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            onPressed: () =>
-                                setState(() => _obscure2 = !_obscure2),
-                            icon: Icon(
-                              _obscure2
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
+                        TextFormField(
+                          controller: _confirmCtrl,
+                          obscureText: _obscure2,
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            hintText: 'Confirm password',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              onPressed: () =>
+                                  setState(() => _obscure2 = !_obscure2),
+                              icon: Icon(
+                                _obscure2
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
                             ),
                           ),
+                          validator: (v) {
+                            if ((v ?? '').isEmpty) return 'Confirm is required';
+                            if (v != _passCtrl.text) {
+                              return 'Passwords do not match';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (v) {
-                          if ((v ?? '').isEmpty) return 'Confirm is required';
-                          if (v != _passCtrl.text)
-                            return 'Passwords do not match';
-                          return null;
-                        },
-                      ),
 
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Checkbox(
-                            value: _marketingOptIn,
-                            onChanged: (v) =>
-                                setState(() => _marketingOptIn = v ?? false),
-                          ),
-                          const Expanded(
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Checkbox(
+                              value: _marketingOptIn,
+                              onChanged: (v) =>
+                                  setState(() => _marketingOptIn = v ?? false),
+                            ),
+                            const Expanded(
+                              child: Text(
+                                'Send me occasional emails regarding my account '
+                                'subscription and special offers',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        if (_error != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
                             child: Text(
-                              'Send me occasional emails regarding my account '
-                              'subscription and special offers',
-                              style: TextStyle(fontSize: 13),
+                              _error!,
+                              style: const TextStyle(color: Colors.red),
                             ),
                           ),
-                        ],
-                      ),
 
-                      const SizedBox(height: 14),
+                        const SizedBox(height: 10),
 
-                      if (_error != null)
-                        Text(
-                          _error!,
-                          style: const TextStyle(color: Colors.red),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: _loading
+                                ? null
+                                : () {
+                                    if (_formKey.currentState!.validate()) {
+                                      _register();
+                                    }
+                                  },
+                            child: _loading
+                                ? const CircularProgressIndicator()
+                                : const Text('Create Account'),
+                          ),
                         ),
 
-                      const SizedBox(height: 10),
+                        const SizedBox(height: 18),
+                        const Text('Continue with'),
+                        const SizedBox(height: 12),
 
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton(
-                          onPressed: _loading
-                              ? null
-                              : () {
-                                  if (_formKey.currentState!.validate()) {
-                                    _register();
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _SocialCircle(
+                              label: 'G',
+                              onTap: () async {
+                                try {
+                                  final success = await AuthRepository()
+                                      .loginWithGoogle();
+                                  if (!mounted) return;
+                                  if (success) {
+                                    Navigator.pushReplacementNamed(
+                                      context,
+                                      AuthRoutes.authGate,
+                                    );
                                   }
-                                },
-                          child: _loading
-                              ? const CircularProgressIndicator()
-                              : const Text('Create Account'),
-                        ),
-                      ),
-
-                      const SizedBox(height: 18),
-                      const Text('Continue with'),
-                      const SizedBox(height: 12),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _SocialCircle(
-                            label: 'G',
-                            onTap: () async {
-                              try {
-                                final success = await AuthRepository()
-                                    .loginWithGoogle();
-                                if (!mounted) return;
-
-                                if (success) {
-                                  Navigator.pushReplacementNamed(
-                                    context,
-                                    AuthRoutes.authGate,
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(e.toString())),
                                   );
                                 }
-                              } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(e.toString())),
-                                );
-                              }
-                            },
-                          ),
-
-                          const SizedBox(width: 14),
-
-                          _SocialCircle(
-                            label: '',
-                            onTap: () {
-                              // Apple login → sonra
-                            },
-                          ),
-
-                          const SizedBox(width: 14),
-
-                          _SocialCircle(
-                            label: 'f',
-                            onTap: () {
-                              // Facebook login → sonra
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
+                              },
+                            ),
+                            const SizedBox(width: 14),
+                            _SocialCircle(label: '', onTap: () {}),
+                            const SizedBox(width: 14),
+                            _SocialCircle(label: 'f', onTap: () {}),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

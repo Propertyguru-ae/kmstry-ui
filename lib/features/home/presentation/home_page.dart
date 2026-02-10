@@ -21,7 +21,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadMe() async {
     try {
-      final me = await AuthRepository().getMe(); // birazdan ekleyeceğiz
+      final me = await AuthRepository().getMe(); 
       setState(() {
         _user = me;
         _loading = false;

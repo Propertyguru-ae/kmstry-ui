@@ -3,6 +3,7 @@ import 'dart:ui'; // Glassmorphism efekti için
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 import '../../checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -15,6 +16,8 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? _user;
   bool _loading = true;
   Map<String, dynamic>? _activeCheckin;
+  String? _featuredPhoto;
+
   List<String> _moments = [];
   final CheckinRepository _checkinRepo = CheckinRepository();
 
@@ -27,18 +30,31 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _loadProfile() async {
     try {
       final me = await AuthRepository().getMe();
-          print('ME :  $me');
+      print('ME :  $me');
 
+      String? featured;
       List<String> moments = [];
 
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
       final activeCheckin = me['active_checkin'];
-      final checkinId = activeCheckin is Map ? activeCheckin['id'] as String? : null;
+      final checkinId = activeCheckin is Map
+          ? activeCheckin['id'] as String?
+          : null;
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _checkinRepo.getCheckinProfile(checkinId);
           if (profile.photos.isNotEmpty) {
-            moments = profile.photos.map((p) => p.url).toList();
+            final featuredPhoto = profile.photos.firstWhere(
+              (p) => p.isFeatured,
+              orElse: () => profile.photos.first,
+            );
+
+            featured = featuredPhoto.url;
+
+            moments = profile.photos
+                .where((p) => p.url != featuredPhoto.url)
+                .map((p) => p.url)
+                .toList();
           }
         } catch (_) {}
       }
@@ -55,7 +71,10 @@ class _ProfilePageState extends State<ProfilePage> {
       if (moments.isEmpty) {
         final fromMe = me['moments'] as List?;
         if (fromMe != null) {
-          moments = fromMe.map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+          moments = fromMe
+              .map((e) => e?.toString() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList();
         }
       }
 
@@ -63,6 +82,7 @@ class _ProfilePageState extends State<ProfilePage> {
       setState(() {
         _user = me;
         _activeCheckin = me['active_checkin'];
+        _featuredPhoto = featured;
         _moments = moments;
         _loading = false;
       });
@@ -80,9 +100,7 @@ class _ProfilePageState extends State<ProfilePage> {
         body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
-
-    final String? backgroundImage = _activeCheckin?['photo_url'] ?? _user?['photo_url'];
-    final bool hasImage = backgroundImage != null;
+    final bool hasImage = _featuredPhoto != null;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -90,8 +108,8 @@ class _ProfilePageState extends State<ProfilePage> {
         children: [
           /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
           Positioned.fill(
-            child: hasImage
-                ? Image.network(backgroundImage, fit: BoxFit.cover)
+            child: _featuredPhoto != null
+                ? Image.network(_featuredPhoto!, fit: BoxFit.cover)
                 : _buildModernEmptyStateBackground(),
           ),
 
@@ -127,8 +145,6 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-             
-
                 const Spacer(),
 
                 /// KULLANICI BİLGİLERİ
@@ -156,26 +172,40 @@ class _ProfilePageState extends State<ProfilePage> {
                               color: Color(0xFF00FF75), // Daha canlı bir yeşil
                               shape: BoxShape.circle,
                               boxShadow: [
-                                BoxShadow(color: Color(0xFF00FF75), blurRadius: 4),
+                                BoxShadow(
+                                  color: Color(0xFF00FF75),
+                                  blurRadius: 4,
+                                ),
                               ],
                             ),
                           ),
                           const SizedBox(width: 8),
                           const Text(
                             'Online',
-                            style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 20),
-                      
+
                       /// BIO VEYA NO CHECK-IN UYARISI (Şık bir kutu içinde)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(hasImage ? 0.1 : 0.05),
+                          color: Colors.white.withOpacity(
+                            hasImage ? 0.1 : 0.05,
+                          ),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white.withOpacity(0.1)),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.1),
+                          ),
                         ),
                         child: Text(
                           _activeCheckin != null
@@ -203,19 +233,61 @@ class _ProfilePageState extends State<ProfilePage> {
                     itemCount: _moments.isEmpty ? 4 : _moments.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
-                      return Container(
-                        width: 85,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(hasImage ? 0.15 : 0.05),
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(color: Colors.white.withOpacity(0.1)),
+                      final hasImage = _moments.isNotEmpty;
+
+                      return GestureDetector(
+                        onTap: hasImage
+                            ? () {
+                                final imagesForViewer = [
+                                  if (_featuredPhoto != null) _featuredPhoto!,
+                                  ..._moments,
+                                ];
+
+                                final initialIndex = _featuredPhoto != null
+                                    ? index + 1
+                                    : index;
+
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => MomentsViewerPage(
+                                      images: imagesForViewer,
+                                      initialIndex: initialIndex,
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+
+                        child: Container(
+                          width: 85,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(
+                              hasImage ? 0.15 : 0.05,
+                            ),
+                            borderRadius: BorderRadius.circular(15),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.1),
+                            ),
+                          ),
+                          child: hasImage
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(15),
+                                  child: Hero(
+                                    tag: 'moment_${_moments[index]}',
+                                    child: Image.network(
+                                      _moments[index],
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                )
+                              : Center(
+                                  child: Icon(
+                                    Icons.add_a_photo_outlined,
+                                    color: Colors.white.withOpacity(0.2),
+                                  ),
+                                ),
                         ),
-                        child: _moments.isNotEmpty
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(15),
-                                child: Image.network(_moments[index], fit: BoxFit.cover),
-                              )
-                            : Center(child: Icon(Icons.add_a_photo_outlined, color: Colors.white.withOpacity(0.2))),
                       );
                     },
                   ),
@@ -232,17 +304,24 @@ class _ProfilePageState extends State<ProfilePage> {
                     child: ElevatedButton(
                       onPressed: () {},
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: hasImage ? Colors.transparent : Colors.white,
+                        backgroundColor: hasImage
+                            ? Colors.transparent
+                            : Colors.white,
                         foregroundColor: hasImage ? Colors.white : Colors.black,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
-                          side: hasImage ? const BorderSide(color: Colors.white70) : BorderSide.none,
+                          side: hasImage
+                              ? const BorderSide(color: Colors.white70)
+                              : BorderSide.none,
                         ),
                       ),
                       child: const Text(
                         'Edit Profile',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -258,9 +337,7 @@ class _ProfilePageState extends State<ProfilePage> {
   /// RESİM OLMADIĞINDA GÖRÜNECEK MODERN GRADIENT
   Widget _buildModernEmptyStateBackground() {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F0F0F),
-      ),
+      decoration: const BoxDecoration(color: Color(0xFF0F0F0F)),
       child: Stack(
         children: [
           // Sol üst köşe ışığı
