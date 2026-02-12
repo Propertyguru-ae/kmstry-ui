@@ -4,6 +4,9 @@ import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 import '../../checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import '../../checkin/data/checkin_profile_model.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -16,10 +19,18 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? _user;
   bool _loading = true;
   Map<String, dynamic>? _activeCheckin;
-  String? _featuredPhoto;
+  List<CheckinProfilePhoto> _photos = [];
 
-  List<String> _moments = [];
   final CheckinRepository _checkinRepo = CheckinRepository();
+  String? _checkinVibe;
+
+  bool _isExpanded = false;
+  bool _isOverflowing = false;
+
+  final ImagePicker _picker = ImagePicker();
+  bool _uploadingMoment = false;
+  final TextEditingController _vibeController = TextEditingController();
+  bool _savingVibe = false;
 
   @override
   void initState() {
@@ -28,13 +39,16 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _loadProfile() async {
+    setState(() {
+      _loading = true;
+    });
     try {
       final me = await AuthRepository().getMe();
       print('ME :  $me');
 
-      String? featured;
-      List<String> moments = [];
+      List<CheckinProfilePhoto> photos = [];
 
+      String? checkinVibe;
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
       final activeCheckin = me['active_checkin'];
       final checkinId = activeCheckin is Map
@@ -43,53 +57,181 @@ class _ProfilePageState extends State<ProfilePage> {
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _checkinRepo.getCheckinProfile(checkinId);
+          print('PROFILE :  $profile');
+          print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
+          checkinVibe = profile.checkin.vibe ?? '';
+          print('CHECKIN VIBE :  $checkinVibe');
           if (profile.photos.isNotEmpty) {
-            final featuredPhoto = profile.photos.firstWhere(
-              (p) => p.isFeatured,
-              orElse: () => profile.photos.first,
-            );
-
-            featured = featuredPhoto.url;
-
-            moments = profile.photos
-                .where((p) => p.url != featuredPhoto.url)
-                .map((p) => p.url)
-                .toList();
+            photos = profile.photos;
           }
         } catch (_) {}
-      }
-
-      // 2) Yoksa kullanıcının tüm check-in fotoğrafları (GET /users/me/checkin-photos)
-      if (moments.isEmpty) {
-        try {
-          final myPhotos = await _checkinRepo.getMyCheckinPhotos();
-          if (myPhotos.isNotEmpty) moments = myPhotos;
-        } catch (_) {}
-      }
-
-      // 3) Son çare: /auth/me içindeki moments
-      if (moments.isEmpty) {
-        final fromMe = me['moments'] as List?;
-        if (fromMe != null) {
-          moments = fromMe
-              .map((e) => e?.toString() ?? '')
-              .where((s) => s.isNotEmpty)
-              .toList();
-        }
       }
 
       if (!mounted) return;
       setState(() {
         _user = me;
         _activeCheckin = me['active_checkin'];
-        _featuredPhoto = featured;
-        _moments = moments;
+        _checkinVibe = checkinVibe;
+        _photos = photos;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 3,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+
+    return textPainter.didExceedMaxLines;
+  }
+
+  Future<void> _addMomentPhoto() async {
+    if (_activeCheckin == null) return;
+
+    final checkinId = _activeCheckin!['id'] as String;
+
+    try {
+      final XFile? picked = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
+
+      if (picked == null) return;
+
+      setState(() => _uploadingMoment = true);
+
+      await _checkinRepo.uploadCheckinPhoto(
+        checkinId: checkinId,
+        file: File(picked.path),
+        isFeatured: false,
+      );
+
+      await _loadProfile(); // refresh UI
+    } catch (e) {
+      print("Moment upload error: $e");
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingMoment = false);
+      }
+    }
+  }
+
+  Future<void> _openEditVibeModal() async {
+    if (_activeCheckin == null) return;
+
+    _vibeController.text = _checkinVibe ?? "";
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1A1A1A),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "Edit your vibe",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                TextField(
+                  controller: _vibeController,
+                  maxLength: 150,
+                  maxLines: 4,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: "What's your vibe?",
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _savingVibe ? null : _saveVibe,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: _savingVibe
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                        : const Text("Save"),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _saveVibe() async {
+    if (_activeCheckin == null) return;
+
+    final checkinId = _activeCheckin!['id'] as String;
+
+    setState(() => _savingVibe = true);
+
+    try {
+      await _checkinRepo.updateVibe(
+        checkinId: checkinId,
+        vibe: _vibeController.text.trim(),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _checkinVibe = _vibeController.text.trim();
+      });
+
+      Navigator.pop(context); // modal kapanır
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Failed to update vibe")));
+    }
+
+    if (mounted) setState(() => _savingVibe = false);
   }
 
   @override
@@ -100,16 +242,26 @@ class _ProfilePageState extends State<ProfilePage> {
         body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
-    final bool hasImage = _featuredPhoto != null;
+    CheckinProfilePhoto? featuredPhoto;
+    if (_photos.isNotEmpty) {
+      featuredPhoto = _photos.firstWhere(
+        (p) => p.isFeatured,
+        orElse: () => _photos.first,
+      );
+    }
 
+    final bool hasImage = featuredPhoto != null;
+
+    print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
+    print('active ceckin geliyor mu  :  $_activeCheckin');
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
           /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
           Positioned.fill(
-            child: _featuredPhoto != null
-                ? Image.network(_featuredPhoto!, fit: BoxFit.cover)
+            child: hasImage
+                ? Image.network(featuredPhoto!.url, fit: BoxFit.cover)
                 : _buildModernEmptyStateBackground(),
           ),
 
@@ -196,7 +348,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
-                          vertical: 12,
+                          vertical: 14,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(
@@ -207,15 +359,82 @@ class _ProfilePageState extends State<ProfilePage> {
                             color: Colors.white.withOpacity(0.1),
                           ),
                         ),
-                        child: Text(
-                          _activeCheckin != null
-                              ? (_user?['bio'] ?? 'Hello! This is my bio...')
-                              : '✨ You do not have an active check-in.',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final vibeText = _activeCheckin != null
+                                ? (_checkinVibe ?? 'Hello! This is my bio...')
+                                : '✨ You do not have an active check-in.';
+
+                            final style = TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 15,
+                              height: 1.4,
+                            );
+
+                            final isOverflowing = _checkTextOverflow(
+                              vibeText,
+                              constraints.maxWidth - 30, // 👈 ikon için boşluk
+                              style,
+                            );
+
+                            return AnimatedSize(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeInOut,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    vibeText,
+                                    style: style,
+                                    maxLines: _isExpanded ? null : 2,
+                                    overflow: _isExpanded
+                                        ? TextOverflow.visible
+                                        : TextOverflow.ellipsis,
+                                  ),
+
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        // 👈 See more sadece overflow varsa
+                                        if (isOverflowing)
+                                          GestureDetector(
+                                            onTap: () {
+                                              setState(() {
+                                                _isExpanded = !_isExpanded;
+                                              });
+                                            },
+                                            child: Text(
+                                              _isExpanded
+                                                  ? 'See less'
+                                                  : 'See more',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          const SizedBox(), // boşluk dengesi için
+                                        // 👉 Kalem HER ZAMAN
+                                        if (_activeCheckin != null)
+                                          GestureDetector(
+                                            onTap: _openEditVibeModal,
+                                            child: const Icon(
+                                              Icons.edit_outlined,
+                                              size: 18,
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ],
@@ -224,69 +443,93 @@ class _ProfilePageState extends State<ProfilePage> {
 
                 const SizedBox(height: 30),
 
-                /// MOMENTS (Yatay Liste)
+                /// MOMENTS HEADER
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Moments",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+
+                      /// 📸 Add More sadece 6'dan az ise
+                      if (_activeCheckin != null && _photos.length < 6)
+                        _uploadingMoment
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white70,
+                                ),
+                              )
+                            : GestureDetector(
+                                onTap: _addMomentPhoto,
+                                child: Row(
+                                  children: const [
+                                    Icon(
+                                      Icons.camera_alt_outlined,
+                                      size: 18,
+                                      color: Colors.white70,
+                                    ),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      "Add more",
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 14),
+
+                /// MOMENTS LIST
                 SizedBox(
                   height: 110,
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     scrollDirection: Axis.horizontal,
-                    itemCount: _moments.isEmpty ? 4 : _moments.length,
+                    itemCount: _photos.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
-                      final hasImage = _moments.isNotEmpty;
-
                       return GestureDetector(
-                        onTap: hasImage
-                            ? () {
-                                final imagesForViewer = [
-                                  if (_featuredPhoto != null) _featuredPhoto!,
-                                  ..._moments,
-                                ];
-
-                                final initialIndex = _featuredPhoto != null
-                                    ? index + 1
-                                    : index;
-
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => MomentsViewerPage(
-                                      images: imagesForViewer,
-                                      initialIndex: initialIndex,
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-
-                        child: Container(
-                          width: 85,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(
-                              hasImage ? 0.15 : 0.05,
+                        onTap: () async {
+                          final reload = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => MomentsViewerPage(
+                                photos: _photos,
+                                initialIndex: index,
+                                allowFeature: true,
+                              ),
                             ),
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.1),
-                            ),
+                          );
+
+                          // MomentsViewerPage star ile featured seçince: Navigator.pop(context, true) dönüyor
+                          if (reload == true) {
+                            await _loadProfile();
+                          }
+                        },
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(15),
+                          child: Image.network(
+                            _photos[index].url,
+                            width: 85,
+                            height: 110,
+                            fit: BoxFit.cover,
                           ),
-                          child: hasImage
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(15),
-                                  child: Hero(
-                                    tag: 'moment_${_moments[index]}',
-                                    child: Image.network(
-                                      _moments[index],
-                                      fit: BoxFit.cover,
-                                    ),
-                                  ),
-                                )
-                              : Center(
-                                  child: Icon(
-                                    Icons.add_a_photo_outlined,
-                                    color: Colors.white.withOpacity(0.2),
-                                  ),
-                                ),
                         ),
                       );
                     },
@@ -294,38 +537,6 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
 
                 const SizedBox(height: 30),
-
-                /// ACTION BUTTON
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: hasImage
-                            ? Colors.transparent
-                            : Colors.white,
-                        foregroundColor: hasImage ? Colors.white : Colors.black,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          side: hasImage
-                              ? const BorderSide(color: Colors.white70)
-                              : BorderSide.none,
-                        ),
-                      ),
-                      child: const Text(
-                        'Edit Profile',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),

@@ -32,6 +32,8 @@ class ProfilePreviewPage extends StatefulWidget {
 class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
   final _chatRepo = ChatRepository();
+  bool _isVibeExpanded = false;
+  bool _isVibeOverflowing = false;
 
   CheckinProfile? _profile;
   bool _loading = true;
@@ -43,14 +45,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     _loadProfile();
   }
 
+  bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 2,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+
+    return textPainter.didExceedMaxLines;
+  }
+
   Future<void> _loadProfile() async {
     try {
       final profile = await _repo.getCheckinProfile(widget.checkinId);
       if (!mounted) return;
- // 🔍 DEBUG: chat geliyor mu?
-    debugPrint('🧪 PROFILE DEBUG');
-    debugPrint('isMatched: ${profile.isMatched}');
-    debugPrint('chatId: ${profile.chatId}');
+      // 🔍 DEBUG: chat geliyor mu?
+      debugPrint('🧪 PROFILE DEBUG');
+      debugPrint('isMatched: ${profile.isMatched}');
+      debugPrint('chatId: ${profile.chatId}');
 
       setState(() {
         _profile = profile;
@@ -64,67 +76,64 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
   }
 
-ProfileActionState _determineActionState(CheckinProfile profile) {
-  final myAction = profile.myActionAtThisVenue;
-  final theirAction = profile.theirActionAtThisVenue;
+  ProfileActionState _determineActionState(CheckinProfile profile) {
+    final myAction = profile.myActionAtThisVenue;
+    final theirAction = profile.theirActionAtThisVenue;
 
-  // 1) GLOBAL MATCH
-  if (profile.isMatched) {
-    return ProfileActionState.matched;
-  }
-
-  // 2) THEY SENT INTERESTED
-  if (theirAction == 'interested') {
-    if (myAction == 'interested') {
+    // 1) GLOBAL MATCH
+    if (profile.isMatched) {
       return ProfileActionState.matched;
     }
 
-    if (myAction == 'pass') {
-      // Check timestamps to determine if pass was sent BEFORE or AFTER interested
-      final myActionTime = profile.myActionCreatedAt;
-      final theirActionTime = profile.theirActionCreatedAt;
-      
-      // Only hard lock if pass was sent AFTER receiving interested
-      if (myActionTime != null && 
-          theirActionTime != null && 
-          myActionTime.isAfter(theirActionTime)) {
-        // Reactive pass: I sent pass AFTER they sent interested (hard lock)
-        return ProfileActionState.reactivePass;
+    // 2) THEY SENT INTERESTED
+    if (theirAction == 'interested') {
+      if (myAction == 'interested') {
+        return ProfileActionState.matched;
       }
-      
-      // Proactive pass: I sent pass BEFORE they sent interested
-      // Show incomingInterested so user can respond
+
+      if (myAction == 'pass') {
+        // Check timestamps to determine if pass was sent BEFORE or AFTER interested
+        final myActionTime = profile.myActionCreatedAt;
+        final theirActionTime = profile.theirActionCreatedAt;
+
+        // Only hard lock if pass was sent AFTER receiving interested
+        if (myActionTime != null &&
+            theirActionTime != null &&
+            myActionTime.isAfter(theirActionTime)) {
+          // Reactive pass: I sent pass AFTER they sent interested (hard lock)
+          return ProfileActionState.reactivePass;
+        }
+
+        // Proactive pass: I sent pass BEFORE they sent interested
+        // Show incomingInterested so user can respond
+        return ProfileActionState.incomingInterested;
+      }
+
       return ProfileActionState.incomingInterested;
     }
 
-    return ProfileActionState.incomingInterested;
+    // 3) I SENT INTERESTED, WAITING
+    if (myAction == 'interested') {
+      // If they responded with PASS AFTER my interested → hard reject
+      if (theirAction == 'pass' &&
+          profile.theirActionCreatedAt != null &&
+          profile.myActionCreatedAt != null &&
+          profile.theirActionCreatedAt!.isAfter(profile.myActionCreatedAt!)) {
+        return ProfileActionState.reactivePass;
+      }
+
+      // Otherwise still waiting
+      return ProfileActionState.waitingResponse;
+    }
+
+    // 4) I SENT PASS (SOFT)
+    if (myAction == 'pass') {
+      return ProfileActionState.proactivePass;
+    }
+
+    // 5) NOTHING YET
+    return ProfileActionState.showActions;
   }
-
-  // 3) I SENT INTERESTED, WAITING
-if (myAction == 'interested') {
-  // If they responded with PASS AFTER my interested → hard reject
-  if (theirAction == 'pass' &&
-      profile.theirActionCreatedAt != null &&
-      profile.myActionCreatedAt != null &&
-      profile.theirActionCreatedAt!
-          .isAfter(profile.myActionCreatedAt!)) {
-    return ProfileActionState.reactivePass;
-  }
-
-  // Otherwise still waiting
-  return ProfileActionState.waitingResponse;
-}
-
-
-  // 4) I SENT PASS (SOFT)
-  if (myAction == 'pass') {
-    return ProfileActionState.proactivePass;
-  }
-
-  // 5) NOTHING YET
-  return ProfileActionState.showActions;
-}
-
 
   Future<void> _handleAction(String action) async {
     if (_profile == null) return;
@@ -151,37 +160,38 @@ if (myAction == 'interested') {
     }
   }
 
- Future<void> _openChat() async {
-  final profile = _profile;
-  if (profile == null) return;
+  Future<void> _openChat() async {
+    final profile = _profile;
+    if (profile == null) return;
 
-  debugPrint('🧪 OPEN CHAT → chatId = ${profile.chatId}');
+    debugPrint('🧪 OPEN CHAT → chatId = ${profile.chatId}');
 
-  if (profile.chatId == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('ChatId gelmedi (backend kontrol et)')),
-    );
-    return;
-  }
+    if (profile.chatId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ChatId gelmedi (backend kontrol et)')),
+      );
+      return;
+    }
 
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => MessageDetailPage(
-        chatId: profile.chatId!,
-        otherUserId: profile.user.id,
-        otherName: profile.user.fullName,
-        otherPhotoUrl: profile.photos.first.url,
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MessageDetailPage(
+          chatId: profile.chatId!,
+          otherUserId: profile.user.id,
+          otherName: profile.user.fullName,
+          otherPhotoUrl: profile.photos.first.url,
+        ),
       ),
-    ),
-  );
-}
-
+    );
+  }
 
   void _showNoChatYetSnackbar() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Henüz mesaj yok. Önce mesajlar listesinden sohbet başlatın.'),
+        content: Text(
+          'Henüz mesaj yok. Önce mesajlar listesinden sohbet başlatın.',
+        ),
         duration: Duration(seconds: 4),
       ),
     );
@@ -210,7 +220,10 @@ if (myAction == 'interested') {
       );
     }
 
-    final featuredPhoto = _profile!.photos.firstWhere((p) => p.isFeatured);
+    final featuredPhoto = _profile!.photos.firstWhere(
+      (p) => p.isFeatured,
+      orElse: () => _profile!.photos.first,
+    );
 
     final moments = _profile!.photos.where((p) => !p.isFeatured).toList();
 
@@ -300,12 +313,57 @@ if (myAction == 'interested') {
                     _profile!.checkin.vibe!.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      _profile!.checkin.vibe!,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                      ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final vibeText = _profile!.checkin.vibe!;
+                        const style = TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        );
+
+                        _isVibeOverflowing = _checkTextOverflow(
+                          vibeText,
+                          constraints.maxWidth,
+                          style,
+                        );
+
+                        return AnimatedSize(
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeInOut,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                vibeText,
+                                style: style,
+                                maxLines: _isVibeExpanded ? null : 2,
+                                overflow: _isVibeExpanded
+                                    ? TextOverflow.visible
+                                    : TextOverflow.ellipsis,
+                              ),
+
+                              if (_isVibeOverflowing)
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _isVibeExpanded = !_isVibeExpanded;
+                                    });
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(
+                                      _isVibeExpanded ? 'See less' : 'See more',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
 
@@ -328,73 +386,61 @@ if (myAction == 'interested') {
 
                 /// RECENT MOMENTS LIST
                 if (moments.isNotEmpty)
-                  SizedBox(
-                    height: 90,
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: moments.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final photo = moments[index];
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Builder(
+                      builder: (context) {
+                        final count = moments.length;
 
-                        return GestureDetector(
-                          onTap: () {
-                            final imagesForViewer = [
-                              featuredPhoto.url,
-                              ...moments.map((p) => p.url),
-                            ];
+                        // 🔥 1 FOTO
+                        if (count == 1) {
+                          return _buildMomentImage(
+                            moments.first,
+                            width: double.infinity,
+                            height: 160,
+                            initialIndex: 1,
+                          );
+                        }
 
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => MomentsViewerPage(
-                                  images: imagesForViewer,
-                                  initialIndex: index + 1,
+                        // 🔥 2 FOTO
+                        if (count == 2) {
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: _buildMomentImage(
+                                  moments[0],
+                                  height: 140,
+                                  initialIndex: 1,
                                 ),
                               ),
-                            );
-                          },
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              photo.url,
-                              width: 70,
-                              height: 90,
-                              fit: BoxFit.cover,
-                              loadingBuilder:
-                                  (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _buildMomentImage(
+                                  moments[1],
+                                  height: 140,
+                                  initialIndex: 2,
+                                ),
+                              ),
+                            ],
+                          );
+                        }
 
-                                    return Container(
-                                      width: 70,
-                                      height: 90,
-                                      color: Colors.grey.shade300,
-                                      child: const Center(
-                                        child: SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.black54,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  width: 70,
-                                  height: 90,
-                                  color: Colors.grey.shade400,
-                                  child: const Icon(
-                                    Icons.broken_image,
-                                    color: Colors.white70,
-                                    size: 20,
-                                  ),
-                                );
-                              },
-                            ),
+                        // 🔥 3+ FOTO (scroll)
+                        return SizedBox(
+                          height: 90,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: count,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
+                            itemBuilder: (_, index) {
+                              return _buildMomentImage(
+                                moments[index],
+                                width: 70,
+                                height: 90,
+                                initialIndex: index + 1,
+                              );
+                            },
                           ),
                         );
                       },
@@ -449,10 +495,7 @@ if (myAction == 'interested') {
               child: const Center(
                 child: Text(
                   'Already no Kmstry',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 16,
-                  ),
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
                 ),
               ),
             ),
@@ -517,10 +560,7 @@ if (myAction == 'interested') {
         return const Center(
           child: Text(
             'Waiting response',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
+            style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
         );
 
@@ -528,10 +568,7 @@ if (myAction == 'interested') {
         return const Center(
           child: Text(
             'No Kmstry already',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
+            style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
         );
 
@@ -544,5 +581,41 @@ if (myAction == 'interested') {
           ),
         );
     }
+  }
+
+  Widget _buildMomentImage(
+    photo, {
+    double? width,
+    required double height,
+    required int initialIndex,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        final featuredPhoto = _profile!.photos.firstWhere((p) => p.isFeatured);
+        final moments = _profile!.photos.where((p) => !p.isFeatured).toList();
+
+        final photosForViewer = [featuredPhoto, ...moments];
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MomentsViewerPage(
+              photos: photosForViewer,
+              initialIndex: initialIndex,
+              allowFeature: false, // 👈 BURASI ÖNEMLİ
+            ),
+          ),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          photo.url,
+          width: width,
+          height: height,
+          fit: BoxFit.cover,
+        ),
+      ),
+    );
   }
 }

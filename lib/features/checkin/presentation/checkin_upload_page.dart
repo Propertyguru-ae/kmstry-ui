@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:characters/characters.dart';
 
 class CheckInPage extends StatefulWidget {
   final String venueId;
@@ -22,6 +23,7 @@ class _CheckInPageState extends State<CheckInPage> {
   final int _maxPhotos = 6;
   final _repo = CheckinRepository();
   bool _isSubmitting = false;
+  static const int _vibeMaxLength = 150;
 
   // Öne çıkarılan fotoğrafın indeksi (varsayılan olarak ilk fotoğraf)
   int _featuredIndex = 0;
@@ -105,7 +107,12 @@ class _CheckInPageState extends State<CheckInPage> {
 
   Future<void> _submitCheckin() async {
     if (_photos.isEmpty) return;
-
+    if (_vibeController.text.trim().characters.length > _vibeMaxLength) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Vibe is too long.")));
+      return;
+    }
     setState(() => _isSubmitting = true);
 
     try {
@@ -229,10 +236,36 @@ class _CheckInPageState extends State<CheckInPage> {
             TextField(
               controller: _vibeController,
               maxLines: 4,
+              maxLength: _vibeMaxLength,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                FocusScope.of(context).unfocus();
+              onChanged: (_) {
+                setState(() {}); // Buton aktif/pasif için gerekli
               },
+              buildCounter:
+                  (
+                    context, {
+                    required currentLength,
+                    required isFocused,
+                    maxLength,
+                  }) {
+                    final visibleLength =
+                        _vibeController.text.characters.length;
+
+                    final remaining = _vibeMaxLength - visibleLength;
+                    final isWarning = remaining <= 20;
+
+                    return Text(
+                      "$visibleLength / $_vibeMaxLength",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isWarning ? Colors.orange : Colors.grey.shade600,
+                        fontWeight: isWarning
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    );
+                  },
+
               decoration: InputDecoration(
                 hintText: 'Say something that helps people pick up your vibe.',
                 hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),

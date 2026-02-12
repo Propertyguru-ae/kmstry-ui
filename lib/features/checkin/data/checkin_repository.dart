@@ -73,11 +73,14 @@ class CheckinRepository {
       );
       if (data is! List) return [];
       final list = data as List;
-      return list.map((e) {
-        if (e is String) return e;
-        if (e is Map && e['url'] != null) return e['url'] as String;
-        return null;
-      }).whereType<String>().toList();
+      return list
+          .map((e) {
+            if (e is String) return e;
+            if (e is Map && e['url'] != null) return e['url'] as String;
+            return null;
+          })
+          .whereType<String>()
+          .toList();
     } catch (_) {
       return [];
     }
@@ -92,6 +95,28 @@ class CheckinRepository {
     );
 
     return CheckinProfile.fromJson(data);
+  }
+
+  Future<void> setFeaturedPhoto(String photoId) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.patch(
+      '/checkins/photos/$photoId/feature',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  Future<void> updateVibe({
+    required String checkinId,
+    required String vibe,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.patch(
+      '/checkins/$checkinId/vibe',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {"vibe": vibe},
+    );
   }
 
   Future<void> sendFeedAction({
