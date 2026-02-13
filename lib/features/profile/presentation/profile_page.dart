@@ -4,9 +4,9 @@ import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 import '../../checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
-import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -27,7 +27,6 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isExpanded = false;
   bool _isOverflowing = false;
 
-  final ImagePicker _picker = ImagePicker();
   bool _uploadingMoment = false;
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
@@ -97,22 +96,27 @@ class _ProfilePageState extends State<ProfilePage> {
     final checkinId = _activeCheckin!['id'] as String;
 
     try {
-      final XFile? picked = await _picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 85,
+      // 🔥 Kendi kamera ekranımızı açıyoruz
+      final File? photo = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const CameraScreen(
+            useFrontCamera: true, // selfie
+          ),
+        ),
       );
 
-      if (picked == null) return;
+      if (photo == null) return;
 
       setState(() => _uploadingMoment = true);
 
       await _checkinRepo.uploadCheckinPhoto(
         checkinId: checkinId,
-        file: File(picked.path),
+        file: photo,
         isFeatured: false,
       );
 
-      await _loadProfile(); // refresh UI
+      await _loadProfile();
     } catch (e) {
       print("Moment upload error: $e");
     } finally {

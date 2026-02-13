@@ -119,6 +119,15 @@ class CheckinRepository {
     );
   }
 
+  Future<void> deletePhoto(String photoId) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.delete(
+      '/checkins/photos/$photoId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
   Future<void> sendFeedAction({
     required String targetUserId,
     required String venueId,

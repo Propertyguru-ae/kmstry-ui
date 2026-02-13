@@ -146,7 +146,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     setState(() => _loading = true);
 
     try {
-      //await _repo.deletePhoto(photo.id);
+      await _repo.deletePhoto(photo.id);
 
       if (!mounted) return;
 

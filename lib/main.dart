@@ -3,16 +3,23 @@ import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'features/auth/presentation/auth_routes.dart';
 import 'package:flutter/foundation.dart';
+import 'package:camera/camera.dart';
 
-void main() async {
+late List<CameraDescription> cameras;
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  //Kameraları yükle
+  cameras = await availableCameras();
+
+  //Notifications
   await initNotifications();
-  WidgetsFlutterBinding.ensureInitialized();
 
   if (kDebugMode) {
     await SecureStorage.clear();
   }
+
   runApp(const MyApp());
 }
 
