@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
-import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
-import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 
 enum ProfileActionState {
@@ -31,13 +30,16 @@ class ProfilePreviewPage extends StatefulWidget {
 
 class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
-  final _chatRepo = ChatRepository();
+  final _venueRepo = VenueCheckinRepository();
   bool _isVibeExpanded = false;
   bool _isVibeOverflowing = false;
 
   CheckinProfile? _profile;
   bool _loading = true;
   ProfileActionState? _actionState;
+
+  /// When false: viewer is not at this venue (no active check-in here) -> hide posts & vibe.
+  bool _showPostsAndVibe = false;
 
   @override
   void initState() {
@@ -59,14 +61,22 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     try {
       final profile = await _repo.getCheckinProfile(widget.checkinId);
       if (!mounted) return;
-      // 🔍 DEBUG: chat geliyor mu?
-      debugPrint('🧪 PROFILE DEBUG');
-      debugPrint('isMatched: ${profile.isMatched}');
-      debugPrint('chatId: ${profile.chatId}');
 
+      bool showPostsAndVibe = false;
+      try {
+        final active = await _venueRepo.getActiveCheckin();
+        if (active != null &&
+            active.isActive &&
+            active.venueId == widget.venueId) {
+          showPostsAndVibe = true;
+        }
+      } catch (_) {}
+
+      if (!mounted) return;
       setState(() {
         _profile = profile;
         _actionState = _determineActionState(profile);
+        _showPostsAndVibe = showPostsAndVibe;
         _loading = false;
       });
     } catch (e) {
@@ -136,6 +146,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _handleAction(String action) async {
+    debugPrint("🔥 ACTION SENT: $action");
+
     if (_profile == null) return;
 
     // Only allow actions in showActions or incomingInterested states
@@ -148,7 +160,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       await _repo.sendFeedAction(
         targetUserId: _profile!.user.id,
         venueId: widget.venueId,
-        checkinId: widget.checkinId,
+        //checkinId: widget.checkinId,
         action: action,
       );
       if (!mounted) return;
@@ -180,20 +192,70 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           chatId: profile.chatId!,
           otherUserId: profile.user.id,
           otherName: profile.user.fullName,
-          otherPhotoUrl: profile.photos.first.url,
+          otherPhotoUrl: (() {
+            final first = profile.media.first;
+            if (first.mediaType == MediaType.photo) return first.url;
+            return first.thumbnailUrl ?? '';
+          })(),
         ),
       ),
     );
   }
 
-  void _showNoChatYetSnackbar() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Henüz mesaj yok. Önce mesajlar listesinden sohbet başlatın.',
+  List<CheckinProfileMedia> _mediaForViewer() {
+    final featured = _profile!.media.firstWhere(
+      (m) => m.isFeatured,
+      orElse: () => _profile!.media.first,
+    );
+    final moments = _profile!.media.where((m) => !m.isFeatured).toList();
+    return [featured, ...moments];
+  }
+
+  void _openMediaViewerAt(int index) {
+    final mediaForViewer = _mediaForViewer();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MomentsViewerPage(
+          media: mediaForViewer,
+          initialIndex: index,
+          allowFeature: false,
         ),
-        duration: Duration(seconds: 4),
       ),
+    );
+  }
+
+  Widget _buildVideoCover({
+    required CheckinProfileMedia media,
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    double iconSize = 42,
+  }) {
+    final thumbnail = media.thumbnailUrl;
+    final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (hasThumbnail)
+          Image.network(
+            thumbnail,
+            width: width,
+            height: height,
+            fit: fit,
+            errorBuilder: (_, __, ___) => Container(color: Colors.black87),
+          )
+        else
+          Container(color: Colors.black87),
+        Center(
+          child: Icon(
+            Icons.play_circle_fill,
+            color: Colors.white,
+            size: iconSize,
+          ),
+        ),
+      ],
     );
   }
 
@@ -220,39 +282,38 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
-    final featuredPhoto = _profile!.photos.firstWhere(
-      (p) => p.isFeatured,
-      orElse: () => _profile!.photos.first,
+    final featuredMedia = _profile!.media.firstWhere(
+      (m) => m.isFeatured,
+      orElse: () => _profile!.media.first,
     );
 
-    final moments = _profile!.photos.where((p) => !p.isFeatured).toList();
+    final moments = _profile!.media.where((p) => !p.isFeatured).toList();
 
     return Scaffold(
       body: Stack(
         children: [
-          /// HERO IMAGE (FEATURED PHOTO)
+          /// HERO MEDIA (FEATURED)
           Positioned.fill(
-            child: Image.network(
-              featuredPhoto.url,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-
-                return Container(
-                  color: Colors.black,
-                  child: const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  ),
-                );
-              },
-              errorBuilder: (_, __, ___) => Container(
-                color: Colors.black,
-                child: const Icon(
-                  Icons.person,
-                  color: Colors.white70,
-                  size: 48,
-                ),
-              ),
+            child: GestureDetector(
+              onTap: () => _openMediaViewerAt(0),
+              child: featuredMedia.mediaType == MediaType.photo
+                  ? Image.network(
+                      featuredMedia.url,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.black,
+                        child: const Icon(
+                          Icons.person,
+                          color: Colors.white70,
+                          size: 48,
+                        ),
+                      ),
+                    )
+                  : _buildVideoCover(
+                      media: featuredMedia,
+                      fit: BoxFit.cover,
+                      iconSize: 60,
+                    ),
             ),
           ),
 
@@ -308,8 +369,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                 const SizedBox(height: 12),
 
-                /// VIBE (REAL DATA)
-                if (_profile!.checkin.vibe != null &&
+                /// VIBE (only when viewer is at same venue)
+                if (_showPostsAndVibe &&
+                    _profile!.checkin.vibe != null &&
                     _profile!.checkin.vibe!.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -369,8 +431,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                 const SizedBox(height: 16),
 
-                /// RECENT MOMENTS TITLE
-                if (moments.isNotEmpty)
+                /// RECENT MOMENTS (only when viewer is at same venue)
+                if (_showPostsAndVibe && moments.isNotEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
                     child: Text(
@@ -382,10 +444,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ),
                   ),
 
-                const SizedBox(height: 8),
+                if (_showPostsAndVibe && moments.isNotEmpty)
+                  const SizedBox(height: 8),
 
-                /// RECENT MOMENTS LIST
-                if (moments.isNotEmpty)
+                if (_showPostsAndVibe && moments.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Builder(
@@ -488,18 +550,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               ),
             ),
 
-          // Text for proactivePass
-          if (_actionState == ProfileActionState.proactivePass)
-            Container(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: const Center(
-                child: Text(
-                  'Already no Kmstry',
-                  style: TextStyle(color: Colors.white70, fontSize: 16),
-                ),
-              ),
-            ),
-
           // Action buttons/content
           _buildActionBar(),
         ],
@@ -534,40 +584,18 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         );
 
       case ProfileActionState.proactivePass:
-        return Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _handleAction('interested'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white),
-                ),
-                child: const Text('Kmstry 👋'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: null, // Disabled
-                child: const Text('Not Kmstry'),
-              ),
-            ),
-          ],
+      case ProfileActionState.reactivePass:
+        return const Center(
+          child: Text(
+            'No Kmstry already',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
         );
 
       case ProfileActionState.waitingResponse:
         return const Center(
           child: Text(
             'Waiting response',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
-          ),
-        );
-
-      case ProfileActionState.reactivePass:
-        return const Center(
-          child: Text(
-            'No Kmstry already',
             style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
         );
@@ -584,37 +612,33 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildMomentImage(
-    photo, {
+    CheckinProfileMedia media, {
     double? width,
     required double height,
     required int initialIndex,
   }) {
+    final constrainedChild = SizedBox(
+      width: width,
+      height: height,
+      child: media.mediaType == MediaType.photo
+          ? Image.network(
+              media.url,
+              fit: BoxFit.cover,
+            )
+          : _buildVideoCover(
+              media: media,
+              fit: BoxFit.cover,
+              iconSize: 30,
+            ),
+    );
+
     return GestureDetector(
       onTap: () {
-        final featuredPhoto = _profile!.photos.firstWhere((p) => p.isFeatured);
-        final moments = _profile!.photos.where((p) => !p.isFeatured).toList();
-
-        final photosForViewer = [featuredPhoto, ...moments];
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => MomentsViewerPage(
-              photos: photosForViewer,
-              initialIndex: initialIndex,
-              allowFeature: false, // 👈 BURASI ÖNEMLİ
-            ),
-          ),
-        );
+        _openMediaViewerAt(initialIndex);
       },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          photo.url,
-          width: width,
-          height: height,
-          fit: BoxFit.cover,
-        ),
+        child: constrainedChild,
       ),
     );
   }

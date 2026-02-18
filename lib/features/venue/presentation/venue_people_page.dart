@@ -4,7 +4,6 @@ import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.da
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/user_card.dart';
-import 'package:kmstry_frontend/features/venue/data/users_dummy_data.dart';
 
 class VenuePeoplePage extends StatefulWidget {
   final Venue venue;

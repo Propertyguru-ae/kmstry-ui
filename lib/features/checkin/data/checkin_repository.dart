@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
+import 'package:http_parser/http_parser.dart' as http_parser;
+import 'package:mime/mime.dart';
 
 class CheckinRepository {
   final ApiClient _api = ApiClient();
@@ -58,6 +60,57 @@ class CheckinRepository {
     if (response.statusCode >= 400) {
       throw Exception('Upload failed (${response.statusCode}): $responseBody');
     }
+  }
+
+  Future<void> uploadCheckinMedia({
+    required String checkinId,
+    required File file,
+    required bool isFeatured,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+
+    final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/media');
+
+    final request = http.MultipartRequest('POST', uri);
+
+    request.headers['Authorization'] = 'Bearer $token';
+
+    // ✅ MIME TYPE FIX
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final mimeSplit = mimeType.split('/');
+
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+      ),
+    );
+
+    request.fields['isFeatured'] = isFeatured.toString();
+
+    final response = await request.send();
+    final responseBody = await response.stream.bytesToString();
+
+    if (response.statusCode >= 400) {
+      throw Exception(
+        'Media upload failed (${response.statusCode}): $responseBody',
+      );
+    }
+  }
+
+  Future<List<dynamic>> getMyCheckinMedia() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return [];
+
+    final data = await _api.get(
+      '/users/me/checkin-media',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (data is! List) return [];
+
+    return data;
   }
 
   /// Logged-in user's check-in photos (for own profile moments list).
@@ -131,7 +184,7 @@ class CheckinRepository {
   Future<void> sendFeedAction({
     required String targetUserId,
     required String venueId,
-    required String checkinId,
+    // required String checkinId,
     required String action,
   }) async {
     final token = await SecureStorage.getAccessToken();
@@ -142,7 +195,7 @@ class CheckinRepository {
       body: {
         'target_user_id': targetUserId,
         'venue_id': venueId,
-        'checkin_id': checkinId,
+        //'checkin_id': checkinId,
         'action': action,
       },
     );

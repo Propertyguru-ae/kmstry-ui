@@ -8,6 +8,7 @@ import 'preview_screen.dart';
 import 'package:image/image.dart' as img;
 import 'preview_video_screen.dart';
 import 'dart:async';
+import 'package:permission_handler/permission_handler.dart';
 
 enum CaptureMode { photo, video }
 
@@ -48,7 +49,7 @@ class _CameraScreenState extends State<CameraScreen> {
     _controller = CameraController(
       _currentCamera,
       ResolutionPreset.high,
-      enableAudio: false,
+      enableAudio: true,
     );
 
     await _controller.initialize();
@@ -75,7 +76,7 @@ class _CameraScreenState extends State<CameraScreen> {
     _controller = CameraController(
       newCamera,
       ResolutionPreset.high,
-      enableAudio: false,
+      enableAudio: true,
     );
 
     await _controller.initialize();
@@ -125,6 +126,48 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _startVideo() async {
+    final micStatus = await Permission.microphone.request();
+    debugPrint('🎤 Microphone permission result: $micStatus');
+
+    if (micStatus.isPermanentlyDenied) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Microphone access required'),
+          content: const Text(
+            'Please enable microphone access from Settings to record videos with audio.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                openAppSettings();
+                Navigator.pop(context);
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (!micStatus.isGranted) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Microphone permission is required for video with sound. Photo mode can still be used.',
+          ),
+        ),
+      );
+      return;
+    }
+
     await _controller.startVideoRecording();
 
     setState(() {

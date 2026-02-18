@@ -1,15 +1,17 @@
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
+import 'package:video_player/video_player.dart';
 
 class MomentsViewerPage extends StatefulWidget {
-  final List<CheckinProfilePhoto> photos;
+  final List<CheckinProfileMedia> media;
   final int initialIndex;
   final bool allowFeature;
 
   const MomentsViewerPage({
     super.key,
-    required this.photos,
+    required this.media,
     required this.initialIndex,
     this.allowFeature = false,
   });
@@ -23,147 +25,98 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   late int _currentIndex;
   final CheckinRepository _repo = CheckinRepository();
   bool _loading = false;
-  late List<CheckinProfilePhoto> _photos;
+  late List<CheckinProfileMedia> _media;
   bool _hasChanged = false;
+  VideoPlayerController? _videoController;
 
   @override
   void initState() {
     super.initState();
-    _photos = List.from(widget.photos);
+
+    // 🔥 HATA BURADAYDI
+    _media = List.from(widget.media);
+
     _currentIndex = widget.initialIndex;
     _controller = PageController(initialPage: widget.initialIndex);
+
+    // İlk item video ise başlat
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _setupVideoIfNeeded(_currentIndex);
+    });
+  }
+
+  Future<void> _setupVideoIfNeeded(int index) async {
+    final item = _media[index];
+
+    _videoController?.dispose();
+    _videoController = null;
+
+    if (item.mediaType == MediaType.video) {
+      _videoController =
+          VideoPlayerController.networkUrl(Uri.parse(item.url));
+
+      await _videoController!.initialize();
+      await _videoController!.setLooping(true);
+      await _videoController!.play();
+
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _setFeatured() async {
     setState(() => _loading = true);
 
     try {
-      final selectedPhoto = _photos[_currentIndex];
+      final selected = _media[_currentIndex];
 
-      await _repo.setFeaturedPhoto(selectedPhoto.id);
+      await _repo.setFeaturedPhoto(selected.id);
 
       if (!mounted) return;
 
       setState(() {
-        _photos = _photos.map((photo) {
-          return CheckinProfilePhoto(
-            id: photo.id,
-            url: photo.url,
-            isFeatured: photo.id == selectedPhoto.id,
-          );
+        _media = _media.map((m) {
+          return m.copyWith(isFeatured: m.id == selected.id);
         }).toList();
         _hasChanged = true;
       });
     } catch (e) {
-      print("Feature error: $e");
+      log("Feature error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to set featured photo")),
+        const SnackBar(content: Text("Failed to set featured media")),
       );
     }
 
     if (mounted) setState(() => _loading = false);
   }
 
-  Widget _buildFeatureButton(CheckinProfilePhoto currentPhoto) {
-    return GestureDetector(
-      onTap: currentPhoto.isFeatured || _loading ? null : _setFeatured,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.6),
-          shape: BoxShape.circle,
-        ),
-        child: _loading
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : Icon(
-                Icons.star,
-                color: currentPhoto.isFeatured ? Colors.amber : Colors.white,
-                size: 26,
-              ),
-      ),
-    );
-  }
-
-  Widget _buildDeleteButton(CheckinProfilePhoto currentPhoto) {
-    return GestureDetector(
-      onTap: _loading ? null : () => _confirmDelete(currentPhoto),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.6),
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(
-          Icons.delete_outline,
-          color: Colors.redAccent,
-          size: 26,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmDelete(CheckinProfilePhoto photo) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: Colors.black,
-          title: const Text(
-            "Delete photo?",
-            style: TextStyle(color: Colors.white),
-          ),
-          content: const Text(
-            "This action cannot be undone.",
-            style: TextStyle(color: Colors.white70),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Cancel"),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("Delete", style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirm == true) {
-      await _deletePhoto(photo);
-    }
-  }
-
-  Future<void> _deletePhoto(CheckinProfilePhoto photo) async {
+  Future<void> _deleteMedia(CheckinProfileMedia media) async {
     setState(() => _loading = true);
 
     try {
-      await _repo.deletePhoto(photo.id);
+      await _repo.deletePhoto(media.id);
 
       if (!mounted) return;
-
-      Navigator.pop(context, true); // profile reload
+      Navigator.pop(context, true);
     } catch (e) {
-      print("Delete error: $e");
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to delete photo")));
+      log("Delete error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to delete media")),
+      );
     }
 
     if (mounted) setState(() => _loading = false);
   }
 
   @override
+  void dispose() {
+    _videoController?.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final currentPhoto = _photos[_currentIndex];
+    final currentMedia = _media[_currentIndex];
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -171,47 +124,104 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
         children: [
           PageView.builder(
             controller: _controller,
-            onPageChanged: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
+            itemCount: _media.length,
+            onPageChanged: (index) async {
+              setState(() => _currentIndex = index);
+              await _setupVideoIfNeeded(index);
             },
-            itemCount: _photos.length,
             itemBuilder: (context, index) {
+              final item = _media[index];
+
+              // 🖼 PHOTO
+              if (item.mediaType == MediaType.photo) {
+                return Center(
+                  child: InteractiveViewer(
+                    child: Image.network(
+                      item.url,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                );
+              }
+
+              // 🎬 VIDEO
               return Center(
-                child: InteractiveViewer(
-                  child: Image.network(_photos[index].url, fit: BoxFit.contain),
-                ),
+                child: _videoController != null &&
+                        _videoController!.value.isInitialized &&
+                        _currentIndex == index
+                    ? AspectRatio(
+                        aspectRatio:
+                            _videoController!.value.aspectRatio,
+                        child: VideoPlayer(_videoController!),
+                      )
+                    : const CircularProgressIndicator(
+                        color: Colors.white,
+                      ),
               );
             },
           ),
 
-          /// CLOSE BUTTON
-          /// if (widget.allowFeature)
+          // ❌ CLOSE
           Positioned(
             top: 40,
             right: 16,
             child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 28),
-              onPressed: () => Navigator.pop(context, _hasChanged),
+              icon: const Icon(Icons.close,
+                  color: Colors.white, size: 28),
+              onPressed: () =>
+                  Navigator.pop(context, _hasChanged),
             ),
           ),
 
-          /// ⭐ FEATURE BUTTON
-          /// BOTTOM ACTIONS (sadece izin varsa)
+          // ⭐ FEATURE + 🗑 DELETE
           if (widget.allowFeature)
             Positioned(
               bottom: 40,
               left: 20,
               right: 20,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment:
+                    MainAxisAlignment.spaceBetween,
                 children: [
-                  // ⭐ FEATURE
-                  _buildFeatureButton(currentPhoto),
+                  // FEATURE
+                  GestureDetector(
+                    onTap: currentMedia.isFeatured || _loading
+                        ? null
+                        : _setFeatured,
+                    child: CircleAvatar(
+                      backgroundColor:
+                          Colors.black.withValues(alpha: 0.6),
+                      radius: 28,
+                      child: _loading
+                          ? const CircularProgressIndicator(
+                              color: Colors.white,
+                            )
+                          : Icon(
+                              Icons.star,
+                              color: currentMedia.isFeatured
+                                  ? Colors.amber
+                                  : Colors.white,
+                              size: 26,
+                            ),
+                    ),
+                  ),
 
-                  // 🗑 DELETE
-                  _buildDeleteButton(currentPhoto),
+                  // DELETE
+                  GestureDetector(
+                    onTap: _loading
+                        ? null
+                        : () => _deleteMedia(currentMedia),
+                    child: CircleAvatar(
+                      backgroundColor:
+                          Colors.black.withValues(alpha: 0.6),
+                      radius: 28,
+                      child: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.redAccent,
+                        size: 26,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),

@@ -43,6 +43,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>We need camera access to let you take photos and share moments.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need microphone access to record videos with audio.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Your location helps us show nearby venues even when the app is active.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

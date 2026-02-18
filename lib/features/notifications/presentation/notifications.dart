@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/messageDetail/presentation/message_deta
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
+import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -36,16 +37,20 @@ class _NotificationPageState extends State<NotificationPage> {
       } catch (_) {}
       if (!mounted) return;
       NotificationUnreadScope.of(context)?.updateUnreadCount(0);
-      final asRead = list.map((n) => NotificationModel(
-        id: n.id,
-        type: n.type,
-        title: n.title,
-        body: n.body,
-        data: n.data,
-        isRead: true,
-        createdAt: n.createdAt,
-        dedupeKey: n.dedupeKey,
-      )).toList();
+      final asRead = list
+          .map(
+            (n) => NotificationModel(
+              id: n.id,
+              type: n.type,
+              title: n.title,
+              body: n.body,
+              data: n.data,
+              isRead: true,
+              createdAt: n.createdAt,
+              dedupeKey: n.dedupeKey,
+            ),
+          )
+          .toList();
       setState(() {
         _list = asRead;
         _loading = false;
@@ -74,6 +79,29 @@ class _NotificationPageState extends State<NotificationPage> {
             ),
           ),
         );
+        return;
+      }
+    }
+
+    // Interested / liked_you: open requester's profile (checkin context)
+    if ((n.type == 'interested' || n.type == 'liked_you') && n.data != null) {
+      final data = n.data!;
+      final checkinId =
+          data['checkin_id'] as String? ?? data['checkinId'] as String?;
+      final venueId =
+          data['venue_id'] as String? ?? data['venueId'] as String?;
+      if (checkinId != null &&
+          venueId != null &&
+          checkinId.isNotEmpty &&
+          venueId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ProfilePreviewPage(
+              checkinId: checkinId,
+              venueId: venueId,
+            ),
+          ),
+        );
       }
     }
   }
@@ -94,6 +122,8 @@ class _NotificationPageState extends State<NotificationPage> {
         return Icons.favorite;
       case 'new_message':
         return Icons.chat_bubble_outline;
+      case 'liked_you':
+        return Icons.favorite_rounded;
       default:
         return Icons.notifications_none;
     }
@@ -143,10 +173,7 @@ class _NotificationPageState extends State<NotificationPage> {
     }
     if (_list.isEmpty) {
       return const Center(
-        child: Text(
-          'No notifications',
-          style: TextStyle(color: Colors.grey),
-        ),
+        child: Text('No notifications', style: TextStyle(color: Colors.grey)),
       );
     }
     return RefreshIndicator(

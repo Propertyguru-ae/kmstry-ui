@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:ui'; // Glassmorphism efekti için
 import '../../auth/data/auth_repository.dart';
-import '../../auth/presentation/auth_routes.dart';
 import '../../checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -19,17 +19,75 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? _user;
   bool _loading = true;
   Map<String, dynamic>? _activeCheckin;
-  List<CheckinProfilePhoto> _photos = [];
+  List<CheckinProfileMedia> _media = [];
 
   final CheckinRepository _checkinRepo = CheckinRepository();
   String? _checkinVibe;
 
   bool _isExpanded = false;
-  bool _isOverflowing = false;
 
   bool _uploadingMoment = false;
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
+
+  bool _isVideoFile(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.webm');
+  }
+
+  Future<bool> _ensureCameraPermission() async {
+    final camera = await Permission.camera.request();
+    return camera.isGranted;
+  }
+
+  Widget _buildMediaThumb(CheckinProfileMedia media) {
+    const thumbWidth = 85.0;
+    const thumbHeight = 110.0;
+
+    if (media.mediaType == MediaType.video) {
+      final thumbnail = media.thumbnailUrl;
+      final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
+      return SizedBox(
+        width: thumbWidth,
+        height: thumbHeight,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hasThumbnail)
+              Image.network(
+                thumbnail,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(color: Colors.black87),
+              )
+            else
+              Container(color: Colors.black87),
+            const Center(
+              child: Icon(
+                Icons.play_circle_fill,
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (media.mediaType == MediaType.photo) {
+      return SizedBox(
+        width: thumbWidth,
+        height: thumbHeight,
+        child: Image.network(
+          media.url,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    return const SizedBox(width: thumbWidth, height: thumbHeight);
+  }
 
   @override
   void initState() {
@@ -45,7 +103,7 @@ class _ProfilePageState extends State<ProfilePage> {
       final me = await AuthRepository().getMe();
       print('ME :  $me');
 
-      List<CheckinProfilePhoto> photos = [];
+      List<CheckinProfileMedia> media = [];
 
       String? checkinVibe;
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
@@ -60,8 +118,8 @@ class _ProfilePageState extends State<ProfilePage> {
           print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
           checkinVibe = profile.checkin.vibe ?? '';
           print('CHECKIN VIBE :  $checkinVibe');
-          if (profile.photos.isNotEmpty) {
-            photos = profile.photos;
+          if (profile.media.isNotEmpty) {
+            media = profile.media;
           }
         } catch (_) {}
       }
@@ -71,7 +129,7 @@ class _ProfilePageState extends State<ProfilePage> {
         _user = me;
         _activeCheckin = me['active_checkin'];
         _checkinVibe = checkinVibe;
-        _photos = photos;
+        _media = media;
         _loading = false;
       });
     } catch (_) {
@@ -96,8 +154,19 @@ class _ProfilePageState extends State<ProfilePage> {
     final checkinId = _activeCheckin!['id'] as String;
 
     try {
+      final hasPermission = await _ensureCameraPermission();
+      if (!hasPermission) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Camera permission is required.'),
+          ),
+        );
+        return;
+      }
+
       // 🔥 Kendi kamera ekranımızı açıyoruz
-      final File? photo = await Navigator.push(
+      final File? capturedMedia = await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => const CameraScreen(
@@ -106,13 +175,23 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       );
 
-      if (photo == null) return;
+      if (capturedMedia == null) return;
+
+      // Check-in aninda tek video kurali profile'a da uygulaniyor.
+      if (_isVideoFile(capturedMedia.path) &&
+          _media.any((m) => m.mediaType == MediaType.video)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("You can upload only 1 video.")),
+        );
+        return;
+      }
 
       setState(() => _uploadingMoment = true);
 
-      await _checkinRepo.uploadCheckinPhoto(
+      await _checkinRepo.uploadCheckinMedia(
         checkinId: checkinId,
-        file: photo,
+        file: capturedMedia,
         isFeatured: false,
       );
 
@@ -246,15 +325,16 @@ class _ProfilePageState extends State<ProfilePage> {
         body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
-    CheckinProfilePhoto? featuredPhoto;
-    if (_photos.isNotEmpty) {
-      featuredPhoto = _photos.firstWhere(
-        (p) => p.isFeatured,
-        orElse: () => _photos.first,
+    CheckinProfileMedia? featuredMedia;
+    if (_media.isNotEmpty) {
+      featuredMedia = _media.firstWhere(
+        (m) => m.isFeatured,
+        orElse: () => _media.first,
       );
     }
 
-    final bool hasImage = featuredPhoto != null;
+    final bool hasImage =
+        featuredMedia != null && featuredMedia.mediaType == MediaType.photo;
 
     print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
     print('active ceckin geliyor mu  :  $_activeCheckin');
@@ -265,7 +345,7 @@ class _ProfilePageState extends State<ProfilePage> {
           /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
           Positioned.fill(
             child: hasImage
-                ? Image.network(featuredPhoto!.url, fit: BoxFit.cover)
+                ? Image.network(featuredMedia.url, fit: BoxFit.cover)
                 : _buildModernEmptyStateBackground(),
           ),
 
@@ -463,7 +543,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
 
                       /// 📸 Add More sadece 6'dan az ise
-                      if (_activeCheckin != null && _photos.length < 6)
+                      if (_activeCheckin != null && _media.length < 6)
                         _uploadingMoment
                             ? const SizedBox(
                                 width: 20,
@@ -505,7 +585,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     scrollDirection: Axis.horizontal,
-                    itemCount: _photos.length,
+                    itemCount: _media.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       return GestureDetector(
@@ -514,7 +594,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             context,
                             MaterialPageRoute(
                               builder: (_) => MomentsViewerPage(
-                                photos: _photos,
+                                media: _media,
                                 initialIndex: index,
                                 allowFeature: true,
                               ),
@@ -528,12 +608,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(15),
-                          child: Image.network(
-                            _photos[index].url,
-                            width: 85,
-                            height: 110,
-                            fit: BoxFit.cover,
-                          ),
+                          child: _buildMediaThumb(_media[index]),
                         ),
                       );
                     },

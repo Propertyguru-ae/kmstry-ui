@@ -9,7 +9,7 @@ class UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = user.featuredPhoto ?? user.userPhoto;
+    final imageUrl = user.displayPhoto;
 
     return GestureDetector(
       onTap: onTap,
@@ -50,6 +50,17 @@ class UserCard extends StatelessWidget {
               );
             },
           ),
+
+          if (user.isFeaturedVideo)
+            const Positioned.fill(
+              child: Center(
+                child: Icon(
+                  Icons.play_circle_fill,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ),
 
           /// GRADIENT OVERLAY
           Positioned.fill(

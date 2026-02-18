@@ -1,10 +1,19 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:characters/characters.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+
+enum MediaType { photo, video }
+
+class LocalMedia {
+  final File file;
+  final MediaType type;
+
+  LocalMedia({required this.file, required this.type});
+}
 
 class CheckInPage extends StatefulWidget {
   final String venueId;
@@ -15,12 +24,12 @@ class CheckInPage extends StatefulWidget {
 }
 
 class _CheckInPageState extends State<CheckInPage> {
-  final ImagePicker _picker = ImagePicker();
   final TextEditingController _vibeController = TextEditingController();
 
   // Birden fazla fotoğrafı tutmak için liste yapısı
-  final List<XFile> _photos = [];
-  final int _maxPhotos = 6;
+  final List<LocalMedia> _media = [];
+  final int _maxMedia = 6;
+
   final _repo = CheckinRepository();
   bool _isSubmitting = false;
   static const int _vibeMaxLength = 150;
@@ -30,7 +39,6 @@ class _CheckInPageState extends State<CheckInPage> {
 
   Future<bool> _ensureCameraPermission() async {
     final result = await Permission.camera.request();
-
     debugPrint('📸 Camera permission result: $result');
 
     if (result.isGranted) return true;
@@ -41,7 +49,7 @@ class _CheckInPageState extends State<CheckInPage> {
         builder: (_) => AlertDialog(
           title: const Text('Camera access required'),
           content: const Text(
-            'Please enable camera access from Settings to take photos.',
+            'Please enable camera access from Settings to take photos and record videos.',
           ),
           actions: [
             TextButton(
@@ -63,36 +71,57 @@ class _CheckInPageState extends State<CheckInPage> {
     return false;
   }
 
-  Future<void> _pickImage() async {
-    if (_photos.length >= _maxPhotos) {
+  MediaType _resolveMediaType(File file) {
+    final lower = file.path.toLowerCase();
+    if (lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.webm')) {
+      return MediaType.video;
+    }
+    return MediaType.photo;
+  }
+
+  Future<void> _openCameraAndAddMedia() async {
+    if (_media.length >= _maxMedia) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You can add up to 2 photos.")),
+        const SnackBar(content: Text("You can add up to 6 items.")),
       );
       return;
     }
 
-    // 👇 İZİN BURADA
     final hasPermission = await _ensureCameraPermission();
     if (!hasPermission) return;
 
-    final result = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 85,
+    final File? captured = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const CameraScreen(useFrontCamera: false),
+      ),
     );
 
-    if (result != null) {
-      setState(() {
-        _photos.add(result);
-      });
+    if (captured == null) return;
+
+    final selectedType = _resolveMediaType(captured);
+    final hasExistingVideo = _media.any((m) => m.type == MediaType.video);
+    if (selectedType == MediaType.video && hasExistingVideo) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("You can upload only 1 video.")),
+      );
+      return;
     }
+
+    setState(() {
+      _media.add(LocalMedia(file: File(captured.path), type: selectedType));
+    });
   }
 
   /// Fotoğrafı listeden kaldırma
-  void _removePhoto(int index) {
+  void _removeMedia(int index) {
     setState(() {
-      _photos.removeAt(index);
-      // Eğer öne çıkan fotoğraf silinirse, seçimi başa döndür
-      if (_featuredIndex >= _photos.length) {
+      _media.removeAt(index);
+      if (_featuredIndex >= _media.length) {
         _featuredIndex = 0;
       }
     });
@@ -106,7 +135,7 @@ class _CheckInPageState extends State<CheckInPage> {
   }
 
   Future<void> _submitCheckin() async {
-    if (_photos.isEmpty) return;
+    if (_media.isEmpty) return;
     if (_vibeController.text.trim().characters.length > _vibeMaxLength) {
       ScaffoldMessenger.of(
         context,
@@ -131,10 +160,10 @@ class _CheckInPageState extends State<CheckInPage> {
       ActiveCheckinService().setActiveCheckin(checkinId);
 
       // 2️⃣ Fotoğrafları yükle
-      for (int i = 0; i < _photos.length; i++) {
-        await _repo.uploadCheckinPhoto(
+      for (int i = 0; i < _media.length; i++) {
+        await _repo.uploadCheckinMedia(
           checkinId: checkinId,
-          file: File(_photos[i].path),
+          file: _media[i].file,
           isFeatured: i == _featuredIndex,
         );
       }
@@ -201,23 +230,17 @@ class _CheckInPageState extends State<CheckInPage> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                ...List.generate(_photos.length, (index) {
-                  return _buildPhotoBox(
+                ...List.generate(_media.length, (index) {
+                  final item = _media[index];
+
+                  return _buildMediaBox(
                     index: index,
                     isFeatured: _featuredIndex == index,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Image.file(
-                        File(_photos[index].path),
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                      ),
-                    ),
+                    media: item,
                   );
                 }),
 
-                if (_photos.length < _maxPhotos) _buildAddBox(),
+                if (_media.length < _maxMedia) _buildAddBox(),
               ],
             ),
 
@@ -286,7 +309,7 @@ class _CheckInPageState extends State<CheckInPage> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: (_photos.isEmpty || _isSubmitting)
+                onPressed: (_media.isEmpty || _isSubmitting)
                     ? null
                     : _submitCheckin,
                 style: ElevatedButton.styleFrom(
@@ -315,12 +338,36 @@ class _CheckInPageState extends State<CheckInPage> {
   }
 
   /// Fotoğraf kutusu tasarımı (Yıldızlı seçim özelliği ile)
-  Widget _buildPhotoBox({
+  Widget _buildMediaBox({
     required int index,
     required bool isFeatured,
-    required Widget child,
+    required LocalMedia media,
   }) {
     double size = (MediaQuery.of(context).size.width - 64) / 3;
+
+    final child = media.type == MediaType.photo
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.file(
+              media.file,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+            ),
+          )
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              color: Colors.black,
+              child: const Center(
+                child: Icon(
+                  Icons.play_circle_fill,
+                  color: Colors.white,
+                  size: 42,
+                ),
+              ),
+            ),
+          );
 
     return Stack(
       clipBehavior: Clip.none,
@@ -340,12 +387,13 @@ class _CheckInPageState extends State<CheckInPage> {
             child: child,
           ),
         ),
-        // Silme Butonu
+
+        // Delete button
         Positioned(
           top: -5,
           right: -5,
           child: GestureDetector(
-            onTap: () => _removePhoto(index),
+            onTap: () => _removeMedia(index),
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: const BoxDecoration(
@@ -356,7 +404,8 @@ class _CheckInPageState extends State<CheckInPage> {
             ),
           ),
         ),
-        // Öne Çıkan Yıldız İkonu
+
+        // Featured star
         if (isFeatured)
           Positioned(
             left: 8,
@@ -379,7 +428,7 @@ class _CheckInPageState extends State<CheckInPage> {
     double size = (MediaQuery.of(context).size.width - 64) / 3;
 
     return GestureDetector(
-      onTap: _pickImage,
+      onTap: _openCameraAndAddMedia,
       child: Container(
         width: size,
         height: size * 1.3,

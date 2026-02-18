@@ -1,10 +1,63 @@
+enum MediaType { photo, video }
+
+class CheckinProfileMedia {
+  final String id;
+  final String url;
+  final MediaType mediaType;
+  final bool isFeatured;
+  final String? thumbnailUrl;
+  final int? durationSeconds;
+
+  CheckinProfileMedia({
+    required this.id,
+    required this.url,
+    required this.mediaType,
+    required this.isFeatured,
+    this.thumbnailUrl,
+    this.durationSeconds,
+  });
+
+  factory CheckinProfileMedia.fromJson(Map<String, dynamic> json) {
+    return CheckinProfileMedia(
+      id: json['id'],
+      url: json['url'],
+      mediaType: json['media_type'] == 'video'
+          ? MediaType.video
+          : MediaType.photo,
+      isFeatured: json['is_featured'] ?? false,
+      thumbnailUrl: json['thumbnail_url'],
+      durationSeconds: json['duration_seconds'],
+    );
+  }
+
+  // 👇 BURAYA KOYUYORSUN
+  CheckinProfileMedia copyWith({
+    String? id,
+    String? url,
+    MediaType? mediaType,
+    bool? isFeatured,
+    String? thumbnailUrl,
+    int? durationSeconds,
+  }) {
+    return CheckinProfileMedia(
+      id: id ?? this.id,
+      url: url ?? this.url,
+      mediaType: mediaType ?? this.mediaType,
+      isFeatured: isFeatured ?? this.isFeatured,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+    );
+  }
+}
+
 class CheckinProfile {
   final CheckinProfileUser user;
   final CheckinProfileCheckin checkin;
-  final List<CheckinProfilePhoto> photos;
+  final List<CheckinProfileMedia> media;
   final bool isMatched;
-  final String? chatId; 
-  final String? feedAction; // "interested" | "pass" | null (deprecated, use myActionAtThisVenue)
+  final String? chatId;
+  final String?
+  feedAction; // "interested" | "pass" | null (deprecated, use myActionAtThisVenue)
   final String? myActionAtThisVenue; // "interested" | "pass" | null
   final String? theirActionAtThisVenue; // "interested" | "pass" | null
   final DateTime? myActionCreatedAt;
@@ -13,7 +66,7 @@ class CheckinProfile {
   CheckinProfile({
     required this.user,
     required this.checkin,
-    required this.photos,
+    required this.media,
     required this.isMatched,
     this.chatId,
     this.feedAction,
@@ -28,7 +81,7 @@ class CheckinProfile {
     final relationship = json['relationship'] as Map<String, dynamic>?;
     final myAction = relationship?['myActionAtThisVenue'] as String?;
     final theirAction = relationship?['theirActionAtThisVenue'] as String?;
-    
+
     // Parse timestamps from relationship
     DateTime? parseTimestamp(dynamic value) {
       if (value == null) return null;
@@ -41,7 +94,7 @@ class CheckinProfile {
       }
       return null;
     }
-    
+
     final myActionCreatedAt = relationship?['myActionCreatedAt'] != null
         ? parseTimestamp(relationship!['myActionCreatedAt'])
         : null;
@@ -53,14 +106,15 @@ class CheckinProfile {
     return CheckinProfile(
       user: CheckinProfileUser.fromJson(json['user']),
       checkin: CheckinProfileCheckin.fromJson(json['checkin']),
-      photos: (json['photos'] as List)
-          .map((e) => CheckinProfilePhoto.fromJson(e))
+      media: (json['media'] as List)
+          .map((e) => CheckinProfileMedia.fromJson(e))
           .toList(),
       isMatched: json['is_matched'] as bool? ?? false,
       chatId: json['chat_id'] as String?,
       feedAction: json['feed_action'] as String?,
       myActionAtThisVenue: myAction ?? json['feed_action'] as String?,
-      theirActionAtThisVenue: theirAction ?? json['their_action_at_this_venue'] as String?,
+      theirActionAtThisVenue:
+          theirAction ?? json['their_action_at_this_venue'] as String?,
       myActionCreatedAt: myActionCreatedAt,
       theirActionCreatedAt: theirActionCreatedAt,
     );
