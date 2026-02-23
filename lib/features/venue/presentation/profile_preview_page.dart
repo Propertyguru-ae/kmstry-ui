@@ -15,14 +15,25 @@ enum ProfileActionState {
 }
 
 class ProfilePreviewPage extends StatefulWidget {
-  final String checkinId;
-  final String venueId;
+  final String? checkinId;
+  final String? venueId;
+  final String? userId;
+  final String? userName;
+  final bool isMatchedHint;
+  final String? chatIdHint;
 
   const ProfilePreviewPage({
     super.key,
-    required this.checkinId,
-    required this.venueId,
-  });
+    this.checkinId,
+    this.venueId,
+    this.userId,
+    this.userName,
+    this.isMatchedHint = false,
+    this.chatIdHint,
+  }) : assert(
+         checkinId != null || userId != null,
+         'Either checkinId or userId must be provided.',
+       );
 
   @override
   State<ProfilePreviewPage> createState() => _ProfilePreviewPageState();
@@ -37,9 +48,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   CheckinProfile? _profile;
   bool _loading = true;
   ProfileActionState? _actionState;
+  String? _resolvedVenueId;
 
   /// When false: viewer is not at this venue (no active check-in here) -> hide posts & vibe.
   bool _showPostsAndVibe = false;
+  bool _isBlocked = false;
+  bool _isBlocking = false;
 
   @override
   void initState() {
@@ -59,24 +73,48 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Future<void> _loadProfile() async {
     try {
-      final profile = await _repo.getCheckinProfile(widget.checkinId);
-      if (!mounted) return;
-
       bool showPostsAndVibe = false;
-      try {
-        final active = await _venueRepo.getActiveCheckin();
+      String? resolvedVenueId = widget.venueId;
+      final active = await _venueRepo.getActiveCheckin();
+      if (resolvedVenueId == null || resolvedVenueId.isEmpty) {
+        resolvedVenueId = active?.venueId;
+      }
+
+      final checkinId = widget.checkinId;
+      if (checkinId != null && checkinId.isNotEmpty) {
+        final profile = await _repo.getCheckinProfile(checkinId);
         if (active != null &&
             active.isActive &&
-            active.venueId == widget.venueId) {
+            resolvedVenueId != null &&
+            active.venueId == resolvedVenueId) {
           showPostsAndVibe = true;
         }
-      } catch (_) {}
+        if (!mounted) return;
+        final blockedIds = await _repo.getBlockedUserIds();
+        if (!mounted) return;
+        setState(() {
+          _profile = profile;
+          _resolvedVenueId = resolvedVenueId;
+          _actionState = _determineActionState(profile);
+          _isBlocked = blockedIds.contains(profile.user.id);
+          _showPostsAndVibe = showPostsAndVibe;
+          _loading = false;
+        });
+        return;
+      }
 
       if (!mounted) return;
+      final targetUserId = widget.userId;
+      final blockedIds = await _repo.getBlockedUserIds();
+      if (!mounted) return;
       setState(() {
-        _profile = profile;
-        _actionState = _determineActionState(profile);
-        _showPostsAndVibe = showPostsAndVibe;
+        _profile = null;
+        _resolvedVenueId = resolvedVenueId;
+        _actionState = widget.isMatchedHint
+            ? ProfileActionState.matched
+            : ProfileActionState.showActions;
+        _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
+        _showPostsAndVibe = false;
         _loading = false;
       });
     } catch (e) {
@@ -146,9 +184,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _handleAction(String action) async {
+    if (_isBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unblock user to send actions.')),
+      );
+      return;
+    }
+
     debugPrint("🔥 ACTION SENT: $action");
 
-    if (_profile == null) return;
+    final targetUserId = _profile?.user.id ?? widget.userId;
+    final venueId = _resolvedVenueId;
+    if (targetUserId == null || targetUserId.isEmpty) return;
+    if (venueId == null || venueId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active venue found for this action.')),
+      );
+      return;
+    }
 
     // Only allow actions in showActions or incomingInterested states
     if (_actionState != ProfileActionState.showActions &&
@@ -158,8 +211,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
     try {
       await _repo.sendFeedAction(
-        targetUserId: _profile!.user.id,
-        venueId: widget.venueId,
+        targetUserId: targetUserId,
+        venueId: venueId,
         //checkinId: widget.checkinId,
         action: action,
       );
@@ -173,8 +226,35 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _openChat() async {
+    if (_isBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User is blocked. Unblock to message.')),
+      );
+      return;
+    }
+
     final profile = _profile;
-    if (profile == null) return;
+    if (profile == null) {
+      final userId = widget.userId;
+      if (userId == null || userId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chat is not available.')),
+        );
+        return;
+      }
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MessageDetailPage(
+            chatId: widget.chatIdHint,
+            otherUserId: userId,
+            otherName: widget.userName ?? 'User',
+            otherPhotoUrl: '',
+          ),
+        ),
+      );
+      return;
+    }
 
     debugPrint('🧪 OPEN CHAT → chatId = ${profile.chatId}');
 
@@ -193,6 +273,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           otherUserId: profile.user.id,
           otherName: profile.user.fullName,
           otherPhotoUrl: (() {
+            if (profile.media.isEmpty) return '';
             final first = profile.media.first;
             if (first.mediaType == MediaType.photo) return first.url;
             return first.thumbnailUrl ?? '';
@@ -200,6 +281,42 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _toggleBlock() async {
+    final targetUserId = _profile?.user.id ?? widget.userId;
+    if (targetUserId == null || targetUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User is not available.')),
+      );
+      return;
+    }
+
+    if (_isBlocking) return;
+
+    setState(() => _isBlocking = true);
+    try {
+      if (_isBlocked) {
+        await _repo.unblockUser(targetUserId);
+      } else {
+        await _repo.blockUser(targetUserId);
+      }
+      if (!mounted) return;
+      setState(() => _isBlocked = !_isBlocked);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isBlocked
+                ? 'Could not unblock user.'
+                : 'Could not block user.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isBlocking = false);
+    }
   }
 
   List<CheckinProfileMedia> _mediaForViewer() {
@@ -212,6 +329,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   void _openMediaViewerAt(int index) {
+    if (_profile == null || _profile!.media.isEmpty) return;
     final mediaForViewer = _mediaForViewer();
     Navigator.push(
       context,
@@ -269,8 +387,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
+    final hasFallbackProfile = widget.userId != null || widget.userName != null;
+
     /// ERROR / EMPTY STATE
-    if (_profile == null) {
+    if (_profile == null && !hasFallbackProfile) {
       return const Scaffold(
         backgroundColor: Colors.black,
         body: Center(
@@ -282,21 +402,42 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
-    final featuredMedia = _profile!.media.firstWhere(
-      (m) => m.isFeatured,
-      orElse: () => _profile!.media.first,
-    );
+    final hasMedia = _profile != null && _profile!.media.isNotEmpty;
+    final featuredMedia = hasMedia
+        ? _profile!.media.firstWhere(
+            (m) => m.isFeatured,
+            orElse: () => _profile!.media.first,
+          )
+        : null;
 
-    final moments = _profile!.media.where((p) => !p.isFeatured).toList();
+    final moments = hasMedia
+        ? _profile!.media.where((p) => !p.isFeatured).toList()
+        : <CheckinProfileMedia>[];
+    final displayName =
+        _profile?.user.fullName ??
+        widget.userName ??
+        'User';
 
     return Scaffold(
       body: Stack(
+        fit: StackFit.expand,
         children: [
           /// HERO MEDIA (FEATURED)
           Positioned.fill(
             child: GestureDetector(
-              onTap: () => _openMediaViewerAt(0),
-              child: featuredMedia.mediaType == MediaType.photo
+              onTap: hasMedia ? () => _openMediaViewerAt(0) : null,
+              child: !hasMedia
+                  ? Container(
+                      color: Colors.black,
+                      child: const Center(
+                        child: Icon(
+                          Icons.person,
+                          color: Colors.white70,
+                          size: 48,
+                        ),
+                      ),
+                    )
+                  : featuredMedia!.mediaType == MediaType.photo
                   ? Image.network(
                       featuredMedia.url,
                       fit: BoxFit.cover,
@@ -336,9 +477,25 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 /// BACK
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      TextButton(
+                        onPressed: _isBlocking ? null : _toggleBlock,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white54,
+                        ),
+                        child: Text(_isBlocked ? 'Unblock' : 'Block'),
+                      ),
+                    ],
+                  ),
                 ),
 
                 const Spacer(),
@@ -347,7 +504,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    _profile!.user.fullName,
+                    displayName,
                     style: const TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -371,6 +528,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                 /// VIBE (only when viewer is at same venue)
                 if (_showPostsAndVibe &&
+                    _profile != null &&
                     _profile!.checkin.vibe != null &&
                     _profile!.checkin.vibe!.isNotEmpty)
                   Padding(
@@ -558,6 +716,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildActionBar() {
+    if (_isBlocked) {
+      return const Center(
+        child: Text(
+          'User blocked',
+          style: TextStyle(color: Colors.white70, fontSize: 16),
+        ),
+      );
+    }
+
     switch (_actionState!) {
       case ProfileActionState.incomingInterested:
       case ProfileActionState.showActions:

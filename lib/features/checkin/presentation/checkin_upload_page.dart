@@ -37,6 +37,15 @@ class _CheckInPageState extends State<CheckInPage> {
   // Öne çıkarılan fotoğrafın indeksi (varsayılan olarak ilk fotoğraf)
   int _featuredIndex = 0;
 
+  int get _featuredPhotoIndex {
+    if (_featuredIndex >= 0 &&
+        _featuredIndex < _media.length &&
+        _media[_featuredIndex].type == MediaType.photo) {
+      return _featuredIndex;
+    }
+    return _media.indexWhere((m) => m.type == MediaType.photo);
+  }
+
   Future<bool> _ensureCameraPermission() async {
     final result = await Permission.camera.request();
     debugPrint('📸 Camera permission result: $result');
@@ -129,6 +138,12 @@ class _CheckInPageState extends State<CheckInPage> {
 
   /// Fotoğrafı öne çıkan olarak işaretleme
   void _setFeatured(int index) {
+    if (_media[index].type != MediaType.photo) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only photos can be featured.')),
+      );
+      return;
+    }
     setState(() {
       _featuredIndex = index;
     });
@@ -160,11 +175,13 @@ class _CheckInPageState extends State<CheckInPage> {
       ActiveCheckinService().setActiveCheckin(checkinId);
 
       // 2️⃣ Fotoğrafları yükle
+      final featuredPhotoIndex = _featuredPhotoIndex;
       for (int i = 0; i < _media.length; i++) {
         await _repo.uploadCheckinMedia(
           checkinId: checkinId,
           file: _media[i].file,
-          isFeatured: i == _featuredIndex,
+          isFeatured:
+              _media[i].type == MediaType.photo && i == featuredPhotoIndex,
         );
       }
 
@@ -235,7 +252,7 @@ class _CheckInPageState extends State<CheckInPage> {
 
                   return _buildMediaBox(
                     index: index,
-                    isFeatured: _featuredIndex == index,
+                    isFeatured: _featuredPhotoIndex == index,
                     media: item,
                   );
                 }),

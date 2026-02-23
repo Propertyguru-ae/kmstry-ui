@@ -141,7 +141,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
     final textPainter = TextPainter(
       text: TextSpan(text: text, style: style),
-      maxLines: 3,
+      maxLines: 2,
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth);
 

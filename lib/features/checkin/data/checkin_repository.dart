@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
-import 'dart:convert';
 
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -125,7 +124,7 @@ class CheckinRepository {
         headers: {'Authorization': 'Bearer $token'},
       );
       if (data is! List) return [];
-      final list = data as List;
+      final list = data;
       return list
           .map((e) {
             if (e is String) return e;
@@ -199,5 +198,74 @@ class CheckinRepository {
         'action': action,
       },
     );
+  }
+
+  Future<void> blockUser(String targetUserId) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.post(
+      '/blocks',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'blocked_id': targetUserId},
+    );
+  }
+
+  Future<void> unblockUser(String targetUserId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _api.delete(
+      '/blocks/$targetUserId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  Future<Set<String>> getBlockedUserIds() async {
+    final token = await SecureStorage.getAccessToken();
+    dynamic data;
+    try {
+      data = await _api.get(
+        '/blocks/me',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      data = await _api.get(
+        '/blocks/me',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    }
+
+    final list = _extractList(data);
+    final result = <String>{};
+    for (final raw in list) {
+      if (raw is! Map) continue;
+      final json = Map<String, dynamic>.from(raw);
+      final user = json['user'] is Map
+          ? Map<String, dynamic>.from(json['user'] as Map)
+          : null;
+      final id =
+          json['user_id'] as String? ??
+          json['blocked_id'] as String? ??
+          json['blocked_user_id'] as String? ??
+          json['target_user_id'] as String? ??
+          json['userId'] as String? ??
+          user?['id'] as String?;
+      if (id != null && id.isNotEmpty) result.add(id);
+    }
+    return result;
+  }
+
+  List<dynamic> _extractList(dynamic data) {
+    if (data is List) return data;
+    if (data is Map<String, dynamic>) {
+      final nested =
+          data['items'] ??
+          data['data'] ??
+          data['blocks'] ??
+          data['blocked'] ??
+          data['results'];
+      if (nested is List) return nested;
+    }
+    return const [];
   }
 }

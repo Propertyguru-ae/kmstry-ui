@@ -19,6 +19,50 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscure = true;
   String? _error;
 
+  String _friendlyLoginError(Object error) {
+    if (error is ApiException) {
+      final status = error.statusCode;
+      final code = error.data['errorCode']?.toString();
+      final message = _extractBackendMessage(error.data);
+
+      if (code == 'INVALID_CREDENTIALS' || code == 'AUTH_INVALID_CREDENTIALS') {
+        return 'The email or password you entered is incorrect.';
+      }
+      if (code == 'EMAIL_NOT_VERIFIED') {
+        return 'Please verify your email address before signing in.';
+      }
+      if (status == 429) {
+        return 'Too many attempts. Please wait a moment and try again.';
+      }
+      if (status >= 500) {
+        return 'We are unable to sign you in right now. Please try again shortly.';
+      }
+      if (message.isNotEmpty) {
+        return message;
+      }
+    }
+
+    final raw = error.toString().toLowerCase();
+    if (raw.contains('timeout')) {
+      return 'The request timed out. Please check your connection and try again.';
+    }
+    if (raw.contains('socketexception') || raw.contains('failed host lookup')) {
+      return 'No internet connection. Please check your network and try again.';
+    }
+    return 'We could not sign you in. Please try again.';
+  }
+
+  String _extractBackendMessage(Map<String, dynamic> data) {
+    final raw = data['message'];
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    if (raw is List && raw.isNotEmpty) {
+      final first = raw.first;
+      final text = first?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
   @override
   void dispose() {
     _emailCtrl.dispose();
@@ -95,10 +139,8 @@ class _LoginPageState extends State<LoginPage> {
           return;
         }
 
-        setState(() => _error = e.data['message']);
-      } else {
-        setState(() => _error = 'Unexpected error');
       }
+      setState(() => _error = _friendlyLoginError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -154,8 +196,8 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 validator: (v) {
                                   final x = (v ?? '').trim();
-                                  if (x.isEmpty) return 'Email is required';
-                                  if (!x.contains('@')) return 'Invalid email';
+                                  if (x.isEmpty) return 'Please enter your email address.';
+                                  if (!x.contains('@')) return 'Please enter a valid email address.';
                                   return null;
                                 },
                               ),
@@ -181,7 +223,7 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 validator: (v) {
                                   if ((v ?? '').isEmpty)
-                                    return 'Password is required';
+                                    return 'Please enter your password.';
                                   return null;
                                 },
                               ),
@@ -251,7 +293,9 @@ class _LoginPageState extends State<LoginPage> {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
-                                          SnackBar(content: Text(e.toString())),
+                                          SnackBar(
+                                            content: Text(_friendlyLoginError(e)),
+                                          ),
                                         );
                                       }
                                     },

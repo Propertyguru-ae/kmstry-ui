@@ -3,6 +3,8 @@ import 'package:kmstry_frontend/features/messageDetail/presentation/message_deta
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
+import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
+import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
 class NotificationPage extends StatefulWidget {
@@ -14,6 +16,7 @@ class NotificationPage extends StatefulWidget {
 
 class _NotificationPageState extends State<NotificationPage> {
   final NotificationRepository _repo = NotificationRepository();
+  final MatchRepository _matchRepo = MatchRepository();
   List<NotificationModel> _list = [];
   bool _loading = true;
   String? _error;
@@ -31,6 +34,20 @@ class _NotificationPageState extends State<NotificationPage> {
     });
     try {
       final list = await _repo.getNotifications(limit: 50);
+      List<MatchItem> matches = const [];
+      try {
+        matches = await _matchRepo.getMatches();
+      } catch (_) {}
+
+      final matchById = <String, MatchItem>{
+        for (final m in matches)
+          if (m.matchId.isNotEmpty) m.matchId: m,
+      };
+      final matchByUserId = <String, MatchItem>{
+        for (final m in matches)
+          if (m.userId.isNotEmpty) m.userId: m,
+      };
+
       if (!mounted) return;
       try {
         await _repo.markAllAsRead();
@@ -42,9 +59,9 @@ class _NotificationPageState extends State<NotificationPage> {
             (n) => NotificationModel(
               id: n.id,
               type: n.type,
-              title: n.title,
-              body: n.body,
-              data: n.data,
+              title: _enrichedTitle(n, matchById: matchById, matchByUserId: matchByUserId),
+              body: _enrichedBody(n, matchById: matchById, matchByUserId: matchByUserId),
+              data: _enrichedData(n, matchById: matchById, matchByUserId: matchByUserId),
               isRead: true,
               createdAt: n.createdAt,
               dedupeKey: n.dedupeKey,
@@ -83,6 +100,31 @@ class _NotificationPageState extends State<NotificationPage> {
       }
     }
 
+    if (n.type == 'match_created') {
+      final data = n.data ?? const <String, dynamic>{};
+      final chatId = data['chat_id'] as String? ?? data['chatId'] as String?;
+      final userId =
+          data['user_id'] as String? ??
+          data['target_user_id'] as String? ??
+          data['sender_id'] as String? ??
+          data['userId'] as String?;
+      final matchedName = _matchedName(n);
+
+      if (userId != null && userId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MessageDetailPage(
+              chatId: chatId,
+              otherUserId: userId,
+              otherName: matchedName,
+              otherPhotoUrl: '',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
     // Interested / liked_you: open requester's profile (checkin context)
     if ((n.type == 'interested' || n.type == 'liked_you') && n.data != null) {
       final data = n.data!;
@@ -90,6 +132,11 @@ class _NotificationPageState extends State<NotificationPage> {
           data['checkin_id'] as String? ?? data['checkinId'] as String?;
       final venueId =
           data['venue_id'] as String? ?? data['venueId'] as String?;
+      final userId =
+          data['user_id'] as String? ??
+          data['sender_id'] as String? ??
+          data['target_user_id'] as String? ??
+          data['userId'] as String?;
       if (checkinId != null &&
           venueId != null &&
           checkinId.isNotEmpty &&
@@ -99,6 +146,18 @@ class _NotificationPageState extends State<NotificationPage> {
             builder: (_) => ProfilePreviewPage(
               checkinId: checkinId,
               venueId: venueId,
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (userId != null && userId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ProfilePreviewPage(
+              userId: userId,
+              userName: n.title,
             ),
           ),
         );
@@ -114,6 +173,86 @@ class _NotificationPageState extends State<NotificationPage> {
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 2) return 'Yesterday';
     return '${diff.inDays} days ago';
+  }
+
+  String _matchedName(NotificationModel n) {
+    final data = n.data ?? const <String, dynamic>{};
+    debugPrint('data ne geliyir: $data');
+    return (data['full_name'] as String? ??
+            data['sender_name'] as String? ??
+            data['name'] as String? ??
+            data['fullName'] as String? ??
+            n.title)
+        .trim();
+  }
+
+  Map<String, dynamic>? _enrichedData(
+    NotificationModel n, {
+    required Map<String, MatchItem> matchById,
+    required Map<String, MatchItem> matchByUserId,
+  }) {
+    if (n.type != 'match_created') return n.data;
+    final source = n.data == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(n.data!);
+
+    final matchId = source['match_id'] as String? ?? source['matchId'] as String?;
+    final userId =
+        source['user_id'] as String? ??
+        source['target_user_id'] as String? ??
+        source['sender_id'] as String? ??
+        source['userId'] as String?;
+    final matched = (matchId != null && matchId.isNotEmpty)
+        ? matchById[matchId]
+        : (userId != null && userId.isNotEmpty ? matchByUserId[userId] : null);
+
+    if (matched == null) return source;
+    source['userId'] = source['userId'] ?? matched.userId;
+    source['chatId'] = source['chatId'] ?? matched.chatId;
+    source['fullName'] = source['fullName'] ?? matched.fullName;
+    return source;
+  }
+
+  String _enrichedTitle(
+    NotificationModel n, {
+    required Map<String, MatchItem> matchById,
+    required Map<String, MatchItem> matchByUserId,
+  }) {
+    if (n.type != 'match_created') return n.title;
+    return 'New Kmstry';
+  }
+
+  String _enrichedBody(
+    NotificationModel n, {
+    required Map<String, MatchItem> matchById,
+    required Map<String, MatchItem> matchByUserId,
+  }) {
+    if (n.type != 'match_created') return n.body;
+    final enriched = _enrichedData(
+      n,
+      matchById: matchById,
+      matchByUserId: matchByUserId,
+    );
+    final name =
+        (enriched?['fullName'] as String? ??
+                enriched?['full_name'] as String? ??
+                enriched?['sender_name'] as String? ??
+                enriched?['name'] as String? ??
+                '')
+            .trim();
+    final safeName = name.isEmpty ? 'your match' : name;
+    return "You've matched with $safeName. Start chat!";
+  }
+
+  String _displayTitle(NotificationModel n) {
+    return n.title;
+  }
+
+  String _displayBody(NotificationModel n) {
+    if (n.type == 'match_created') {
+      return "You've matched with ${_matchedName(n)}. Start chat!";
+    }
+    return n.body;
   }
 
   IconData _iconForType(String type) {
@@ -192,6 +331,8 @@ class _NotificationPageState extends State<NotificationPage> {
   Widget _buildNotificationItem(NotificationModel n) {
     final time = _formatTime(n.createdAt);
     final icon = _iconForType(n.type);
+    final title = _displayTitle(n);
+    final body = _displayBody(n);
     return InkWell(
       onTap: () => _onNotificationTap(n),
       borderRadius: BorderRadius.circular(16),
@@ -220,7 +361,7 @@ class _NotificationPageState extends State<NotificationPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    n.title,
+                    title,
                     style: const TextStyle(
                       color: Colors.black,
                       fontSize: 14,
@@ -229,7 +370,7 @@ class _NotificationPageState extends State<NotificationPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    n.body,
+                    body,
                     style: TextStyle(color: Colors.grey[600], fontSize: 13),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,

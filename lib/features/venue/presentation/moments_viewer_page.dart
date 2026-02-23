@@ -64,11 +64,17 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   }
 
   Future<void> _setFeatured() async {
+    final selected = _media[_currentIndex];
+    if (selected.mediaType != MediaType.photo) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only photos can be featured.')),
+      );
+      return;
+    }
+
     setState(() => _loading = true);
 
     try {
-      final selected = _media[_currentIndex];
-
       await _repo.setFeaturedPhoto(selected.id);
 
       if (!mounted) return;
@@ -117,6 +123,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   @override
   Widget build(BuildContext context) {
     final currentMedia = _media[_currentIndex];
+    final canFeaturePhoto =
+        currentMedia.mediaType == MediaType.photo && !currentMedia.isFeatured;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -185,7 +193,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
                 children: [
                   // FEATURE
                   GestureDetector(
-                    onTap: currentMedia.isFeatured || _loading
+                    onTap: !canFeaturePhoto || _loading
                         ? null
                         : _setFeatured,
                     child: CircleAvatar(
@@ -200,7 +208,9 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
                               Icons.star,
                               color: currentMedia.isFeatured
                                   ? Colors.amber
-                                  : Colors.white,
+                                  : canFeaturePhoto
+                                  ? Colors.white
+                                  : Colors.white38,
                               size: 26,
                             ),
                     ),

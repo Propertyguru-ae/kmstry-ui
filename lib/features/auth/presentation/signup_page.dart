@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import '../data/auth_repository.dart';
 
@@ -21,51 +22,54 @@ class _SignupPageState extends State<SignupPage> {
   bool _marketingOptIn = true;
   String? _error;
 
+  String _friendlySignupError(Object error) {
+    if (error is ApiException) {
+      final status = error.statusCode;
+      final code = error.data['errorCode']?.toString();
+      final message = _extractBackendMessage(error.data);
+
+      if (code == 'EMAIL_ALREADY_IN_USE' || code == 'AUTH_EMAIL_IN_USE') {
+        return 'An account with this email already exists. Please sign in instead.';
+      }
+      if (code == 'WEAK_PASSWORD') {
+        return 'Your password is too weak. Please choose a stronger password.';
+      }
+      if (status == 429) {
+        return 'Too many attempts. Please wait a moment and try again.';
+      }
+      if (status >= 500) {
+        return 'We are unable to create your account right now. Please try again shortly.';
+      }
+      if (message.isNotEmpty) return message;
+    }
+
+    final raw = error.toString().toLowerCase();
+    if (raw.contains('timeout')) {
+      return 'The request timed out. Please check your connection and try again.';
+    }
+    if (raw.contains('socketexception') || raw.contains('failed host lookup')) {
+      return 'No internet connection. Please check your network and try again.';
+    }
+    return 'We could not create your account. Please try again.';
+  }
+
+  String _extractBackendMessage(Map<String, dynamic> data) {
+    final raw = data['message'];
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    if (raw is List && raw.isNotEmpty) {
+      final first = raw.first;
+      final text = first?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     _confirmCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _register1() async {
-    setState(() {
-      _error = null;
-      _loading = true;
-    });
-
-    try {
-      await AuthRepository().register(_emailCtrl.text.trim(), _passCtrl.text);
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: const Text('Account created'),
-          content: const Text(
-            'Your account has been created successfully.\n\n'
-            'We’ve sent a verification email to your inbox.\n'
-            'You can continue using the app, but some features '
-            'may be limited until your email is verified.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context); // dialog
-                Navigator.pop(context); // signup -> login
-              },
-              child: const Text('Go to Login'),
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
   }
 
   Future<void> _register() async {
@@ -84,7 +88,7 @@ class _SignupPageState extends State<SignupPage> {
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = _friendlySignupError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -142,8 +146,10 @@ class _SignupPageState extends State<SignupPage> {
                           ),
                           validator: (v) {
                             final x = (v ?? '').trim();
-                            if (x.isEmpty) return 'Email is required';
-                            if (!x.contains('@')) return 'Invalid email';
+                            if (x.isEmpty) return 'Please enter your email address.';
+                            if (!x.contains('@')) {
+                              return 'Please enter a valid email address.';
+                            }
                             return null;
                           },
                         ),
@@ -168,7 +174,7 @@ class _SignupPageState extends State<SignupPage> {
                           ),
                           validator: (v) {
                             if ((v ?? '').isEmpty)
-                              return 'Password is required';
+                              return 'Please enter a password.';
                             return null;
                           },
                         ),
@@ -192,9 +198,11 @@ class _SignupPageState extends State<SignupPage> {
                             ),
                           ),
                           validator: (v) {
-                            if ((v ?? '').isEmpty) return 'Confirm is required';
+                            if ((v ?? '').isEmpty) {
+                              return 'Please confirm your password.';
+                            }
                             if (v != _passCtrl.text) {
-                              return 'Passwords do not match';
+                              return 'Passwords do not match. Please try again.';
                             }
                             return null;
                           },
@@ -268,7 +276,9 @@ class _SignupPageState extends State<SignupPage> {
                                   }
                                 } catch (e) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(e.toString())),
+                                    SnackBar(
+                                      content: Text(_friendlySignupError(e)),
+                                    ),
                                   );
                                 }
                               },
