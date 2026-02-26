@@ -5,8 +5,6 @@ import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
-enum PeopleListTab { friends, blocked }
-
 class PeoplePage extends StatefulWidget {
   const PeoplePage({super.key});
 
@@ -17,13 +15,10 @@ class PeoplePage extends StatefulWidget {
 class _PeoplePageState extends State<PeoplePage> {
   final MatchRepository _repo = MatchRepository();
   final TextEditingController _searchController = TextEditingController();
-  List<MatchItem> _allMatches = [];
   List<MatchItem> _matches = [];
   List<BlockedUser> _blockedUsers = [];
   bool _loading = true;
-  bool _unblocking = false;
   String? _error;
-  PeopleListTab _selectedTab = PeopleListTab.friends;
 
   @override
   void initState() {
@@ -50,7 +45,6 @@ class _PeoplePageState extends State<PeoplePage> {
       final blockedIds = blocked.map((b) => b.userId).toSet();
       if (!mounted) return;
       setState(() {
-        _allMatches = list;
         _matches = list.where((m) => !blockedIds.contains(m.userId)).toList();
         _blockedUsers = blocked;
         _loading = false;
@@ -68,14 +62,6 @@ class _PeoplePageState extends State<PeoplePage> {
     if (query.isEmpty) return _matches;
     return _matches
         .where((m) => m.fullName.toLowerCase().contains(query))
-        .toList();
-  }
-
-  List<BlockedUser> get _filteredBlockedUsers {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _blockedUsers;
-    return _blockedUsers
-        .where((u) => u.fullName.toLowerCase().contains(query))
         .toList();
   }
 
@@ -109,47 +95,6 @@ class _PeoplePageState extends State<PeoplePage> {
         .then((_) => _loadData());
   }
 
-  void _openBlockedProfile(BlockedUser user) {
-    MatchItem? matched;
-    for (final m in _allMatches) {
-      if (m.userId == user.userId) {
-        matched = m;
-        break;
-      }
-    }
-
-    Navigator.of(context)
-        .push(
-      MaterialPageRoute(
-        builder: (_) => ProfilePreviewPage(
-          userId: user.userId,
-          userName: user.fullName,
-          // Blocked listten acilan profilde unblock sonrasi direkt Message akisi hedeflenir.
-          isMatchedHint: true,
-          chatIdHint: matched?.chatId,
-        ),
-      ),
-    )
-        .then((_) => _loadData());
-  }
-
-  Future<void> _unblockUser(BlockedUser user) async {
-    if (_unblocking) return;
-    setState(() => _unblocking = true);
-    try {
-      await _repo.unblockUser(user.userId);
-      if (!mounted) return;
-      await _loadData();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not unblock user.')),
-      );
-    } finally {
-      if (mounted) setState(() => _unblocking = false);
-    }
-  }
-
   @override
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
@@ -159,30 +104,34 @@ class _PeoplePageState extends State<PeoplePage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'Friends',
-          style: TextStyle(
-            color: Color(0xFF1E293B),
+          style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.w900,
-            fontSize: 22,
             letterSpacing: -0.8,
           ),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
         centerTitle: true,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(color: Colors.grey[200], height: 1),
+          child: Container(
+            color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200], 
+            height: 1,
+          ),
         ),
       ),
       body: _loading && _matches.isEmpty && _blockedUsers.isEmpty
-          ? const Center(
+          ? Center(
               child: CircularProgressIndicator(
-                color: Colors.blueAccent,
+                color: theme.colorScheme.primary,
                 strokeWidth: 3,
               ),
             )
@@ -195,7 +144,7 @@ class _PeoplePageState extends State<PeoplePage> {
                   children: [
                     Text(
                       'Could not load matches',
-                      style: TextStyle(color: Colors.grey[700]),
+                      style: theme.textTheme.bodyMedium,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 12),
@@ -209,25 +158,24 @@ class _PeoplePageState extends State<PeoplePage> {
             )
           : Column(
               children: [
-                _buildSearchBar(),
-                _buildTabHeader(),
-                Expanded(child: _buildPeopleList()),
+                _buildSearchBar(isDark, theme),
+                Expanded(child: _buildPeopleList(isDark, theme)),
               ],
             ),
     );
   }
 
-  Widget _buildSearchBar() {
+  Widget _buildSearchBar(bool isDark, ThemeData theme) {
     return Container(
-      color: Colors.white,
+      color: theme.appBarTheme.backgroundColor,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9),
+          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
+              color: Colors.black.withOpacity(0.02),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -235,13 +183,16 @@ class _PeoplePageState extends State<PeoplePage> {
         ),
         child: TextField(
           controller: _searchController,
-          style: const TextStyle(fontSize: 15),
+          style: theme.textTheme.bodyLarge,
           decoration: InputDecoration(
             hintText: 'Search by name...',
-            hintStyle: TextStyle(color: Colors.grey[500], fontSize: 15),
-            prefixIcon: const Icon(
+            hintStyle: TextStyle(
+              color: isDark ? Colors.white38 : Colors.grey[500],
+              fontSize: 15,
+            ),
+            prefixIcon: Icon(
               Icons.search_rounded,
-              color: Color(0xFF64748B),
+              color: isDark ? Colors.white54 : const Color(0xFF64748B),
               size: 22,
             ),
             border: InputBorder.none,
@@ -255,26 +206,16 @@ class _PeoplePageState extends State<PeoplePage> {
     );
   }
 
-  Widget _buildPeopleList() {
+  Widget _buildPeopleList(bool isDark, ThemeData theme) {
     final friends = _filteredMatches;
-    final blocked = _filteredBlockedUsers;
-    if (friends.isEmpty && blocked.isEmpty) {
-      return const Center(
-        child: Text(
-          'No friends yet',
-          style: TextStyle(color: Color(0xFF64748B), fontSize: 15),
-        ),
-      );
-    }
-
-    final activeFriends = _selectedTab == PeopleListTab.friends;
-    final activeItems = activeFriends ? friends : blocked;
-
-    if (activeItems.isEmpty) {
+    if (friends.isEmpty) {
       return Center(
         child: Text(
-          activeFriends ? 'No friends yet' : 'No blocked users',
-          style: const TextStyle(color: Color(0xFF64748B), fontSize: 15),
+          'No friends yet',
+          style: TextStyle(
+            color: isDark ? Colors.white54 : const Color(0xFF64748B),
+            fontSize: 15,
+          ),
         ),
       );
     }
@@ -286,77 +227,26 @@ class _PeoplePageState extends State<PeoplePage> {
           parent: BouncingScrollPhysics(),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        children: activeFriends
-            ? friends.map(_buildFriendTile).toList()
-            : blocked.map(_buildBlockedTile).toList(),
+        children: friends.map((m) => _buildFriendTile(m, isDark, theme)).toList(),
       ),
     );
   }
 
-  Widget _buildTabHeader() {
-    final friendsCount = _matches.length;
-    final blockedCount = _blockedUsers.length;
-    //debugPrint('FRIENDS COUNT :  $friendsCount');
-    debugPrint('BLOCKED COUNT :  $blockedCount');
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      child: Row(
-        children: [
-          _buildTabButton(
-            label: 'Friends ($friendsCount)',
-            selected: _selectedTab == PeopleListTab.friends,
-            onTap: () => setState(() => _selectedTab = PeopleListTab.friends),
-          ),
-          const SizedBox(width: 10),
-          _buildTabButton(
-            label: 'Blocked ($blockedCount)',
-            selected: _selectedTab == PeopleListTab.blocked,
-            onTap: () => setState(() => _selectedTab = PeopleListTab.blocked),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabButton({
-    required String label,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF0F172A) : const Color(0xFFEFF6FF),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : const Color(0xFF334155),
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFriendTile(MatchItem match) {
+  Widget _buildFriendTile(MatchItem match, bool isDark, ThemeData theme) {
     final name = match.fullName;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDark ? theme.colorScheme.surface : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+        border: Border.all(
+          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFE2E8F0),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
+            color: Colors.black.withOpacity(0.02),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -374,40 +264,42 @@ class _PeoplePageState extends State<PeoplePage> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(
-                color: Colors.blueAccent.withValues(alpha: 0.2),
+                color: theme.colorScheme.primary.withOpacity(0.2),
                 width: 2,
               ),
-              color: const Color(0xFFEFF6FF),
+              color: isDark ? theme.colorScheme.primary.withOpacity(0.1) : const Color(0xFFEFF6FF),
             ),
             child: CircleAvatar(
               radius: 28,
-              backgroundColor: const Color(0xFFEFF6FF),
+              backgroundColor: Colors.transparent,
               child: Text(
                 initial,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 22,
-                  color: Color(0xFF1E293B),
+                  color: isDark ? theme.colorScheme.primary : const Color(0xFF1E293B),
                 ),
               ),
             ),
           ),
           title: Text(
             name,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w700,
               fontSize: 16,
-              color: Color(0xFF0F172A),
+              color: isDark ? Colors.white : const Color(0xFF0F172A),
             ),
           ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildActionButton(Icons.call_rounded, () {}),
+              _buildActionButton(Icons.call_rounded, () {}, isDark, theme),
               const SizedBox(width: 8),
               _buildActionButton(
                 Icons.chat_bubble_rounded,
                 () => _openMessage(match),
+                isDark,
+                theme,
               ),
             ],
           ),
@@ -416,59 +308,19 @@ class _PeoplePageState extends State<PeoplePage> {
     );
   }
 
-  Widget _buildBlockedTile(BlockedUser user) {
-    final name = user.fullName;
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        onTap: () => _openBlockedProfile(user),
-        leading: CircleAvatar(
-          radius: 28,
-          backgroundColor: const Color(0xFFF1F5F9),
-          child: Text(
-            initial,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 22,
-              color: Color(0xFF334155),
-            ),
-          ),
-        ),
-        title: Text(
-          name,
-          style: const TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-            color: Color(0xFF0F172A),
-          ),
-        ),
-        trailing: TextButton(
-          onPressed: _unblocking ? null : () => _unblockUser(user),
-          child: const Text('Unblock'),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton(IconData icon, VoidCallback onTap) {
+  Widget _buildActionButton(IconData icon, VoidCallback onTap, bool isDark, ThemeData theme) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
+        color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFEFF6FF),
         borderRadius: BorderRadius.circular(12),
       ),
       child: IconButton(
         visualDensity: VisualDensity.compact,
-        icon: Icon(icon, color: Colors.blueAccent, size: 20),
+        icon: Icon(
+          icon,
+          color: isDark ? theme.colorScheme.primary : Colors.blueAccent,
+          size: 20,
+        ),
         onPressed: onTap,
       ),
     );

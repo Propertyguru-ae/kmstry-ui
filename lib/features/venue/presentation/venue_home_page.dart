@@ -11,6 +11,7 @@ class VenueHomePage extends StatefulWidget {
 
 class _VenueHomePageState extends State<VenueHomePage> {
   bool isSheetExpanded = false;
+  bool _locationAvailable = false;
 
   @override
   Widget build(BuildContext context) {
@@ -20,12 +21,19 @@ class _VenueHomePageState extends State<VenueHomePage> {
         children: [
           VenueMapView(
             hideSearch: isSheetExpanded,
-          ),
-          VenueBottomSheet(
-            onExpandChanged: (expanded) {
-              setState(() => isSheetExpanded = expanded);
+            onLocationAccessChanged: (granted) {
+              if (!mounted) return;
+              setState(() {
+                _locationAvailable = granted;
+              });
             },
           ),
+          if (_locationAvailable)
+            VenueBottomSheet(
+              onExpandChanged: (expanded) {
+                setState(() => isSheetExpanded = expanded);
+              },
+            ),
         ],
       ),
     );

@@ -12,13 +12,52 @@ class AuthApi {
   Future<Map<String, dynamic>> register({
     required String email,
     required String password,
+    required String otpProof,
   }) async {
     final res = await _client.post(
       '/auth/register',
-      body: {'email': email, 'password': password},
+      body: {'email': email, 'password': password, 'otpProof': otpProof},
     );
-
     return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestRegisterOtp({
+    required String email,
+  }) async {
+    try {
+      final res = await _client.post(
+        '/auth/register/otp/request',
+        body: {'email': email},
+      );
+      return res as Map<String, dynamic>;
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      final res = await _client.post(
+        '/auth/register/request-otp',
+        body: {'email': email},
+      );
+      return res as Map<String, dynamic>;
+    }
+  }
+
+  Future<Map<String, dynamic>> verifyRegisterOtp({
+    required String email,
+    required String otp,
+  }) async {
+    try {
+      final res = await _client.post(
+        '/auth/register/otp/verify',
+        body: {'email': email, 'otp': otp},
+      );
+      return res as Map<String, dynamic>;
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      final res = await _client.post(
+        '/auth/register/verify-otp',
+        body: {'email': email, 'otp': otp},
+      );
+      return res as Map<String, dynamic>;
+    }
   }
 
   Future<Map<String, dynamic>> forgotPassword({required String email}) async {

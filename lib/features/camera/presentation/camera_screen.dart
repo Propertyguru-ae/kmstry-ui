@@ -26,8 +26,10 @@ class _CameraScreenState extends State<CameraScreen> {
   late CameraDescription _currentCamera;
   int _recordSeconds = 0;
   Timer? _recordTimer;
-  int _maxSeconds = 5; // şimdilik 5, premium'da 15 yapacağız
+  final int _maxSeconds = 5; // şimdilik 5, premium'da 15 yapacağız
   bool _isReady = false;
+  bool _cameraPermissionDenied = false;
+  bool _cameraPermissionPermanentlyDenied = false;
   CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
 
@@ -38,6 +40,23 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _initCamera() async {
+    final status = await Permission.camera.request();
+    if (!status.isGranted) {
+      if (!mounted) return;
+      setState(() {
+        _cameraPermissionDenied = true;
+        _cameraPermissionPermanentlyDenied = status.isPermanentlyDenied;
+        _isReady = false;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _cameraPermissionDenied = false;
+      _cameraPermissionPermanentlyDenied = false;
+    });
+
     _currentCamera = cameras.firstWhere(
       (cam) =>
           cam.lensDirection ==
@@ -52,7 +71,16 @@ class _CameraScreenState extends State<CameraScreen> {
       enableAudio: true,
     );
 
-    await _controller.initialize();
+    try {
+      await _controller.initialize();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cameraPermissionDenied = true;
+        _isReady = false;
+      });
+      return;
+    }
 
     if (!mounted) return;
 
@@ -203,6 +231,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     final savedVideo = await File(video.path).copy(filePath);
 
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => PreviewVideoScreen(file: savedVideo)),
@@ -218,6 +247,53 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_cameraPermissionDenied) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.no_photography_outlined,
+                  color: Colors.white,
+                  size: 56,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Camera permission is required.',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                if (_cameraPermissionPermanentlyDenied)
+                  ElevatedButton(
+                    onPressed: openAppSettings,
+                    child: const Text('Open Settings'),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: _initCamera,
+                    child: const Text('Retry'),
+                  ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     if (!_isReady) {
       return const Scaffold(
         backgroundColor: Colors.black,

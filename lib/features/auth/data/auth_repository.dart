@@ -14,8 +14,12 @@ class AuthRepository {
         '525936528438-c2i235kepeou80utta1rhsgg7jdfhrca.apps.googleusercontent.com',
   );
 
-  Future<void> register(String email, String password) async {
-    final response = await _api.register(email: email, password: password);
+  Future<void> register(String email, String password, String otpProof) async {
+    final response = await _api.register(
+      email: email,
+      password: password,
+      otpProof: otpProof,
+    );
 
     if (response['success'] == true) {
       await SecureStorage.saveTokens(
@@ -27,8 +31,16 @@ class AuthRepository {
     }
   }
 
-  Future<void> registerAndAutoLogin(String email, String password) async {
-    final response = await _api.register(email: email, password: password);
+  Future<void> registerAndAutoLogin(
+    String email,
+    String password,
+    String otpProof,
+  ) async {
+    final response = await _api.register(
+      email: email,
+      password: password,
+      otpProof: otpProof,
+    );
 
     if (response['success'] == true) {
       await SecureStorage.saveTokens(
@@ -39,6 +51,29 @@ class AuthRepository {
     }
 
     throw Exception(response['message'] ?? 'Register failed');
+  }
+
+  Future<void> requestRegisterOtp(String email) async {
+    final response = await _api.requestRegisterOtp(email: email);
+    if (response['success'] == true) return;
+    throw Exception(response['message'] ?? 'Failed to send verification code');
+  }
+
+  Future<String> verifyRegisterOtp({
+    required String email,
+    required String otp,
+  }) async {
+    final response = await _api.verifyRegisterOtp(email: email, otp: otp);
+
+    if (response['success'] == true) {
+      final proof = response['otpProof']?.toString();
+      if (proof == null || proof.isEmpty) {
+        throw Exception('Missing otpProof from server');
+      }
+      return proof;
+    }
+
+    throw Exception(response['message'] ?? 'Verification code is invalid');
   }
 
   Future<void> forgotPassword(String email) async {
@@ -244,6 +279,15 @@ class AuthRepository {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
-    await _api.updatePermissions(accessToken: token, data: data);
+    print('🟡 updatePermissions called with: $data');
+
+    try {
+      await _api.updatePermissions(accessToken: token, data: data);
+
+      print('🟢 updatePermissions success');
+    } catch (e) {
+      print('🔴 updatePermissions error: $e');
+      rethrow;
+    }
   }
 }

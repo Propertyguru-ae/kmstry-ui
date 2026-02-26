@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/network/api_exception.dart';
-import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import '../data/auth_repository.dart';
+import 'package:kmstry_frontend/features/auth/presentation/register_email_otp_page.dart';
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
@@ -12,83 +10,33 @@ class SignupPage extends StatefulWidget {
 
 class _SignupPageState extends State<SignupPage> {
   final _emailCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
-
   bool _loading = false;
-  bool _obscure = true;
-  bool _obscure2 = true;
-  bool _marketingOptIn = true;
   String? _error;
-
-  String _friendlySignupError(Object error) {
-    if (error is ApiException) {
-      final status = error.statusCode;
-      final code = error.data['errorCode']?.toString();
-      final message = _extractBackendMessage(error.data);
-
-      if (code == 'EMAIL_ALREADY_IN_USE' || code == 'AUTH_EMAIL_IN_USE') {
-        return 'An account with this email already exists. Please sign in instead.';
-      }
-      if (code == 'WEAK_PASSWORD') {
-        return 'Your password is too weak. Please choose a stronger password.';
-      }
-      if (status == 429) {
-        return 'Too many attempts. Please wait a moment and try again.';
-      }
-      if (status >= 500) {
-        return 'We are unable to create your account right now. Please try again shortly.';
-      }
-      if (message.isNotEmpty) return message;
-    }
-
-    final raw = error.toString().toLowerCase();
-    if (raw.contains('timeout')) {
-      return 'The request timed out. Please check your connection and try again.';
-    }
-    if (raw.contains('socketexception') || raw.contains('failed host lookup')) {
-      return 'No internet connection. Please check your network and try again.';
-    }
-    return 'We could not create your account. Please try again.';
-  }
-
-  String _extractBackendMessage(Map<String, dynamic> data) {
-    final raw = data['message'];
-    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
-    if (raw is List && raw.isNotEmpty) {
-      final first = raw.first;
-      final text = first?.toString().trim() ?? '';
-      if (text.isNotEmpty) return text;
-    }
-    return '';
-  }
 
   @override
   void dispose() {
     _emailCtrl.dispose();
-    _passCtrl.dispose();
-    _confirmCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _register() async {
+  Future<void> _continueToOtp() async {
+    if (!_formKey.currentState!.validate()) return;
+    final email = _emailCtrl.text.trim();
     setState(() {
-      _error = null;
       _loading = true;
+      _error = null;
     });
-
     try {
-      final email = _emailCtrl.text.trim();
-      final pass = _passCtrl.text;
-
-      await AuthRepository().registerAndAutoLogin(email, pass);
-
-      if (!mounted) return;
-
-      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
-    } catch (e) {
-      setState(() => _error = _friendlySignupError(e));
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => RegisterEmailOtpPage(email: email)),
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'Unable to continue. Please try again.';
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -96,8 +44,9 @@ class _SignupPageState extends State<SignupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F3F3),
+      backgroundColor: colors.surface,
       body: SafeArea(
         child: Column(
           children: [
@@ -114,7 +63,7 @@ class _SignupPageState extends State<SignupPage> {
               child: Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: colors.surface,
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: SingleChildScrollView(
@@ -135,103 +84,40 @@ class _SignupPageState extends State<SignupPage> {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Step 1 of 3: Enter your email',
+                          style: TextStyle(color: colors.onSurface),
+                        ),
                         const SizedBox(height: 18),
 
                         TextFormField(
                           controller: _emailCtrl,
-                          decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.mail_outline),
+                          decoration: InputDecoration(
+                            prefixIcon: Icon(
+                              Icons.mail_outline,
+                              color: colors.onSurface,
+                            ),
                             hintText: 'Email',
-                            border: OutlineInputBorder(),
+                            border: const OutlineInputBorder(),
                           ),
                           validator: (v) {
                             final x = (v ?? '').trim();
-                            if (x.isEmpty) return 'Please enter your email address.';
+                            if (x.isEmpty) {
+                              return 'Please enter your email address.';
+                            }
                             if (!x.contains('@')) {
                               return 'Please enter a valid email address.';
                             }
                             return null;
                           },
                         ),
-                        const SizedBox(height: 12),
-
-                        TextFormField(
-                          controller: _passCtrl,
-                          obscureText: _obscure,
-                          decoration: InputDecoration(
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            hintText: 'Password',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: IconButton(
-                              onPressed: () =>
-                                  setState(() => _obscure = !_obscure),
-                              icon: Icon(
-                                _obscure
-                                    ? Icons.visibility_off
-                                    : Icons.visibility,
-                              ),
-                            ),
-                          ),
-                          validator: (v) {
-                            if ((v ?? '').isEmpty)
-                              return 'Please enter a password.';
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextFormField(
-                          controller: _confirmCtrl,
-                          obscureText: _obscure2,
-                          decoration: InputDecoration(
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            hintText: 'Confirm password',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: IconButton(
-                              onPressed: () =>
-                                  setState(() => _obscure2 = !_obscure2),
-                              icon: Icon(
-                                _obscure2
-                                    ? Icons.visibility_off
-                                    : Icons.visibility,
-                              ),
-                            ),
-                          ),
-                          validator: (v) {
-                            if ((v ?? '').isEmpty) {
-                              return 'Please confirm your password.';
-                            }
-                            if (v != _passCtrl.text) {
-                              return 'Passwords do not match. Please try again.';
-                            }
-                            return null;
-                          },
-                        ),
-
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Checkbox(
-                              value: _marketingOptIn,
-                              onChanged: (v) =>
-                                  setState(() => _marketingOptIn = v ?? false),
-                            ),
-                            const Expanded(
-                              child: Text(
-                                'Send me occasional emails regarding my account '
-                                'subscription and special offers',
-                                style: TextStyle(fontSize: 13),
-                              ),
-                            ),
-                          ],
-                        ),
-
                         if (_error != null)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.only(top: 10),
                             child: Text(
                               _error!,
-                              style: const TextStyle(color: Colors.red),
+                              style: TextStyle(color: colors.error),
                             ),
                           ),
 
@@ -244,50 +130,14 @@ class _SignupPageState extends State<SignupPage> {
                             onPressed: _loading
                                 ? null
                                 : () {
-                                    if (_formKey.currentState!.validate()) {
-                                      _register();
-                                    }
+                                    _continueToOtp();
                                   },
                             child: _loading
-                                ? const CircularProgressIndicator()
-                                : const Text('Create Account'),
+                                ? CircularProgressIndicator(
+                                    color: colors.onPrimary,
+                                  )
+                                : const Text('Continue'),
                           ),
-                        ),
-
-                        const SizedBox(height: 18),
-                        const Text('Continue with'),
-                        const SizedBox(height: 12),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _SocialCircle(
-                              label: 'G',
-                              onTap: () async {
-                                try {
-                                  final success = await AuthRepository()
-                                      .loginWithGoogle();
-                                  if (!mounted) return;
-                                  if (success) {
-                                    Navigator.pushReplacementNamed(
-                                      context,
-                                      AuthRoutes.authGate,
-                                    );
-                                  }
-                                } catch (e) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(_friendlySignupError(e)),
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _SocialCircle(label: '', onTap: () {}),
-                            const SizedBox(width: 14),
-                            _SocialCircle(label: 'f', onTap: () {}),
-                          ],
                         ),
                       ],
                     ),
@@ -296,34 +146,6 @@ class _SignupPageState extends State<SignupPage> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SocialCircle extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-
-  const _SocialCircle({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2F2F2),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
       ),
     );

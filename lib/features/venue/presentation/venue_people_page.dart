@@ -17,7 +17,6 @@ class VenuePeoplePage extends StatefulWidget {
 class _VenuePeoplePageState extends State<VenuePeoplePage> {
   final _repo = VenueCheckinRepository();
   late Future<List<VenueCheckin>> _future;
-
   @override
   void initState() {
     super.initState();
@@ -32,18 +31,19 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: colors.surface,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(70),
         child: AppBar(
-          backgroundColor: Colors.white,
+          backgroundColor: colors.surface,
           elevation: 0,
           scrolledUnderElevation: 0,
           leading: IconButton(
-            icon: const Icon(
+            icon: Icon(
               Icons.arrow_back_ios_new,
-              color: Colors.black,
+              color: colors.onSurface,
               size: 20,
             ),
             onPressed: () => Navigator.pop(context),
@@ -77,8 +77,8 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               widget.venue.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.black,
+                              style: TextStyle(
+                                color: colors.onSurface,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 17,
                                 letterSpacing: -0.5,
@@ -97,13 +97,13 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                                   vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.grey[100],
+                                  color: colors.surfaceContainerHighest,
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
                                   snapshot.data!.length.toString(),
-                                  style: const TextStyle(
-                                    color: Colors.black54,
+                                  style: TextStyle(
+                                    color: colors.onSurface,
                                     fontSize: 12,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -118,16 +118,16 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                           Container(
                             width: 7,
                             height: 7,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF00FF00),
+                            decoration: BoxDecoration(
+                              color: colors.primary,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 6),
-                          const Text(
+                          Text(
                             "Live now",
                             style: TextStyle(
-                              color: Colors.grey,
+                              color: colors.onSurface,
                               fontSize: 13,
                               fontWeight: FontWeight.w400,
                             ),
@@ -144,7 +144,11 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       ),
       body: Column(
         children: [
-          const Divider(height: 1, thickness: 0.5),
+          Divider(
+            height: 1,
+            thickness: 0.5,
+            color: colors.onSurface.withValues(alpha: 0.2),
+          ),
           Expanded(
             child: FutureBuilder<List<VenueCheckin>>(
               future: _future,
@@ -161,17 +165,18 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.error_outline,
                             size: 48,
-                            color: Colors.grey,
+                            color: colors.secondary,
                           ),
                           const SizedBox(height: 16),
                           Text(
                             'Failed to load people',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w500,
+                              color: colors.onSurface,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -180,7 +185,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 14,
-                              color: Colors.grey[600],
+                              color: colors.onSurface.withValues(alpha: 0.8),
                             ),
                           ),
                           const SizedBox(height: 24),
@@ -204,17 +209,22 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                 final people = snapshot.data!;
 
                 if (people.isEmpty) {
-                  return const Center(child: Text('No one is here yet'));
+                  return Center(
+                    child: Text(
+                      'No one is here yet',
+                      style: TextStyle(color: colors.onSurface),
+                    ),
+                  );
                 }
 
                 return GridView.builder(
                   padding: EdgeInsets.zero,
                   itemCount: people.length,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
+                    crossAxisCount: 2,
                     mainAxisSpacing: 1.5,
                     crossAxisSpacing: 1.5,
-                    childAspectRatio: 1.0,
+                    childAspectRatio: 0.7,
                   ),
                   itemBuilder: (context, index) {
                     final person = people[index];

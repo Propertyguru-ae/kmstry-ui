@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
 
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:http_parser/http_parser.dart' as http_parser;
@@ -17,22 +18,73 @@ class CheckinRepository {
     required double latitude,
     required double longitude,
     required String vibe,
+    List<String>? whatBringsYou,
   }) async {
     final token = await SecureStorage.getAccessToken();
+    final selectedReasons = (whatBringsYou ?? [])
+        .where((item) => item.trim().isNotEmpty)
+        .map((item) => item.trim())
+        .toList();
 
-    final data = await _api.post(
-      '/checkins',
-      headers: {'Authorization': 'Bearer $token'},
-      body: {
-        'venue_id': venueId,
-        'checkin_method': 'gps',
-        'latitude': latitude,
-        'longitude': longitude,
-        'vibe': vibe,
-      },
-    );
+    final baseBody = <String, dynamic>{
+      'venue_id': venueId,
+      'checkin_method': 'gps',
+      'latitude': latitude,
+      'longitude': longitude,
+      'vibe': vibe,
+    };
+
+    final enrichedBody = <String, dynamic>{
+      ...baseBody,
+      if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
+    };
+
+    Map<String, dynamic> data;
+    try {
+      data = await _api.post(
+        '/checkins',
+        headers: {'Authorization': 'Bearer $token'},
+        body: enrichedBody,
+      );
+    } on ApiException catch (e) {
+      // Safe fallback for older backends that don't accept this new field yet.
+      if (selectedReasons.isNotEmpty && _isUnknownWhatBringsFieldError(e)) {
+        data = await _api.post(
+          '/checkins',
+          headers: {'Authorization': 'Bearer $token'},
+          body: baseBody,
+        );
+      } else {
+        rethrow;
+      }
+    }
 
     return data['id'] as String;
+  }
+
+  bool _isUnknownWhatBringsFieldError(ApiException error) {
+    if (error.statusCode != 400) return false;
+    final message = error.data.toString().toLowerCase();
+    return message.contains('what_brings_you') ||
+        message.contains('unknown') ||
+        message.contains('not allowed') ||
+        message.contains('additional properties');
+  }
+
+  Future<List<String>> getWhatBringsOptions() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return [];
+
+    final data = await _api.get(
+      '/checkins/options/what-brings',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (data is Map && data['options'] is List) {
+      return List<String>.from(data['options']);
+    }
+
+    return [];
   }
 
   /// 2️⃣ Foto yükle (MULTIPART)

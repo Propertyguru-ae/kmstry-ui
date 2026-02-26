@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -237,9 +239,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (profile == null) {
       final userId = widget.userId;
       if (userId == null || userId.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chat is not available.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Chat is not available.')));
         return;
       }
       Navigator.push(
@@ -286,9 +288,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   Future<void> _toggleBlock() async {
     final targetUserId = _profile?.user.id ?? widget.userId;
     if (targetUserId == null || targetUserId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User is not available.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('User is not available.')));
       return;
     }
 
@@ -308,9 +310,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _isBlocked
-                ? 'Could not unblock user.'
-                : 'Could not block user.',
+            _isBlocked ? 'Could not unblock user.' : 'Could not block user.',
           ),
         ),
       );
@@ -362,7 +362,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             width: width,
             height: height,
             fit: fit,
-            errorBuilder: (_, __, ___) => Container(color: Colors.black87),
+            errorBuilder: (context, error, stackTrace) =>
+                Container(color: Colors.black87),
           )
         else
           Container(color: Colors.black87),
@@ -377,13 +378,60 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     );
   }
 
+  Widget _buildEmptyGradientBackground(bool isDark) {
+    if (!isDark) {
+      // Light mode must stay clean white.
+      return Container(color: Colors.white);
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F0F0F),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -120,
+            left: -80,
+            child: Container(
+              width: 320,
+              height: 320,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF1FE4D2).withValues(alpha: 0.25),
+              ),
+            ),
+          ),
+
+          Positioned(
+            bottom: -120,
+            right: -80,
+            child: Container(
+              width: 350,
+              height: 350,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFF6B4A).withValues(alpha: 0.18),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     /// LOADING STATE
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        body: Center(
+          child: CircularProgressIndicator(color: theme.colorScheme.primary),
+        ),
       );
     }
 
@@ -391,12 +439,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
     /// ERROR / EMPTY STATE
     if (_profile == null && !hasFallbackProfile) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
+      return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
         body: Center(
           child: Text(
             'Profile unavailable',
-            style: TextStyle(color: Colors.white),
+            style: TextStyle(color: theme.colorScheme.onSurface),
           ),
         ),
       );
@@ -413,10 +461,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final moments = hasMedia
         ? _profile!.media.where((p) => !p.isFeatured).toList()
         : <CheckinProfileMedia>[];
-    final displayName =
-        _profile?.user.fullName ??
-        widget.userName ??
-        'User';
+    final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
 
     return Scaffold(
       body: Stack(
@@ -427,26 +472,31 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             child: GestureDetector(
               onTap: hasMedia ? () => _openMediaViewerAt(0) : null,
               child: !hasMedia
-                  ? Container(
-                      color: Colors.black,
-                      child: const Center(
-                        child: Icon(
-                          Icons.person,
-                          color: Colors.white70,
-                          size: 48,
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _buildEmptyGradientBackground(isDark),
+                        Center(
+                          child: Icon(
+                            Icons.person,
+                            color: isDark ? Colors.white70 : Colors.black45,
+                            size: 48,
+                          ),
                         ),
-                      ),
+                      ],
                     )
                   : featuredMedia!.mediaType == MediaType.photo
                   ? Image.network(
                       featuredMedia.url,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.black,
-                        child: const Icon(
-                          Icons.person,
-                          color: Colors.white70,
-                          size: 48,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: theme.colorScheme.surface,
+                        child: Center(
+                          child: Icon(
+                            Icons.person,
+                            color: isDark ? Colors.white70 : Colors.black45,
+                            size: 48,
+                          ),
                         ),
                       ),
                     )
@@ -458,14 +508,33 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
           ),
 
-          /// DARK GRADIENT
+          /// ProfilePage ile ayni blur + gradient katmani
+          if (!hasMedia)
+            Positioned.fill(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                child: Container(
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.2)
+                      : Colors.white.withValues(alpha: 0.2),
+                ),
+              ),
+            ),
+
           Positioned.fill(
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
-                  colors: [Colors.black87, Colors.transparent],
+                  colors: [
+                    isDark ? Colors.black : Colors.white,
+                    isDark
+                        ? Colors.black.withValues(alpha: 0.4)
+                        : Colors.white.withValues(alpha: 0.6),
+                    Colors.transparent,
+                  ],
+                  stops: const [0.0, 0.4, 0.8],
                 ),
               ),
             ),
@@ -483,14 +552,19 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        icon: Icon(
+                          Icons.arrow_back,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
                         onPressed: () => Navigator.pop(context),
                       ),
                       TextButton(
                         onPressed: _isBlocking ? null : _toggleBlock,
                         style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          disabledForegroundColor: Colors.white54,
+                          foregroundColor: isDark ? Colors.white : Colors.black87,
+                          disabledForegroundColor: isDark
+                              ? Colors.white54
+                              : Colors.black38,
                         ),
                         child: Text(_isBlocked ? 'Unblock' : 'Block'),
                       ),
@@ -505,10 +579,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
                     displayName,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
                 ),
@@ -516,11 +590,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 const SizedBox(height: 6),
 
                 /// ONLINE STATUS
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
                     'Online now',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
                   ),
                 ),
 
@@ -536,8 +612,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final vibeText = _profile!.checkin.vibe!;
-                        const style = TextStyle(
-                          color: Colors.white70,
+                        final style = TextStyle(
+                          color: isDark ? Colors.white70 : Colors.black54,
                           fontSize: 14,
                         );
 
@@ -573,8 +649,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                     padding: const EdgeInsets.only(top: 6),
                                     child: Text(
                                       _isVibeExpanded ? 'See less' : 'See more',
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? Colors.white
+                                            : theme.colorScheme.primary,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
@@ -591,12 +669,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                 /// RECENT MOMENTS (only when viewer is at same venue)
                 if (_showPostsAndVibe && moments.isNotEmpty)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
                     child: Text(
                       'Recent moments',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: isDark ? Colors.white : Colors.black87,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -651,7 +729,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
                             itemCount: count,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (context, index) =>
                                 const SizedBox(width: 8),
                             itemBuilder: (_, index) {
                               return _buildMomentImage(
@@ -686,9 +764,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildActionBarContainer() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.black.withOpacity(0.85)),
+      decoration: BoxDecoration(
+        color: (isDark ? Colors.black : theme.colorScheme.surface).withValues(
+          alpha: 0.85,
+        ),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -696,11 +780,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           if (_actionState == ProfileActionState.incomingInterested)
             Container(
               padding: const EdgeInsets.only(bottom: 12),
-              child: const Center(
+              child: Center(
                 child: Text(
                   'Kmstry you! What do you think?',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: isDark ? Colors.white : theme.colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
@@ -716,11 +800,17 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildActionBar() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     if (_isBlocked) {
-      return const Center(
+      return Center(
         child: Text(
           'User blocked',
-          style: TextStyle(color: Colors.white70, fontSize: 16),
+          style: TextStyle(
+            color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
+            fontSize: 16,
+          ),
         ),
       );
     }
@@ -734,8 +824,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               child: OutlinedButton(
                 onPressed: () => _handleAction('interested'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white),
+                  foregroundColor: isDark
+                      ? Colors.white
+                      : theme.colorScheme.onSurface,
+                  side: BorderSide(
+                    color: isDark ? Colors.white : theme.colorScheme.onSurface,
+                  ),
                 ),
                 child: const Text('Kmstry 👋'),
               ),
@@ -752,18 +846,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       case ProfileActionState.proactivePass:
       case ProfileActionState.reactivePass:
-        return const Center(
+        return Center(
           child: Text(
             'No Kmstry already',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
+            style: TextStyle(
+              color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
+              fontSize: 16,
+            ),
           ),
         );
 
       case ProfileActionState.waitingResponse:
-        return const Center(
+        return Center(
           child: Text(
             'Waiting response',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
+            style: TextStyle(
+              color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
+              fontSize: 16,
+            ),
           ),
         );
 
@@ -788,15 +888,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       width: width,
       height: height,
       child: media.mediaType == MediaType.photo
-          ? Image.network(
-              media.url,
-              fit: BoxFit.cover,
-            )
-          : _buildVideoCover(
-              media: media,
-              fit: BoxFit.cover,
-              iconSize: 30,
-            ),
+          ? Image.network(media.url, fit: BoxFit.cover)
+          : _buildVideoCover(media: media, fit: BoxFit.cover, iconSize: 30),
     );
 
     return GestureDetector(

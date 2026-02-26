@@ -77,18 +77,21 @@ Color _avatarColor(String seed) {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
-        title: const Text(
+        title: Text(
           'Messages',
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.more_horiz, color: Colors.black),
+            icon: Icon(Icons.more_horiz, color: isDark ? Colors.white70 : Colors.black),
             onPressed: () {},
           ),
         ],
@@ -98,11 +101,13 @@ Color _avatarColor(String seed) {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: TextField(
+              style: theme.textTheme.bodyLarge,
               decoration: InputDecoration(
                 hintText: 'Search messages',
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
+                prefixIcon: Icon(Icons.search, color: isDark ? Colors.white38 : Colors.grey),
                 filled: true,
-                fillColor: Colors.grey[100],
+                fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -115,24 +120,24 @@ Color _avatarColor(String seed) {
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Row(
               children: [
-                _buildFilterChip('All'),
+                _buildFilterChip('All', isDark, theme),
                 const SizedBox(width: 8),
-                _buildFilterChip('Unread'),
+                _buildFilterChip('Unread', isDark, theme),
               ],
             ),
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: _buildListContent(),
+            child: _buildListContent(isDark, theme),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildListContent() {
+  Widget _buildListContent(bool isDark, ThemeData theme) {
     if (_loading && _chats.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(child: CircularProgressIndicator(color: theme.colorScheme.primary));
     }
     if (_error != null && _chats.isEmpty) {
       return Center(
@@ -143,7 +148,7 @@ Color _avatarColor(String seed) {
             children: [
               Text(
                 'Could not load chats',
-                style: TextStyle(color: Colors.grey[700]),
+                style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 12),
               TextButton(
@@ -157,10 +162,10 @@ Color _avatarColor(String seed) {
     }
     final list = _buildFilteredChats();
     if (list.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'No messages yet',
-          style: TextStyle(color: Colors.grey),
+          style: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
         ),
       );
     }
@@ -170,7 +175,7 @@ Color _avatarColor(String seed) {
         itemCount: list.length,
         itemBuilder: (context, index) {
           final chat = list[index];
-          return _buildChatTile(chat);
+          return _buildChatTile(chat, isDark, theme);
         },
       ),
     );
@@ -183,7 +188,7 @@ Color _avatarColor(String seed) {
     return _chats;
   }
 
-  Widget _buildFilterChip(String label) {
+  Widget _buildFilterChip(String label, bool isDark, ThemeData theme) {
     final isSelected = _selectedFilter == label;
     return GestureDetector(
       onTap: () {
@@ -194,13 +199,15 @@ Color _avatarColor(String seed) {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF2D5BD0) : Colors.grey[200],
+          color: isSelected 
+            ? (isDark ? theme.colorScheme.primary : const Color(0xFF2D5BD0)) 
+            : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.white : Colors.black54,
+            color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black54),
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -208,7 +215,7 @@ Color _avatarColor(String seed) {
     );
   }
 
-  Widget _buildChatTile(ChatListItem chat) {
+  Widget _buildChatTile(ChatListItem chat, bool isDark, ThemeData theme) {
     final other = chat.getDisplayUser(_currentUserId);
     final name = other?.fullName ?? 'Unknown';
     final avatarColor = _avatarColor(name);
@@ -220,35 +227,33 @@ Color _avatarColor(String seed) {
       children: [
         ListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-     leading: Container(
-  width: 55,
-  height: 55,
-  decoration: BoxDecoration(
-    borderRadius: BorderRadius.circular(12),
-    color: avatarColor.withOpacity(0.15),
-  ),
-  alignment: Alignment.center,
-  child: Text(
-    name.isNotEmpty ? name[0].toUpperCase() : '?',
-    style: TextStyle(
-      fontSize: 22,
-      fontWeight: FontWeight.bold,
-      color: avatarColor,
-    ),
-  ),
-),
-
+          leading: Container(
+            width: 55,
+            height: 55,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: isDark ? avatarColor.withOpacity(0.2) : avatarColor.withOpacity(0.15),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: isDark ? avatarColor.withOpacity(0.9) : avatarColor,
+              ),
+            ),
+          ),
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 name,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 16),
+                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
               Text(
                 time,
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: TextStyle(color: isDark ? Colors.white38 : Colors.grey, fontSize: 12),
               ),
             ],
           ),
@@ -262,15 +267,15 @@ Color _avatarColor(String seed) {
                     preview,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black87),
+                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
                   ),
                 ),
                 if (unread > 0)
                   Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE57373),
-                      shape: BoxShape.circle,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondary,
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       unread > 99 ? '99+' : unread.toString(),
@@ -300,8 +305,12 @@ Color _avatarColor(String seed) {
             loadChats();
           },
         ),
-        const Divider(
-            height: 1, indent: 85, endIndent: 16, color: Color(0xFFEEEEEE)),
+        Divider(
+          height: 1, 
+          indent: 85, 
+          endIndent: 16, 
+          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFEEEEEE),
+        ),
       ],
     );
   }

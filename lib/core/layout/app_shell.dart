@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/features/notifications/presentation/notification
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -16,7 +18,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   String _userInitial = 'D';
   int _unreadNotificationCount = 0;
@@ -29,6 +31,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pages = [
       const VenueHomePage(),
       const NotificationPage(),
@@ -38,6 +41,20 @@ class _AppShellState extends State<AppShell> {
     ];
     _loadUserInitial();
     _loadUnreadNotificationCount();
+    PushManager.instance.reconcileNotificationState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      PushManager.instance.reconcileNotificationState();
+    }
   }
 
   Future<void> _loadUnreadNotificationCount() async {
@@ -57,7 +74,7 @@ class _AppShellState extends State<AppShell> {
     try {
       final me = await AuthRepository().getMe();
       if (!mounted) return;
-      final fullName = me['full_name'] as String?;
+      final fullName = me['fullName'] as String?;
       if (fullName != null && fullName.isNotEmpty) {
         setState(() {
           _userInitial = fullName[0].toUpperCase();
@@ -92,9 +109,11 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _showAccountSwitcher(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -110,19 +129,22 @@ class _AppShellState extends State<AppShell> {
                   height: 4,
                   margin: const EdgeInsets.only(bottom: 20),
                   decoration: BoxDecoration(
-                    color: Colors.grey[300],
+                    color: colors.onSurface.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
                 ..._userVenues.map((venue) => ListTile(
-                      leading: const CircleAvatar(
-                        backgroundColor: Colors.black12,
-                        child: Icon(Icons.storefront, color: Colors.black),
+                      leading: CircleAvatar(
+                        backgroundColor: colors.primary.withValues(alpha: 0.12),
+                        child: Icon(Icons.storefront, color: colors.primary),
                       ),
                       title: Text(venue,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: colors.onSurface,
+                          )),
                       trailing: _activeAccount == venue
-                          ? const Icon(Icons.check_circle, color: Colors.blue)
+                          ? Icon(Icons.check_circle, color: colors.primary)
                           : null,
                       onTap: () {
                         setState(() => _activeAccount = venue);
@@ -131,31 +153,37 @@ class _AppShellState extends State<AppShell> {
                     )),
                 const Divider(),
                 ListTile(
-                  leading: const Icon(Icons.settings_outlined),
-                  title: const Text('Account Settings'),
+                  leading: Icon(Icons.settings_outlined, color: colors.onSurface),
+                  title: Text(
+                    'Account Settings',
+                    style: TextStyle(color: colors.onSurface),
+                  ),
                   onTap: () => Navigator.pop(context),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('Switch to Personal'),
+                  leading: Icon(Icons.person_outline, color: colors.onSurface),
+                  title: Text(
+                    'Switch to Personal',
+                    style: TextStyle(color: colors.onSurface),
+                  ),
                   onTap: () {
                     setState(() => _activeAccount = 'Personal');
                     Navigator.pop(context);
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.add_circle_outline, color: Colors.blue),
-                  title: const Text('Add Venue',
+                  leading: Icon(Icons.add_circle_outline, color: colors.primary),
+                  title: Text('Add Venue',
                       style: TextStyle(
-                          color: Colors.blue, fontWeight: FontWeight.bold)),
+                          color: colors.primary, fontWeight: FontWeight.bold)),
                   onTap: () => Navigator.pop(context),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.red),
-                  title: const Text(
+                  leading: Icon(Icons.logout, color: colors.error),
+                  title: Text(
                     'Log out',
                     style: TextStyle(
-                      color: Colors.red,
+                      color: colors.error,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -172,32 +200,11 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  Widget _buildProfileAvatar({required bool isActive}) {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: isActive ? Colors.black : Colors.transparent,
-          width: 2,
-        ),
-        color: Colors.grey.shade200,
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        _userInitial,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 16,
-          color: Colors.black,
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return NotificationUnreadScope(
       unreadCount: _unreadNotificationCount,
       updateUnreadCount: (count) {
@@ -209,12 +216,14 @@ class _AppShellState extends State<AppShell> {
         extendBody: true,
         body: _pages[_currentIndex],
         bottomNavigationBar: BottomNavigationBar(
-          backgroundColor: Colors.white.withOpacity(0.95),
+          backgroundColor: isDark
+              ? theme.colorScheme.surface.withValues(alpha: 0.95)
+              : theme.colorScheme.surface.withValues(alpha: 0.95),
           elevation: 0,
           currentIndex: _currentIndex,
           type: BottomNavigationBarType.fixed,
-          selectedItemColor: Colors.black,
-          unselectedItemColor: Colors.grey.shade400,
+          selectedItemColor: theme.colorScheme.primary,
+          unselectedItemColor: isDark ? Colors.white24 : Colors.grey.shade400,
           showSelectedLabels: false,
           showUnselectedLabels: false,
           onTap: _onItemTapped,
@@ -227,24 +236,53 @@ class _AppShellState extends State<AppShell> {
               icon: _buildNotificationIcon(),
               label: '',
             ),
-          BottomNavigationBarItem(
-            icon: Icon(
-              Icons.mark_chat_unread_outlined, // Instagram DM stili
-              size: 28,
+            const BottomNavigationBarItem(
+              icon: Icon(
+                Icons.mark_chat_unread_outlined, // Instagram DM stili
+                size: 28,
+              ),
+              label: '',
             ),
-            label: '',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.people_outline, size: 30),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: _buildProfileAvatar(isActive: _currentIndex == 4),
-            label: '',
-          ),
-        ],
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.people_outline, size: 30),
+              label: '',
+            ),
+            BottomNavigationBarItem(
+              icon: _buildProfileAvatar(isActive: _currentIndex == 4, isDark: isDark, theme: theme),
+              label: '',
+            ),
+          ],
+        ),
       ),
-    ),
+    );
+  }
+
+  Widget _buildProfileAvatar({required bool isActive, required bool isDark, required ThemeData theme}) {
+    final colors = theme.colorScheme;
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: isActive 
+            ? colors.onSurface
+            : Colors.transparent,
+          width: 2,
+        ),
+        color: isDark
+            ? colors.primary.withValues(alpha: 0.2)
+            : colors.primary.withValues(alpha: 0.12),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        _userInitial,
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+          color: isDark ? colors.primary : colors.onSurface,
+        ),
+      ),
     );
   }
 
@@ -264,7 +302,7 @@ class _AppShellState extends State<AppShell> {
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
             decoration: const BoxDecoration(
-              color: Colors.red,
+              color: AppTheme.darkCtaOrange,
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,

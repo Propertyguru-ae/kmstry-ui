@@ -61,8 +61,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   }
 
   void _onScroll() {
-    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages)
+    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages) {
       return;
+    }
     if (_scrollController.offset <= 100 && _scrollController.hasClients) {
       _loadMoreMessages();
     }
@@ -108,8 +109,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     if (cid == null ||
         _loadingMore ||
         _chat == null ||
-        _hasReachedEndOfMessages)
+        _hasReachedEndOfMessages) {
       return;
+    }
     final messages = _chat!.messages;
     if (messages.isEmpty) {
       _hasReachedEndOfMessages = true;
@@ -133,11 +135,12 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
           .where((m) => !existingIds.contains(m.id))
           .toList();
       if (older.isEmpty) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _hasReachedEndOfMessages = true;
             _loadingMore = false;
           });
+        }
         return;
       }
       final merged = [...older, ..._chat!.messages];
@@ -222,25 +225,31 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final name = _chat?.displayOtherUser?.fullName ?? widget.otherName;
     final photoUrl = _chat?.displayOtherUser?.photo ?? widget.otherPhotoUrl;
     final avatarSeed = name.isNotEmpty ? name : widget.otherUserId;
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0.5,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.black, size: 20),
+          icon: Icon(
+            Icons.arrow_back_ios,
+            color: colors.onSurface,
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Row(
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor: avatarColor.withOpacity(0.15),
+              backgroundColor: avatarColor.withValues(alpha: 0.15),
               backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
               child: !hasPhoto
                   ? Text(
@@ -260,15 +269,18 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
               children: [
                 Text(
                   name,
-                  style: const TextStyle(
-                    color: Colors.black,
+                  style: TextStyle(
+                    color: colors.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Text(
+                Text(
                   'Online',
-                  style: TextStyle(color: Colors.green, fontSize: 12),
+                  style: TextStyle(
+                    color: colors.primary,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -276,11 +288,11 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.videocam_outlined, color: Colors.black),
+            icon: Icon(Icons.videocam_outlined, color: colors.onSurface),
             onPressed: () {},
           ),
           IconButton(
-            icon: const Icon(Icons.call_outlined, color: Colors.black),
+            icon: Icon(Icons.call_outlined, color: colors.onSurface),
             onPressed: () {},
           ),
         ],
@@ -295,6 +307,8 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   }
 
   Widget _buildMessageList() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     if (_loading && _chat == null && _chatId != null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -307,7 +321,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             children: [
               Text(
                 'Could not load chat',
-                style: TextStyle(color: Colors.grey[700]),
+                style: TextStyle(
+                  color: colors.onSurface.withValues(alpha: 0.75),
+                ),
               ),
               const SizedBox(height: 12),
               TextButton(onPressed: _loadChat, child: const Text('Retry')),
@@ -358,6 +374,12 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     required bool isMe,
     required String time,
   }) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final incomingBubble = theme.brightness == Brightness.dark
+        ? colors.surface.withValues(alpha: 0.8)
+        : colors.surface.withValues(alpha: 0.95);
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -367,7 +389,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isMe ? const Color(0xFF2D5BD0) : Colors.grey[100],
+          color: isMe ? colors.secondary : incomingBubble,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
@@ -381,7 +403,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             Text(
               message,
               style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
+                color: isMe ? colors.onSecondary : colors.onSurface,
                 fontSize: 15,
               ),
             ),
@@ -389,7 +411,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             Text(
               time,
               style: TextStyle(
-                color: isMe ? Colors.white70 : Colors.grey,
+                color: isMe
+                    ? colors.onSecondary.withValues(alpha: 0.75)
+                    : colors.onSurface.withValues(alpha: 0.55),
                 fontSize: 10,
               ),
             ),
@@ -400,6 +424,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   }
 
   Widget _buildImageBubble(String imageUrl, bool isMe, String time) {
+    final colors = Theme.of(context).colorScheme;
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -419,12 +444,18 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 width: 200,
                 height: 200,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
+                errorBuilder: (context, error, stackTrace) =>
                     const Icon(Icons.broken_image, size: 48),
               ),
             ),
             const SizedBox(height: 4),
-            Text(time, style: TextStyle(color: Colors.grey, fontSize: 10)),
+            Text(
+              time,
+              style: TextStyle(
+                color: colors.onSurface.withValues(alpha: 0.55),
+                fontSize: 10,
+              ),
+            ),
           ],
         ),
       ),
@@ -438,13 +469,15 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   }
 
   Widget _buildMessageInput() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colors.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: colors.onSurface.withValues(alpha: 0.08),
             spreadRadius: 1,
             blurRadius: 10,
           ),
@@ -454,7 +487,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         child: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
+              icon: Icon(Icons.add_circle_outline, color: colors.primary),
               onPressed: () {},
             ),
             Expanded(
@@ -462,12 +495,17 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 controller: _messageController,
                 decoration: InputDecoration(
                   hintText: 'Type a message...',
+                  hintStyle: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.6),
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(24),
                     borderSide: BorderSide.none,
                   ),
                   filled: true,
-                  fillColor: Colors.grey[100],
+                  fillColor: theme.brightness == Brightness.dark
+                      ? colors.surface.withValues(alpha: 0.75)
+                      : colors.surface.withValues(alpha: 0.95),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 8,
@@ -478,7 +516,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             ),
             const SizedBox(width: 8),
             CircleAvatar(
-              backgroundColor: const Color(0xFF2D5BD0),
+              backgroundColor: colors.secondary,
               child: IconButton(
                 icon: _sending
                     ? const SizedBox(

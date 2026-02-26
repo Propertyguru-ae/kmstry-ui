@@ -4,8 +4,9 @@ import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flow_page.dart';
-import 'package:kmstry_frontend/features/onboarding/presentation/photo_onboarding_page.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 
 class AuthGatePage extends StatefulWidget {
   const AuthGatePage({super.key});
@@ -31,11 +32,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
     }
 
     final me = await AuthRepository().getMe();
-    final step = me['onboarding_step'];
+    final step = me['onboardingStep'];
 
     switch (step) {
       case 'NAME_DOB':
-        _go(NameDobOnboardingPage(initialName: me['full_name']));
+        _go(NameDobOnboardingPage(initialName: me['fullName']));
         return;
 
       case 'GENDER_INTEREST':
@@ -51,10 +52,24 @@ class _AuthGatePageState extends State<AuthGatePage> {
         return;
 
       case 'COMPLETED':
+        final devicePermissionsDone =
+            await SecureStorage.isDevicePermissionsOnboardingDone();
+        if (!devicePermissionsDone) {
+          _go(const PermissionsFlowPage(markProfileCompleted: false));
+          return;
+        }
+        await PushManager.instance.ensureRegisteredIfAllowed();
         _go(const AppShell());
         return;
 
       default:
+        final devicePermissionsDone =
+            await SecureStorage.isDevicePermissionsOnboardingDone();
+        if (!devicePermissionsDone) {
+          _go(const PermissionsFlowPage(markProfileCompleted: false));
+          return;
+        }
+        await PushManager.instance.ensureRegisteredIfAllowed();
         // Güvenli fallback
         _go(const AppShell());
         return;

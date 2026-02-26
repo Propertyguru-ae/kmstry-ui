@@ -35,9 +35,12 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
       setState(() => _loading = false);
     }
   }
-
   @override
   Widget build(BuildContext context) {
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return DraggableScrollableSheet(
       initialChildSize: 0.25,
       minChildSize: 0.22,
@@ -62,12 +65,15 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: isDark ? theme.colorScheme.surface : Colors.white,
               borderRadius: BorderRadius.vertical(
                 top: Radius.circular(_isExpanded ? 0 : 24),
               ),
-              boxShadow: const [
-                BoxShadow(blurRadius: 14, color: Colors.black12),
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: 14, 
+                  color: isDark ? Colors.black45 : Colors.black12,
+                ),
               ],
             ),
             child: Column(
@@ -79,14 +85,14 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
                     width: 44,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
+                      color: isDark ? Colors.white10 : Colors.grey.shade300,
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
 
                 const SizedBox(height: 8),
 
-                _isExpanded ? _ExpandedHeader() : _CollapsedHeader(),
+                _isExpanded ? _ExpandedHeader(isDark: isDark, theme: theme) : _CollapsedHeader(),
 
                 const SizedBox(height: 8),
 
@@ -119,11 +125,11 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
 class _CollapsedHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return const Text(
+    return Text(
       'Over 1,000 venues in this area',
       style: TextStyle(
         fontSize: 13,
-        color: Colors.grey,
+        color: Theme.of(context).brightness == Brightness.dark ? Colors.white54 : Colors.grey,
         fontWeight: FontWeight.w500,
       ),
     );
@@ -131,6 +137,11 @@ class _CollapsedHeader extends StatelessWidget {
 }
 
 class _ExpandedHeader extends StatelessWidget {
+  final bool isDark;
+  final ThemeData theme;
+
+  const _ExpandedHeader({required this.isDark, required this.theme});
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -143,16 +154,16 @@ class _ExpandedHeader extends StatelessWidget {
               height: 42,
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
+                color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(22),
               ),
               child: Row(
-                children: const [
-                  Icon(Icons.search, size: 18, color: Colors.grey),
-                  SizedBox(width: 8),
+                children: [
+                  Icon(Icons.search, size: 18, color: isDark ? Colors.white54 : Colors.grey),
+                  const SizedBox(width: 8),
                   Text(
                     'Search venues or areas',
-                    style: TextStyle(color: Colors.grey, fontSize: 13),
+                    style: TextStyle(color: isDark ? Colors.white54 : Colors.grey, fontSize: 13),
                   ),
                 ],
               ),
@@ -166,10 +177,10 @@ class _ExpandedHeader extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
+              color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade100,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.tune, size: 20),
+            child: Icon(Icons.tune, size: 20, color: isDark ? Colors.white70 : Colors.black87),
           ),
         ],
       ),

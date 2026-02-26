@@ -91,14 +91,14 @@ class _LoginPageState extends State<LoginPage> {
                 ElevatedButton(
                   onPressed: () async {
                     final authRepository = AuthRepository();
+                    final navigator = Navigator.of(context);
 
                     final success = await authRepository.loginWithGoogle();
                     if (!context.mounted) return;
 
                     if (success) {
-                      Navigator.pop(context);
-                      Navigator.pushReplacementNamed(
-                        context,
+                      navigator.pop();
+                      navigator.pushReplacementNamed(
                         AuthRoutes.authGate,
                       );
                     }
@@ -148,10 +148,12 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final bottomSheetRadius = BorderRadius.circular(24);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F3F3),
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
         child: Stack(
           children: [
@@ -163,7 +165,7 @@ class _LoginPageState extends State<LoginPage> {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: colors.surface,
                         borderRadius: bottomSheetRadius,
                       ),
                       padding: const EdgeInsets.all(24),
@@ -222,8 +224,9 @@ class _LoginPageState extends State<LoginPage> {
                                   ),
                                 ),
                                 validator: (v) {
-                                  if ((v ?? '').isEmpty)
+                                  if ((v ?? '').isEmpty) {
                                     return 'Please enter your password.';
+                                  }
                                   return null;
                                 },
                               ),
@@ -234,7 +237,7 @@ class _LoginPageState extends State<LoginPage> {
                                 Text(
                                   _error!,
                                   textAlign: TextAlign.center,
-                                  style: const TextStyle(color: Colors.red),
+                                  style: TextStyle(color: colors.error),
                                 ),
 
                               const SizedBox(height: 10),
@@ -267,9 +270,23 @@ class _LoginPageState extends State<LoginPage> {
                               ),
 
                               const SizedBox(height: 16),
-                              const Center(child: Text('Or')),
+                              Center(
+                                child: Text(
+                                  'Or',
+                                  style: TextStyle(
+                                    color: colors.onSurface.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              ),
                               const SizedBox(height: 10),
-                              const Center(child: Text('Sign in with')),
+                              Center(
+                                child: Text(
+                                  'Sign in with',
+                                  style: TextStyle(
+                                    color: colors.onSurface.withValues(alpha: 0.8),
+                                  ),
+                                ),
+                              ),
                               const SizedBox(height: 12),
 
                               Row(
@@ -278,21 +295,23 @@ class _LoginPageState extends State<LoginPage> {
                                   _SocialCircle(
                                     label: 'G',
                                     onTap: () async {
+                                      final navigator = Navigator.of(context);
+                                      final messenger = ScaffoldMessenger.of(
+                                        context,
+                                      );
                                       try {
                                         final success = await AuthRepository()
                                             .loginWithGoogle();
                                         if (!mounted) return;
 
                                         if (success) {
-                                          Navigator.pushReplacementNamed(
-                                            context,
+                                          navigator.pushReplacementNamed(
                                             AuthRoutes.authGate,
                                           );
                                         }
                                       } catch (e) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
+                                        if (!mounted) return;
+                                        messenger.showSnackBar(
                                           SnackBar(
                                             content: Text(_friendlyLoginError(e)),
                                           ),
@@ -313,7 +332,12 @@ class _LoginPageState extends State<LoginPage> {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  const Text("Don’t have an account? "),
+                                  Text(
+                                    "Don’t have an account? ",
+                                    style: TextStyle(
+                                      color: colors.onSurface.withValues(alpha: 0.85),
+                                    ),
+                                  ),
                                   TextButton(
                                     onPressed: () {
                                       Navigator.pushNamed(
@@ -349,6 +373,8 @@ class _SocialCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
@@ -356,13 +382,19 @@ class _SocialCircle extends StatelessWidget {
         width: 52,
         height: 52,
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F2F2),
+          color: theme.brightness == Brightness.dark
+              ? colors.surface.withValues(alpha: 0.8)
+              : colors.surface.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(999),
         ),
         alignment: Alignment.center,
         child: Text(
           label,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
         ),
       ),
     );

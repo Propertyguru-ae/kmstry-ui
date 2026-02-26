@@ -54,6 +54,9 @@ dependencies:
   video_player: ^2.8.2
   mime: ^1.0.4
   http_parser: ^4.0.2
+  firebase_core: 2.30.0
+  firebase_messaging: 14.7.10    
+  shared_preferences: ^2.5.4
 dev_dependencies:
   flutter_test:
     sdk: flutter

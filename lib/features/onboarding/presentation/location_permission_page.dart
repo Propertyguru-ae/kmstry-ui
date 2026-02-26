@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class LocationPermissionPage extends StatelessWidget {
   final VoidCallback onNext;
+  static final LocationPermissionService _locationPermissionService =
+      LocationPermissionService();
 
   const LocationPermissionPage({super.key, required this.onNext});
 
@@ -32,7 +35,8 @@ class LocationPermissionPage extends StatelessWidget {
 */
 
   Future<void> _requestLocation(BuildContext context) async {
-    final status = await Permission.locationWhenInUse.status;
+    final navigator = Navigator.of(context);
+    final status = await _locationPermissionService.status();
 
     if (status.isGranted) {
       await AuthRepository().updatePermissions({
@@ -43,16 +47,23 @@ class LocationPermissionPage extends StatelessWidget {
     }
 
     if (status.isPermanentlyDenied) {
+      await AuthRepository().updatePermissions({
+        'locationPermissionGranted': false,
+      });
+      if (!context.mounted) return;
       await _showSettingsDialog(context);
+      if (!navigator.mounted) return;
+      onNext();
       return;
     }
 
-    final result = await Permission.locationWhenInUse.request();
+    final result = await _locationPermissionService.request();
 
     await AuthRepository().updatePermissions({
       'locationPermissionGranted': result.isGranted,
     });
 
+    if (!navigator.mounted) return;
     onNext();
   }
 
@@ -79,6 +90,15 @@ class LocationPermissionPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _notNow(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    await AuthRepository().updatePermissions({
+      'locationPermissionGranted': false,
+    });
+    if (!navigator.mounted) return;
+    onNext();
   }
 
   @override
@@ -108,7 +128,11 @@ class LocationPermissionPage extends StatelessWidget {
                 child: const Text('Enable Location'),
               ),
             ),
-            /*TextButton(onPressed: onNext, child: const Text('Not now')),*/
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => _notNow(context),
+              child: const Text('Not now'),
+            ),
           ],
         ),
       ),

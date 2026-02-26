@@ -96,6 +96,10 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   }
 
   Future<void> _deleteMedia(CheckinProfileMedia media) async {
+    final shouldDelete = await _confirmDelete(media);
+    if (!shouldDelete) return;
+    if (!mounted) return;
+
     setState(() => _loading = true);
 
     try {
@@ -111,6 +115,30 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<bool> _confirmDelete(CheckinProfileMedia media) async {
+    final typeLabel = media.mediaType == MediaType.video ? 'video' : 'photo';
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete media'),
+        content: Text(
+          'Are you sure you want to delete this $typeLabel? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
   }
 
   @override

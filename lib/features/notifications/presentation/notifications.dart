@@ -270,14 +270,15 @@ class _NotificationPageState extends State<NotificationPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        title: const Text(
+        title: Text(
           'Notifications',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
       ),
       body: _buildBody(),
@@ -285,6 +286,8 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   Widget _buildBody() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     if (_loading && _list.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -297,7 +300,9 @@ class _NotificationPageState extends State<NotificationPage> {
             children: [
               Text(
                 'Could not load notifications',
-                style: TextStyle(color: Colors.grey[700]),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurface.withValues(alpha: 0.75),
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
@@ -311,8 +316,13 @@ class _NotificationPageState extends State<NotificationPage> {
       );
     }
     if (_list.isEmpty) {
-      return const Center(
-        child: Text('No notifications', style: TextStyle(color: Colors.grey)),
+      return Center(
+        child: Text(
+          'No notifications',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: colors.onSurface.withValues(alpha: 0.65),
+          ),
+        ),
       );
     }
     return RefreshIndicator(
@@ -329,6 +339,8 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   Widget _buildNotificationItem(NotificationModel n) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final time = _formatTime(n.createdAt);
     final icon = _iconForType(n.type);
     final title = _displayTitle(n);
@@ -340,9 +352,11 @@ class _NotificationPageState extends State<NotificationPage> {
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[100]!),
+          border: Border.all(
+            color: colors.primary.withValues(alpha: 0.15),
+          ),
         ),
         child: Row(
           children: [
@@ -350,10 +364,10 @@ class _NotificationPageState extends State<NotificationPage> {
               width: 50,
               height: 50,
               decoration: BoxDecoration(
-                color: Colors.grey[200],
+                color: colors.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, size: 28, color: Colors.grey[600]),
+              child: Icon(icon, size: 28, color: colors.primary),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -362,8 +376,8 @@ class _NotificationPageState extends State<NotificationPage> {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
-                      color: Colors.black,
+                    style: TextStyle(
+                      color: colors.onSurface,
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
                     ),
@@ -371,14 +385,20 @@ class _NotificationPageState extends State<NotificationPage> {
                   const SizedBox(height: 4),
                   Text(
                     body,
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    style: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.75),
+                      fontSize: 13,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Text(
                     time,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 11),
+                    style: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.55),
+                      fontSize: 11,
+                    ),
                   ),
                 ],
               ),

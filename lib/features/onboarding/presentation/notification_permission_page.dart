@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 
 class NotificationPermissionPage extends StatefulWidget {
   final VoidCallback onNext;
@@ -16,7 +17,7 @@ class NotificationPermissionPage extends StatefulWidget {
 
 class _NotificationPermissionPageState
     extends State<NotificationPermissionPage> {
-  bool _notifShownOnDevice = false;
+  bool _systemNotificationGranted = false;
   bool _loading = true;
 
   @override
@@ -26,33 +27,30 @@ class _NotificationPermissionPageState
   }
 
   Future<void> _init() async {
-    _notifShownOnDevice = await SecureStorage.isNotificationOnboardingDone();
+    final status = await Permission.notification.status;
+    _systemNotificationGranted =
+        status.isGranted || status == PermissionStatus.provisional;
     setState(() {
       _loading = false;
     });
   }
 
   Future<void> _enableNotifications() async {
-    final iosPlugin = notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >();
+    debugPrint("Notification button pressed");
 
-    if (iosPlugin != null) {
-      // Popup sadece ilk sefer çıkar
-      await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
-    }
-
-    // Enable = explicit app-level consent
-    await AuthRepository().updatePermissions({
-      'notificationPermissionGranted': true,
-    });
+    try {
+      await PushManager.instance.handlePermissionFlow();
+    } catch (_) {}
 
     await SecureStorage.setNotificationOnboardingDone();
+    if (!mounted) return;
+
     widget.onNext();
+    unawaited(PushManager.instance.reconcileNotificationState());
   }
 
   Future<void> _notNow() async {
+    // Account-level preference (user opt-out)
     await AuthRepository().updatePermissions({
       'notificationPermissionGranted': false,
     });
@@ -84,6 +82,18 @@ class _NotificationPermissionPageState
               'Get notified about matches and activity.',
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 8),
+            Text(
+              _systemNotificationGranted
+                  ? 'System notifications: ON'
+                  : 'System notifications: OFF',
+              style: TextStyle(
+                color: _systemNotificationGranted
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.secondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const Spacer(),
 
             // 🔔 ENABLE (her zaman var)
@@ -95,11 +105,8 @@ class _NotificationPermissionPageState
               ),
             ),
 
-            // ⛔ NOT NOW (sadece popup artık çıkmıyorsa)
-            if (_notifShownOnDevice) ...[
-              const SizedBox(height: 8),
-              TextButton(onPressed: _notNow, child: const Text('Not now')),
-            ],
+            const SizedBox(height: 8),
+            TextButton(onPressed: _notNow, child: const Text('Not now')),
           ],
         ),
       ),

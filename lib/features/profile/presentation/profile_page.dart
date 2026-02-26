@@ -7,6 +7,9 @@ import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -15,7 +18,7 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
+class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   Map<String, dynamic>? _user;
   bool _loading = true;
   Map<String, dynamic>? _activeCheckin;
@@ -23,12 +26,16 @@ class _ProfilePageState extends State<ProfilePage> {
 
   final CheckinRepository _checkinRepo = CheckinRepository();
   String? _checkinVibe;
+  List<String> _checkinWhatBrings = [];
 
   bool _isExpanded = false;
 
   bool _uploadingMoment = false;
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
+  final NotificationPermissionService _notificationPermissionService =
+      NotificationPermissionService();
+  bool _showNotificationWarning = false;
 
   bool _isVideoFile(String path) {
     final lower = path.toLowerCase();
@@ -80,10 +87,7 @@ class _ProfilePageState extends State<ProfilePage> {
       return SizedBox(
         width: thumbWidth,
         height: thumbHeight,
-        child: Image.network(
-          media.url,
-          fit: BoxFit.cover,
-        ),
+        child: Image.network(media.url, fit: BoxFit.cover),
       );
     }
     return const SizedBox(width: thumbWidth, height: thumbHeight);
@@ -92,7 +96,82 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadProfile();
+    _refreshNotificationWarningState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _vibeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshNotificationWarningState();
+    }
+  }
+
+  List<String> _extractWhatBrings(Map<String, dynamic>? activeCheckin) {
+    if (activeCheckin == null) return const [];
+    final raw = activeCheckin['what_brings_to_kmstry'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  String _formatWhatBringsLabel(String raw) {
+    final normalized = raw
+        .toLowerCase()
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+    if (normalized.isEmpty) return raw;
+    return normalized;
+  }
+
+  Future<void> _refreshNotificationWarningState() async {
+    try {
+      final permissionState =
+          await _notificationPermissionService.readStateFromBackend();
+      // If user enabled system notifications from Settings, sync account preference.
+      if (permissionState.systemGranted && !permissionState.accountPreference) {
+        await AuthRepository().updatePermissions({
+          'notificationPermissionGranted': true,
+        });
+        await PushManager.instance.reconcileNotificationState();
+      }
+      final refreshedState =
+          await _notificationPermissionService.readStateFromBackend();
+      if (!mounted) return;
+      setState(() {
+        _showNotificationWarning = !refreshedState.effectiveStatus;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _enableNotificationsFromProfile() async {
+    final status = await Permission.notification.status;
+    final systemGranted = status.isGranted || status == PermissionStatus.provisional;
+    if (!systemGranted) {
+      await openAppSettings();
+      return;
+    }
+
+    try {
+      await AuthRepository().updatePermissions({
+        'notificationPermissionGranted': true,
+      });
+    } catch (_) {}
+    await PushManager.instance.reconcileNotificationState();
+    await _refreshNotificationWarningState();
   }
 
   Future<void> _loadProfile() async {
@@ -107,17 +186,17 @@ class _ProfilePageState extends State<ProfilePage> {
 
       String? checkinVibe;
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
-      final activeCheckin = me['active_checkin'];
+      final activeCheckin = me['activeCheckin'];
       final checkinId = activeCheckin is Map
           ? activeCheckin['id'] as String?
           : null;
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _checkinRepo.getCheckinProfile(checkinId);
-          print('PROFILE :  $profile');
-          print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
+          //print('PROFILE :  $profile');
+          //print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
           checkinVibe = profile.checkin.vibe ?? '';
-          print('CHECKIN VIBE :  $checkinVibe');
+          //print('CHECKIN VIBE :  $checkinVibe');
           if (profile.media.isNotEmpty) {
             media = profile.media;
           }
@@ -127,7 +206,12 @@ class _ProfilePageState extends State<ProfilePage> {
       if (!mounted) return;
       setState(() {
         _user = me;
-        _activeCheckin = me['active_checkin'];
+        _activeCheckin = me['activeCheckin'];
+        _checkinWhatBrings = _extractWhatBrings(
+          me['activeCheckin'] is Map<String, dynamic>
+              ? me['activeCheckin'] as Map<String, dynamic>
+              : null,
+        );
         _checkinVibe = checkinVibe;
         _media = media;
         _loading = false;
@@ -158,9 +242,7 @@ class _ProfilePageState extends State<ProfilePage> {
       if (!hasPermission) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Camera permission is required.'),
-          ),
+          const SnackBar(content: Text('Camera permission is required.')),
         );
         return;
       }
@@ -317,12 +399,24 @@ class _ProfilePageState extends State<ProfilePage> {
     if (mounted) setState(() => _savingVibe = false);
   }
 
+  Future<void> _openSettings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        body: Center(
+          child: CircularProgressIndicator(color: theme.colorScheme.primary),
+        ),
       );
     }
     CheckinProfileMedia? featuredMedia;
@@ -336,17 +430,17 @@ class _ProfilePageState extends State<ProfilePage> {
     final bool hasImage =
         featuredMedia != null && featuredMedia.mediaType == MediaType.photo;
 
-    print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
-    print('active ceckin geliyor mu  :  $_activeCheckin');
+    //print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
+    //print('active ceckin geliyor mu  :  $_activeCheckin');
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: Stack(
         children: [
           /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
           Positioned.fill(
             child: hasImage
                 ? Image.network(featuredMedia.url, fit: BoxFit.cover)
-                : _buildModernEmptyStateBackground(),
+                : _buildModernEmptyStateBackground(isDark, theme),
           ),
 
           /// 2. BLUR & GRADIENT KATMANI (Daha derin bir görünüm için)
@@ -354,7 +448,11 @@ class _ProfilePageState extends State<ProfilePage> {
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                child: Container(color: Colors.black.withOpacity(0.2)),
+                child: Container(
+                  color: isDark
+                      ? Colors.black.withOpacity(0.2)
+                      : Colors.white.withOpacity(0.2),
+                ),
               ),
             ),
 
@@ -366,8 +464,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: [
-                    Colors.black,
-                    Colors.black.withOpacity(0.4),
+                    isDark ? Colors.black : Colors.white,
+                    isDark
+                        ? Colors.black.withOpacity(0.4)
+                        : Colors.white.withOpacity(0.6),
                     Colors.transparent,
                   ],
                   stops: const [0.0, 0.4, 0.8],
@@ -381,6 +481,26 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Top Action Bar with Settings
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        onPressed: _openSettings,
+                        icon: Icon(
+                          Icons.settings_outlined,
+                          color: isDark ? Colors.white : theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
                 const Spacer(),
 
                 /// KULLANICI BİLGİLERİ
@@ -390,11 +510,11 @@ class _ProfilePageState extends State<ProfilePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${_user?['full_name'] ?? 'Guest'} ${_user?['age'] ?? ''}',
-                        style: const TextStyle(
+                        '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
+                        style: TextStyle(
                           fontSize: 34,
                           fontWeight: FontWeight.w800,
-                          color: Colors.white,
+                          color: isDark ? Colors.white : Colors.black87,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -416,16 +536,60 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          const Text(
+                          Text(
                             'Online',
                             style: TextStyle(
-                              color: Colors.white70,
+                              color: isDark ? Colors.white70 : Colors.black54,
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
                       ),
+                      if (_showNotificationWarning) ...[
+                        const SizedBox(height: 14),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.35,
+                              ),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Turn on notifications so you don't miss matches.",
+                                style: TextStyle(
+                                  color: isDark
+                                      ? Colors.white
+                                      : theme.colorScheme.onSurface,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  ElevatedButton(
+                                    onPressed: _enableNotificationsFromProfile,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: theme.colorScheme.primary,
+                                      foregroundColor: theme.colorScheme.onPrimary,
+                                    ),
+                                    child: const Text('Enable'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 20),
 
                       /// BIO VEYA NO CHECK-IN UYARISI (Şık bir kutu içinde)
@@ -435,12 +599,16 @@ class _ProfilePageState extends State<ProfilePage> {
                           vertical: 14,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(
-                            hasImage ? 0.1 : 0.05,
-                          ),
+                          color: isDark
+                              ? Colors.white.withOpacity(hasImage ? 0.1 : 0.05)
+                              : Colors.black.withOpacity(
+                                  hasImage ? 0.05 : 0.03,
+                                ),
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.1),
+                            color: isDark
+                                ? Colors.white.withOpacity(0.1)
+                                : Colors.black.withOpacity(0.05),
                           ),
                         ),
                         child: LayoutBuilder(
@@ -450,7 +618,9 @@ class _ProfilePageState extends State<ProfilePage> {
                                 : '✨ You do not have an active check-in.';
 
                             final style = TextStyle(
-                              color: Colors.white.withOpacity(0.9),
+                              color: isDark
+                                  ? Colors.white.withOpacity(0.9)
+                                  : Colors.black.withOpacity(0.8),
                               fontSize: 15,
                               height: 1.4,
                             );
@@ -494,8 +664,10 @@ class _ProfilePageState extends State<ProfilePage> {
                                               _isExpanded
                                                   ? 'See less'
                                                   : 'See more',
-                                              style: const TextStyle(
-                                                color: Colors.white,
+                                              style: TextStyle(
+                                                color: isDark
+                                                    ? Colors.white
+                                                    : theme.colorScheme.primary,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),
@@ -506,10 +678,12 @@ class _ProfilePageState extends State<ProfilePage> {
                                         if (_activeCheckin != null)
                                           GestureDetector(
                                             onTap: _openEditVibeModal,
-                                            child: const Icon(
+                                            child: Icon(
                                               Icons.edit_outlined,
                                               size: 18,
-                                              color: Colors.white70,
+                                              color: isDark
+                                                  ? Colors.white70
+                                                  : Colors.black54,
                                             ),
                                           ),
                                       ],
@@ -521,6 +695,42 @@ class _ProfilePageState extends State<ProfilePage> {
                           },
                         ),
                       ),
+
+                      if (_activeCheckin != null &&
+                          _checkinWhatBrings.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _checkinWhatBrings.map((item) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary.withValues(
+                                  alpha: isDark ? 0.22 : 0.14,
+                                ),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: theme.colorScheme.primary.withValues(
+                                    alpha: 0.45,
+                                  ),
+                                ),
+                              ),
+                              child: Text(
+                                _formatWhatBringsLabel(item),
+                                style: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -533,10 +743,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
+                      Text(
                         "Moments",
                         style: TextStyle(
-                          color: Colors.white,
+                          color: isDark ? Colors.white : Colors.black87,
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
@@ -556,17 +766,21 @@ class _ProfilePageState extends State<ProfilePage> {
                             : GestureDetector(
                                 onTap: _addMomentPhoto,
                                 child: Row(
-                                  children: const [
+                                  children: [
                                     Icon(
                                       Icons.camera_alt_outlined,
                                       size: 18,
-                                      color: Colors.white70,
+                                      color: isDark
+                                          ? Colors.white70
+                                          : theme.colorScheme.primary,
                                     ),
-                                    SizedBox(width: 6),
+                                    const SizedBox(width: 6),
                                     Text(
                                       "Add more",
                                       style: TextStyle(
-                                        color: Colors.white70,
+                                        color: isDark
+                                            ? Colors.white70
+                                            : theme.colorScheme.primary,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
@@ -625,9 +839,11 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   /// RESİM OLMADIĞINDA GÖRÜNECEK MODERN GRADIENT
-  Widget _buildModernEmptyStateBackground() {
+  Widget _buildModernEmptyStateBackground(bool isDark, ThemeData theme) {
     return Container(
-      decoration: const BoxDecoration(color: Color(0xFF0F0F0F)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0F0F0F) : const Color(0xFFF1F5F9),
+      ),
       child: Stack(
         children: [
           // Sol üst köşe ışığı
@@ -639,7 +855,9 @@ class _ProfilePageState extends State<ProfilePage> {
               height: 300,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.deepPurple.withOpacity(0.3),
+                color: theme.colorScheme.primary.withOpacity(
+                  isDark ? 0.25 : 0.15,
+                ),
               ),
             ),
           ),
@@ -652,7 +870,9 @@ class _ProfilePageState extends State<ProfilePage> {
               height: 400,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.blueAccent.withOpacity(0.15),
+                color: isDark
+                    ? Colors.blueAccent.withOpacity(0.15)
+                    : theme.colorScheme.secondary.withOpacity(0.15),
               ),
             ),
           ),

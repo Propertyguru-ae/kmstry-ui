@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -8,13 +9,20 @@ import 'package:kmstry_frontend/features/onboarding/presentation/notification_pe
 import 'permission_steps.dart';
 
 class PermissionsFlowPage extends StatefulWidget {
-  const PermissionsFlowPage({super.key});
+  final bool markProfileCompleted;
+
+  const PermissionsFlowPage({
+    super.key,
+    this.markProfileCompleted = true,
+  });
 
   @override
   State<PermissionsFlowPage> createState() => _PermissionsFlowPageState();
 }
 
 class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
+  final LocationPermissionService _locationPermissionService =
+      LocationPermissionService();
   final List<PermissionStep> _steps = [];
   int _currentIndex = 0;
   bool _initialized = false;
@@ -34,7 +42,7 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
     }
 
     // 📍 Location
-    final locationStatus = await Permission.locationWhenInUse.status;
+    final locationStatus = await _locationPermissionService.status();
     debugPrint('locationStatus: $locationStatus');
 
     if (!locationStatus.isGranted) {
@@ -58,8 +66,8 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
   Future<void> _initPermissions() async {
     final me = await AuthRepository().getMe();
 
-    // Backend onboarding tamamlandıysa direkt geç
-    if (me['onboarding_step'] == 'COMPLETED') {
+    // Account onboarding içinden geliyorsa ve backend completed ise direkt geç.
+    if (widget.markProfileCompleted && me['onboarding_step'] == 'COMPLETED') {
       await _finishPermissions();
       return;
     }
@@ -68,7 +76,7 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
      * 📍 LOCATION — DEVICE ↔ DB SYNC (GÜVENLİ)
      * -------------------------------------------------- */
 
-    final locationStatus = await Permission.locationWhenInUse.status;
+    final locationStatus = await _locationPermissionService.status();
     final bool systemLocationGranted = locationStatus.isGranted;
     final bool? userLocationPermission = me['locationPermissionGranted'];
 
@@ -83,15 +91,24 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
     }
 
     /* --------------------------------------------------
-     * 🔔 NOTIFICATION — SADECE DEVICE FLAG
+     * 🔔 NOTIFICATION — DEVICE ONBOARDING FLAG + SYSTEM STATUS
      * -------------------------------------------------- */
+    final notifOnboardingDone = await SecureStorage.isNotificationOnboardingDone();
+    final notificationStatus = await Permission.notification.status;
+    final systemNotificationGranted =
+        notificationStatus.isGranted ||
+        notificationStatus == PermissionStatus.provisional;
 
+    // If system permission already granted but backend is null, sync once.
+    final bool? accountOptIn = me['notificationPermissionGranted'] as bool?;
+    if (systemNotificationGranted && accountOptIn == null) {
+      await AuthRepository().updatePermissions({
+        'notificationPermissionGranted': true,
+      });
+    }
 
-    final bool? userNotificationPermission =
-        me['notificationPermissionGranted'];
-
-    // iOS için status okunmaz → sadece explicit consent
-    if (userNotificationPermission == null) {
+    // Show notification onboarding only once per device.
+    if (!notifOnboardingDone) {
       _steps.add(PermissionStep.notifications);
     }
 
@@ -101,7 +118,10 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
   }
 
   Future<void> _finishPermissions() async {
-    await AuthRepository().updateMe({'profile_completed': true});
+    if (widget.markProfileCompleted) {
+      await AuthRepository().updateMe({'profile_completed': true});
+    }
+    await SecureStorage.setDevicePermissionsOnboardingDone();
 
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, AuthRoutes.appShell);

@@ -1,19 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class VenueMapView extends StatefulWidget {
   final bool hideSearch;
-  const VenueMapView({super.key, this.hideSearch = false});
+  final ValueChanged<bool>? onLocationAccessChanged;
+  const VenueMapView({
+    super.key,
+    this.hideSearch = false,
+    this.onLocationAccessChanged,
+  });
 
   @override
   State<VenueMapView> createState() => _VenueMapViewState();
 }
 
 class _VenueMapViewState extends State<VenueMapView> {
+  final LocationPermissionService _locationPermissionService =
+      LocationPermissionService();
   LatLng? _currentLocation;
   bool _loading = true;
+  bool _locationPermissionDenied = false;
 
   @override
   void initState() {
@@ -22,26 +32,96 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   Future<void> _loadLocation() async {
-    final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      await Geolocator.requestPermission();
+    setState(() {
+      _loading = true;
+      _locationPermissionDenied = false;
+    });
+
+    final permission = await _locationPermissionService.status();
+
+    if (!permission.isGranted) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _locationPermissionDenied = true;
+      });
+      widget.onLocationAccessChanged?.call(false);
+      return;
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
 
-    setState(() {
-      _currentLocation = LatLng(position.latitude, position.longitude);
-      _loading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = LatLng(position.latitude, position.longitude);
+        _loading = false;
+      });
+      widget.onLocationAccessChanged?.call(true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _locationPermissionDenied = true;
+      });
+      widget.onLocationAccessChanged?.call(false);
+    }
+  }
+
+  Future<void> _enableLocationPermission() async {
+    final status = await Permission.location.status;
+
+    if (status.isGranted) {
+      await _loadLocation();
+    } else if (status.isDenied) {
+      final result = await Permission.location.request();
+      if (result.isGranted) {
+        await _loadLocation();
+      }
+    } else if (status.isPermanentlyDenied) {
+      await openAppSettings();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading || _currentLocation == null) {
+    if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_locationPermissionDenied) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.location_off_outlined, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                'Location permission needed',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Enable location to load nearby venues on the map.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton(
+                onPressed: _enableLocationPermission,
+                child: const Text('Enable'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_currentLocation == null) {
+      return const Center(child: Text('Location unavailable'));
     }
 
     return Stack(
@@ -127,7 +207,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           gradient: RadialGradient(
-            colors: [ 
+            colors: [
               Colors.red.withValues(alpha: 0.8),
               Colors.orange.withValues(alpha: 0.4),
               Colors.transparent,
@@ -170,7 +250,7 @@ class _SearchBar extends StatelessWidget {
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha:0.95),
+        color: Colors.white.withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(22),
         boxShadow: const [
           BoxShadow(
