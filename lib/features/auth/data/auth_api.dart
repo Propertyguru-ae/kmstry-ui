@@ -14,11 +14,28 @@ class AuthApi {
     required String email,
     required String password,
     required String otpProof,
+    required bool consentGiven,
+    required String termsVersionId,
+    required String privacyVersionId,
+    required String consentSource,
   }) async {
     final res = await _client.post(
       '/auth/register',
-      body: {'email': email, 'password': password, 'otpProof': otpProof},
+      body: {
+        'email': email,
+        'password': password,
+        'otpProof': otpProof,
+        'consentGiven': consentGiven,
+        'termsVersionId': termsVersionId,
+        'privacyVersionId': privacyVersionId,
+        'consentSource': consentSource,
+      },
     );
+    return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getActiveLegalVersions() async {
+    final res = await _client.get('/legal/active-versions');
     return res as Map<String, dynamic>;
   }
 
@@ -172,7 +189,9 @@ class AuthApi {
     }) async {
       // #region agent log
       try {
-        final file = File('/Users/denizkorukcu/kmstry_ui/.cursor/debug-1c5261.log');
+        final file = File(
+          '/Users/denizkorukcu/kmstry_ui/.cursor/debug-1c5261.log',
+        );
         final payload = <String, dynamic>{
           'sessionId': '1c5261',
           'runId': 'run1',
@@ -182,7 +201,10 @@ class AuthApi {
           'data': data,
           'timestamp': DateTime.now().millisecondsSinceEpoch,
         };
-        await file.writeAsString('${jsonEncode(payload)}\n', mode: FileMode.append);
+        await file.writeAsString(
+          '${jsonEncode(payload)}\n',
+          mode: FileMode.append,
+        );
       } catch (_) {}
       // #endregion
     }

@@ -8,6 +8,7 @@ class SecureStorage {
   static const _refreshTokenKey = 'refresh_token';
   static const _notificationOnboardingDoneKey = 'notification_onboarding_done';
   static const _devicePermissionsDoneKey = 'device_permissions_done';
+  static const _introSeenKey = 'intro_seen';
 
   static Future<bool> isNotificationOnboardingDone() async {
     // Keep this flag in app prefs (not keychain) so uninstall resets it.
@@ -32,10 +33,21 @@ class SecureStorage {
     await prefs.setString(_devicePermissionsDoneKey, 'true');
   }
 
-static Future<void> clearSession() async {
-  await _storage.delete(key: _accessTokenKey);
-  await _storage.delete(key: _refreshTokenKey);
-}
+  static Future<bool> isIntroSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_introSeenKey);
+    return value == 'true';
+  }
+
+  static Future<void> setIntroSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_introSeenKey, 'true');
+  }
+
+  static Future<void> clearSession() async {
+    await _storage.delete(key: _accessTokenKey);
+    await _storage.delete(key: _refreshTokenKey);
+  }
 
   static Future<void> saveTokens({
     required String accessToken,

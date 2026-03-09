@@ -12,7 +12,12 @@ import 'forgot_password_page.dart';
 import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/app_intro_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/startup_gate_page.dart';
+
 class AuthRoutes {
+  static const startupGate = '/startup-gate';
+  static const appIntro = '/app-intro';
   static const login = '/login';
   static const signup = '/signup';
   static const forgotPassword = '/forgot-password';
@@ -30,6 +35,8 @@ class AuthRoutes {
   static const venueOnboarding = '/venue-onboarding';
 
   static Map<String, WidgetBuilder> routes = {
+    startupGate: (_) => const StartupGatePage(),
+    appIntro: (_) => const AppIntroPage(),
     login: (_) => const LoginPage(),
     signup: (_) => const SignupPage(),
     forgotPassword: (_) => const ForgotPasswordPage(),

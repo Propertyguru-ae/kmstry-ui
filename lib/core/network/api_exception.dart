@@ -9,6 +9,17 @@ class ApiException implements Exception {
 
   @override
   String toString() {
-    return data['message'] ?? 'ApiException';
+    final message = data['message'];
+    if (message is String && message.trim().isNotEmpty) {
+      return message.trim();
+    }
+    if (message is List && message.isNotEmpty) {
+      final first = message.first;
+      final asText = first?.toString().trim() ?? '';
+      if (asText.isNotEmpty) {
+        return asText;
+      }
+    }
+    return 'ApiException';
   }
 }

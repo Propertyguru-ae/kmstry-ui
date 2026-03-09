@@ -57,6 +57,7 @@ dependencies:
   firebase_core: 2.30.0
   firebase_messaging: 14.7.10    
   shared_preferences: ^2.5.4
+  url_launcher: ^6.3.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

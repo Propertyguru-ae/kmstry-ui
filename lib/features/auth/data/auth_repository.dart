@@ -20,11 +20,23 @@ class AuthRepository {
     if (kDebugMode && _enableAuthLogs) debugPrint(message);
   }
 
-  Future<void> register(String email, String password, String otpProof) async {
+  Future<void> register(
+    String email,
+    String password,
+    String otpProof, {
+    required bool consentGiven,
+    required String termsVersionId,
+    required String privacyVersionId,
+    String consentSource = 'MOBILE',
+  }) async {
     final response = await _api.register(
       email: email,
       password: password,
       otpProof: otpProof,
+      consentGiven: consentGiven,
+      termsVersionId: termsVersionId,
+      privacyVersionId: privacyVersionId,
+      consentSource: consentSource,
     );
 
     if (response['success'] == true) {
@@ -40,12 +52,20 @@ class AuthRepository {
   Future<void> registerAndAutoLogin(
     String email,
     String password,
-    String otpProof,
-  ) async {
+    String otpProof, {
+    required bool consentGiven,
+    required String termsVersionId,
+    required String privacyVersionId,
+    String consentSource = 'MOBILE',
+  }) async {
     final response = await _api.register(
       email: email,
       password: password,
       otpProof: otpProof,
+      consentGiven: consentGiven,
+      termsVersionId: termsVersionId,
+      privacyVersionId: privacyVersionId,
+      consentSource: consentSource,
     );
 
     if (response['success'] == true) {
@@ -64,6 +84,53 @@ class AuthRepository {
     _log('🔥 requestRegisterOtp response = $response');
     if (response['success'] == true) return;
     throw Exception(response['message'] ?? 'Failed to send verification code');
+  }
+
+  Future<ActiveLegalVersions> getActiveLegalVersions() async {
+    final data = await _api.getActiveLegalVersions();
+    final payload = data['data'] is Map
+        ? Map<String, dynamic>.from(data['data'] as Map)
+        : data;
+
+    String? readVersionId(
+      Map<String, dynamic> source,
+      String camel,
+      String snake,
+    ) {
+      final raw = source[camel] ?? source[snake];
+      if (raw is Map) {
+        final nested = raw['id'] ?? raw['versionId'] ?? raw['version_id'];
+        final value = nested?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+      final value = raw?.toString().trim();
+      if (value == null || value.isEmpty) return null;
+      return value;
+    }
+
+    final termsVersionId = readVersionId(
+      payload,
+      'termsVersionId',
+      'terms_version_id',
+    );
+    final privacyVersionId = readVersionId(
+      payload,
+      'privacyVersionId',
+      'privacy_version_id',
+    );
+
+    if (termsVersionId == null ||
+        termsVersionId.isEmpty ||
+        privacyVersionId == null ||
+        privacyVersionId.isEmpty) {
+      throw Exception(
+        'Active legal policy versions are missing in /legal/active-versions response.',
+      );
+    }
+    return ActiveLegalVersions(
+      termsVersionId: termsVersionId,
+      privacyVersionId: privacyVersionId,
+    );
   }
 
   Future<String> verifyRegisterOtp({
@@ -237,14 +304,17 @@ class AuthRepository {
       me['nextAction'] ??= context['nextAction'] ?? context['next_action'];
       me['lastActiveContext'] ??=
           context['lastActiveContext'] ?? context['last_active_context'];
-      me['activeVenueId'] ??= context['activeVenueId'] ?? context['active_venue_id'];
+      me['activeVenueId'] ??=
+          context['activeVenueId'] ?? context['active_venue_id'];
       me['resolvedActiveVenueId'] ??=
-          context['resolvedActiveVenueId'] ?? context['resolved_active_venue_id'];
+          context['resolvedActiveVenueId'] ??
+          context['resolved_active_venue_id'];
       me['hasPersonalProfile'] ??=
           context['hasPersonalProfile'] ?? context['has_personal_profile'];
       me['hasVenueMembership'] ??=
           context['hasVenueMembership'] ?? context['has_venue_membership'];
-      me['memberVenues'] ??= context['memberVenues'] ?? context['member_venues'];
+      me['memberVenues'] ??=
+          context['memberVenues'] ?? context['member_venues'];
       me['contextContractValid'] ??=
           context['contextContractValid'] ?? context['context_contract_valid'];
     }
@@ -305,8 +375,9 @@ class AuthRepository {
     if (gender != null && gender.isNotEmpty) {
       mirror['gender'] = gender;
     }
-    final interestedIn =
-        (data['interestedIn'] ?? data['interested_in'])?.toString().trim();
+    final interestedIn = (data['interestedIn'] ?? data['interested_in'])
+        ?.toString()
+        .trim();
     if (interestedIn != null && interestedIn.isNotEmpty) {
       mirror['interested_in'] = interestedIn;
     }
@@ -375,4 +446,14 @@ class AuthRepository {
       rethrow;
     }
   }
+}
+
+class ActiveLegalVersions {
+  final String termsVersionId;
+  final String privacyVersionId;
+
+  const ActiveLegalVersions({
+    required this.termsVersionId,
+    required this.privacyVersionId,
+  });
 }

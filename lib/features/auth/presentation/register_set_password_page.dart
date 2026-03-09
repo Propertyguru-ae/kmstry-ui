@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../data/auth_repository.dart';
 
@@ -15,7 +17,8 @@ class RegisterSetPasswordPage extends StatefulWidget {
   });
 
   @override
-  State<RegisterSetPasswordPage> createState() => _RegisterSetPasswordPageState();
+  State<RegisterSetPasswordPage> createState() =>
+      _RegisterSetPasswordPageState();
 }
 
 class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
@@ -25,11 +28,32 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool _marketingOptIn = true;
+  bool _legalConsent = false;
+  bool _loadingLegalVersions = true;
+  String? _termsVersionId;
+  String? _privacyVersionId;
+  String? _legalVersionsError;
+  String? _legalConsentError;
   bool _loading = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _passwordCtrl.addListener(_onFormChanged);
+    _confirmCtrl.addListener(_onFormChanged);
+    _loadLegalVersions();
+  }
+
+  void _onFormChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
   void dispose() {
+    _passwordCtrl.removeListener(_onFormChanged);
+    _confirmCtrl.removeListener(_onFormChanged);
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
     super.dispose();
@@ -52,6 +76,21 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       }
       if (status >= 500) {
         return 'We are unable to create your account right now. Please try again shortly.';
+      }
+      if (code == 'LEGAL_CONSENT_REQUIRED') {
+        return 'You must accept Terms and Privacy to create an account.';
+      }
+      if (code == 'LEGAL_VERSION_INVALID') {
+        return 'Legal policy version is invalid. Please refresh and try again.';
+      }
+      if (code == 'LEGAL_VERSION_INACTIVE') {
+        return 'Legal policies were updated. Please review and try again.';
+      }
+      if (code == 'LEGAL_VERSION_TYPE_MISMATCH') {
+        return 'Legal policy mismatch detected. Please refresh and try again.';
+      }
+      if (code == 'LEGAL_CONSENT_SOURCE_INVALID') {
+        return 'Invalid consent source. Please update the app and try again.';
       }
       if (message.isNotEmpty) return message;
     }
@@ -77,12 +116,71 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     return '';
   }
 
+  bool get _isPasswordReady =>
+      _passwordCtrl.text.trim().length >= 8 &&
+      _confirmCtrl.text.trim().isNotEmpty &&
+      _confirmCtrl.text == _passwordCtrl.text;
+
+  bool get _canSubmit =>
+      !_loading &&
+      !_loadingLegalVersions &&
+      _legalVersionsError == null &&
+      _legalConsent &&
+      _isPasswordReady;
+
+  Future<void> _loadLegalVersions() async {
+    setState(() {
+      _loadingLegalVersions = true;
+      _legalVersionsError = null;
+    });
+    try {
+      final versions = await AuthRepository().getActiveLegalVersions();
+      if (!mounted) return;
+      setState(() {
+        _termsVersionId = versions.termsVersionId;
+        _privacyVersionId = versions.privacyVersionId;
+        _loadingLegalVersions = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingLegalVersions = false;
+        _legalVersionsError =
+            'Policies could not be loaded. Check /legal/active-versions response shape and try again.';
+      });
+    }
+  }
+
+  Future<void> _openPolicy(String path) async {
+    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open policy link.')),
+      );
+    }
+  }
+
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_legalConsent) {
+      setState(() {
+        _legalConsentError =
+            'You must agree to Terms of Service and Privacy Policy.';
+      });
+      return;
+    }
+    if (_termsVersionId == null || _privacyVersionId == null) {
+      setState(() {
+        _legalVersionsError = 'Policies could not be loaded. Please try again.';
+      });
+      return;
+    }
 
     setState(() {
       _loading = true;
       _error = null;
+      _legalConsentError = null;
     });
 
     try {
@@ -90,6 +188,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
         widget.email,
         _passwordCtrl.text,
         widget.otpProof,
+        consentGiven: true,
+        termsVersionId: _termsVersionId!,
+        privacyVersionId: _privacyVersionId!,
+        consentSource: 'MOBILE',
       );
 
       if (!mounted) return;
@@ -109,9 +211,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: colors.surface,
-      appBar: AppBar(
-        title: const Text('Create Account'),
-      ),
+      appBar: AppBar(title: const Text('Create Account')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -207,9 +307,8 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                       children: [
                         Checkbox(
                           value: _marketingOptIn,
-                          onChanged: (v) => setState(
-                            () => _marketingOptIn = v ?? false,
-                          ),
+                          onChanged: (v) =>
+                              setState(() => _marketingOptIn = v ?? false),
                         ),
                         const Expanded(
                           child: Padding(
@@ -223,22 +322,103 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Checkbox(
+                          value: _legalConsent,
+                          onChanged: _loadingLegalVersions
+                              ? null
+                              : (v) => setState(() {
+                                  _legalConsent = v ?? false;
+                                  _legalConsentError = null;
+                                }),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Wrap(
+                              children: [
+                                const Text(
+                                  'I agree to the ',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                InkWell(
+                                  onTap: () => _openPolicy('/legal/terms'),
+                                  child: Text(
+                                    'Terms of Service',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colors.primary,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                                const Text(
+                                  ' and ',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                InkWell(
+                                  onTap: () => _openPolicy('/legal/privacy'),
+                                  child: Text(
+                                    'Privacy Policy',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colors.primary,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                                const Text('.', style: TextStyle(fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_loadingLegalVersions)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: LinearProgressIndicator(),
+                      ),
+                    if (_legalVersionsError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _legalVersionsError!,
+                                style: TextStyle(color: colors.error),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _loadLegalVersions,
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (_legalConsentError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          _legalConsentError!,
+                          style: TextStyle(color: colors.error),
+                        ),
+                      ),
                     if (_error != null) ...[
                       const SizedBox(height: 6),
-                      Text(
-                        _error!,
-                        style: TextStyle(color: colors.error),
-                      ),
+                      Text(_error!, style: TextStyle(color: colors.error)),
                     ],
                     const SizedBox(height: 16),
                     SizedBox(
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: _loading ? null : _register,
+                        onPressed: _canSubmit ? _register : null,
                         child: _loading
-                            ? CircularProgressIndicator(
-                                color: colors.onPrimary,
-                              )
+                            ? CircularProgressIndicator(color: colors.onPrimary)
                             : const Text('Create Account'),
                       ),
                     ),
