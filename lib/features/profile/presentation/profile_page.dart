@@ -33,9 +33,15 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   bool _uploadingMoment = false;
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
+  String? _profileErrorMessage;
   final NotificationPermissionService _notificationPermissionService =
       NotificationPermissionService();
   bool _showNotificationWarning = false;
+  String _formatDuration(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
 
   bool _isVideoFile(String path) {
     final lower = path.toLowerCase();
@@ -57,27 +63,56 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (media.mediaType == MediaType.video) {
       final thumbnail = media.thumbnailUrl;
       final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
+
       return SizedBox(
         width: thumbWidth,
         height: thumbHeight,
         child: Stack(
           fit: StackFit.expand,
           children: [
+            /// Thumbnail
             if (hasThumbnail)
               Image.network(
-                thumbnail,
+                thumbnail!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(color: Colors.black87),
               )
             else
               Container(color: Colors.black87),
+
+            /// Play icon
             const Center(
               child: Icon(
                 Icons.play_circle_fill,
                 color: Colors.white,
-                size: 30,
+                size: 32,
               ),
             ),
+
+            /// Duration badge
+            if (media.durationSeconds != null)
+              Positioned(
+                bottom: 6,
+                right: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.7),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _formatDuration(media.durationSeconds!),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       );
@@ -90,6 +125,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         child: Image.network(media.url, fit: BoxFit.cover),
       );
     }
+
     return const SizedBox(width: thumbWidth, height: thumbHeight);
   }
 
@@ -117,13 +153,29 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   List<String> _extractWhatBrings(Map<String, dynamic>? activeCheckin) {
     if (activeCheckin == null) return const [];
-    final raw = activeCheckin['what_brings_to_kmstry'];
+    final raw =
+        activeCheckin['what_brings_to_kmstry'] ??
+        activeCheckin['whatBringsToKmstry'];
     if (raw is! List) return const [];
     return raw
         .whereType<String>()
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList();
+  }
+
+  Map<String, dynamic>? _extractActiveCheckin(Map<String, dynamic> me) {
+    final raw = me['activeCheckin'] ?? me['active_checkin'];
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
+  String? _activeCheckinId() {
+    final value = _activeCheckin?['id'];
+    final id = value?.toString().trim();
+    if (id == null || id.isEmpty) return null;
+    return id;
   }
 
   String _formatWhatBringsLabel(String raw) {
@@ -139,8 +191,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Future<void> _refreshNotificationWarningState() async {
     try {
-      final permissionState =
-          await _notificationPermissionService.readStateFromBackend();
+      final permissionState = await _notificationPermissionService
+          .readStateFromBackend();
       // If user enabled system notifications from Settings, sync account preference.
       if (permissionState.systemGranted && !permissionState.accountPreference) {
         await AuthRepository().updatePermissions({
@@ -148,8 +200,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         });
         await PushManager.instance.reconcileNotificationState();
       }
-      final refreshedState =
-          await _notificationPermissionService.readStateFromBackend();
+      final refreshedState = await _notificationPermissionService
+          .readStateFromBackend();
       if (!mounted) return;
       setState(() {
         _showNotificationWarning = !refreshedState.effectiveStatus;
@@ -159,7 +211,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Future<void> _enableNotificationsFromProfile() async {
     final status = await Permission.notification.status;
-    final systemGranted = status.isGranted || status == PermissionStatus.provisional;
+    final systemGranted =
+        status.isGranted || status == PermissionStatus.provisional;
     if (!systemGranted) {
       await openAppSettings();
       return;
@@ -177,6 +230,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   Future<void> _loadProfile() async {
     setState(() {
       _loading = true;
+      _profileErrorMessage = null;
     });
     try {
       final me = await AuthRepository().getMe();
@@ -186,39 +240,49 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
       String? checkinVibe;
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
-      final activeCheckin = me['activeCheckin'];
-      final checkinId = activeCheckin is Map
-          ? activeCheckin['id'] as String?
-          : null;
+      final activeCheckin = _extractActiveCheckin(me);
+      final checkinId = activeCheckin?['id']?.toString();
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _checkinRepo.getCheckinProfile(checkinId);
-          //print('PROFILE :  $profile');
+          print('PROFILE :  $profile');
           //print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
           checkinVibe = profile.checkin.vibe ?? '';
           //print('CHECKIN VIBE :  $checkinVibe');
+          for (final m in profile.media) {
+            print("MEDIA ITEM:");
+            print("url: ${m.url}");
+            print("thumbnail: ${m.thumbnailUrl}");
+            print("type: ${m.mediaType}");
+            print("duration: ${m.durationSeconds}");
+          }
           if (profile.media.isNotEmpty) {
             media = profile.media;
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('Profile checkin fetch failed: $e');
+          _profileErrorMessage =
+              'Moments could not be loaded. Pull to refresh or try again.';
+        }
       }
 
       if (!mounted) return;
       setState(() {
         _user = me;
-        _activeCheckin = me['activeCheckin'];
-        _checkinWhatBrings = _extractWhatBrings(
-          me['activeCheckin'] is Map<String, dynamic>
-              ? me['activeCheckin'] as Map<String, dynamic>
-              : null,
-        );
+        _activeCheckin = activeCheckin;
+        _checkinWhatBrings = _extractWhatBrings(activeCheckin);
         _checkinVibe = checkinVibe;
         _media = media;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Profile load failed: $e');
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _profileErrorMessage =
+            'Profile data could not be loaded. Please retry.';
+      });
     }
   }
 
@@ -234,8 +298,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Future<void> _addMomentPhoto() async {
     if (_activeCheckin == null) return;
-
-    final checkinId = _activeCheckin!['id'] as String;
+    final checkinId = _activeCheckinId();
+    if (checkinId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Active check-in data is missing.')),
+      );
+      return;
+    }
 
     try {
       final hasPermission = await _ensureCameraPermission();
@@ -372,8 +442,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
   Future<void> _saveVibe() async {
     if (_activeCheckin == null) return;
-
-    final checkinId = _activeCheckin!['id'] as String;
+    final checkinId = _activeCheckinId();
+    if (checkinId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Active check-in data is missing.')),
+      );
+      return;
+    }
 
     setState(() => _savingVibe = true);
 
@@ -494,12 +570,44 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         onPressed: _openSettings,
                         icon: Icon(
                           Icons.settings_outlined,
-                          color: isDark ? Colors.white : theme.colorScheme.onSurface,
+                          color: isDark
+                              ? Colors.white
+                              : theme.colorScheme.onSurface,
                         ),
                       ),
                     ],
                   ),
                 ),
+                if (_profileErrorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.errorContainer,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _profileErrorMessage!,
+                              style: TextStyle(
+                                color: theme.colorScheme.onErrorContainer,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _loadProfile,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 const Spacer(),
 
@@ -552,7 +660,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           width: double.infinity,
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                            color: theme.colorScheme.primary.withValues(
+                              alpha: 0.1,
+                            ),
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
                               color: theme.colorScheme.primary.withValues(
@@ -579,8 +689,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                   ElevatedButton(
                                     onPressed: _enableNotificationsFromProfile,
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: theme.colorScheme.primary,
-                                      foregroundColor: theme.colorScheme.onPrimary,
+                                      backgroundColor:
+                                          theme.colorScheme.primary,
+                                      foregroundColor:
+                                          theme.colorScheme.onPrimary,
                                     ),
                                     child: const Text('Enable'),
                                   ),

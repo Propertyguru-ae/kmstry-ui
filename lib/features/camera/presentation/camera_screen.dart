@@ -30,6 +30,7 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isReady = false;
   bool _cameraPermissionDenied = false;
   bool _cameraPermissionPermanentlyDenied = false;
+  bool _microphoneGranted = false;
   CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
 
@@ -56,6 +57,7 @@ class _CameraScreenState extends State<CameraScreen> {
       _cameraPermissionDenied = false;
       _cameraPermissionPermanentlyDenied = false;
     });
+    _microphoneGranted = await Permission.microphone.isGranted;
 
     _currentCamera = cameras.firstWhere(
       (cam) =>
@@ -67,7 +69,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     _controller = CameraController(
       _currentCamera,
-      ResolutionPreset.high,
+      ResolutionPreset.medium,
       enableAudio: true,
     );
 
@@ -154,8 +156,18 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _startVideo() async {
-    final micStatus = await Permission.microphone.request();
-    debugPrint('🎤 Microphone permission result: $micStatus');
+    PermissionStatus micStatus;
+    if (_microphoneGranted) {
+      micStatus = PermissionStatus.granted;
+    } else {
+      final currentMicStatus = await Permission.microphone.status;
+      micStatus = currentMicStatus.isGranted
+          ? currentMicStatus
+          : await Permission.microphone.request();
+      if (micStatus.isGranted) {
+        _microphoneGranted = true;
+      }
+    }
 
     if (micStatus.isPermanentlyDenied) {
       if (!mounted) return;

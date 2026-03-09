@@ -56,8 +56,8 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
     setState(() => _loading = true);
 
     try {
-      await AuthRepository().updateMe({
-        'full_name': _nameController.text.trim(),
+      await AuthRepository().upsertPersonalProfile({
+        'fullName': _nameController.text.trim(),
         'birthdate': _birthdate!.toIso8601String(),
       });
 

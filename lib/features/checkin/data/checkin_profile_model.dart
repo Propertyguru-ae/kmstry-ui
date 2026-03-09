@@ -18,15 +18,22 @@ class CheckinProfileMedia {
   });
 
   factory CheckinProfileMedia.fromJson(Map<String, dynamic> json) {
+    final rawType = (json['media_type'] ?? json['mediaType'])?.toString();
+    final rawDuration = json['duration_seconds'] ?? json['durationSeconds'];
+    int? duration;
+    if (rawDuration is num) {
+      duration = rawDuration.toInt();
+    } else if (rawDuration != null) {
+      duration = int.tryParse(rawDuration.toString());
+    }
     return CheckinProfileMedia(
-      id: json['id'],
-      url: json['url'],
-      mediaType: json['media_type'] == 'video'
-          ? MediaType.video
-          : MediaType.photo,
-      isFeatured: json['is_featured'] ?? false,
-      thumbnailUrl: json['thumbnail_url'],
-      durationSeconds: json['duration_seconds'],
+      id: json['id']?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      mediaType: rawType == 'video' ? MediaType.video : MediaType.photo,
+      isFeatured: json['is_featured'] == true || json['isFeatured'] == true,
+      thumbnailUrl:
+          (json['thumbnail_url'] ?? json['thumbnailUrl'])?.toString(),
+      durationSeconds: duration,
     );
   }
 
@@ -78,9 +85,11 @@ class CheckinProfile {
 
   factory CheckinProfile.fromJson(Map<String, dynamic> json) {
     // Parse relationship object (preferred)
-    final relationship = json['relationship'] as Map<String, dynamic>?;
-    final myAction = relationship?['myActionAtThisVenue'] as String?;
-    final theirAction = relationship?['theirActionAtThisVenue'] as String?;
+    final relationship = json['relationship'] is Map
+        ? Map<String, dynamic>.from(json['relationship'] as Map)
+        : null;
+    final myAction = relationship?['myActionAtThisVenue']?.toString();
+    final theirAction = relationship?['theirActionAtThisVenue']?.toString();
 
     // Parse timestamps from relationship
     DateTime? parseTimestamp(dynamic value) {
@@ -104,17 +113,24 @@ class CheckinProfile {
 
     // Backward compatibility: fallback to flat fields if relationship doesn't exist
     return CheckinProfile(
-      user: CheckinProfileUser.fromJson(json['user']),
-      checkin: CheckinProfileCheckin.fromJson(json['checkin']),
-      media: (json['media'] as List)
-          .map((e) => CheckinProfileMedia.fromJson(e))
+      user: CheckinProfileUser.fromJson(
+        json['user'] is Map ? Map<String, dynamic>.from(json['user'] as Map) : const {},
+      ),
+      checkin: CheckinProfileCheckin.fromJson(
+        json['checkin'] is Map
+            ? Map<String, dynamic>.from(json['checkin'] as Map)
+            : const {},
+      ),
+      media: (json['media'] is List ? json['media'] as List : const [])
+          .whereType<Map>()
+          .map((e) => CheckinProfileMedia.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
       isMatched: json['is_matched'] as bool? ?? false,
-      chatId: json['chat_id'] as String?,
-      feedAction: json['feed_action'] as String?,
-      myActionAtThisVenue: myAction ?? json['feed_action'] as String?,
+      chatId: json['chat_id']?.toString(),
+      feedAction: json['feed_action']?.toString(),
+      myActionAtThisVenue: myAction ?? json['feed_action']?.toString(),
       theirActionAtThisVenue:
-          theirAction ?? json['their_action_at_this_venue'] as String?,
+          theirAction ?? json['their_action_at_this_venue']?.toString(),
       myActionCreatedAt: myActionCreatedAt,
       theirActionCreatedAt: theirActionCreatedAt,
     );
@@ -139,13 +155,16 @@ class CheckinProfileUser {
   });
 
   factory CheckinProfileUser.fromJson(Map<String, dynamic> json) {
+    final birthdateRaw = json['birthdate']?.toString();
     return CheckinProfileUser(
-      id: json['id'],
-      fullName: json['full_name'],
-      birthdate: DateTime.parse(json['birthdate']),
-      gender: json['gender'],
-      isVerified: json['is_verified'],
-      isPremium: json['is_premium'],
+      id: json['id']?.toString() ?? '',
+      fullName: (json['full_name'] ?? json['fullName'])?.toString() ?? 'Guest',
+      birthdate:
+          DateTime.tryParse(birthdateRaw ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      gender: json['gender']?.toString() ?? '',
+      isVerified: json['is_verified'] == true || json['isVerified'] == true,
+      isPremium: json['is_premium'] == true || json['isPremium'] == true,
     );
   }
 }
@@ -162,10 +181,13 @@ class CheckinProfileCheckin {
   });
 
   factory CheckinProfileCheckin.fromJson(Map<String, dynamic> json) {
+    final expiresAtRaw = (json['expires_at'] ?? json['expiresAt'])?.toString();
     return CheckinProfileCheckin(
-      id: json['id'],
-      vibe: json['vibe'],
-      expiresAt: DateTime.parse(json['expires_at']),
+      id: json['id']?.toString() ?? '',
+      vibe: json['vibe']?.toString(),
+      expiresAt:
+          DateTime.tryParse(expiresAtRaw ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
 }
@@ -183,9 +205,9 @@ class CheckinProfilePhoto {
 
   factory CheckinProfilePhoto.fromJson(Map<String, dynamic> json) {
     return CheckinProfilePhoto(
-      id: json['id'],
-      url: json['url'],
-      isFeatured: json['isFeatured'],
+      id: json['id']?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      isFeatured: json['isFeatured'] == true || json['is_featured'] == true,
     );
   }
 }

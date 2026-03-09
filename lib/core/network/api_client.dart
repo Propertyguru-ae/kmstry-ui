@@ -1,23 +1,37 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import 'api_exception.dart';
 
 class ApiClient {
   final http.Client _client = http.Client();
+  static const bool _enableVerboseHttpLogs = false;
 
-   Future<dynamic>post(
+  void _log(String message) {
+    if (kDebugMode && _enableVerboseHttpLogs) {
+      debugPrint(message);
+    }
+  }
+
+  String _truncate(dynamic value, {int max = 500}) {
+    final text = value?.toString() ?? 'null';
+    if (text.length <= max) return text;
+    return '${text.substring(0, max)}... [truncated ${text.length - max} chars]';
+  }
+
+  Future<dynamic> post(
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
 
-    print('🌐 [HTTP] POST $url');
-    print('🌐 [HTTP] headers = $headers');
-    print('🌐 [HTTP] body = $body');
+    _log('🌐 [HTTP] POST $url');
+    _log('🌐 [HTTP] headers = ${_truncate(headers)}');
+    _log('🌐 [HTTP] body = ${_truncate(body)}');
 
     try {
       final response = await _client
@@ -28,8 +42,8 @@ class ApiClient {
           )
           .timeout(const Duration(seconds: 10));
 
-      print('🌐 [HTTP] statusCode = ${response.statusCode}');
-      print('🌐 [HTTP] raw response = ${response.body}');
+      _log('🌐 [HTTP] statusCode = ${response.statusCode}');
+      _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
       final data = jsonDecode(response.body);
 
@@ -39,13 +53,13 @@ class ApiClient {
 
       return data;
     } on SocketException catch (e) {
-      print('❌ [HTTP] SocketException: $e');
+      _log('❌ [HTTP] SocketException: $e');
       rethrow;
     } on TimeoutException catch (e) {
-      print('⏱️ [HTTP] TimeoutException: $e');
+      _log('⏱️ [HTTP] TimeoutException: $e');
       rethrow;
     } catch (e) {
-      print('❌ [HTTP] Unknown error: $e');
+      _log('❌ [HTTP] Unknown error: $e');
       rethrow;
     }
   }
@@ -56,16 +70,16 @@ class ApiClient {
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
 
-    print('🌐 [HTTP] GET $url');
-    print('🌐 [HTTP] headers = $headers');
+    _log('🌐 [HTTP] GET $url');
+    _log('🌐 [HTTP] headers = ${_truncate(headers)}');
 
     try {
       final response = await _client
           .get(url, headers: {'Content-Type': 'application/json', ...?headers})
           .timeout(const Duration(seconds: 10));
 
-      print('🌐 [HTTP] statusCode = ${response.statusCode}');
-      print('🌐 [HTTP] raw response = ${response.body}');
+      _log('🌐 [HTTP] statusCode = ${response.statusCode}');
+      _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
       final data = jsonDecode(response.body);
 
@@ -75,21 +89,21 @@ class ApiClient {
 
       return data;
     } catch (e) {
-      print('❌ [HTTP] GET error: $e');
+      _log('❌ [HTTP] GET error: $e');
       rethrow;
     }
   }
 
-   Future<dynamic> patch(
+  Future<dynamic> patch(
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
 
-    print('🌐 [HTTP] PATCH $url');
-    print('🌐 [HTTP] headers = $headers');
-    print('🌐 [HTTP] body = $body');
+    _log('🌐 [HTTP] PATCH $url');
+    _log('🌐 [HTTP] headers = ${_truncate(headers)}');
+    _log('🌐 [HTTP] body = ${_truncate(body)}');
 
     try {
       final response = await _client
@@ -100,8 +114,8 @@ class ApiClient {
           )
           .timeout(const Duration(seconds: 10));
 
-      print('🌐 [HTTP] statusCode = ${response.statusCode}');
-      print('🌐 [HTTP] raw response = ${response.body}');
+      _log('🌐 [HTTP] statusCode = ${response.statusCode}');
+      _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
       final data = jsonDecode(response.body);
 
@@ -111,13 +125,13 @@ class ApiClient {
 
       return data;
     } on SocketException catch (e) {
-      print('❌ [HTTP] SocketException: $e');
+      _log('❌ [HTTP] SocketException: $e');
       rethrow;
     } on TimeoutException catch (e) {
-      print('⏱️ [HTTP] TimeoutException: $e');
+      _log('⏱️ [HTTP] TimeoutException: $e');
       rethrow;
     } catch (e) {
-      print('❌ [HTTP] Unknown error: $e');
+      _log('❌ [HTTP] Unknown error: $e');
       rethrow;
     }
   }
@@ -128,15 +142,15 @@ class ApiClient {
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
 
-    print('🌐 [HTTP] DELETE $url');
+    _log('🌐 [HTTP] DELETE $url');
 
     try {
       final response = await _client
           .delete(url, headers: {'Content-Type': 'application/json', ...?headers})
           .timeout(const Duration(seconds: 10));
 
-      print('🌐 [HTTP] statusCode = ${response.statusCode}');
-      print('🌐 [HTTP] raw response = ${response.body}');
+      _log('🌐 [HTTP] statusCode = ${response.statusCode}');
+      _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
       if (response.body.isEmpty) {
         return null;
@@ -150,13 +164,13 @@ class ApiClient {
 
       return data;
     } on SocketException catch (e) {
-      print('❌ [HTTP] SocketException: $e');
+      _log('❌ [HTTP] SocketException: $e');
       rethrow;
     } on TimeoutException catch (e) {
-      print('⏱️ [HTTP] TimeoutException: $e');
+      _log('⏱️ [HTTP] TimeoutException: $e');
       rethrow;
     } catch (e) {
-      print('❌ [HTTP] DELETE error: $e');
+      _log('❌ [HTTP] DELETE error: $e');
       rethrow;
     }
   }

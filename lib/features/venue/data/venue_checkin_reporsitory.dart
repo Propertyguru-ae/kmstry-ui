@@ -56,7 +56,7 @@ class VenueCheckinRepository {
 
         final List data = decoded;
         debugPrint("✅ decoded runtime=${decoded.runtimeType}");
-        debugPrint("✅ decoded length=${(decoded as List).length}");
+        debugPrint("✅ decoded length=${data.length}");
         return data
             .map((e) => VenueCheckin.fromJson(e as Map<String, dynamic>))
             .toList();
@@ -114,19 +114,21 @@ class VenueCheckinRepository {
       throw Exception('UnAuth: No access token available');
     }
 
+    Object? lastError;
     try {
       // Approach 1: Check /auth/me for active_checkin field
       try {
         final me = await AuthRepository().getMe();
+        final rawActiveCheckin = me['activeCheckin'] ?? me['active_checkin'];
         debugPrint(
           '🔍 DEBUG getActiveCheckin: /auth/me response keys = ${me.keys}',
         );
         debugPrint(
-          '🔍 DEBUG getActiveCheckin: me[activeCheckin] = ${me['activeCheckin']}',
+          '🔍 DEBUG getActiveCheckin: me[activeCheckin] = $rawActiveCheckin',
         );
 
-        if (me['activeCheckin'] != null) {
-          final activeCheckinData = me['activeCheckin'] as Map<String, dynamic>;
+        if (rawActiveCheckin is Map) {
+          final activeCheckinData = Map<String, dynamic>.from(rawActiveCheckin);
           debugPrint(
             '🔍 DEBUG getActiveCheckin: activeCheckinData = $activeCheckinData',
           );
@@ -159,6 +161,7 @@ class VenueCheckinRepository {
       } catch (e) {
         // If /auth/me doesn't have active_checkin, continue to next approach
         debugPrint('⚠️ /auth/me does not include active_checkin: $e');
+        lastError = e;
       }
 
       // Approach 2: Try dedicated endpoint /checkins/active
@@ -185,7 +188,9 @@ class VenueCheckinRepository {
 
         if (res.statusCode >= 400) {
           // Try alternative endpoint
-          throw Exception('Failed to get active checkin (${res.statusCode})');
+          throw Exception(
+            'Failed to get active checkin from /checkins/active (${res.statusCode})',
+          );
         }
 
         if (res.body.isEmpty) {
@@ -202,6 +207,7 @@ class VenueCheckinRepository {
         );
         return checkin.isActive ? checkin : null;
       } catch (e) {
+        lastError = e;
         // Approach 3: Try /users/me/checkins/active
         try {
           final res = await http
@@ -224,7 +230,9 @@ class VenueCheckinRepository {
           }
 
           if (res.statusCode >= 400) {
-            return null; // No active check-in or endpoint doesn't exist
+            throw Exception(
+              'Failed to get active checkin from /users/me/checkins/active (${res.statusCode})',
+            );
           }
 
           if (res.body.isEmpty) {
@@ -241,23 +249,19 @@ class VenueCheckinRepository {
           );
           return checkin.isActive ? checkin : null;
         } catch (e2) {
-          // Both endpoints failed, assume no active check-in
+          lastError = e2;
           debugPrint(
             '⚠️ Could not fetch active check-in from any endpoint: $e2',
           );
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: All approaches failed, returning null',
-          );
-          return null;
+          throw Exception('Could not determine active check-in state');
         }
       }
     } catch (e) {
-      // If all approaches fail, return null (no active check-in)
       debugPrint('⚠️ Error fetching active check-in: $e');
-      debugPrint('🔍 DEBUG getActiveCheckin: Outer catch, returning null');
-      return null;
+      if (lastError != null) {
+        throw Exception('Failed to fetch active check-in: $lastError');
+      }
+      rethrow;
     }
-    debugPrint('🔍 DEBUG getActiveCheckin: Reached end, returning null');
-    return null;
   }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
-import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
 
 import '../data/auth_repository.dart';
 
@@ -93,7 +93,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       );
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const ContextChoicePage()),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = _friendlySignupError(e));

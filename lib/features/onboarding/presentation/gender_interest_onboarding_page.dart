@@ -22,14 +22,21 @@ class _GenderInterestOnboardingPageState
     if (!valid) return;
 
     setState(() => loading = true);
+    try {
+      await AuthRepository().upsertPersonalProfile({
+        'gender': gender!,
+        'interestedIn': interest!,
+      });
 
-    await AuthRepository().updateMe({
-      'gender': gender,
-      'interested_in': interest,
-    });
-
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Something went wrong')),
+      );
+    }
   }
 
   Widget tile(

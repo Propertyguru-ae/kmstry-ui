@@ -3,9 +3,9 @@ import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_gate_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/photo_onboarding_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
-import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'login_page.dart';
 import 'signup_page.dart';
 import 'forgot_password_page.dart';
@@ -26,6 +26,8 @@ class AuthRoutes {
   static const people = '/people';
   static const messages = '/messages';
   static const notifications = '/notifications';
+  static const contextChoice = '/context-choice';
+  static const venueOnboarding = '/venue-onboarding';
 
   static Map<String, WidgetBuilder> routes = {
     login: (_) => const LoginPage(),
@@ -36,6 +38,8 @@ class AuthRoutes {
     profile: (_) => const ProfilePage(),
     messages: (_) => const DmListPage(),
     notifications: (_) => const NotificationPage(),
+    contextChoice: (_) => const ContextChoicePage(),
+    venueOnboarding: (_) => const VenueContextOnboardingPage(),
     people: (_) => const PeoplePage(),
     onboardingPhoto: (context) => const PhotoOnboardingPage(),
     appShell: (context) => const AppShell(),

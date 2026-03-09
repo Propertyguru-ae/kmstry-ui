@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
@@ -134,6 +135,97 @@ class AuthApi {
     );
 
     return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> upsertPersonalProfile({
+    required String accessToken,
+    required Map<String, dynamic> data,
+  }) async {
+    try {
+      final res = await _client.post(
+        '/users/me/personal-profile',
+        body: data,
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+      return res as Map<String, dynamic>;
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      // Backward compatibility for environments without personal-profile route.
+      final fallback = await _client.patch(
+        '/users/me',
+        body: data,
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+      return fallback as Map<String, dynamic>;
+    }
+  }
+
+  Future<Map<String, dynamic>> switchContext({
+    required String accessToken,
+    required String lastActiveContext,
+    String? activeVenueId,
+  }) async {
+    Future<void> debugLog({
+      required String hypothesisId,
+      required String message,
+      required Map<String, dynamic> data,
+    }) async {
+      // #region agent log
+      try {
+        final file = File('/Users/denizkorukcu/kmstry_ui/.cursor/debug-1c5261.log');
+        final payload = <String, dynamic>{
+          'sessionId': '1c5261',
+          'runId': 'run1',
+          'hypothesisId': hypothesisId,
+          'location': 'auth_api.dart:switchContext',
+          'message': message,
+          'data': data,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        await file.writeAsString('${jsonEncode(payload)}\n', mode: FileMode.append);
+      } catch (_) {}
+      // #endregion
+    }
+
+    await debugLog(
+      hypothesisId: 'H1',
+      message: 'switchContext entry',
+      data: {
+        'hasActiveVenueId': activeVenueId != null,
+        'lastActiveContext': lastActiveContext,
+      },
+    );
+
+    final body = <String, dynamic>{
+      'lastActiveContext': lastActiveContext,
+      if (activeVenueId != null) 'activeVenueId': activeVenueId,
+    };
+    await debugLog(
+      hypothesisId: 'H2',
+      message: 'switchContext request body keys',
+      data: {'keys': body.keys.toList()},
+    );
+
+    try {
+      final res = await _client.patch(
+        '/users/me/context',
+        body: body,
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+      await debugLog(
+        hypothesisId: 'H4',
+        message: 'switchContext success',
+        data: {'responseKeys': (res as Map<String, dynamic>).keys.toList()},
+      );
+      return res;
+    } on ApiException catch (e) {
+      await debugLog(
+        hypothesisId: 'H3',
+        message: 'switchContext api error',
+        data: {'statusCode': e.statusCode, 'error': e.data},
+      );
+      rethrow;
+    }
   }
 
   Future<void> updatePermissions({

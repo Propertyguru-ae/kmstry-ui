@@ -1,4 +1,5 @@
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
 import 'auth_api.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -13,6 +14,11 @@ class AuthRepository {
     serverClientId:
         '525936528438-c2i235kepeou80utta1rhsgg7jdfhrca.apps.googleusercontent.com',
   );
+
+  static const bool _enableAuthLogs = false;
+  void _log(String message) {
+    if (kDebugMode && _enableAuthLogs) debugPrint(message);
+  }
 
   Future<void> register(String email, String password, String otpProof) async {
     final response = await _api.register(
@@ -55,6 +61,7 @@ class AuthRepository {
 
   Future<void> requestRegisterOtp(String email) async {
     final response = await _api.requestRegisterOtp(email: email);
+    _log('🔥 requestRegisterOtp response = $response');
     if (response['success'] == true) return;
     throw Exception(response['message'] ?? 'Failed to send verification code');
   }
@@ -86,10 +93,10 @@ class AuthRepository {
   }
 
   Future<bool> login(String email, String password) async {
-    print('🔥 Password login started');
+    _log('🔥 Password login started');
 
     final response = await _api.login(email: email, password: password);
-    print('📡 backend password response = $response');
+    _log('📡 backend password response = $response');
 
     if (response['success'] == true) {
       await SecureStorage.saveTokens(
@@ -128,10 +135,10 @@ class AuthRepository {
   }
 
   Future<bool> loginWithGoogle() async {
-    print('🔥 Google login started');
+    _log('🔥 Google login started');
 
     final googleUser = await _googleSignIn.signIn();
-    print('👤 googleUser = $googleUser');
+    _log('👤 googleUser = $googleUser');
 
     if (googleUser == null) return false;
 
@@ -143,7 +150,7 @@ class AuthRepository {
     }
 
     final response = await _api.loginWithGoogle(idToken: idToken);
-    print('📡 backend google response = $response');
+    _log('📡 backend google response = $response');
 
     if (response['success'] == true) {
       await SecureStorage.saveTokens(
@@ -217,10 +224,58 @@ class AuthRepository {
     if (token == null) {
       throw Exception('Not authenticated');
     }
-    final userrr = _api.me(accessToken: token);
-    print('👤 googleUser = $userrr');
+    final me = await _api.me(accessToken: token);
+    return _normalizeMeResponse(me);
+  }
 
-    return _api.me(accessToken: token);
+  Map<String, dynamic> _normalizeMeResponse(Map<String, dynamic> source) {
+    final me = Map<String, dynamic>.from(source);
+    final nestedContext = me['context'];
+    if (nestedContext is Map) {
+      final context = Map<String, dynamic>.from(nestedContext);
+      me['homeRoute'] ??= context['homeRoute'] ?? context['home_route'];
+      me['nextAction'] ??= context['nextAction'] ?? context['next_action'];
+      me['lastActiveContext'] ??=
+          context['lastActiveContext'] ?? context['last_active_context'];
+      me['activeVenueId'] ??= context['activeVenueId'] ?? context['active_venue_id'];
+      me['resolvedActiveVenueId'] ??=
+          context['resolvedActiveVenueId'] ?? context['resolved_active_venue_id'];
+      me['hasPersonalProfile'] ??=
+          context['hasPersonalProfile'] ?? context['has_personal_profile'];
+      me['hasVenueMembership'] ??=
+          context['hasVenueMembership'] ?? context['has_venue_membership'];
+      me['memberVenues'] ??= context['memberVenues'] ?? context['member_venues'];
+      me['contextContractValid'] ??=
+          context['contextContractValid'] ?? context['context_contract_valid'];
+    }
+
+    me['fullName'] ??= me['full_name'];
+    me['interestedIn'] ??= me['interested_in'];
+    me['onboardingStep'] ??= me['onboarding_step'];
+    me['activeCheckin'] ??= me['active_checkin'];
+    me['hasPersonalProfile'] ??= me['has_personal_profile'];
+    me['hasVenueMembership'] ??= me['has_venue_membership'];
+    me['memberVenues'] ??= me['member_venues'];
+    me['homeRoute'] ??= me['home_route'];
+    me['nextAction'] ??= me['next_action'];
+    me['lastActiveContext'] ??= me['last_active_context'];
+    me['activeVenueId'] ??= me['active_venue_id'];
+    me['resolvedActiveVenueId'] ??= me['resolved_active_venue_id'];
+
+    return me;
+  }
+
+  Future<Map<String, dynamic>> switchContext({
+    required String lastActiveContext,
+    String? activeVenueId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    return _api.switchContext(
+      accessToken: token,
+      lastActiveContext: lastActiveContext,
+      activeVenueId: activeVenueId,
+    );
   }
 
   Future<void> updateMe(Map<String, dynamic> data) async {
@@ -228,6 +283,36 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
 
     await _api.updateMe(accessToken: token, data: data);
+  }
+
+  Future<void> upsertPersonalProfile(Map<String, dynamic> data) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _api.upsertPersonalProfile(accessToken: token, data: data);
+
+    // Keep legacy /auth/me fields in sync for clients that still read user root fields.
+    final mirror = <String, dynamic>{};
+    final fullName = (data['fullName'] ?? data['full_name'])?.toString().trim();
+    if (fullName != null && fullName.isNotEmpty) {
+      mirror['full_name'] = fullName;
+    }
+    final birthdate = data['birthdate']?.toString().trim();
+    if (birthdate != null && birthdate.isNotEmpty) {
+      mirror['birthdate'] = birthdate;
+    }
+    final gender = data['gender']?.toString().trim();
+    if (gender != null && gender.isNotEmpty) {
+      mirror['gender'] = gender;
+    }
+    final interestedIn =
+        (data['interestedIn'] ?? data['interested_in'])?.toString().trim();
+    if (interestedIn != null && interestedIn.isNotEmpty) {
+      mirror['interested_in'] = interestedIn;
+    }
+    if (mirror.isNotEmpty) {
+      await _api.updateMe(accessToken: token, data: mirror);
+    }
   }
 
   Future<void> uploadProfilePhoto1(File file) async {
@@ -279,14 +364,14 @@ class AuthRepository {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
-    print('🟡 updatePermissions called with: $data');
+    _log('🟡 updatePermissions called with: $data');
 
     try {
       await _api.updatePermissions(accessToken: token, data: data);
 
-      print('🟢 updatePermissions success');
+      _log('🟢 updatePermissions success');
     } catch (e) {
-      print('🔴 updatePermissions error: $e');
+      _log('🔴 updatePermissions error: $e');
       rethrow;
     }
   }
