@@ -201,7 +201,12 @@ class AuthRepository {
     }
   }
 
-  Future<bool> loginWithGoogle() async {
+  Future<bool> loginWithGoogle({
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
+  }) async {
     _log('🔥 Google login started');
 
     final googleUser = await _googleSignIn.signIn();
@@ -216,7 +221,13 @@ class AuthRepository {
       throw Exception('Google idToken is null');
     }
 
-    final response = await _api.loginWithGoogle(idToken: idToken);
+    final response = await _api.loginWithGoogle(
+      idToken: idToken,
+      consentGiven: consentGiven,
+      termsVersionId: termsVersionId,
+      privacyVersionId: privacyVersionId,
+      consentSource: consentSource,
+    );
     _log('📡 backend google response = $response');
 
     if (response['success'] == true) {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../data/auth_repository.dart';
 import 'auth_routes.dart';
 
@@ -18,6 +20,131 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   bool _obscure = true;
   String? _error;
+
+  bool _isConsentRequiredError(ApiException error) {
+    final code = error.data['errorCode']?.toString().toUpperCase();
+    final message = _extractBackendMessage(error.data).toLowerCase();
+    return code == 'CONSENT_REQUIRED_FOR_SOCIAL_LOGIN' ||
+        code == 'LEGAL_CONSENT_REQUIRED' ||
+        message.contains('consent is required for first-time social login');
+  }
+
+  Future<void> _openPolicy(String path) async {
+    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open policy link.')),
+      );
+    }
+  }
+
+  Future<bool?> _showGoogleConsentSheet() {
+    bool consent = false;
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final colors = Theme.of(sheetContext).colorScheme;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Consent Required',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text('Please agree to continue with Google sign in.'),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Checkbox(
+                          value: consent,
+                          onChanged: (v) =>
+                              setSheetState(() => consent = v ?? false),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Wrap(
+                              children: [
+                                const Text('I agree to the '),
+                                InkWell(
+                                  onTap: () => _openPolicy('/legal/terms'),
+                                  child: Text(
+                                    'Terms of Service',
+                                    style: TextStyle(
+                                      color: colors.primary,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                                const Text(' and '),
+                                InkWell(
+                                  onTap: () => _openPolicy('/legal/privacy'),
+                                  child: Text(
+                                    'Privacy Policy',
+                                    style: TextStyle(
+                                      color: colors.primary,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                                const Text('.'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: consent
+                            ? () => Navigator.of(sheetContext).pop(true)
+                            : null,
+                        child: const Text('Continue'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<bool> _loginWithGoogleWithConsentFlow() async {
+    final authRepository = AuthRepository();
+    try {
+      return await authRepository.loginWithGoogle();
+    } on ApiException catch (e) {
+      if (!_isConsentRequiredError(e)) rethrow;
+      final versions = await authRepository.getActiveLegalVersions();
+      if (!mounted) return false;
+      final consent = await _showGoogleConsentSheet();
+      if (consent != true) return false;
+      return authRepository.loginWithGoogle(
+        consentGiven: true,
+        termsVersionId: versions.termsVersionId,
+        privacyVersionId: versions.privacyVersionId,
+        consentSource: 'MOBILE',
+      );
+    }
+  }
 
   String _friendlyLoginError(Object error) {
     if (error is ApiException) {
@@ -90,16 +217,20 @@ class _LoginPageState extends State<LoginPage> {
               if (providers.contains('google'))
                 ElevatedButton(
                   onPressed: () async {
-                    final authRepository = AuthRepository();
                     final navigator = Navigator.of(context);
+                    final messenger = ScaffoldMessenger.of(context);
 
-                    final success = await authRepository.loginWithGoogle();
-                    if (!context.mounted) return;
-
-                    if (success) {
-                      navigator.pop();
-                      navigator.pushReplacementNamed(
-                        AuthRoutes.authGate,
+                    try {
+                      final success = await _loginWithGoogleWithConsentFlow();
+                      if (!context.mounted) return;
+                      if (success) {
+                        navigator.pop();
+                        navigator.pushReplacementNamed(AuthRoutes.authGate);
+                      }
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(content: Text(_friendlyLoginError(e))),
                       );
                     }
                   },
@@ -138,7 +269,6 @@ class _LoginPageState extends State<LoginPage> {
           _handleSocialLoginOnly(e.data);
           return;
         }
-
       }
       setState(() => _error = _friendlyLoginError(e));
     } finally {
@@ -198,8 +328,10 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 validator: (v) {
                                   final x = (v ?? '').trim();
-                                  if (x.isEmpty) return 'Please enter your email address.';
-                                  if (!x.contains('@')) return 'Please enter a valid email address.';
+                                  if (x.isEmpty)
+                                    return 'Please enter your email address.';
+                                  if (!x.contains('@'))
+                                    return 'Please enter a valid email address.';
                                   return null;
                                 },
                               ),
@@ -274,7 +406,9 @@ class _LoginPageState extends State<LoginPage> {
                                 child: Text(
                                   'Or',
                                   style: TextStyle(
-                                    color: colors.onSurface.withValues(alpha: 0.7),
+                                    color: colors.onSurface.withValues(
+                                      alpha: 0.7,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -283,7 +417,9 @@ class _LoginPageState extends State<LoginPage> {
                                 child: Text(
                                   'Sign in with',
                                   style: TextStyle(
-                                    color: colors.onSurface.withValues(alpha: 0.8),
+                                    color: colors.onSurface.withValues(
+                                      alpha: 0.8,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -300,8 +436,8 @@ class _LoginPageState extends State<LoginPage> {
                                         context,
                                       );
                                       try {
-                                        final success = await AuthRepository()
-                                            .loginWithGoogle();
+                                        final success =
+                                            await _loginWithGoogleWithConsentFlow();
                                         if (!mounted) return;
 
                                         if (success) {
@@ -313,7 +449,9 @@ class _LoginPageState extends State<LoginPage> {
                                         if (!mounted) return;
                                         messenger.showSnackBar(
                                           SnackBar(
-                                            content: Text(_friendlyLoginError(e)),
+                                            content: Text(
+                                              _friendlyLoginError(e),
+                                            ),
                                           ),
                                         );
                                       }
@@ -335,7 +473,9 @@ class _LoginPageState extends State<LoginPage> {
                                   Text(
                                     "Don’t have an account? ",
                                     style: TextStyle(
-                                      color: colors.onSurface.withValues(alpha: 0.85),
+                                      color: colors.onSurface.withValues(
+                                        alpha: 0.85,
+                                      ),
                                     ),
                                   ),
                                   TextButton(

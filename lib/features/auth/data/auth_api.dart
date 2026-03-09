@@ -119,8 +119,19 @@ class AuthApi {
 
   Future<Map<String, dynamic>> loginWithGoogle({
     required String idToken,
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
   }) async {
-    final res = await _client.post('/auth/google', body: {'idToken': idToken});
+    final body = <String, dynamic>{
+      'idToken': idToken,
+      if (consentGiven != null) 'consentGiven': consentGiven,
+      if (termsVersionId != null) 'termsVersionId': termsVersionId,
+      if (privacyVersionId != null) 'privacyVersionId': privacyVersionId,
+      if (consentSource != null) 'consentSource': consentSource,
+    };
+    final res = await _client.post('/auth/google', body: body);
 
     return res as Map<String, dynamic>;
   }
