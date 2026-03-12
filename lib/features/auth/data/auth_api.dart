@@ -39,6 +39,18 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getUsernameSuggestions({
+    required String accessToken,
+    required String base,
+  }) async {
+    final encodedBase = Uri.encodeQueryComponent(base);
+    final res = await _client.get(
+      '/users/me/username-suggestions?base=$encodedBase',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return res as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> requestRegisterOtp({
     required String email,
   }) async {

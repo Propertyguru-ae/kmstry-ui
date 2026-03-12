@@ -67,6 +67,7 @@ class _NotificationPageState extends State<NotificationPage> {
               dedupeKey: n.dedupeKey,
             ),
           )
+          .where((n) => !_isStaleInterestedAfterMatch(n))
           .toList();
       setState(() {
         _list = asRead;
@@ -82,9 +83,19 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   void _onNotificationTap(NotificationModel n) {
+    final data = _profileContextData(n);
+
     if (n.type == 'new_message' && n.data != null) {
-      final chatId = n.data!['chatId'] as String?;
-      final senderId = n.data!['senderId'] as String?;
+      final chatId = _firstNonEmptyString(data, const [
+        'chatId',
+        'chat_id',
+      ]);
+      final senderId = _firstNonEmptyString(data, const [
+        'senderId',
+        'sender_id',
+        'userId',
+        'user_id',
+      ]);
       if (chatId != null && chatId.isNotEmpty) {
         Navigator.of(context).push(
           MaterialPageRoute(
@@ -101,13 +112,19 @@ class _NotificationPageState extends State<NotificationPage> {
     }
 
     if (n.type == 'match_created') {
-      final data = n.data ?? const <String, dynamic>{};
-      final chatId = data['chat_id'] as String? ?? data['chatId'] as String?;
-      final userId =
-          data['user_id'] as String? ??
-          data['target_user_id'] as String? ??
-          data['sender_id'] as String? ??
-          data['userId'] as String?;
+      final chatId = _firstNonEmptyString(data, const ['chat_id', 'chatId']);
+      final userId = _firstNonEmptyString(data, const [
+        'user_id',
+        'target_user_id',
+        'sender_id',
+        'requester_id',
+        'actor_user_id',
+        'userId',
+        'targetUserId',
+        'senderId',
+        'requesterId',
+        'actorUserId',
+      ]);
       final matchedName = _matchedName(n);
 
       if (userId != null && userId.isNotEmpty) {
@@ -126,26 +143,50 @@ class _NotificationPageState extends State<NotificationPage> {
     }
 
     // Interested / liked_you: open requester's profile (checkin context)
-    if ((n.type == 'interested' || n.type == 'liked_you') && n.data != null) {
-      final data = n.data!;
-      final checkinId =
-          data['checkin_id'] as String? ?? data['checkinId'] as String?;
-      final venueId =
-          data['venue_id'] as String? ?? data['venueId'] as String?;
-      final userId =
-          data['user_id'] as String? ??
-          data['sender_id'] as String? ??
-          data['target_user_id'] as String? ??
-          data['userId'] as String?;
-      if (checkinId != null &&
-          venueId != null &&
-          checkinId.isNotEmpty &&
-          venueId.isNotEmpty) {
+    if (n.type == 'interested' || n.type == 'liked_you') {
+      final actionHint = _inferActionHintFromNotification(data, n.type);
+      final checkinId = _firstNonEmptyString(data, const [
+        'checkin_id',
+        'checkinId',
+      ]);
+      final venueId = _firstNonEmptyString(data, const [
+        'venue_id',
+        'venueId',
+      ]);
+      final userId = _firstNonEmptyString(data, const [
+        'user_id',
+        'sender_id',
+        'requester_id',
+        'actor_user_id',
+        'target_user_id',
+        'userId',
+        'senderId',
+        'requesterId',
+        'actorUserId',
+        'targetUserId',
+      ]);
+      final userName = _firstNonEmptyString(data, const [
+        'fullName',
+        'full_name',
+        'sender_name',
+        'name',
+      ]);
+      final username = _firstNonEmptyString(data, const [
+        'username',
+        'user_name',
+        'sender_username',
+        'senderUsername',
+      ]);
+      if (checkinId != null && checkinId.isNotEmpty) {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => ProfilePreviewPage(
               checkinId: checkinId,
               venueId: venueId,
+              userId: userId,
+              userName: userName,
+              userUsername: username,
+              actionStateHint: actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
@@ -157,12 +198,155 @@ class _NotificationPageState extends State<NotificationPage> {
           MaterialPageRoute(
             builder: (_) => ProfilePreviewPage(
               userId: userId,
-              userName: n.title,
+              userName: userName ?? n.title,
+              userUsername: username,
+              actionStateHint: actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
+        return;
       }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile data is not available for this notification.')),
+      );
     }
+  }
+
+  Map<String, dynamic> _normalizeNotificationData(Map<String, dynamic>? data) {
+    final source = data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
+    final nested = source['data'];
+    if (nested is Map) {
+      source.addAll(Map<String, dynamic>.from(nested));
+    }
+    final payload = source['payload'];
+    if (payload is Map) {
+      source.addAll(Map<String, dynamic>.from(payload));
+    }
+    return source;
+  }
+
+  Map<String, dynamic> _profileContextData(NotificationModel n) {
+    final source = _normalizeNotificationData(n.data);
+    final relatedUser = _asMap(source['relatedUser']) ?? _asMap(source['related_user']);
+    if (relatedUser != null) {
+      source['userId'] = source['userId'] ?? relatedUser['id'];
+      source['user_id'] = source['user_id'] ?? relatedUser['id'];
+      source['username'] = source['username'] ?? relatedUser['username'];
+      source['user_name'] = source['user_name'] ?? relatedUser['user_name'];
+      source['fullName'] = source['fullName'] ?? relatedUser['fullName'];
+      source['full_name'] = source['full_name'] ?? relatedUser['full_name'];
+    }
+
+    final activeCheckin = _asMap(source['activeCheckin']) ?? _asMap(source['active_checkin']);
+    if (activeCheckin != null) {
+      source['checkinId'] = source['checkinId'] ?? activeCheckin['id'];
+      source['checkin_id'] = source['checkin_id'] ?? activeCheckin['id'];
+      source['venueId'] = source['venueId'] ?? activeCheckin['venueId'];
+      source['venue_id'] = source['venue_id'] ?? activeCheckin['venue_id'];
+    }
+    return source;
+  }
+
+  String? _firstNonEmptyString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+      if (value == null) continue;
+      final str = value.toString().trim();
+      if (str.isNotEmpty && str.toLowerCase() != 'null') return str;
+    }
+    return null;
+  }
+
+  ProfileActionState? _inferActionHintFromNotification(
+    Map<String, dynamic> data,
+    String type,
+  ) {
+    final rel = _asMap(data['relationship']);
+    final myActionObj = _asMap(rel?['myAction']);
+    final theirActionObj = _asMap(rel?['theirAction']);
+    final matchObj = _asMap(rel?['match']);
+
+    final status = _firstNonEmptyString(rel ?? data, const [
+      'status',
+      'relationshipStatus',
+      'relationship_status',
+    ])?.toLowerCase();
+    final myAction = _firstNonEmptyString(myActionObj ?? rel ?? data, const [
+      'action',
+      'myAction',
+      'my_action',
+      'feedAction',
+      'feed_action',
+    ])?.toLowerCase();
+    final theirAction = _firstNonEmptyString(theirActionObj ?? rel ?? data, const [
+      'action',
+      'theirAction',
+      'their_action',
+      'incomingAction',
+      'incoming_action',
+    ])?.toLowerCase();
+    final chatId = _firstNonEmptyString(matchObj ?? rel ?? data, const [
+      'chatId',
+      'chat_id',
+    ]);
+
+    bool hasAny(String? value, List<String> candidates) =>
+        value != null && value.isNotEmpty && candidates.contains(value);
+
+    if (hasAny(status, const ['matched']) || (chatId != null && chatId.isNotEmpty)) {
+      return ProfileActionState.matched;
+    }
+    if (hasAny(status, const [
+      'incoming_interested',
+      'liked_you',
+      'incoming',
+      'received_interest',
+    ])) {
+      return ProfileActionState.incomingInterested;
+    }
+    if (hasAny(status, const [
+      'outgoing_interested',
+      'waiting_response',
+      'pending',
+      'requested',
+    ])) {
+      return ProfileActionState.waitingResponse;
+    }
+    if (hasAny(status, const ['outgoing_pass'])) {
+      return ProfileActionState.proactivePass;
+    }
+    if (hasAny(status, const ['incoming_pass'])) {
+      return ProfileActionState.showActions;
+    }
+    if (hasAny(theirAction, const ['interested'])) {
+      if (hasAny(myAction, const ['interested'])) {
+        return ProfileActionState.matched;
+      }
+      return ProfileActionState.incomingInterested;
+    }
+    if (hasAny(myAction, const ['interested'])) {
+      return ProfileActionState.waitingResponse;
+    }
+    if (hasAny(myAction, const ['pass'])) {
+      return ProfileActionState.proactivePass;
+    }
+    if (type == 'interested' || type == 'liked_you') {
+      return ProfileActionState.incomingInterested;
+    }
+    return null;
+  }
+
+  bool _isStaleInterestedAfterMatch(NotificationModel n) {
+    if (n.type != 'interested' && n.type != 'liked_you') return false;
+    final data = _profileContextData(n);
+    final hint = _inferActionHintFromNotification(data, n.type);
+    return hint == ProfileActionState.matched;
+  }
+
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 
   String _formatTime(DateTime date) {

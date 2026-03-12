@@ -234,21 +234,25 @@ class CheckinRepository {
 
   Future<void> sendFeedAction({
     required String targetUserId,
-    required String venueId,
+    String? venueId,
     // required String checkinId,
     required String action,
   }) async {
     final token = await SecureStorage.getAccessToken();
 
+    final body = <String, dynamic>{
+      'target_user_id': targetUserId,
+      //'checkin_id': checkinId,
+      'action': action,
+    };
+    if (venueId != null && venueId.isNotEmpty) {
+      body['venue_id'] = venueId;
+    }
+
     await _api.post(
       '/feed/actions',
       headers: {'Authorization': 'Bearer $token'},
-      body: {
-        'target_user_id': targetUserId,
-        'venue_id': venueId,
-        //'checkin_id': checkinId,
-        'action': action,
-      },
+      body: body,
     );
   }
 

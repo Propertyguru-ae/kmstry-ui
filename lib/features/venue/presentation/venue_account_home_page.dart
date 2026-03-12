@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 
 class VenueAccountHomePage extends StatefulWidget {
   const VenueAccountHomePage({super.key});
@@ -43,7 +43,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
       await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
       if (!mounted) return;
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const NameDobOnboardingPage()),
+        MaterialPageRoute(builder: (_) => const UsernameOnboardingPage()),
       );
     } catch (_) {
       if (!mounted) return;

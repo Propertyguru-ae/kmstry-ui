@@ -14,6 +14,7 @@ import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/app_intro_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/startup_gate_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 
 class AuthRoutes {
   static const startupGate = '/startup-gate';
@@ -27,6 +28,7 @@ class AuthRoutes {
   static const onboardingDob = '/onboarding/dob';
   static const onboardingGender = '/onboarding/gender';
   static const onboardingPhoto = '/onboarding/photo';
+  static const onboardingUsername = '/onboarding/username';
   static const appShell = '/app-shell';
   static const people = '/people';
   static const messages = '/messages';
@@ -49,6 +51,7 @@ class AuthRoutes {
     venueOnboarding: (_) => const VenueContextOnboardingPage(),
     people: (_) => const PeoplePage(),
     onboardingPhoto: (context) => const PhotoOnboardingPage(),
+    onboardingUsername: (context) => const UsernameOnboardingPage(),
     appShell: (context) => const AppShell(),
   };
 }

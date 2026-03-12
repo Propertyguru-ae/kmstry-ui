@@ -163,17 +163,13 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
-    // 🔐 Chat yoksa mesaj atılamaz
-    if (_chatId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Chat is not ready yet')));
-      return;
-    }
     setState(() => _sending = true);
     _messageController.clear();
 
     try {
+      if (_chatId == null) {
+        _chatId = await _repo.createChat(widget.otherUserId);
+      }
       final sent = await _repo.sendMessage(
         _chatId!,
         messageType: 'text',
@@ -334,6 +330,20 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     }
 
     final messages = _chat?.messages ?? [];
+    if (_chatId == null && messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Henüz chat açılmadı / eşleşme yok.\nİlk mesajı göndererek başlayabilirsin.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colors.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      );
+    }
     final ordered = List<ChatMessage>.from(messages)
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 

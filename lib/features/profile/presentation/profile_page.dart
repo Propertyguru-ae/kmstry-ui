@@ -214,6 +214,11 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final systemGranted =
         status.isGranted || status == PermissionStatus.provisional;
     if (!systemGranted) {
+      final granted = await PushManager.instance.handlePermissionFlow();
+      if (granted) {
+        await _refreshNotificationWarningState();
+        return;
+      }
       await openAppSettings();
       return;
     }
@@ -645,7 +650,16 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Online',
+                            (() {
+                              final username = (_user?['username'] ??
+                                      _user?['user_name'])
+                                  ?.toString()
+                                  .trim();
+                              if (username == null || username.isEmpty) {
+                                return 'Online';
+                              }
+                              return '@${username.toLowerCase()}';
+                            })(),
                             style: TextStyle(
                               color: isDark ? Colors.white70 : Colors.black54,
                               fontSize: 14,

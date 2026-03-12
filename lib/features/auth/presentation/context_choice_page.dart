@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
@@ -23,7 +23,7 @@ class _ContextChoicePageState extends State<ContextChoicePage> {
       await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const NameDobOnboardingPage()),
+        MaterialPageRoute(builder: (_) => const UsernameOnboardingPage()),
       );
     } catch (_) {
       if (!mounted) return;

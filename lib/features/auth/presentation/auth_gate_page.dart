@@ -6,6 +6,7 @@ import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flow_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
@@ -45,11 +46,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim() ?? '';
       final birthdate = me['birthdate']?.toString().trim() ?? '';
       final gender = me['gender']?.toString().trim() ?? '';
+      final username = (me['username'] ?? me['user_name'])?.toString().trim() ?? '';
       final interestedIn =
           (me['interestedIn'] ?? me['interested_in'])?.toString().trim() ?? '';
       final onboardingStep =
           (me['onboardingStep'] ?? me['onboarding_step'])?.toString().toUpperCase();
+      final devicePermissionsDone =
+          await SecureStorage.isDevicePermissionsOnboardingDone();
       final hasNameDob = fullName.isNotEmpty && birthdate.isNotEmpty;
+      final hasUsername = username.isNotEmpty;
       final hasInferredPersonalProfile = fullName.isNotEmpty &&
           birthdate.isNotEmpty &&
           gender.isNotEmpty &&
@@ -62,6 +67,14 @@ class _AuthGatePageState extends State<AuthGatePage> {
           !meContext.memberVenues.any((venue) => venue.id == resolvedVenueId)) {
         resolvedVenueId =
             meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null;
+      }
+
+      // On fresh installs, existing accounts can come with COMPLETED but still need
+      // device permission onboarding on this device.
+      if (onboardingStep == 'COMPLETED' && !devicePermissionsDone) {
+        _logDecision('completed_but_device_permissions_missing');
+        _go(const PermissionsFlowPage(markProfileCompleted: false));
+        return;
       }
 
     // Safe fallback for known backend inconsistency:
@@ -98,6 +111,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
       }
       if (homeRoute == 'PERSONAL_HOME' || nextAction == 'GO_TO_PERSONAL_HOME') {
         // For personal context, onboarding step still has priority.
+        if (!hasUsername) {
+          _logDecision('personal_home_step_username');
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          return;
+        }
         if (onboardingStep == 'NAME_DOB' && !hasNameDob) {
           _logDecision('personal_home_step_name_dob');
           _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
@@ -130,6 +148,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
       }
       if (homeRoute == 'PERSONAL_ONBOARDING' ||
           nextAction == 'START_PERSONAL_ONBOARDING') {
+        if (!hasUsername) {
+          _logDecision('server_route_personal_onboarding_username');
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          return;
+        }
         if (onboardingStep == 'GENDER_INTEREST') {
           _logDecision('server_route_personal_onboarding_gender_interest');
           _go(const GenderInterestOnboardingPage());
@@ -191,6 +214,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
     // 4) Legacy onboarding_step is the last fallback.
       switch (step) {
         case 'NAME_DOB':
+          if (!hasUsername) {
+            _logDecision('legacy_username_before_name_dob');
+            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+            return;
+          }
           _logDecision('legacy_name_dob');
           _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
           return;
@@ -245,6 +273,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
     final name = (me['fullName'] ?? me['full_name'])?.toString().trim();
     if (name == null || name.isEmpty) return null;
     return name;
+  }
+
+  String? _usernamePrefill(Map<String, dynamic> me) {
+    final username = (me['username'] ?? me['user_name'])?.toString().trim();
+    if (username == null || username.isEmpty) return null;
+    return username;
   }
 
   void _logDecision(String branch) {

@@ -40,7 +40,29 @@ class NotificationModel {
     final dataRaw = json['data'];
     Map<String, dynamic>? dataMap;
     if (dataRaw is Map) {
-      dataMap = Map<String, dynamic>.from(dataRaw as Map);
+      dataMap = Map<String, dynamic>.from(dataRaw);
+    }
+    // New backend payload may provide relationship context at root level.
+    if (json['relationship'] is Map ||
+        json['activeCheckin'] is Map ||
+        json['active_checkin'] is Map ||
+        json['relatedUser'] is Map ||
+        json['related_user'] is Map) {
+      dataMap ??= <String, dynamic>{};
+      if (json['relationship'] is Map) {
+        dataMap['relationship'] = Map<String, dynamic>.from(json['relationship'] as Map);
+      }
+      if (json['activeCheckin'] is Map) {
+        dataMap['activeCheckin'] = Map<String, dynamic>.from(json['activeCheckin'] as Map);
+      } else if (json['active_checkin'] is Map) {
+        dataMap['activeCheckin'] =
+            Map<String, dynamic>.from(json['active_checkin'] as Map);
+      }
+      if (json['relatedUser'] is Map) {
+        dataMap['relatedUser'] = Map<String, dynamic>.from(json['relatedUser'] as Map);
+      } else if (json['related_user'] is Map) {
+        dataMap['relatedUser'] = Map<String, dynamic>.from(json['related_user'] as Map);
+      }
     }
 
     return NotificationModel(

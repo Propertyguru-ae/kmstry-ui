@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/messageDetail/presentation/message_deta
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
 class PeoplePage extends StatefulWidget {
@@ -87,6 +88,7 @@ class _PeoplePageState extends State<PeoplePage> {
           venueId: match.venueId,
           userId: match.userId,
           userName: match.fullName,
+          userUsername: match.username,
           isMatchedHint: true,
           chatIdHint: match.chatId,
         ),
@@ -110,6 +112,15 @@ class _PeoplePageState extends State<PeoplePage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
+        leading: IconButton(
+          tooltip: 'Find new friends',
+          icon: const Icon(Icons.person_add_alt_1_rounded),
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const FindFriendsPage()),
+            );
+          },
+        ),
         title: Text(
           'Friends',
           style: theme.textTheme.headlineSmall?.copyWith(
@@ -234,6 +245,7 @@ class _PeoplePageState extends State<PeoplePage> {
 
   Widget _buildFriendTile(MatchItem match, bool isDark, ThemeData theme) {
     final name = match.fullName;
+    final username = match.username;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -290,6 +302,7 @@ class _PeoplePageState extends State<PeoplePage> {
               color: isDark ? Colors.white : const Color(0xFF0F172A),
             ),
           ),
+          
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

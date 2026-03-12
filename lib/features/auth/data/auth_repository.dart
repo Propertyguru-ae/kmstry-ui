@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../../../core/config/app_config.dart';
+import '../../venue/presentation/profile_preview_page.dart';
 
 class AuthRepository {
   final AuthApi _api = AuthApi();
@@ -133,6 +134,27 @@ class AuthRepository {
     );
   }
 
+  Future<List<String>> getUsernameSuggestions(String base) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await _api.getUsernameSuggestions(
+      accessToken: token,
+      base: base.trim().toLowerCase(),
+    );
+    final payload = response['data'] is Map
+        ? Map<String, dynamic>.from(response['data'] as Map)
+        : response;
+    final rawSuggestions = payload['suggestions'];
+    if (rawSuggestions is! List) return const [];
+
+    final unique = <String>{};
+    for (final item in rawSuggestions) {
+      final text = item?.toString().trim().toLowerCase() ?? '';
+      if (text.isNotEmpty) unique.add(text);
+    }
+    return unique.toList();
+  }
+
   Future<String> verifyRegisterOtp({
     required String email,
     required String otp,
@@ -249,6 +271,7 @@ class AuthRepository {
     await _googleSignIn.signOut();
 
     await SecureStorage.clearSession();
+    ProfilePreviewPage.clearActionStateCache();
   }
 
   Future<bool> tryGetMe(String accessToken) async {
@@ -331,6 +354,7 @@ class AuthRepository {
     }
 
     me['fullName'] ??= me['full_name'];
+    me['username'] ??= me['user_name'];
     me['interestedIn'] ??= me['interested_in'];
     me['onboardingStep'] ??= me['onboarding_step'];
     me['activeCheckin'] ??= me['active_checkin'];

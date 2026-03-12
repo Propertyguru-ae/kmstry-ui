@@ -88,8 +88,12 @@ class CheckinProfile {
     final relationship = json['relationship'] is Map
         ? Map<String, dynamic>.from(json['relationship'] as Map)
         : null;
-    final myAction = relationship?['myActionAtThisVenue']?.toString();
-    final theirAction = relationship?['theirActionAtThisVenue']?.toString();
+    final myAction = (relationship?['myActionAtThisVenue'] ??
+            relationship?['my_action_at_this_venue'])
+        ?.toString();
+    final theirAction = (relationship?['theirActionAtThisVenue'] ??
+            relationship?['their_action_at_this_venue'])
+        ?.toString();
 
     // Parse timestamps from relationship
     DateTime? parseTimestamp(dynamic value) {
@@ -104,11 +108,23 @@ class CheckinProfile {
       return null;
     }
 
-    final myActionCreatedAt = relationship?['myActionCreatedAt'] != null
-        ? parseTimestamp(relationship!['myActionCreatedAt'])
+    final myActionCreatedAt =
+        (relationship?['myActionCreatedAt'] ??
+                relationship?['my_action_created_at']) !=
+            null
+        ? parseTimestamp(
+            relationship!['myActionCreatedAt'] ??
+                relationship['my_action_created_at'],
+          )
         : null;
-    final theirActionCreatedAt = relationship?['theirActionCreatedAt'] != null
-        ? parseTimestamp(relationship!['theirActionCreatedAt'])
+    final theirActionCreatedAt =
+        (relationship?['theirActionCreatedAt'] ??
+                relationship?['their_action_created_at']) !=
+            null
+        ? parseTimestamp(
+            relationship!['theirActionCreatedAt'] ??
+                relationship['their_action_created_at'],
+          )
         : null;
 
     // Backward compatibility: fallback to flat fields if relationship doesn't exist
@@ -125,12 +141,17 @@ class CheckinProfile {
           .whereType<Map>()
           .map((e) => CheckinProfileMedia.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      isMatched: json['is_matched'] as bool? ?? false,
-      chatId: json['chat_id']?.toString(),
-      feedAction: json['feed_action']?.toString(),
-      myActionAtThisVenue: myAction ?? json['feed_action']?.toString(),
+      isMatched: (json['isMatched'] ?? json['is_matched']) == true,
+      chatId: (json['chatId'] ?? json['chat_id'])?.toString(),
+      feedAction: (json['feedAction'] ?? json['feed_action'])?.toString(),
+      myActionAtThisVenue:
+          myAction ??
+          (json['myActionAtThisVenue'] ?? json['feedAction'] ?? json['feed_action'])
+              ?.toString(),
       theirActionAtThisVenue:
-          theirAction ?? json['their_action_at_this_venue']?.toString(),
+          theirAction ??
+          (json['theirActionAtThisVenue'] ?? json['their_action_at_this_venue'])
+              ?.toString(),
       myActionCreatedAt: myActionCreatedAt,
       theirActionCreatedAt: theirActionCreatedAt,
     );
@@ -139,6 +160,7 @@ class CheckinProfile {
 
 class CheckinProfileUser {
   final String id;
+  final String? username;
   final String fullName;
   final DateTime birthdate;
   final String gender;
@@ -147,6 +169,7 @@ class CheckinProfileUser {
 
   CheckinProfileUser({
     required this.id,
+    this.username,
     required this.fullName,
     required this.birthdate,
     required this.gender,
@@ -158,6 +181,7 @@ class CheckinProfileUser {
     final birthdateRaw = json['birthdate']?.toString();
     return CheckinProfileUser(
       id: json['id']?.toString() ?? '',
+      username: (json['username'] ?? json['user_name'])?.toString(),
       fullName: (json['full_name'] ?? json['fullName'])?.toString() ?? 'Guest',
       birthdate:
           DateTime.tryParse(birthdateRaw ?? '') ??
@@ -171,11 +195,13 @@ class CheckinProfileUser {
 
 class CheckinProfileCheckin {
   final String id;
+  final String? venueId;
   final String? vibe;
   final DateTime expiresAt;
 
   CheckinProfileCheckin({
     required this.id,
+    required this.venueId,
     required this.vibe,
     required this.expiresAt,
   });
@@ -184,6 +210,7 @@ class CheckinProfileCheckin {
     final expiresAtRaw = (json['expires_at'] ?? json['expiresAt'])?.toString();
     return CheckinProfileCheckin(
       id: json['id']?.toString() ?? '',
+      venueId: (json['venue_id'] ?? json['venueId'])?.toString(),
       vibe: json['vibe']?.toString(),
       expiresAt:
           DateTime.tryParse(expiresAtRaw ?? '') ??

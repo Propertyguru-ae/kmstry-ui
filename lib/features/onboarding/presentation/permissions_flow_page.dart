@@ -107,8 +107,12 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
       });
     }
 
-    // Show notification onboarding only once per device.
-    if (!notifOnboardingDone) {
+    // Show notification onboarding on fresh device, and also if account says
+    // notifications are still disabled while system permission is not granted.
+    final shouldShowNotificationStep =
+        !notifOnboardingDone ||
+        (!systemNotificationGranted && accountOptIn != true);
+    if (shouldShowNotificationStep) {
       _steps.add(PermissionStep.notifications);
     }
 
@@ -133,7 +137,9 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
         _currentIndex++;
       });
     } else {
-      await SecureStorage.setNotificationOnboardingDone();
+      if (_steps.contains(PermissionStep.notifications)) {
+        await SecureStorage.setNotificationOnboardingDone();
+      }
       await _finishPermissions();
     }
   }

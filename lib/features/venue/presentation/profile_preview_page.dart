@@ -3,7 +3,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
+import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 
@@ -17,12 +19,25 @@ enum ProfileActionState {
 }
 
 class ProfilePreviewPage extends StatefulWidget {
+  static final Map<String, ProfileActionState> _actionStateCacheByUserId = {};
+
+  static void clearActionStateCache() {
+    _actionStateCacheByUserId.clear();
+  }
+
+  static ProfileActionState? peekCachedActionState(String? userId) {
+    if (userId == null || userId.isEmpty) return null;
+    return _actionStateCacheByUserId[userId];
+  }
+
   final String? checkinId;
   final String? venueId;
   final String? userId;
   final String? userName;
+  final String? userUsername;
   final bool isMatchedHint;
   final String? chatIdHint;
+  final ProfileActionState? actionStateHint;
 
   const ProfilePreviewPage({
     super.key,
@@ -30,8 +45,10 @@ class ProfilePreviewPage extends StatefulWidget {
     this.venueId,
     this.userId,
     this.userName,
+    this.userUsername,
     this.isMatchedHint = false,
     this.chatIdHint,
+    this.actionStateHint,
   }) : assert(
          checkinId != null || userId != null,
          'Either checkinId or userId must be provided.',
@@ -43,6 +60,7 @@ class ProfilePreviewPage extends StatefulWidget {
 
 class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
+  final _matchRepo = MatchRepository();
   final _venueRepo = VenueCheckinRepository();
   bool _isVibeExpanded = false;
   bool _isVibeOverflowing = false;
@@ -56,6 +74,48 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _showPostsAndVibe = false;
   bool _isBlocked = false;
   bool _isBlocking = false;
+  bool _isSendingAction = false;
+
+  ProfileActionState? _cachedActionStateFor(String? userId) {
+    return ProfilePreviewPage.peekCachedActionState(userId);
+  }
+
+  void _rememberActionState(String? userId, ProfileActionState state) {
+    if (userId == null || userId.isEmpty) return;
+    ProfilePreviewPage._actionStateCacheByUserId[userId] = state;
+  }
+
+  Future<void> _syncPendingInterestedState(
+    String? userId,
+    ProfileActionState state,
+  ) async {
+    if (userId == null || userId.isEmpty) return;
+    if (state == ProfileActionState.waitingResponse) {
+      await SecureStorage.addPendingInterestedUserId(userId);
+      return;
+    }
+    await SecureStorage.removePendingInterestedUserId(userId);
+  }
+
+  ProfileActionState _mergeServerAndLocalActionState({
+    required ProfileActionState serverState,
+    ProfileActionState? localState,
+  }) {
+    // Prevent temporary stale backend states from downgrading a local matched state.
+    if (localState == ProfileActionState.matched &&
+        serverState != ProfileActionState.matched) {
+      return localState!;
+    }
+
+    // Keep optimistic/local UX state when backend still returns "showActions"
+    // due to eventual consistency or venue-independent action flow.
+    if (serverState == ProfileActionState.showActions &&
+        localState != null &&
+        localState != ProfileActionState.showActions) {
+      return localState;
+    }
+    return serverState;
+  }
 
   @override
   void initState() {
@@ -77,32 +137,50 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     try {
       bool showPostsAndVibe = false;
       String? resolvedVenueId = widget.venueId;
-      final active = await _venueRepo.getActiveCheckin();
+      final shouldCheckActive = (widget.checkinId != null && widget.checkinId!.isNotEmpty) ||
+          (widget.venueId != null && widget.venueId!.isNotEmpty);
+      final active = shouldCheckActive ? await _venueRepo.getActiveCheckin() : null;
       if (resolvedVenueId == null || resolvedVenueId.isEmpty) {
         resolvedVenueId = active?.venueId;
       }
 
       final checkinId = widget.checkinId;
       if (checkinId != null && checkinId.isNotEmpty) {
-        final profile = await _repo.getCheckinProfile(checkinId);
-        if (active != null &&
-            active.isActive &&
-            resolvedVenueId != null &&
-            active.venueId == resolvedVenueId) {
-          showPostsAndVibe = true;
+        try {
+          final profile = await _repo.getCheckinProfile(checkinId);
+          resolvedVenueId ??= profile.checkin.venueId;
+          if (active != null &&
+              active.isActive &&
+              resolvedVenueId != null &&
+              active.venueId == resolvedVenueId) {
+            showPostsAndVibe = true;
+          }
+          if (!mounted) return;
+          final blockedIds = await _repo.getBlockedUserIds();
+          if (!mounted) return;
+          setState(() {
+            final determined = _determineActionState(profile);
+            final localHint =
+                _cachedActionStateFor(profile.user.id) ??
+                widget.actionStateHint ??
+                _actionState;
+            _profile = profile;
+            _resolvedVenueId = resolvedVenueId;
+            _actionState = _mergeServerAndLocalActionState(
+              serverState: determined,
+              localState: localHint,
+            );
+            _isBlocked = blockedIds.contains(profile.user.id);
+            _showPostsAndVibe = showPostsAndVibe;
+            _loading = false;
+          });
+          _rememberActionState(profile.user.id, _actionState!);
+          await _syncPendingInterestedState(profile.user.id, _actionState!);
+          return;
+        } catch (e) {
+          // If checkin profile is unavailable (expired/deleted), still allow opening by user fallback.
+          debugPrint('⚠️ checkin profile fallback to user mode: $e');
         }
-        if (!mounted) return;
-        final blockedIds = await _repo.getBlockedUserIds();
-        if (!mounted) return;
-        setState(() {
-          _profile = profile;
-          _resolvedVenueId = resolvedVenueId;
-          _actionState = _determineActionState(profile);
-          _isBlocked = blockedIds.contains(profile.user.id);
-          _showPostsAndVibe = showPostsAndVibe;
-          _loading = false;
-        });
-        return;
       }
 
       if (!mounted) return;
@@ -114,7 +192,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         _resolvedVenueId = resolvedVenueId;
         _actionState = widget.isMatchedHint
             ? ProfileActionState.matched
-            : ProfileActionState.showActions;
+            : (_cachedActionStateFor(targetUserId) ??
+                  _actionState ??
+                  widget.actionStateHint ??
+                  ProfileActionState.showActions);
         _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
         _showPostsAndVibe = false;
         _loading = false;
@@ -193,25 +274,28 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       return;
     }
 
+    if (_isSendingAction) return;
+
     debugPrint("🔥 ACTION SENT: $action");
 
     final targetUserId = _profile?.user.id ?? widget.userId;
-    final venueId = _resolvedVenueId;
+    final venueId = _resolvedVenueId ?? _profile?.checkin.venueId;
     if (targetUserId == null || targetUserId.isEmpty) return;
-    if (venueId == null || venueId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No active venue found for this action.')),
-      );
-      return;
-    }
+    final isAcceptFlow =
+        action == 'interested' &&
+        _actionState == ProfileActionState.incomingInterested;
 
     // Only allow actions in showActions or incomingInterested states
     if (_actionState != ProfileActionState.showActions &&
         _actionState != ProfileActionState.incomingInterested) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bu profile şu an yeni aksiyon gönderilemez.')),
+      );
       return;
     }
 
     try {
+      setState(() => _isSendingAction = true);
       await _repo.sendFeedAction(
         targetUserId: targetUserId,
         venueId: venueId,
@@ -220,10 +304,47 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
       if (!mounted) return;
 
-      // Reload profile to get updated state
+      // Optimistic state update to immediately disable action buttons.
+      final nextState = action == 'interested'
+          ? (isAcceptFlow
+                ? ProfileActionState.matched
+                : ProfileActionState.waitingResponse)
+          : ProfileActionState.proactivePass;
+      setState(() {
+        _actionState = nextState;
+      });
+      _rememberActionState(targetUserId, nextState);
+      if (action == 'interested' && !isAcceptFlow) {
+        await SecureStorage.addPendingInterestedUserId(targetUserId);
+      } else {
+        await SecureStorage.removePendingInterestedUserId(targetUserId);
+      }
+
+      // Best effort reload profile to sync authoritative server state.
       await _loadProfile();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            action == 'interested'
+                ? (isAcceptFlow
+                      ? 'Kmstry accepted.'
+                      : 'Interested gönderildi.')
+                : 'Not Kmstry gönderildi.',
+          ),
+        ),
+      );
     } catch (e) {
       debugPrint('❌ feed action error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aksiyon gönderilemedi. Lütfen tekrar dene.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingAction = false);
+      }
     }
   }
 
@@ -244,11 +365,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ).showSnackBar(const SnackBar(content: Text('Chat is not available.')));
         return;
       }
+      String? fallbackChatId = widget.chatIdHint;
+      try {
+        fallbackChatId ??= await _matchRepo.getChatIdForUser(userId);
+      } catch (_) {}
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => MessageDetailPage(
-            chatId: widget.chatIdHint,
+            chatId: fallbackChatId,
             otherUserId: userId,
             otherName: widget.userName ?? 'User',
             otherPhotoUrl: '',
@@ -258,20 +383,20 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       return;
     }
 
-    debugPrint('🧪 OPEN CHAT → chatId = ${profile.chatId}');
-
-    if (profile.chatId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ChatId gelmedi (backend kontrol et)')),
-      );
-      return;
+    String? resolvedChatId = profile.chatId;
+    if ((resolvedChatId == null || resolvedChatId.isEmpty) &&
+        profile.user.id.isNotEmpty) {
+      try {
+        resolvedChatId = await _matchRepo.getChatIdForUser(profile.user.id);
+      } catch (_) {}
     }
+    final isMatched = profile.isMatched;
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => MessageDetailPage(
-          chatId: profile.chatId!,
+          chatId: resolvedChatId,
           otherUserId: profile.user.id,
           otherName: profile.user.fullName,
           otherPhotoUrl: (() {
@@ -283,6 +408,17 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ),
       ),
     );
+    if ((resolvedChatId == null || resolvedChatId.isEmpty) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isMatched
+                ? 'Henüz chat açılmadı. İlk mesajı göndererek başlatabilirsin.'
+                : 'Henüz chat açılmadı / eşleşme yok.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _toggleBlock() async {
@@ -329,7 +465,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   void _openMediaViewerAt(int index) {
-    if (_profile == null || _profile!.media.isEmpty) return;
+    if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty) return;
     final mediaForViewer = _mediaForViewer();
     Navigator.push(
       context,
@@ -451,18 +587,21 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     final hasMedia = _profile != null && _profile!.media.isNotEmpty;
-    final featuredMedia = hasMedia
+    final canShowMedia = _showPostsAndVibe && hasMedia;
+    final featuredMedia = canShowMedia
         ? _profile!.media.firstWhere(
             (m) => m.isFeatured,
             orElse: () => _profile!.media.first,
           )
         : null;
 
-    final moments = hasMedia
+    final moments = canShowMedia
         ? _profile!.media.where((p) => !p.isFeatured).toList()
         : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
-
+    final displayUsername =
+        (_profile?.user.username ?? widget.userUsername)?.trim();
+debugPrint('DISPLAY USERNAME: $displayUsername');
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,
@@ -470,8 +609,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           /// HERO MEDIA (FEATURED)
           Positioned.fill(
             child: GestureDetector(
-              onTap: hasMedia ? () => _openMediaViewerAt(0) : null,
-              child: !hasMedia
+              onTap: canShowMedia ? () => _openMediaViewerAt(0) : null,
+              child: !canShowMedia
                   ? Stack(
                       fit: StackFit.expand,
                       children: [
@@ -509,7 +648,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
 
           /// ProfilePage ile ayni blur + gradient katmani
-          if (!hasMedia)
+          if (!canShowMedia)
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
@@ -589,11 +728,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                 const SizedBox(height: 6),
 
-                /// ONLINE STATUS
+                /// USERNAME
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    'Online now',
+                    (displayUsername != null && displayUsername.isNotEmpty)
+                        ? '@$displayUsername'
+                        : '',
                     style: TextStyle(
                       color: isDark ? Colors.white70 : Colors.black54,
                     ),
@@ -822,7 +963,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: () => _handleAction('interested'),
+                onPressed: _isSendingAction
+                    ? null
+                    : () => _handleAction('interested'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: isDark
                       ? Colors.white
@@ -837,7 +980,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton(
-                onPressed: () => _handleAction('pass'),
+                onPressed: _isSendingAction ? null : () => _handleAction('pass'),
                 child: const Text('Not Kmstry'),
               ),
             ),

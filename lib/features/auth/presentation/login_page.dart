@@ -256,7 +256,7 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      await AuthRepository().login(_emailCtrl.text.trim(), _passCtrl.text);
+      await AuthRepository().login(_emailCtrl.text.trim().toLowerCase(), _passCtrl.text);
       if (!mounted) return;
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
