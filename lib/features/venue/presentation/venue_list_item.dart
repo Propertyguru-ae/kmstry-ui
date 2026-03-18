@@ -4,19 +4,33 @@ import '../data/venue_model.dart';
 
 class VenueListItem extends StatelessWidget {
   final Venue venue;
+  final bool isSelected;
+  final ValueChanged<Venue>? onTap;
 
-  const VenueListItem({super.key, required this.venue});
+  const VenueListItem({
+    super.key,
+    required this.venue,
+    this.isSelected = false,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final displayAddress = venue.address.isNotEmpty
+        ? venue.address
+        : (venue.city.isNotEmpty ? venue.city : '-');
+    final displayType = venue.type.isNotEmpty ? venue.type : 'venue';
+    final hasRating = venue.rating != null && venue.rating! > 0;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () {
+          onTap?.call(venue);
+          if (onTap != null) return;
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -28,30 +42,20 @@ class VenueListItem extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: isDark ? theme.colorScheme.surface : const Color(0xFFF7F3FB),
+            color: isSelected
+                ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                : (isDark ? theme.colorScheme.surface : const Color(0xFFF7F3FB)),
             borderRadius: BorderRadius.circular(16),
-            border: isDark ? Border.all(color: Colors.white.withOpacity(0.05)) : null,
+            border: isDark
+                ? Border.all(color: Colors.white.withValues(alpha: 0.05))
+                : null,
           ),
           child: Row(
             children: [
-              /// ICON
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFE8E1F3),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.place,
-                  size: 18,
-                  color: isDark ? theme.colorScheme.primary : Colors.black87,
-                ),
-              ),
+              _SourceAvatar(isDark: isDark, isGoogleVenue: venue.source == 'google'),
 
               const SizedBox(width: 12),
 
-              /// TEXT
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,18 +70,46 @@ class VenueListItem extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      venue.tag,
+                      displayAddress,
                       style: TextStyle(
                         color: isDark ? Colors.white54 : Colors.grey,
                         fontSize: 12,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                   
+                        if (hasRating) ...[
+                          Icon(
+                            Icons.star_rounded,
+                            size: 14,
+                            color: isDark ? Colors.amber.shade300 : Colors.amber.shade700,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            venue.rating!.toStringAsFixed(1),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: isDark ? Colors.white70 : Colors.black87,
+                            ),
+                          ),
+                        ] else
+                          Text(
+                            'No rating',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? Colors.white54 : Colors.grey,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
               ),
-
-              /// BADGE
-              _Badge(venue.type, isDark, theme),
             ],
           ),
         ),
@@ -86,22 +118,68 @@ class VenueListItem extends StatelessWidget {
   }
 }
 
-class _Badge extends StatelessWidget {
-  final String text;
+class _SourceAvatar extends StatelessWidget {
   final bool isDark;
-  final ThemeData theme;
-  const _Badge(this.text, this.isDark, this.theme);
+  final bool isGoogleVenue;
+
+  const _SourceAvatar({required this.isDark, required this.isGoogleVenue});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      width: 36,
+      height: 36,
       decoration: BoxDecoration(
-        color: isDark ? theme.colorScheme.primary.withOpacity(0.2) : Colors.deepPurple.withOpacity(0.1),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.05)
+            : const Color(0xFFE8E1F3),
         borderRadius: BorderRadius.circular(12),
       ),
+      child: isGoogleVenue
+          ? Padding(
+              padding: const EdgeInsets.all(7),
+              child: Image.network(
+                'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => Icon(
+                  Icons.map_rounded,
+                  size: 18,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+            )
+          : Icon(
+              Icons.place,
+              size: 18,
+              color: isDark ? Theme.of(context).colorScheme.primary : Colors.black87,
+            ),
+    );
+  }
+}
+
+class _TypeChip extends StatelessWidget {
+  final String label;
+  final bool isDark;
+  final ThemeData theme;
+
+  const _TypeChip({
+    required this.label,
+    required this.isDark,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDark
+            ? theme.colorScheme.primary.withValues(alpha: 0.2)
+            : Colors.deepPurple.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Text(
-        text,
+        label,
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,

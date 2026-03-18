@@ -78,7 +78,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.network(
-                      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
+                      widget.venue.photoUrl.isNotEmpty
+                          ? widget.venue.photoUrl
+                          : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
                       width: 40,
                       height: 40,
                       fit: BoxFit.cover,
@@ -125,9 +127,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 width: double.infinity,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  image: const DecorationImage(
+                  image: DecorationImage(
                     image: NetworkImage(
-                      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
+                      widget.venue.photoUrl.isNotEmpty
+                          ? widget.venue.photoUrl
+                          : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
                     ),
                     fit: BoxFit.cover,
                   ),
@@ -180,7 +184,10 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _loadingActiveCheckin || hasActiveCheckinHere
+                  onPressed:
+                      _loadingActiveCheckin ||
+                          hasActiveCheckinHere ||
+                          !widget.venue.canCheckin
                       ? null
                       : () async {
                           await Navigator.push(
@@ -197,7 +204,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   child: Text(
                     _loadingActiveCheckin
                         ? 'Checking status...'
-                        : hasActiveCheckinHere
+                        : !widget.venue.canCheckin
+                            ? 'Community data pending (details only)'
+                            : hasActiveCheckinHere
                             ? 'You are already checked in'
                             : 'Check In Live',
                   ),
