@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 class Venue {
   final String id;
   final String? placeId;
@@ -14,6 +16,10 @@ class Venue {
   final bool isInDb;
   final bool canCheckin;
   final int? checkinCountActive;
+  /// Active check-ins reported as male (optional; from API).
+  final int? checkinCountMale;
+  /// Active check-ins reported as female (optional; from API).
+  final int? checkinCountFemale;
   final VenueEventSummary? eventSummary;
   final String? verificationLevel;
   final int? distanceMeters;
@@ -36,6 +42,8 @@ class Venue {
     this.isInDb = true,
     this.canCheckin = true,
     this.checkinCountActive,
+    this.checkinCountMale,
+    this.checkinCountFemale,
     this.eventSummary,
     this.verificationLevel,
     this.distanceMeters,
@@ -53,6 +61,33 @@ class Venue {
     final isInDb = json['isInDb'] == true || json['is_in_db'] == true;
     final checkinCountRaw =
         json['checkinCountActive'] ?? json['checkin_count_active'];
+    int? maleCount = _parseOptionalInt(
+      json['checkinCountMale'] ??
+          json['checkin_count_male'] ??
+          json['maleCheckinCount'] ??
+          json['male_checkin_count'] ??
+          json['checkinsMale'] ??
+          json['checkins_male'],
+    );
+    int? femaleCount = _parseOptionalInt(
+      json['checkinCountFemale'] ??
+          json['checkin_count_female'] ??
+          json['femaleCheckinCount'] ??
+          json['female_checkin_count'] ??
+          json['checkinsFemale'] ??
+          json['checkins_female'],
+    );
+    final genderBreakRaw =
+        json['checkinGenderBreakdown'] ?? json['checkin_gender_breakdown'];
+    if (genderBreakRaw is Map) {
+      final g = Map<dynamic, dynamic>.from(genderBreakRaw);
+      maleCount ??= _parseOptionalInt(
+        g['male'] ?? g['m'] ?? g['men'] ?? g['man'],
+      );
+      femaleCount ??= _parseOptionalInt(
+        g['female'] ?? g['f'] ?? g['women'] ?? g['woman'],
+      );
+    }
     final canCheckinRaw = json['canCheckin'] ?? json['can_checkin'];
     final distanceRaw = json['distanceMeters'] ?? json['distance_meters'];
 
@@ -77,6 +112,8 @@ class Venue {
       checkinCountActive: checkinCountRaw is num
           ? checkinCountRaw.toInt()
           : null,
+      checkinCountMale: maleCount,
+      checkinCountFemale: femaleCount,
       eventSummary: eventRaw is Map<String, dynamic>
           ? VenueEventSummary.fromJson(eventRaw)
           : (eventRaw is Map
@@ -96,6 +133,13 @@ class Venue {
       status: _computeStatus(json),
       tag: _computeTag(json),
     );
+  }
+
+  static int? _parseOptionalInt(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
   }
 
   // ---------- UI HELPERS ----------
@@ -123,6 +167,92 @@ class Venue {
     }
     return '#NearbyNow';
   }
+
+  /// Same physical venue may appear in API `mapItems` vs `items` with different ids
+  /// (e.g. placeId vs DB uuid). Used to merge check-in stats onto map pins.
+  bool isSameVenueAs(Venue other) {
+    if (id.isNotEmpty && id == other.id) return true;
+    final p = placeId;
+    final op = other.placeId;
+    if (p != null && p.isNotEmpty && p == other.id) return true;
+    if (op != null && op.isNotEmpty && op == id) return true;
+    if (p != null &&
+        op != null &&
+        p.isNotEmpty &&
+        op.isNotEmpty &&
+        p == op) {
+      return true;
+    }
+    // Same place from Google vs DB rows (different ids, missing placeId on one side).
+    if (_venuesRoughSameLocation(this, other) &&
+        _venueNamesLikelySame(name, other.name)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Prefer non-null check-in fields from [other] when this venue has gaps.
+  Venue mergeCheckinFieldsFrom(Venue other) {
+    return Venue(
+      id: id,
+      placeId: placeId,
+      name: name,
+      type: type,
+      status: status,
+      address: address,
+      city: city,
+      photoUrl: photoUrl,
+      latitude: latitude,
+      longitude: longitude,
+      tag: tag,
+      source: source,
+      isInDb: isInDb,
+      canCheckin: canCheckin,
+      checkinCountActive: checkinCountActive ?? other.checkinCountActive,
+      checkinCountMale: checkinCountMale ?? other.checkinCountMale,
+      checkinCountFemale: checkinCountFemale ?? other.checkinCountFemale,
+      eventSummary: eventSummary,
+      verificationLevel: verificationLevel,
+      distanceMeters: distanceMeters,
+      openNow: openNow,
+      rating: rating,
+      types: types,
+    );
+  }
+}
+
+/// ~100m — enough for map/list coordinate jitter; avoids false matches when names differ.
+bool _venuesRoughSameLocation(Venue a, Venue b, {double maxKm = 0.1}) {
+  if (!(a.latitude.isFinite &&
+      b.latitude.isFinite &&
+      a.longitude.isFinite &&
+      b.longitude.isFinite)) {
+    return false;
+  }
+  if (a.latitude == 0 &&
+      a.longitude == 0 &&
+      b.latitude == 0 &&
+      b.longitude == 0) {
+    return false;
+  }
+  final dLat = (a.latitude - b.latitude).abs();
+  final dLng = (a.longitude - b.longitude).abs();
+  final latRad = a.latitude * math.pi / 180.0;
+  final kmLat = dLat * 111.0;
+  final kmLng = dLng * 111.0 * math.cos(latRad).abs().clamp(0.2, 1.0);
+  final km = math.sqrt(kmLat * kmLat + kmLng * kmLng);
+  return km <= maxKm;
+}
+
+bool _venueNamesLikelySame(String a, String b) {
+  final na = a.toLowerCase().trim().replaceAll(RegExp(r'\s+'), ' ');
+  final nb = b.toLowerCase().trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (na.isEmpty || nb.isEmpty) return false;
+  if (na == nb) return true;
+  if (na.length >= 6 && nb.length >= 6 && (na.contains(nb) || nb.contains(na))) {
+    return true;
+  }
+  return false;
 }
 
 class VenueEventSummary {

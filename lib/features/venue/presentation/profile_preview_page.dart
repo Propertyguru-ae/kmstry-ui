@@ -148,11 +148,26 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _repo.getCheckinProfile(checkinId);
-          resolvedVenueId ??= profile.checkin.venueId;
-          if (active != null &&
+          // Prefer API check-in venue (DB UUID). Caller may pass Google [Venue.id] as venueId — do not use that for gating.
+          final profileVenueId = profile.checkin.venueId;
+          if (profileVenueId != null && profileVenueId.isNotEmpty) {
+            resolvedVenueId = profileVenueId;
+          } else {
+            resolvedVenueId ??= active?.venueId;
+          }
+          final sameVenueAsCheckin = profileVenueId != null &&
+              profileVenueId.isNotEmpty &&
+              active != null &&
+              active.isActive &&
+              active.venueId == profileVenueId;
+          final sameVenueFallback = (profileVenueId == null ||
+                  profileVenueId.isEmpty) &&
+              active != null &&
               active.isActive &&
               resolvedVenueId != null &&
-              active.venueId == resolvedVenueId) {
+              resolvedVenueId.isNotEmpty &&
+              active.venueId == resolvedVenueId;
+          if (sameVenueAsCheckin || sameVenueFallback) {
             showPostsAndVibe = true;
           }
           if (!mounted) return;
@@ -601,7 +616,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername =
         (_profile?.user.username ?? widget.userUsername)?.trim();
-debugPrint('DISPLAY USERNAME: $displayUsername');
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,

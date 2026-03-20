@@ -341,8 +341,8 @@ class _CheckInPageState extends State<CheckInPage> {
     try {
       // 🔴 Şimdilik sabit (sonra GPS’ten gelecek)
       //const venueId = 'dbe83cb4-d108-4b11-b999-f34abbe39825';
-      const latitude = 25.2105;
-      const longitude = 55.276;
+      const latitude = 25.055932;
+      const longitude = 55.203866;
 
       // 1️⃣ Check-in oluştur
       final checkinId = await _repo.createCheckin(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
 import '../data/venue_model.dart';
 
 class VenueListItem extends StatelessWidget {
@@ -79,16 +80,19 @@ class VenueListItem extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Row(
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                   
                         if (hasRating) ...[
                           Icon(
                             Icons.star_rounded,
                             size: 14,
-                            color: isDark ? Colors.amber.shade300 : Colors.amber.shade700,
+                            color: isDark
+                                ? Colors.amber.shade300
+                                : Colors.amber.shade700,
                           ),
-                          const SizedBox(width: 3),
                           Text(
                             venue.rating!.toStringAsFixed(1),
                             style: TextStyle(
@@ -105,6 +109,12 @@ class VenueListItem extends StatelessWidget {
                               color: isDark ? Colors.white54 : Colors.grey,
                             ),
                           ),
+                        VenueCheckinStatsRow(
+                          venue: venue,
+                          isDark: isDark,
+                          iconSize: 14,
+                          fontSize: 12,
+                        ),
                       ],
                     ),
                   ],

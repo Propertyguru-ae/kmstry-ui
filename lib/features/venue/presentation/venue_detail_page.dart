@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 
@@ -15,8 +16,12 @@ class VenueDetailPage extends StatefulWidget {
 
 class _VenueDetailPageState extends State<VenueDetailPage> {
   final _repo = VenueCheckinRepository();
+  final _venueContextRepo = VenueContextRepository();
   String? _activeCheckinVenueId;
+  String? _activeCheckinVenuePlaceId;
+  String? _resolvedVenueIdForCurrentDetail;
   bool _loadingActiveCheckin = true;
+  bool _resolvingVenueForCheckin = false;
 
   @override
   void initState() {
@@ -24,26 +29,92 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _loadActiveCheckin();
   }
 
+  /// For Google-backed detail, [Venue.id] may be a Places id while active check-in uses DB UUID.
+  /// We need a stable key to resolve/compare without flashing the wrong CTA.
+  String? _effectivePlaceKeyForActiveCheckinCorrelation() {
+    final p = widget.venue.placeId;
+    if (p != null && p.isNotEmpty) return p;
+    if (widget.venue.source != 'google') return null;
+    if (widget.venue.id.isEmpty) return null;
+    // Real DB uuid as id — matching is done via id == activeVenueId.
+    if (widget.venue.isInDb && widget.venue.canCheckin) return null;
+    return widget.venue.id;
+  }
+
   Future<void> _loadActiveCheckin() async {
     try {
       final activeCheckin = await _repo.getActiveCheckin();
-      
-      debugPrint('🔍 DEBUG: activeCheckin = $activeCheckin');
-      debugPrint('🔍 DEBUG: activeCheckin?.venueId = ${activeCheckin?.venueId}');
-      debugPrint('🔍 DEBUG: widget.venue.id = ${widget.venue.id}');
-      debugPrint('🔍 DEBUG: venue.id type = ${widget.venue.id.runtimeType}');
-      debugPrint('🔍 DEBUG: venueId type = ${activeCheckin?.venueId.runtimeType}');
-      
+      final activeVenueId = activeCheckin?.venueId;
+
+      if (!mounted) return;
+
+      if (activeVenueId == null || activeVenueId.isEmpty) {
+        setState(() {
+          _activeCheckinVenueId = null;
+          _activeCheckinVenuePlaceId = null;
+          _loadingActiveCheckin = false;
+        });
+        return;
+      }
+
       setState(() {
-        _activeCheckinVenueId = activeCheckin?.venueId;
-        _loadingActiveCheckin = false;
+        _activeCheckinVenueId = activeVenueId;
+        _activeCheckinVenuePlaceId = null;
+        // Stay loading until we can decide "here" vs elsewhere (avoid wrong "Check in first").
       });
-      
-      debugPrint('🔍 DEBUG: _activeCheckinVenueId = $_activeCheckinVenueId');
-      debugPrint('🔍 DEBUG: hasActiveCheckinHere = ${_activeCheckinVenueId == widget.venue.id}');
+
+      final matchedById =
+          widget.venue.id.isNotEmpty && widget.venue.id == activeVenueId;
+      if (matchedById) {
+        if (mounted) {
+          setState(() => _loadingActiveCheckin = false);
+        }
+        return;
+      }
+
+      final placeKey = _effectivePlaceKeyForActiveCheckinCorrelation();
+      if (placeKey != null && placeKey.isNotEmpty) {
+        try {
+          final resolvedResponse =
+              await _venueContextRepo.resolveVenueFromPlace(placeKey);
+          final resolved = _extractVenueIdFromResponse(resolvedResponse);
+          if (!mounted) return;
+          if (resolved != null &&
+              resolved.isNotEmpty &&
+              resolved == activeVenueId) {
+            setState(() {
+              _resolvedVenueIdForCurrentDetail = resolved;
+              _loadingActiveCheckin = false;
+            });
+            return;
+          }
+        } catch (e) {
+          debugPrint('⚠️ resolve for active check-in correlation: $e');
+        }
+      }
+
+      try {
+        final venueData = await _venueContextRepo.getVenueById(activeVenueId);
+        final placeId = (venueData['placeId'] ??
+                venueData['place_id'] ??
+                venueData['googlePlaceId'] ??
+                venueData['google_place_id'])
+            ?.toString();
+        if (!mounted) return;
+        setState(() {
+          if (placeId != null && placeId.isNotEmpty) {
+            _activeCheckinVenuePlaceId = placeId;
+          }
+          _loadingActiveCheckin = false;
+        });
+      } catch (e) {
+        debugPrint('⚠️ Could not load active check-in venue details: $e');
+        if (!mounted) return;
+        setState(() => _loadingActiveCheckin = false);
+      }
     } catch (e) {
-      // On error, assume no active check-in
       debugPrint('⚠️ Error loading active check-in: $e');
+      if (!mounted) return;
       setState(() {
         _activeCheckinVenueId = null;
         _loadingActiveCheckin = false;
@@ -51,10 +122,106 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     }
   }
 
+  String? _extractVenueIdFromResponse(Map<String, dynamic> response) {
+    final direct = response['venueId'] ?? response['venue_id'] ?? response['id'];
+    if (direct is String && direct.isNotEmpty) return direct;
+
+    final venue = response['venue'];
+    if (venue is Map) {
+      final nestedId = venue['id'] ?? venue['venueId'] ?? venue['venue_id'];
+      if (nestedId is String && nestedId.isNotEmpty) return nestedId;
+    }
+    return null;
+  }
+
+  Future<String> _resolveVenueIdForCheckin() async {
+    if (widget.venue.id.isNotEmpty && widget.venue.canCheckin) {
+      return widget.venue.id;
+    }
+
+    final placeId = widget.venue.placeId;
+    if (placeId == null || placeId.isEmpty) {
+      if (widget.venue.id.isNotEmpty) return widget.venue.id;
+      throw Exception('Venue reference is missing');
+    }
+
+    // Check-in flow must resolve a usable venue id without claim/account side effects.
+    final resolvedResponse = await _venueContextRepo.resolveVenueFromPlace(placeId);
+    final resolved = _extractVenueIdFromResponse(resolvedResponse);
+    if (resolved == null || resolved.isEmpty) {
+      throw Exception('Could not resolve venue id from place');
+    }
+    return resolved;
+  }
+
+  Future<void> _openCheckinFlow() async {
+    setState(() => _resolvingVenueForCheckin = true);
+    try {
+      final resolvedVenueId = await _resolveVenueIdForCheckin();
+      if (!mounted) return;
+      setState(() {
+        _resolvedVenueIdForCurrentDetail = resolvedVenueId;
+      });
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CheckInPage(venueId: resolvedVenueId),
+        ),
+      );
+      _loadActiveCheckin();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not prepare venue for check-in')),
+      );
+      debugPrint('❌ Check-in venue resolve error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _resolvingVenueForCheckin = false);
+      }
+    }
+  }
+
+  bool _isActiveCheckinAtCurrentVenue() {
+    final activeVenueId = _activeCheckinVenueId;
+    if (activeVenueId == null || activeVenueId.isEmpty) return false;
+
+    final resolvedCurrentVenueId = _resolvedVenueIdForCurrentDetail;
+    if (resolvedCurrentVenueId != null &&
+        resolvedCurrentVenueId.isNotEmpty &&
+        activeVenueId == resolvedCurrentVenueId) {
+      return true;
+    }
+
+    final currentVenueId = widget.venue.id;
+    if (currentVenueId.isNotEmpty && activeVenueId == currentVenueId) {
+      return true;
+    }
+
+    final currentPlaceId = widget.venue.placeId;
+    final activePlaceId = _activeCheckinVenuePlaceId;
+    if (currentPlaceId != null &&
+        currentPlaceId.isNotEmpty &&
+        activePlaceId != null &&
+        activePlaceId.isNotEmpty &&
+        currentPlaceId == activePlaceId) {
+      return true;
+    }
+
+    // Some google-only cards use placeId as id.
+    if (activePlaceId != null &&
+        activePlaceId.isNotEmpty &&
+        currentVenueId == activePlaceId) {
+      return true;
+    }
+
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasActiveCheckinHere =
-        _activeCheckinVenueId == widget.venue.id;
+    final hasActiveCheckinHere = _isActiveCheckinAtCurrentVenue();
 
     return Scaffold(
       body: SafeArea(
@@ -180,75 +347,36 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               const SizedBox(height: 24),
 
-              /// ✅ CHECK-IN BUTTON (KURAL BURADA)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed:
-                      _loadingActiveCheckin ||
-                          hasActiveCheckinHere ||
-                          !widget.venue.canCheckin
-                      ? null
-                      : () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => CheckInPage(
-                                venueId: widget.venue.id,
-                              ),
-                            ),
-                          );
-                          // Refresh check-in state after returning from check-in page
-                          _loadActiveCheckin();
-                        },
-                  child: Text(
-                    _loadingActiveCheckin
-                        ? 'Checking status...'
-                        : !widget.venue.canCheckin
-                            ? 'Community data pending (details only)'
-                            : hasActiveCheckinHere
-                            ? 'You are already checked in'
-                            : 'Check In Live',
-                  ),
-                ),
-              ),
-
-              if (!_loadingActiveCheckin && hasActiveCheckinHere)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'You can only check in once per venue.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-
-              const SizedBox(height: 12),
-
               /// WHO'S HERE
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
-                  onPressed: hasActiveCheckinHere
-                      ? () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  VenuePeoplePage(venue: widget.venue),
-                            ),
-                          );
-                        }
-                      : null,
+                  onPressed: _loadingActiveCheckin || _resolvingVenueForCheckin
+                      ? null
+                      : () async {
+                          if (hasActiveCheckinHere) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => VenuePeoplePage(
+                                  venue: widget.venue,
+                                  listVenueId: _activeCheckinVenueId ??
+                                      _resolvedVenueIdForCurrentDetail,
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          await _openCheckinFlow();
+                        },
                   child: Text(
-                    _loadingActiveCheckin
+                    _resolvingVenueForCheckin
+                        ? 'Preparing venue...'
+                        : _loadingActiveCheckin
                         ? "Loading..."
                         : hasActiveCheckinHere
                             ? "Who's here?"
-                            : "Who's here? (Check in first)",
+                            : "Check in first",
                   ),
                 ),
               ),

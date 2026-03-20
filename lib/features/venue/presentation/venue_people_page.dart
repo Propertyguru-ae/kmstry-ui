@@ -8,7 +8,15 @@ import 'package:kmstry_frontend/features/venue/presentation/user_card.dart';
 class VenuePeoplePage extends StatefulWidget {
   final Venue venue;
 
-  const VenuePeoplePage({super.key, required this.venue});
+  /// Backend check-in list uses the DB venue UUID. Google-sourced [venue] may
+  /// use [placeId] as [Venue.id]; pass the resolved id from active check-in / resolve.
+  final String? listVenueId;
+
+  const VenuePeoplePage({
+    super.key,
+    required this.venue,
+    this.listVenueId,
+  });
 
   @override
   State<VenuePeoplePage> createState() => _VenuePeoplePageState();
@@ -23,9 +31,14 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
     _loadCheckins();
   }
 
+  String get _effectiveVenueIdForList =>
+      (widget.listVenueId != null && widget.listVenueId!.isNotEmpty)
+          ? widget.listVenueId!
+          : widget.venue.id;
+
   void _loadCheckins() {
     setState(() {
-      _future = _repo.getWhoIsHere(widget.venue.id);
+      _future = _repo.getWhoIsHere(_effectiveVenueIdForList);
     });
   }
 
@@ -237,7 +250,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                           MaterialPageRoute(
                             builder: (_) => ProfilePreviewPage(
                               checkinId: person.id,
-                              venueId: widget.venue.id,
+                              venueId: _effectiveVenueIdForList,
                             ),
                           ),
                         );

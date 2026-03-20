@@ -10,6 +10,8 @@ import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'cluster_service.dart';
 import 'dart:math' as math;
+import 'venue_detail_page.dart';
+import 'venue_checkin_stats_row.dart';
 
 class VenueMapView extends StatefulWidget {
   final bool hideSearch;
@@ -56,11 +58,14 @@ class _VenueMapViewState extends State<VenueMapView> {
   final Map<String, BitmapDescriptor> _clusterIconCache = {};
   BitmapDescriptor? _singleDefaultIcon;
   BitmapDescriptor? _singleSelectedIcon;
-  BitmapDescriptor? _searchResultIcon;
+  BitmapDescriptor? _singlePressedIcon;
+  /// While the venue pin popup is open, that marker uses a different hue.
+  String? _pressedMarkerVenueKey;
   Timer? _searchDebounce;
   bool _searchLoading = false;
   String? _searchError;
   List<Venue> _searchResults = const [];
+  /// Last venue chosen from type search — shown as a normal map pin if not already on the map.
   Venue? _selectedSearchVenue;
   int _searchRequestToken = 0;
   bool _showSearchResults = false;
@@ -198,7 +203,7 @@ class _VenueMapViewState extends State<VenueMapView> {
 
     final viewportKey = _viewportKey(bounds, camera.zoom);
     final selectedKey =
-        '${widget.selectedVenueId ?? ''}|${_selectedSearchVenue != null ? _venueIdentity(_selectedSearchVenue!) : ''}';
+        '${widget.selectedVenueId ?? ''}|${_selectedSearchVenue != null ? _venueIdentity(_selectedSearchVenue!) : ''}|${_pressedMarkerVenueKey ?? ''}';
     if (!force &&
         viewportKey == _lastViewportKey &&
         venuesKey == _lastVenueKey &&
@@ -211,10 +216,22 @@ class _VenueMapViewState extends State<VenueMapView> {
     _lastSelectedKey = selectedKey;
 
     if (clusteredInputVenues.isEmpty) {
-      if (_markers.isNotEmpty) {
-        setState(() => _markers = const {});
+      final onlySearch = <Marker>{};
+      _appendSearchSelectionMarker(onlySearch);
+      final markerKey =
+          '${_markerFingerprint(onlySearch)}|${_pressedMarkerVenueKey ?? ''}|empty';
+      if (onlySearch.isEmpty) {
+        if (_markers.isNotEmpty) {
+          setState(() => _markers = const {});
+        }
+        _lastMarkerKey = '';
+        return;
       }
-      _lastMarkerKey = '';
+      if (markerKey == _lastMarkerKey) return;
+      _lastMarkerKey = markerKey;
+      if (mounted) {
+        setState(() => _markers = onlySearch);
+      }
       return;
     }
 
@@ -270,48 +287,39 @@ class _VenueMapViewState extends State<VenueMapView> {
         );
       } else {
         final venue = node.primaryVenue;
+        final vid = _venueIdentity(venue);
         final isSelected =
             widget.selectedVenueId != null &&
             widget.selectedVenueId == venue.id;
+        final isPressed = _pressedMarkerVenueKey == vid;
+        final BitmapDescriptor venueIcon;
+        if (isPressed) {
+          venueIcon = _pressedSingleIcon();
+        } else if (isSelected) {
+          venueIcon = _selectedSingleIcon();
+        } else {
+          venueIcon = _defaultSingleIcon();
+        }
         builtMarkers.add(
           Marker(
-            markerId: MarkerId('venue:${_venueIdentity(venue)}'),
+            markerId: MarkerId('venue:$vid'),
             position: LatLng(venue.latitude, venue.longitude),
             infoWindow: InfoWindow(
               title: venue.name,
-              snippet: venue.source == 'db'
-                  ? 'DB venue'
-                  : 'Google venue (community pending)',
+              snippet: _venueMarkerInfoSnippet(venue),
             ),
-            icon: isSelected ? _selectedSingleIcon() : _defaultSingleIcon(),
-            zIndexInt: isSelected ? 4 : 1,
-            onTap: () => widget.onVenueTap?.call(venue),
+            icon: venueIcon,
+            zIndexInt: isPressed ? 5 : (isSelected ? 4 : 1),
+            onTap: () => _showVenueMarkerPopup(venue),
           ),
         );
       }
     }
 
-    if (_selectedSearchVenue != null &&
-        _selectedSearchVenue!.latitude != 0 &&
-        _selectedSearchVenue!.longitude != 0) {
-      builtMarkers.add(
-        Marker(
-          markerId: const MarkerId('search:selected'),
-          position: LatLng(
-            _selectedSearchVenue!.latitude,
-            _selectedSearchVenue!.longitude,
-          ),
-          icon: await _searchSelectionIcon(),
-          zIndexInt: 6,
-          infoWindow: InfoWindow(
-            title: _selectedSearchVenue!.name,
-            snippet: _selectedSearchVenue!.address,
-          ),
-        ),
-      );
-    }
+    _appendSearchSelectionMarker(builtMarkers);
 
-    final markerKey = _markerFingerprint(builtMarkers);
+    final markerKey =
+        '${_markerFingerprint(builtMarkers)}|${_pressedMarkerVenueKey ?? ''}';
     if (markerKey == _lastMarkerKey) return;
     _lastMarkerKey = markerKey;
     if (mounted) {
@@ -331,15 +339,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     );
   }
 
-  Future<BitmapDescriptor> _searchSelectionIcon() async {
-    if (_searchResultIcon != null) return _searchResultIcon!;
-    _searchResultIcon = await _drawClusterBitmap(
-      size: 56,
-      text: 'S',
-      fill: const Color(0xFF0EA5E9),
-      stroke: const Color(0xFFBAE6FD),
+  BitmapDescriptor _pressedSingleIcon() {
+    return _singlePressedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
+      BitmapDescriptor.hueYellow,
     );
-    return _searchResultIcon!;
   }
 
   Future<BitmapDescriptor> _clusterIcon({
@@ -462,6 +465,53 @@ class _VenueMapViewState extends State<VenueMapView> {
     return '${venue.name}_${venue.latitude}_${venue.longitude}';
   }
 
+  /// Search API may omit check-in aggregates; copy from loaded nearby [widget.venues] when same place.
+  List<Venue> _enrichSearchResultsWithNearbyVenues(List<Venue> results) {
+    final nearby = widget.venues;
+    if (nearby.isEmpty) return results;
+    return results.map((r) {
+      var merged = r;
+      for (final v in nearby) {
+        if (r.isSameVenueAs(v)) {
+          merged = merged.mergeCheckinFieldsFrom(v);
+        }
+      }
+      return merged;
+    }).toList();
+  }
+
+  /// Standard red/yellow pin (not the old large "S" badge). Skipped if the same venue is already a cluster pin.
+  void _appendSearchSelectionMarker(Set<Marker> builtMarkers) {
+    final sv = _selectedSearchVenue;
+    if (sv == null) return;
+    if (!sv.latitude.isFinite ||
+        !sv.longitude.isFinite ||
+        (sv.latitude == 0 && sv.longitude == 0)) {
+      return;
+    }
+    final searchId = _venueIdentity(sv);
+    final alreadyPinned = builtMarkers.any(
+      (m) => m.markerId.value == 'venue:$searchId',
+    );
+    if (alreadyPinned) return;
+
+    final searchPressed = _pressedMarkerVenueKey == searchId;
+    final icon = searchPressed ? _pressedSingleIcon() : _defaultSingleIcon();
+    builtMarkers.add(
+      Marker(
+        markerId: MarkerId('search:$searchId'),
+        position: LatLng(sv.latitude, sv.longitude),
+        icon: icon,
+        zIndexInt: searchPressed ? 5 : 6,
+        infoWindow: InfoWindow(
+          title: sv.name,
+          snippet: _venueMarkerInfoSnippet(sv),
+        ),
+        onTap: () => _showVenueMarkerPopup(sv),
+      ),
+    );
+  }
+
   List<Venue> _filterClusterInputVenues(List<Venue> venues) {
     if (venues.isEmpty) return const [];
     return venues
@@ -493,7 +543,9 @@ class _VenueMapViewState extends State<VenueMapView> {
         _searchError = null;
         _searchResults = const [];
         _showSearchResults = _searchFocusNode.hasFocus;
+        _selectedSearchVenue = null;
       });
+      _recomputeClusters(force: true);
       return;
     }
 
@@ -520,7 +572,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       );
       if (!mounted || token != _searchRequestToken) return;
       setState(() {
-        _searchResults = results;
+        _searchResults = _enrichSearchResultsWithNearbyVenues(results);
         _searchLoading = false;
       });
     } catch (_) {
@@ -555,7 +607,156 @@ class _VenueMapViewState extends State<VenueMapView> {
         ),
       ),
     );
-    _recomputeClusters(force: true);
+    if (!mounted) return;
+    // Same UX as tapping the pin: yellow “pressed” marker + bottom sheet.
+    await _showVenueMarkerPopup(venue);
+  }
+
+  void _openVenueDetailFromMap(Venue venue) {
+    widget.onVenueTap?.call(venue);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
+    );
+  }
+
+  /// Short line for native [InfoWindow] (character-limited on some platforms).
+  String _venueMarkerInfoSnippet(Venue venue) {
+    final parts = <String>[];
+    if (venue.rating != null && venue.rating! > 0) {
+      parts.add('★${venue.rating!.toStringAsFixed(1)}');
+    }
+    final total = venue.checkinCountActive;
+    if (total != null) {
+      if (total == 0) {
+        parts.add('Be the first to check in');
+      } else {
+        parts.add('$total checked in');
+      }
+    } else {
+      final m = venue.checkinCountMale;
+      final f = venue.checkinCountFemale;
+      if (m != null && f != null) {
+        final sum = m + f;
+        if (sum == 0) {
+          parts.add('Be the first to check in');
+        } else {
+          parts.add('$sum checked in');
+        }
+      }
+    }
+    if (venue.checkinCountMale != null && venue.checkinCountMale! > 0) {
+      parts.add('♂${venue.checkinCountMale}');
+    }
+    if (venue.checkinCountFemale != null && venue.checkinCountFemale! > 0) {
+      parts.add('♀${venue.checkinCountFemale}');
+    }
+    if (parts.isEmpty) {
+      if (!venue.isInDb) {
+        return 'Be the first to check in';
+      }
+      return venue.source == 'db'
+          ? 'Tap Open for details'
+          : 'Google place · Open for details';
+    }
+    return parts.join(' · ');
+  }
+
+  Future<void> _showVenueMarkerPopup(Venue venue) async {
+    if (!mounted) return;
+    final key = _venueIdentity(venue);
+    setState(() => _pressedMarkerVenueKey = key);
+    await _recomputeClusters(force: true);
+    if (!mounted) return;
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final hasRating = venue.rating != null && venue.rating! > 0;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  venue.name,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (venue.address.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    venue.address,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (hasRating) ...[
+                      Icon(
+                        Icons.star_rounded,
+                        size: 18,
+                        color: isDark
+                            ? Colors.amber.shade300
+                            : Colors.amber.shade700,
+                      ),
+                      Text(
+                        venue.rating!.toStringAsFixed(1),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                        ),
+                      ),
+                    ] else
+                      Text(
+                        'No rating',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: isDark ? Colors.white54 : Colors.grey,
+                        ),
+                      ),
+                    VenueCheckinStatsRow(
+                      venue: venue,
+                      isDark: isDark,
+                      iconSize: 16,
+                      fontSize: 14,
+                      treatMissingStatsAsCheckInPrompt: true,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _openVenueDetailFromMap(venue);
+                  },
+                  child: const Text('Open'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted) return;
+    setState(() => _pressedMarkerVenueKey = null);
+    await _recomputeClusters(force: true);
   }
 
   void _closeSearchPanel() {
@@ -718,19 +919,34 @@ class _VenueMapViewState extends State<VenueMapView> {
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.star_rounded,
-                    size: 14,
-                    color: Colors.amber,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.star_rounded,
+                        size: 14,
+                        color: Colors.amber,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        hasRating
+                            ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
+                            : 'Google rating unavailable',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 3),
-                  Text(
-                    hasRating
-                        ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
-                        : 'Google rating unavailable',
-                    style: const TextStyle(fontSize: 11),
+                  VenueCheckinStatsRow(
+                    venue: item,
+                    isDark: false,
+                    iconSize: 13,
+                    fontSize: 11,
+                    treatMissingStatsAsCheckInPrompt: true,
                   ),
                 ],
               ),

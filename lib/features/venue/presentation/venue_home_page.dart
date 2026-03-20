@@ -13,6 +13,25 @@ class VenueHomePage extends StatefulWidget {
   State<VenueHomePage> createState() => _VenueHomePageState();
 }
 
+/// Discover may split the same place across [mapItems] vs [items] with different ids, or
+/// attach check-ins on only one row. Merge every target against the full pool (both lists)
+/// so list cards and map pins get the same stats when any duplicate carries them.
+List<Venue> _enrichVenuesWithPoolCheckins(
+  List<Venue> targets,
+  List<Venue> pool,
+) {
+  if (pool.isEmpty) return targets;
+  return targets.map((t) {
+    var merged = t;
+    for (final p in pool) {
+      if (t.isSameVenueAs(p)) {
+        merged = merged.mergeCheckinFieldsFrom(p);
+      }
+    }
+    return merged;
+  }).toList();
+}
+
 class _VenueHomePageState extends State<VenueHomePage> {
   bool isSheetExpanded = false;
   bool _locationAvailable = false;
@@ -33,8 +52,9 @@ class _VenueHomePageState extends State<VenueHomePage> {
       if (!mounted) return;
 
       setState(() {
-        _mapVenues = response.mapItems;
-        _listVenues = response.items;
+        final pool = [...response.mapItems, ...response.items];
+        _mapVenues = _enrichVenuesWithPoolCheckins(response.mapItems, pool);
+        _listVenues = _enrichVenuesWithPoolCheckins(response.items, pool);
         _loadingVenues = false;
       });
     } catch (_) {

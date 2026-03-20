@@ -165,7 +165,7 @@ class _CollapsedHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      'Over 1,000 venues in this area',
+      'Discover nearby venues',
       style: TextStyle(
         fontSize: 13,
         color: Theme.of(context).brightness == Brightness.dark
@@ -252,22 +252,7 @@ class _ExpandedHeader extends StatelessWidget {
 
           const SizedBox(width: 12),
 
-          /// FILTER ICON
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.05)
-                  : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              Icons.tune,
-              size: 20,
-              color: isDark ? Colors.white70 : Colors.black87,
-            ),
-          ),
+       
         ],
       ),
     );
