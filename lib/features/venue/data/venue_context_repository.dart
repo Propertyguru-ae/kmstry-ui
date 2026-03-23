@@ -14,6 +14,11 @@ class VenueContextRepository {
     return data as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getVenueDetails(String placeId) async {
+    final response = await _api.get('/venues/details/$placeId');
+    return response.data;
+  }
+
   Future<Map<String, dynamic>> claimVenueFromPlace(String placeId) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');

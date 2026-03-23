@@ -73,6 +73,41 @@ Future<NearbyVenuesResponse> getNearbyVenues({
   return NearbyVenuesResponse.fromJson(data);
 }
 
+  Future<List<Venue>> getMapMarkers({
+    required double latitude,
+    required double longitude,
+    int radiusMeters = 3000,
+    int limit = 400,
+    String? keyword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final normalizedLimit = limit.clamp(1, 1000);
+    final normalizedRadius = radiusMeters < 1 ? 3000 : radiusMeters;
+    final q = keyword?.trim();
+    final hasKeyword = q != null && q.isNotEmpty;
+
+    final candidatePaths = <String>[
+      '/venues/map-markers?latitude=$latitude&longitude=$longitude&radiusMeters=$normalizedRadius&limit=$normalizedLimit${hasKeyword ? '&keyword=${Uri.encodeQueryComponent(q)}' : ''}',
+      '/venues/map-markers?lat=$latitude&lng=$longitude&radiusMeters=$normalizedRadius&limit=$normalizedLimit${hasKeyword ? '&keyword=${Uri.encodeQueryComponent(q)}' : ''}',
+    ];
+
+    Object? lastError;
+    for (final path in candidatePaths) {
+      try {
+        final data = await _api.get(path, headers: headers);
+        return _parseVenueList(data);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return const [];
+  }
+
   Future<List<Venue>> searchVenues({
     required String query,
     required double latitude,

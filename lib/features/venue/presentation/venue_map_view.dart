@@ -17,6 +17,7 @@ class VenueMapView extends StatefulWidget {
   final bool hideSearch;
   final ValueChanged<bool>? onLocationAccessChanged;
   final ValueChanged<LatLng>? onLocationResolved;
+  final ValueChanged<bool>? onSearchActivityChanged;
   final List<Venue> venues;
   final String? selectedVenueId;
   final ValueChanged<Venue>? onVenueTap;
@@ -26,6 +27,7 @@ class VenueMapView extends StatefulWidget {
     this.hideSearch = false,
     this.onLocationAccessChanged,
     this.onLocationResolved,
+    this.onSearchActivityChanged,
     this.venues = const [],
     this.selectedVenueId,
     this.onVenueTap,
@@ -101,6 +103,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       if (_searchFocusNode.hasFocus) {
         setState(() => _showSearchResults = true);
       }
+      _notifySearchActivity();
     });
     _loadLocation();
   }
@@ -113,7 +116,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         widget.selectedVenueId != null) {
       Venue? selected;
       for (final venue in widget.venues) {
-        if (venue.id == widget.selectedVenueId) {
+        if (_matchesSelectedVenue(venue)) {
           selected = venue;
           break;
         }
@@ -135,11 +138,23 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   @override
   void dispose() {
+    widget.onSearchActivityChanged?.call(false);
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _mapController?.dispose();
     super.dispose();
+  }
+
+  bool get _isSearchActive {
+    return _searchFocusNode.hasFocus ||
+        _searchLoading ||
+        _showSearchResults ||
+        _searchController.text.trim().isNotEmpty;
+  }
+
+  void _notifySearchActivity() {
+    widget.onSearchActivityChanged?.call(_isSearchActive);
   }
 
   Future<void> _loadLocation() async {
@@ -288,9 +303,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       } else {
         final venue = node.primaryVenue;
         final vid = _venueIdentity(venue);
-        final isSelected =
-            widget.selectedVenueId != null &&
-            widget.selectedVenueId == venue.id;
+        final isSelected = _matchesSelectedVenue(venue);
         final isPressed = _pressedMarkerVenueKey == vid;
         final BitmapDescriptor venueIcon;
         if (isPressed) {
@@ -520,18 +533,49 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   static bool _isRelevantSocialVenue(Venue venue) {
-    final normalized = _normalizeVenueType(venue.type);
-    if (normalized.isEmpty) return false;
-    if (_excludedVenueTypes.contains(normalized)) return false;
-    return _includedVenueTypes.contains(normalized);
+    final normalizedTypes = _normalizedVenueTypes(venue);
+    if (normalizedTypes.isEmpty) {
+      return venue.isInDb;
+    }
+    if (normalizedTypes.any(_excludedVenueTypes.contains)) return false;
+    if (normalizedTypes.any(_includedVenueTypes.contains)) return true;
+    return venue.isInDb;
+  }
+
+  static Set<String> _normalizedVenueTypes(Venue venue) {
+    final out = <String>{};
+    final primary = _normalizeVenueType(venue.type);
+    if (primary.isNotEmpty) out.add(primary);
+    for (final raw in venue.types) {
+      final normalized = _normalizeVenueType(raw);
+      if (normalized.isNotEmpty) out.add(normalized);
+    }
+    return out;
   }
 
   static String _normalizeVenueType(String rawType) {
-    return rawType
+    final normalized = rawType
         .trim()
         .toLowerCase()
         .replaceAll('-', '_')
         .replaceAll(' ', '_');
+    switch (normalized) {
+      case 'night_club':
+        return 'nightclub';
+      case 'pub':
+      case 'brewpub':
+        return 'bar';
+      default:
+        return normalized;
+    }
+  }
+
+  bool _matchesSelectedVenue(Venue venue) {
+    final selectedId = widget.selectedVenueId;
+    if (selectedId == null || selectedId.isEmpty) return false;
+    if (venue.id == selectedId) return true;
+    if ((venue.placeId ?? '') == selectedId) return true;
+    return _venueIdentity(venue) == selectedId;
   }
 
   void _onSearchChanged(String value) {
@@ -545,6 +589,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         _showSearchResults = _searchFocusNode.hasFocus;
         _selectedSearchVenue = null;
       });
+      _notifySearchActivity();
       _recomputeClusters(force: true);
       return;
     }
@@ -563,6 +608,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       _searchError = null;
       _showSearchResults = true;
     });
+    _notifySearchActivity();
 
     try {
       final results = await _venueRepository.searchVenues(
@@ -575,6 +621,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         _searchResults = _enrichSearchResultsWithNearbyVenues(results);
         _searchLoading = false;
       });
+      _notifySearchActivity();
     } catch (_) {
       if (!mounted || token != _searchRequestToken) return;
       setState(() {
@@ -582,6 +629,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         _searchLoading = false;
         _searchError = 'Search failed. Please try again.';
       });
+      _notifySearchActivity();
     }
   }
 
@@ -598,6 +646,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         TextPosition(offset: _searchController.text.length),
       );
     });
+    _notifySearchActivity();
 
     await _mapController?.animateCamera(
       CameraUpdate.newCameraPosition(
@@ -773,6 +822,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       _searchError = null;
       _searchLoading = false;
     });
+    _notifySearchActivity();
   }
 
   Widget _buildSearchBar() {

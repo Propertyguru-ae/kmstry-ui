@@ -40,7 +40,8 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
     super.dispose();
   }
 
-  String get _normalizedUsername => _usernameController.text.trim().toLowerCase();
+  String get _normalizedUsername =>
+      _usernameController.text.trim().toLowerCase();
 
   bool get _isValid => _usernameRegex.hasMatch(_normalizedUsername);
 
@@ -142,8 +143,13 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
         title: const Text('Choose username'),
         automaticallyImplyLeading: false,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -152,13 +158,12 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'This will be unique.',
-              style: TextStyle(fontSize: 14),
-            ),
+            const Text('This will be unique.', style: TextStyle(fontSize: 14)),
             const SizedBox(height: 24),
             TextField(
               controller: _usernameController,
+              autofocus: true,
+              onSubmitted: (_) => _continue(),
               autocorrect: false,
               enableSuggestions: false,
               textInputAction: TextInputAction.done,
@@ -182,24 +187,35 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _suggestions
-                    .map(
-                      (s) => ActionChip(
-                        label: Text('@$s'),
-                        onPressed: () {
-                          setState(() {
-                            _usernameController.text = s;
-                            _usernameController.selection =
-                                TextSelection.collapsed(offset: s.length);
-                            _error = null;
-                          });
-                        },
-                      ),
-                    )
-                    .toList(),
+              SizedBox(
+                height: 120,
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _suggestions
+                        .take(4)
+                        .map(
+                          (s) => ActionChip(
+                            label: Text(
+                              '@$s',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _usernameController.text = s;
+                                _usernameController.selection =
+                                    TextSelection.collapsed(offset: s.length);
+                                _error = null;
+                              });
+                            },
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
               ),
             ],
             if (_suggestionError != null)
@@ -221,18 +237,19 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
               ),
-            const Spacer(),
+            const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isValid && !_loading ? _continue : null,
                 child: _loading
-                    ? const CircularProgressIndicator()
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Text('Continue'),
               ),
             ),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -22,11 +24,22 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   String? _resolvedVenueIdForCurrentDetail;
   bool _loadingActiveCheckin = true;
   bool _resolvingVenueForCheckin = false;
+  Map<String, dynamic>? _venueDetails;
+  bool _loadingDetails = true;
+  bool _loadingCheckinStats = false;
+  int? _checkinCountActive;
+  int? _checkinCountMale;
+  int? _checkinCountFemale;
 
   @override
   void initState() {
     super.initState();
+    _checkinCountActive = widget.venue.checkinCountActive;
+    _checkinCountMale = widget.venue.checkinCountMale;
+    _checkinCountFemale = widget.venue.checkinCountFemale;
     _loadActiveCheckin();
+    _loadVenueDetails();
+    _refreshCheckinStats();
   }
 
   /// For Google-backed detail, [Venue.id] may be a Places id while active check-in uses DB UUID.
@@ -39,6 +52,30 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Real DB uuid as id — matching is done via id == activeVenueId.
     if (widget.venue.isInDb && widget.venue.canCheckin) return null;
     return widget.venue.id;
+  }
+
+  Future<void> _loadVenueDetails() async {
+    try {
+      final placeId = widget.venue.placeId;
+
+      if (placeId == null || placeId.isEmpty) {
+        setState(() => _loadingDetails = false);
+        return;
+      }
+
+      final data = await _venueContextRepo.getVenueDetails(placeId);
+
+      if (!mounted) return;
+
+      setState(() {
+        _venueDetails = data;
+        _loadingDetails = false;
+      });
+    } catch (e) {
+      debugPrint('❌ Error loading venue details: $e');
+      if (!mounted) return;
+      setState(() => _loadingDetails = false);
+    }
   }
 
   Future<void> _loadActiveCheckin() async {
@@ -75,8 +112,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       final placeKey = _effectivePlaceKeyForActiveCheckinCorrelation();
       if (placeKey != null && placeKey.isNotEmpty) {
         try {
-          final resolvedResponse =
-              await _venueContextRepo.resolveVenueFromPlace(placeKey);
+          final resolvedResponse = await _venueContextRepo
+              .resolveVenueFromPlace(placeKey);
           final resolved = _extractVenueIdFromResponse(resolvedResponse);
           if (!mounted) return;
           if (resolved != null &&
@@ -95,11 +132,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
       try {
         final venueData = await _venueContextRepo.getVenueById(activeVenueId);
-        final placeId = (venueData['placeId'] ??
-                venueData['place_id'] ??
-                venueData['googlePlaceId'] ??
-                venueData['google_place_id'])
-            ?.toString();
+        final placeId =
+            (venueData['placeId'] ??
+                    venueData['place_id'] ??
+                    venueData['googlePlaceId'] ??
+                    venueData['google_place_id'])
+                ?.toString();
         if (!mounted) return;
         setState(() {
           if (placeId != null && placeId.isNotEmpty) {
@@ -123,7 +161,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   String? _extractVenueIdFromResponse(Map<String, dynamic> response) {
-    final direct = response['venueId'] ?? response['venue_id'] ?? response['id'];
+    final direct =
+        response['venueId'] ?? response['venue_id'] ?? response['id'];
     if (direct is String && direct.isNotEmpty) return direct;
 
     final venue = response['venue'];
@@ -146,7 +185,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     }
 
     // Check-in flow must resolve a usable venue id without claim/account side effects.
-    final resolvedResponse = await _venueContextRepo.resolveVenueFromPlace(placeId);
+    final resolvedResponse = await _venueContextRepo.resolveVenueFromPlace(
+      placeId,
+    );
     final resolved = _extractVenueIdFromResponse(resolvedResponse);
     if (resolved == null || resolved.isEmpty) {
       throw Exception('Could not resolve venue id from place');
@@ -170,6 +211,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         ),
       );
       _loadActiveCheckin();
+      _refreshCheckinStats(forcedVenueId: resolvedVenueId);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -181,6 +223,216 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         setState(() => _resolvingVenueForCheckin = false);
       }
     }
+  }
+
+  int? _asInt(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw);
+    return null;
+  }
+
+  int? _firstInt(Map<String, dynamic> data, List<String> keys) {
+    for (final k in keys) {
+      final parsed = _asInt(data[k]);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  Future<void> _refreshCheckinStats({String? forcedVenueId}) async {
+    if (_loadingCheckinStats) return;
+    setState(() => _loadingCheckinStats = true);
+    try {
+      String? venueId = forcedVenueId;
+      if (venueId == null || venueId.isEmpty) {
+        try {
+          venueId = await _resolveVenueIdForCheckin();
+        } catch (_) {
+          venueId = null;
+        }
+      }
+      if (venueId == null || venueId.isEmpty) {
+        if (!mounted) return;
+        setState(() => _loadingCheckinStats = false);
+        return;
+      }
+      final venueData = await _venueContextRepo.getVenueById(venueId);
+      final total = _firstInt(venueData, [
+        'checkinCountActive',
+        'checkin_count_active',
+        'activeCheckinCount',
+        'active_checkin_count',
+      ]);
+      final male = _firstInt(venueData, [
+        'checkinCountMale',
+        'checkin_count_male',
+        'maleCheckinCount',
+        'male_checkin_count',
+      ]);
+      final female = _firstInt(venueData, [
+        'checkinCountFemale',
+        'checkin_count_female',
+        'femaleCheckinCount',
+        'female_checkin_count',
+      ]);
+
+      if (!mounted) return;
+      setState(() {
+        _resolvedVenueIdForCurrentDetail ??= venueId;
+        _checkinCountActive = total ?? _checkinCountActive;
+        _checkinCountMale = male ?? _checkinCountMale;
+        _checkinCountFemale = female ?? _checkinCountFemale;
+        _loadingCheckinStats = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingCheckinStats = false);
+    }
+  }
+
+  int? get _displayCheckinTotal {
+    if (_checkinCountActive != null) return _checkinCountActive;
+    if (_checkinCountMale != null && _checkinCountFemale != null) {
+      return _checkinCountMale! + _checkinCountFemale!;
+    }
+    return null;
+  }
+
+  Widget _buildCheckinStatsSection() {
+    final total = _displayCheckinTotal;
+    final male = _checkinCountMale;
+    final female = _checkinCountFemale;
+    final hasAnyData = total != null || male != null || female != null;
+
+    if (!hasAnyData && _loadingCheckinStats) {
+      return const SizedBox(
+        height: 18,
+        width: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+
+    if (!hasAnyData) {
+      return const Text(
+        'Check-in bilgisi henuz yok',
+        style: TextStyle(color: Colors.grey),
+      );
+    }
+
+    Widget statChip(IconData icon, String label, String value) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: Colors.grey.shade700),
+            const SizedBox(width: 6),
+            Text(
+              '$label: $value',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        statChip(Icons.people_outline_rounded, '', '${total ?? 0}'),
+        statChip(Icons.man_rounded, '', '${male ?? 0}'),
+        statChip(Icons.woman_rounded, '', '${female ?? 0}'),
+      ],
+    );
+  }
+
+  bool _hasValidLatLng(Venue v) {
+    if (!v.latitude.isFinite || !v.longitude.isFinite) return false;
+    if (v.latitude == 0 && v.longitude == 0) return false;
+    return true;
+  }
+
+  bool get _canOpenDirections {
+    final v = widget.venue;
+    final pid = v.placeId?.trim();
+    if (pid != null && pid.isNotEmpty) return true;
+    if (_hasValidLatLng(v)) return true;
+    return '${v.address} ${v.city}'.trim().isNotEmpty;
+  }
+
+  Future<void> _openDirections() async {
+    final v = widget.venue;
+    final hasLatLng = _hasValidLatLng(v);
+    final placeId = v.placeId?.trim();
+    final labelQuery =
+        '${v.name} ${v.address} ${v.city}'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final latLng = hasLatLng ? '${v.latitude},${v.longitude}' : '';
+    final destinationForUrl = labelQuery.isNotEmpty ? labelQuery : latLng;
+    final destinationForApp = labelQuery.isNotEmpty ? labelQuery : latLng;
+
+    if (destinationForUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No location available for directions')),
+      );
+      return;
+    }
+
+    // Google Maps universal URL: opens directions preview (ETA + Start button).
+    final browserParams = <String, String>{
+      'api': '1',
+      'destination': destinationForUrl,
+      'travelmode': 'driving',
+    };
+    if (placeId != null && placeId.isNotEmpty) {
+      browserParams['destination_place_id'] = placeId;
+    }
+    final browserUri = Uri.https('www.google.com', '/maps/dir/', browserParams);
+
+    // Platform-preferred deep links to open maps app directly when available.
+    final List<Uri> launchOrder = [];
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      // Google Maps app scheme (iOS) in route-preview mode (not auto-start).
+      final iosDaddr = placeId != null && placeId.isNotEmpty
+          ? 'place_id:$placeId'
+          : destinationForApp;
+      launchOrder.add(
+        Uri(
+          scheme: 'comgooglemaps',
+          queryParameters: {
+            'daddr': iosDaddr,
+            'directionsmode': 'driving',
+            'views': 'traffic',
+          },
+        ),
+      );
+    }
+    // Cross-platform fallback that keeps route preview visible.
+    launchOrder.add(browserUri);
+
+    for (final uri in launchOrder) {
+      try {
+        if (!await canLaunchUrl(uri)) continue;
+        await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        return;
+      } catch (_) {
+        // Try next fallback uri.
+      }
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Could not open maps')));
   }
 
   bool _isActiveCheckinAtCurrentVenue() {
@@ -222,7 +474,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   @override
   Widget build(BuildContext context) {
     final hasActiveCheckinHere = _isActiveCheckinAtCurrentVenue();
-
+    final opening = _venueDetails?['openingHours'];
+    final isOpen = opening?['open_now'] == true;
+    final weekdayText = opening?['weekday_text'];
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -333,14 +587,44 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               /// ADDRESS
               Text(
-                widget.venue.address,
+                _venueDetails?['address'] ?? widget.venue.address,
                 style: const TextStyle(color: Colors.grey),
               ),
+              const SizedBox(height: 6),
+
+              /// CHECK-IN STATS
+              _buildCheckinStatsSection(),
+              const SizedBox(height: 10),
+
+              /// 🟢 OPEN STATUS
+              if (opening != null)
+                Text(
+                  isOpen ? 'Open now' : 'Closed',
+                  style: TextStyle(
+                    color: isOpen ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+
+              /// 🕐 TODAY HOURS
+              if (weekdayText != null && weekdayText.isNotEmpty)
+                Text(
+                  weekdayText[DateTime.now().weekday - 1],
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              if (_venueDetails?['rating'] != null)
+                Row(
+                  children: [
+                    const Icon(Icons.star, color: Colors.amber, size: 16),
+                    const SizedBox(width: 4),
+                    Text(_venueDetails!['rating'].toStringAsFixed(1)),
+                  ],
+                ),
 
               const SizedBox(height: 8),
 
               TextButton.icon(
-                onPressed: () {},
+                onPressed: _canOpenDirections ? () => _openDirections() : null,
                 icon: const Icon(Icons.map),
                 label: const Text('Get Directions'),
               ),
@@ -360,7 +644,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                               MaterialPageRoute(
                                 builder: (_) => VenuePeoplePage(
                                   venue: widget.venue,
-                                  listVenueId: _activeCheckinVenueId ??
+                                  listVenueId:
+                                      _activeCheckinVenueId ??
                                       _resolvedVenueIdForCurrentDetail,
                                 ),
                               ),
@@ -375,8 +660,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                         : _loadingActiveCheckin
                         ? "Loading..."
                         : hasActiveCheckinHere
-                            ? "Who's here?"
-                            : "Check in first",
+                        ? "Who's here?"
+                        : "Check in first",
                   ),
                 ),
               ),

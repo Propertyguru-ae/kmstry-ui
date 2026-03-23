@@ -26,6 +26,13 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  bool _isSelectedVenue(Venue venue) {
+    final selectedVenueId = widget.selectedVenueId;
+    if (selectedVenueId == null || selectedVenueId.isEmpty) return false;
+    if (venue.id == selectedVenueId) return true;
+    return (venue.placeId ?? '') == selectedVenueId;
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -83,8 +90,12 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
         minChildSize: 0.22,
         maxChildSize: 0.95,
         builder: (context, controller) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: kBottomNavigationBarHeight),
+          final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+          final bottomPadding = keyboardInset > 0 ? 0.0 : kBottomNavigationBarHeight;
+          return AnimatedPadding(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(bottom: bottomPadding),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               decoration: BoxDecoration(
@@ -145,8 +156,7 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
                             itemCount: visibleVenues.length,
                             itemBuilder: (_, i) => VenueListItem(
                               venue: visibleVenues[i],
-                              isSelected:
-                                  widget.selectedVenueId == visibleVenues[i].id,
+                              isSelected: _isSelectedVenue(visibleVenues[i]),
                               onTap: widget.onVenueTap,
                             ),
                           ),

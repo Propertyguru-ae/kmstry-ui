@@ -33,7 +33,15 @@ List<Venue> _enrichVenuesWithPoolCheckins(
 }
 
 class _VenueHomePageState extends State<VenueHomePage> {
+  String _selectionKeyForVenue(Venue venue) {
+    if (venue.id.isNotEmpty) return venue.id;
+    final placeId = venue.placeId;
+    if (placeId != null && placeId.isNotEmpty) return placeId;
+    return '';
+  }
+
   bool isSheetExpanded = false;
+  bool _isMapSearchActive = false;
   bool _locationAvailable = false;
   bool _loadingVenues = false;
   List<Venue> _mapVenues = const [];
@@ -48,12 +56,21 @@ class _VenueHomePageState extends State<VenueHomePage> {
         latitude: center.latitude,
         longitude: center.longitude,
       );
+      List<Venue> mapVenues = response.mapItems;
+      try {
+        mapVenues = await _venueRepository.getMapMarkers(
+          latitude: center.latitude,
+          longitude: center.longitude,
+        );
+      } catch (_) {
+        // Keep discover mapItems as fallback if map-markers is unavailable.
+      }
 
       if (!mounted) return;
 
       setState(() {
-        final pool = [...response.mapItems, ...response.items];
-        _mapVenues = _enrichVenuesWithPoolCheckins(response.mapItems, pool);
+        final pool = [...mapVenues, ...response.mapItems, ...response.items];
+        _mapVenues = _enrichVenuesWithPoolCheckins(mapVenues, pool);
         _listVenues = _enrichVenuesWithPoolCheckins(response.items, pool);
         _loadingVenues = false;
       });
@@ -68,7 +85,7 @@ class _VenueHomePageState extends State<VenueHomePage> {
   }
 
   void _selectVenue(Venue venue) {
-    setState(() => _selectedVenueId = venue.id);
+    setState(() => _selectedVenueId = _selectionKeyForVenue(venue));
   }
 
   void _openVenue(Venue venue) {
@@ -99,11 +116,15 @@ class _VenueHomePageState extends State<VenueHomePage> {
               });
             },
             onLocationResolved: _loadNearbyVenues,
+            onSearchActivityChanged: (active) {
+              if (!mounted) return;
+              setState(() => _isMapSearchActive = active);
+            },
             venues: _mapVenues,
             selectedVenueId: _selectedVenueId,
             onVenueTap: _selectVenue,
           ),
-          if (_locationAvailable)
+          if (_locationAvailable && !_isMapSearchActive)
             VenueBottomSheet(
               onExpandChanged: (expanded) {
                 setState(() => isSheetExpanded = expanded);
