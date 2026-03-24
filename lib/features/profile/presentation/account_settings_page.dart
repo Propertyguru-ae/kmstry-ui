@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
-import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
-import 'package:kmstry_frontend/features/people/data/match_repository.dart';
-import 'package:kmstry_frontend/features/profile/presentation/blocked_users_page.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/auth/presentation/forgot_password_page.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
@@ -16,87 +15,8 @@ class AccountSettingsPage extends StatefulWidget {
 }
 
 class _AccountSettingsPageState extends State<AccountSettingsPage> {
-  static const _notificationsEnabledKey = 'notifications_enabled';
-  final NotificationPermissionService _notificationPermissionService =
-      NotificationPermissionService();
-  final MatchRepository _matchRepository = MatchRepository();
-  bool _loading = true;
-  bool _accountNotificationsEnabled = false;
-  bool _systemNotificationsEnabled = false;
-  int _blockedUsersCount = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    try {
-      final me = await AuthRepository().getMe();
-      final accountOptIn = me['notificationPermissionGranted'];
-      final accountEnabled = accountOptIn is bool ? accountOptIn : false;
-      final permissionState = await _notificationPermissionService
-          .readStateWithAccountPreference(accountEnabled);
-      final blockedUsers = await _matchRepository.getBlockedUsers();
-
-      await SecureStorage.write(_notificationsEnabledKey, accountEnabled.toString());
-      await _syncNotificationToBackend(accountEnabled);
-
-      if (!mounted) return;
-      setState(() {
-        _accountNotificationsEnabled = accountEnabled;
-        _systemNotificationsEnabled = permissionState.systemGranted;
-        _blockedUsersCount = blockedUsers.length;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _openBlockedUsers() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const BlockedUsersPage()),
-    );
-    await _loadSettings();
-  }
-
-  Future<void> _syncNotificationToBackend(bool enabled) async {
-    try {
-      await AuthRepository().updatePermissions({
-        'notificationPermissionGranted': enabled,
-      });
-    } catch (_) {}
-  }
-
-  Future<void> _setNotifications(bool enabled) async {
-    if (enabled && !_systemNotificationsEnabled) {
-      final status = await Permission.notification.request();
-      if (!mounted) return;
-
-      final granted =
-          status.isGranted || status == PermissionStatus.provisional;
-      setState(() => _systemNotificationsEnabled = granted);
-      if (!granted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Enable system notifications to turn this on.'),
-          ),
-        );
-        if (status.isPermanentlyDenied) {
-          await openAppSettings();
-        }
-        return;
-      }
-    }
-
-    // This switch controls ACCOUNT preference.
-    setState(() => _accountNotificationsEnabled = enabled);
-    await SecureStorage.write(_notificationsEnabledKey, enabled.toString());
-    await _syncNotificationToBackend(enabled);
-  }
+  bool _deleting = false;
+  bool _deactivating = false;
 
   Widget _buildThemeModeTile({
     required String title,
@@ -140,150 +60,220 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     );
   }
 
+  Future<void> _openPolicy(String path) async {
+    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open link.')),
+      );
+    }
+  }
+
+  Future<void> _openForgotPassword() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+    );
+  }
+
+  Future<void> _deactivateAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Deactivate account?'),
+        content: const Text(
+          'Your account will be temporarily disabled. You can contact support to reactivate. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Deactivate'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deactivating = true);
+    try {
+      await AuthRepository().deactivateAccount();
+      if (!mounted) return;
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not deactivate account: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _deactivating = false);
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This action is permanent. All account data may be removed. Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await AuthRepository().deleteAccount();
+      if (!mounted) return;
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not delete account: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final deactivateColor = colors.tertiary;
     final selectedMode = context.watch<ThemeProvider>().themeMode;
-    final permissionState = NotificationPermissionState(
-      systemStatus: _systemNotificationsEnabled
-          ? NotificationSystemStatus.authorized
-          : NotificationSystemStatus.denied,
-      accountPreference: _accountNotificationsEnabled,
-    );
-    final effectiveNotificationsEnabled = permissionState.effectiveStatus;
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
-        backgroundColor: theme.scaffoldBackgroundColor,
-        elevation: 0,
-        title: const Text('Settings'),
-      ),
-      body: _loading
-          ? Center(
-              child: CircularProgressIndicator(color: colors.primary),
-            )
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  'Notifications',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+      appBar: AppBar(title: const Text('Account Settings')),
+      body: ListView(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'App mode',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: colors.primary.withValues(alpha: 0.12),
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.12),
-                    ),
+              ),
+              child: Column(
+                children: [
+                  _buildThemeModeTile(
+                    title: 'Light',
+                    subtitle: 'Clean white interface',
+                    mode: ThemeMode.light,
+                    selected: selectedMode,
+                    icon: Icons.light_mode_rounded,
                   ),
-                  child: SwitchListTile(
-                    value: _accountNotificationsEnabled,
-                    onChanged: (v) => _setNotifications(v),
-                    activeThumbColor: colors.secondary,
-                    activeTrackColor: colors.secondary.withValues(alpha: 0.4),
-                    title: Text(
-                      'Push notifications (account)',
-                      style: TextStyle(color: colors.onSurface),
-                    ),
-                    subtitle: Text(
-                      effectiveNotificationsEnabled
-                          ? 'On (system + account)'
-                          : _systemNotificationsEnabled
-                          ? 'Off (account)'
-                          : 'Off (system permission)',
-                      style: TextStyle(
-                        color: colors.onSurface.withValues(alpha: 0.65),
-                      ),
-                    ),
-                  ),
-                ),
-                if (!_systemNotificationsEnabled) ...[
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: openAppSettings,
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('Open system notification settings'),
+                  _buildThemeModeTile(
+                    title: 'Dark',
+                    subtitle: 'Matte black interface',
+                    mode: ThemeMode.dark,
+                    selected: selectedMode,
+                    icon: Icons.dark_mode_rounded,
                   ),
                 ],
-                const SizedBox(height: 22),
-                Text(
-                  'Privacy',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: ListTile(
-                    onTap: _openBlockedUsers,
-                    title: Text(
-                      'Blocked',
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    trailing: Text(
-                      '$_blockedUsersCount ',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: colors.onSurface.withValues(alpha: 0.8),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'App mode',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildThemeModeTile(
-                        title: 'Light',
-                        subtitle: 'Clean white interface',
-                        mode: ThemeMode.light,
-                        selected: selectedMode,
-                        icon: Icons.light_mode_rounded,
-                      ),
-                      _buildThemeModeTile(
-                        title: 'Dark',
-                        subtitle: 'Matte black interface',
-                        mode: ThemeMode.dark,
-                        selected: selectedMode,
-                        icon: Icons.dark_mode_rounded,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
+          ),
+          const SizedBox(height: 16),
+          ListTile(
+            leading: const Icon(Icons.lock_reset_outlined),
+            title: const Text('Forgot Password'),
+            subtitle: const Text('Send password reset email'),
+            onTap: _openForgotPassword,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Icons.privacy_tip_outlined, color: colors.primary),
+            title: const Text('Privacy Policy'),
+            onTap: () => _openPolicy('/legal/privacy'),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Icons.gavel_outlined, color: colors.primary),
+            title: const Text('Terms of Service'),
+            onTap: () => _openPolicy('/legal/terms'),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Icons.pause_circle_outline, color: deactivateColor),
+            title: Text(
+              'Deactivate Account',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: deactivateColor,
+              ),
+            ),
+            subtitle: const Text('Temporarily disable your account'),
+            trailing: _deactivating
+                ? SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: deactivateColor,
+                    ),
+                  )
+                : null,
+            onTap: (_deactivating || _deleting) ? null : _deactivateAccount,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Icons.delete_forever_outlined, color: colors.error),
+            title: Text(
+              'Delete Account',
+              style: TextStyle(color: colors.error, fontWeight: FontWeight.w600),
+            ),
+            subtitle: const Text('Permanently remove your account'),
+            trailing: _deleting
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : null,
+            onTap: (_deleting || _deactivating) ? null : _deleteAccount,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -274,6 +274,24 @@ class AuthRepository {
     ProfilePreviewPage.clearActionStateCache();
   }
 
+  Future<void> deleteAccount() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.deleteAccount(accessToken: token);
+    await _googleSignIn.signOut();
+    await SecureStorage.clearSession();
+    ProfilePreviewPage.clearActionStateCache();
+  }
+
+  Future<void> deactivateAccount() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.deactivateAccount(accessToken: token);
+    await _googleSignIn.signOut();
+    await SecureStorage.clearSession();
+    ProfilePreviewPage.clearActionStateCache();
+  }
+
   Future<bool> tryGetMe(String accessToken) async {
     try {
       await _api.me(accessToken: accessToken);

@@ -18,11 +18,44 @@ class ChatRepository {
       '/chats',
       headers: {'Authorization': 'Bearer $token'},
     );
+    return _parseChatList(data);
+  }
 
-    if (data is! List) return [];
-    return (data as List)
+  /// GET /chats/search?query=... — chat list filtered by participant name.
+  Future<List<ChatListItem>> searchChatsByParticipantName(String query) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return getChats();
+    final encoded = Uri.encodeQueryComponent(trimmed);
+    final data = await _api.get(
+      '/chats/search?query=$encoded',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return _parseChatList(data);
+  }
+
+  List<ChatListItem> _parseChatList(dynamic data) {
+    final list = _extractChatList(data);
+    return list
         .map((e) => ChatListItem.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  List<dynamic> _extractChatList(dynamic data) {
+    if (data is List) return data;
+    if (data is Map<String, dynamic>) {
+      final nested =
+          data['items'] ??
+          data['chats'] ??
+          data['data'] ??
+          data['results'];
+      if (nested is List) return nested;
+      if (nested is Map<String, dynamic> && nested['items'] is List) {
+        return nested['items'] as List;
+      }
+    }
+    return const [];
   }
 
   /// POST /chats — create or get existing chat with [otherUserId]. Returns chat id.
@@ -38,8 +71,16 @@ class ChatRepository {
     );
 
     final map = data as Map<String, dynamic>;
-    final id = map['id'] as String? ?? map['chat_id'] as String?;
-    if (id == null) throw Exception('Create chat response missing id');
+    String? id = map['id'] as String? ?? map['chat_id'] as String?;
+    if (id == null || id.isEmpty) {
+      final nested = map['chat'];
+      if (nested is Map<String, dynamic>) {
+        id = nested['id'] as String? ?? nested['chat_id'] as String?;
+      }
+    }
+    if (id == null || id.isEmpty) {
+      throw Exception('Create chat response missing id');
+    }
     return id;
   }
 
@@ -138,6 +179,16 @@ class ChatRepository {
 
     await _api.delete(
       '/chats/$chatId/messages/$messageId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  /// DELETE /chats/:id — soft delete chat for current user.
+  Future<void> deleteChat(String chatId) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.delete(
+      '/chats/$chatId',
       headers: {'Authorization': 'Bearer $token'},
     );
   }

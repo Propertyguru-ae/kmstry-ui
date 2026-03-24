@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
@@ -20,6 +21,8 @@ class _NotificationPageState extends State<NotificationPage> {
   List<NotificationModel> _list = [];
   bool _loading = true;
   String? _error;
+  String _activeContextType = 'PERSONAL';
+  String? _activeVenueId;
 
   @override
   void initState() {
@@ -33,6 +36,18 @@ class _NotificationPageState extends State<NotificationPage> {
       _error = null;
     });
     try {
+      try {
+        final me = await AuthRepository().getMe();
+        final lastContext = (me['lastActiveContext'] ?? me['last_active_context'])
+            ?.toString()
+            .toUpperCase();
+        _activeContextType = lastContext == 'VENUE' ? 'VENUE' : 'PERSONAL';
+        _activeVenueId = (me['activeVenueId'] ?? me['active_venue_id'])
+            ?.toString()
+            .trim();
+        if (_activeVenueId?.isEmpty == true) _activeVenueId = null;
+      } catch (_) {}
+
       final list = await _repo.getNotifications(limit: 50);
       List<MatchItem> matches = const [];
       try {
@@ -55,6 +70,7 @@ class _NotificationPageState extends State<NotificationPage> {
       if (!mounted) return;
       NotificationUnreadScope.of(context)?.updateUnreadCount(0);
       final asRead = list
+          .where(_isVisibleForCurrentContext)
           .map(
             (n) => NotificationModel(
               id: n.id,
@@ -62,6 +78,8 @@ class _NotificationPageState extends State<NotificationPage> {
               title: _enrichedTitle(n, matchById: matchById, matchByUserId: matchByUserId),
               body: _enrichedBody(n, matchById: matchById, matchByUserId: matchByUserId),
               data: _enrichedData(n, matchById: matchById, matchByUserId: matchByUserId),
+              contextType: n.contextType,
+              venueId: n.venueId,
               isRead: true,
               createdAt: n.createdAt,
               dedupeKey: n.dedupeKey,
@@ -80,6 +98,19 @@ class _NotificationPageState extends State<NotificationPage> {
         _loading = false;
       });
     }
+  }
+
+  bool _isVisibleForCurrentContext(NotificationModel n) {
+    final itemContext = n.contextType?.toUpperCase();
+    if (itemContext == null || itemContext.isEmpty) return true;
+    if (itemContext != _activeContextType) return false;
+    if (itemContext == 'VENUE') {
+      final itemVenueId = n.venueId?.trim();
+      if (_activeVenueId == null || _activeVenueId!.isEmpty) return true;
+      if (itemVenueId == null || itemVenueId.isEmpty) return true;
+      return itemVenueId == _activeVenueId;
+    }
+    return true;
   }
 
   void _onNotificationTap(NotificationModel n) {

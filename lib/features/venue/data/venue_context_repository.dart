@@ -1,5 +1,6 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 
 class VenueContextRepository {
   final ApiClient _api = ApiClient();
@@ -49,5 +50,15 @@ class VenueContextRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
     return data as Map<String, dynamic>;
+  }
+
+  Future<VenueCheckinStats> getVenueCheckinStats(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final data = await _api.get(
+      '/venues/$venueId/checkin-stats',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return VenueCheckinStats.fromJson(Map<String, dynamic>.from(data));
   }
 }

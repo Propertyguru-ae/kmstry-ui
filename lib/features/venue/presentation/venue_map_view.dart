@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -18,6 +20,7 @@ class VenueMapView extends StatefulWidget {
   final ValueChanged<bool>? onLocationAccessChanged;
   final ValueChanged<LatLng>? onLocationResolved;
   final ValueChanged<bool>? onSearchActivityChanged;
+  final ValueChanged<Venue>? onVenueDetailClosed;
   final List<Venue> venues;
   final String? selectedVenueId;
   final ValueChanged<Venue>? onVenueTap;
@@ -28,6 +31,7 @@ class VenueMapView extends StatefulWidget {
     this.onLocationAccessChanged,
     this.onLocationResolved,
     this.onSearchActivityChanged,
+    this.onVenueDetailClosed,
     this.venues = const [],
     this.selectedVenueId,
     this.onVenueTap,
@@ -42,6 +46,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       LocationPermissionService();
   final VenueClusterService _clusterService = const VenueClusterService();
   final VenueRepository _venueRepository = VenueRepository();
+  final VenueContextRepository _venueContextRepository = VenueContextRepository();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
@@ -71,6 +76,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   Venue? _selectedSearchVenue;
   int _searchRequestToken = 0;
   bool _showSearchResults = false;
+  final Map<String, VenueCheckinStats> _liveStatsByVenueKey = {};
   final List<bool Function(Venue)> _clusterInputFilters = [
     _isRelevantSocialVenue,
   ];
@@ -301,7 +307,7 @@ class _VenueMapViewState extends State<VenueMapView> {
           ),
         );
       } else {
-        final venue = node.primaryVenue;
+        final venue = _venueWithLiveStats(node.primaryVenue);
         final vid = _venueIdentity(venue);
         final isSelected = _matchesSelectedVenue(venue);
         final isPressed = _pressedMarkerVenueKey == vid;
@@ -323,7 +329,12 @@ class _VenueMapViewState extends State<VenueMapView> {
             ),
             icon: venueIcon,
             zIndexInt: isPressed ? 5 : (isSelected ? 4 : 1),
-            onTap: () => _showVenueMarkerPopup(venue),
+            onTap: () async {
+              final refreshed = await _refreshLiveStatsForVenue(venue);
+              if (!mounted) return;
+              await _mapController?.showMarkerInfoWindow(MarkerId('venue:$vid'));
+              await _showVenueMarkerPopup(refreshed);
+            },
           ),
         );
       }
@@ -661,12 +672,99 @@ class _VenueMapViewState extends State<VenueMapView> {
     await _showVenueMarkerPopup(venue);
   }
 
-  void _openVenueDetailFromMap(Venue venue) {
+  Venue _latestVenueSnapshotFor(Venue venue) {
+    for (final v in widget.venues) {
+      if (v.isSameVenueAs(venue)) return v;
+    }
+    return venue;
+  }
+
+  String? _extractVenueIdFromResolve(Map<String, dynamic> response) {
+    final direct = response['venueId'] ?? response['venue_id'] ?? response['id'];
+    if (direct is String && direct.isNotEmpty) return direct;
+    final nested = response['venue'];
+    if (nested is Map) {
+      final mapped = nested['id'] ?? nested['venueId'] ?? nested['venue_id'];
+      if (mapped is String && mapped.isNotEmpty) return mapped;
+    }
+    return null;
+  }
+
+  Future<String?> _resolveVenueIdForStats(Venue venue) async {
+    if (venue.id.isNotEmpty && venue.canCheckin) return venue.id;
+    final placeId = venue.placeId;
+    if (placeId == null || placeId.isEmpty) return null;
+    try {
+      final resolved = await _venueContextRepository.resolveVenueFromPlace(placeId);
+      return _extractVenueIdFromResolve(resolved);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Venue _withStats(Venue venue, VenueCheckinStats stats) {
+    return Venue(
+      id: venue.id,
+      placeId: venue.placeId,
+      name: venue.name,
+      type: venue.type,
+      status: venue.status,
+      address: venue.address,
+      city: venue.city,
+      photoUrl: venue.photoUrl,
+      latitude: venue.latitude,
+      longitude: venue.longitude,
+      tag: venue.tag,
+      source: venue.source,
+      isInDb: venue.isInDb,
+      canCheckin: venue.canCheckin,
+      checkinCountActive: stats.checkinCountActive,
+      checkinCountMale: stats.male,
+      checkinCountFemale: stats.female,
+      eventSummary: venue.eventSummary,
+      verificationLevel: venue.verificationLevel,
+      distanceMeters: venue.distanceMeters,
+      openNow: venue.openNow,
+      rating: venue.rating,
+      types: venue.types,
+    );
+  }
+
+  Venue _venueWithLiveStats(Venue venue) {
+    final key = _venueIdentity(venue);
+    final stats = _liveStatsByVenueKey[key];
+    if (stats == null) return venue;
+    return _withStats(venue, stats);
+  }
+
+  Future<Venue> _refreshLiveStatsForVenue(Venue venue) async {
+    final resolvedVenueId = await _resolveVenueIdForStats(venue);
+    if (resolvedVenueId == null || resolvedVenueId.isEmpty) {
+      return _venueWithLiveStats(venue);
+    }
+    try {
+      final stats = await _venueContextRepository.getVenueCheckinStats(
+        resolvedVenueId,
+      );
+      if (!mounted) return _venueWithLiveStats(venue);
+      _liveStatsByVenueKey[_venueIdentity(venue)] = stats;
+      await _recomputeClusters(force: true);
+      return _venueWithLiveStats(venue);
+    } catch (_) {
+      return _venueWithLiveStats(venue);
+    }
+  }
+
+  Future<void> _openVenueDetailFromMap(Venue venue) async {
     widget.onVenueTap?.call(venue);
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
     );
+    if (!mounted) return;
+    widget.onVenueDetailClosed?.call(venue);
+    // Keep the map UX continuous: return to same selected venue popup.
+    await _showVenueMarkerPopup(_latestVenueSnapshotFor(venue));
   }
 
   /// Short line for native [InfoWindow] (character-limited on some platforms).
@@ -713,14 +811,16 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   Future<void> _showVenueMarkerPopup(Venue venue) async {
     if (!mounted) return;
-    final key = _venueIdentity(venue);
+    final liveVenue = await _refreshLiveStatsForVenue(venue);
+
+    final key = _venueIdentity(liveVenue);
     setState(() => _pressedMarkerVenueKey = key);
     await _recomputeClusters(force: true);
     if (!mounted) return;
 
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final hasRating = venue.rating != null && venue.rating! > 0;
+    final hasRating = liveVenue.rating != null && liveVenue.rating! > 0;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -734,15 +834,15 @@ class _VenueMapViewState extends State<VenueMapView> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  venue.name,
+                  liveVenue.name,
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                if (venue.address.isNotEmpty) ...[
+                if (liveVenue.address.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
-                    venue.address,
+                    liveVenue.address,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
@@ -765,7 +865,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                             : Colors.amber.shade700,
                       ),
                       Text(
-                        venue.rating!.toStringAsFixed(1),
+                        liveVenue.rating!.toStringAsFixed(1),
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -781,7 +881,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                         ),
                       ),
                     VenueCheckinStatsRow(
-                      venue: venue,
+                      venue: liveVenue,
                       isDark: isDark,
                       iconSize: 16,
                       fontSize: 14,
@@ -793,7 +893,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                 FilledButton(
                   onPressed: () {
                     Navigator.pop(sheetContext);
-                    _openVenueDetailFromMap(venue);
+                    _openVenueDetailFromMap(liveVenue);
                   },
                   child: const Text('Open'),
                 ),
@@ -826,23 +926,38 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   Widget _buildSearchBar() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final backgroundColor = isDark
+        ? theme.colorScheme.surface.withValues(alpha: 0.92)
+        : Colors.white.withValues(alpha: 0.96);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final hintColor = isDark ? Colors.white70 : Colors.grey.shade600;
+    final iconColor = isDark ? Colors.white70 : Colors.grey.shade700;
     return Container(
       height: 46,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.96),
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(22),
-        boxShadow: const [
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.28)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+        boxShadow: [
           BoxShadow(
             blurRadius: 12,
             offset: Offset(0, 4),
-            color: Colors.black12,
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.5)
+                : Colors.black12,
           ),
         ],
       ),
       child: Row(
         children: [
-          const Icon(Icons.search, size: 20, color: Colors.grey),
+          Icon(Icons.search, size: 20, color: iconColor),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -850,8 +965,10 @@ class _VenueMapViewState extends State<VenueMapView> {
               focusNode: _searchFocusNode,
               onChanged: _onSearchChanged,
               textInputAction: TextInputAction.search,
-              decoration: const InputDecoration(
+              style: TextStyle(color: textColor),
+              decoration: InputDecoration(
                 hintText: 'Search places on map',
+                hintStyle: TextStyle(color: hintColor),
                 border: InputBorder.none,
                 isDense: true,
               ),
@@ -869,7 +986,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                 _searchController.clear();
                 _onSearchChanged('');
               },
-              icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+              icon: Icon(Icons.close, size: 18, color: iconColor),
             ),
         ],
       ),
@@ -877,6 +994,8 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   Widget _buildSearchResultsPanel() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final hasQuery = _searchController.text.trim().isNotEmpty;
     final shouldShow = _showSearchResults && (hasQuery || _searchLoading);
     if (!shouldShow) return const SizedBox.shrink();
@@ -884,13 +1003,20 @@ class _VenueMapViewState extends State<VenueMapView> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 320),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isDark ? theme.colorScheme.surface : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.2)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+        boxShadow: [
           BoxShadow(
             blurRadius: 14,
             offset: Offset(0, 4),
-            color: Colors.black12,
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.45)
+                : Colors.black12,
           ),
         ],
       ),
@@ -1111,8 +1237,6 @@ class _VenueMapViewState extends State<VenueMapView> {
             top: 90,
             child: Column(
               children: [
-                const _CircleIcon(Icons.layers_outlined),
-                SizedBox(height: 12),
                 _CircleIcon(
                   Icons.navigation_outlined,
                   onTap: () {
@@ -1140,15 +1264,37 @@ class _CircleIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       width: 44,
       height: 44,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: isDark
+            ? theme.colorScheme.surface.withValues(alpha: 0.95)
+            : Colors.white,
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.3)
+              : Colors.black.withValues(alpha: 0.08),
+        ),
         shape: BoxShape.circle,
-        boxShadow: [BoxShadow(blurRadius: 8, color: Colors.black12)],
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 10,
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.5)
+                : Colors.black12,
+          ),
+        ],
       ),
-      child: IconButton(onPressed: onTap, icon: Icon(icon)),
+      child: IconButton(
+        onPressed: onTap,
+        icon: Icon(
+          icon,
+          color: isDark ? Colors.white : Colors.black87,
+        ),
+      ),
     );
   }
 }

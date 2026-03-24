@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
@@ -14,56 +16,96 @@ class PeoplePage extends StatefulWidget {
 }
 
 class _PeoplePageState extends State<PeoplePage> {
+  static const int _pageSize = 20;
   final MatchRepository _repo = MatchRepository();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  Timer? _searchDebounce;
   List<MatchItem> _matches = [];
   List<BlockedUser> _blockedUsers = [];
+  String _searchQuery = '';
+  String? _nextCursor;
+  bool _hasMore = false;
+  bool _isLoadingMore = false;
   bool _loading = true;
   String? _error;
+  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    _searchController.addListener(_onSearchChanged);
+    _scrollController.addListener(_onScroll);
   }
 
-  void _onSearchChanged() => setState(() {});
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (!_hasMore || _isLoadingMore || _loading) return;
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 220) {
+      _loadData(reset: false);
+    }
+  }
 
-  Future<void> _loadData() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final results = await Future.wait([
-        _repo.getMatches(),
-        _repo.getBlockedUsers(),
-      ]);
-      final list = results[0] as List<MatchItem>;
-      final blocked = results[1] as List<BlockedUser>;
-      debugPrint('BLOCKED :  $blocked');
-      final blockedIds = blocked.map((b) => b.userId).toSet();
-      if (!mounted) return;
+  Future<void> _loadData({bool reset = true}) async {
+    final requestId = ++_requestId;
+    final query = _searchQuery.trim();
+    if (reset) {
       setState(() {
-        _matches = list.where((m) => !blockedIds.contains(m.userId)).toList();
+        _loading = true;
+        _error = null;
+      });
+    } else {
+      if (_isLoadingMore || !_hasMore) return;
+      setState(() {
+        _isLoadingMore = true;
+      });
+    }
+    try {
+      final blocked = reset ? await _repo.getBlockedUsers() : _blockedUsers;
+      final result = await _repo.getMatchesPage(
+        query: query.isEmpty ? null : query,
+        limit: _pageSize,
+        cursor: reset ? null : _nextCursor,
+      );
+      final blockedIds = blocked.map((b) => b.userId).toSet();
+      final pageItems =
+          result.items.where((m) => !blockedIds.contains(m.userId)).toList();
+      if (!mounted || requestId != _requestId) return;
+      setState(() {
+        if (reset) {
+          _matches = pageItems;
+        } else {
+          final existingMatchIds = _matches.map((m) => m.matchId).toSet();
+          final appendable = pageItems
+              .where((m) => !existingMatchIds.contains(m.matchId))
+              .toList();
+          _matches = [..._matches, ...appendable];
+        }
         _blockedUsers = blocked;
+        _nextCursor = result.nextCursor;
+        _hasMore = result.hasMore;
         _loading = false;
+        _isLoadingMore = false;
+        _error = null;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || requestId != _requestId) return;
       setState(() {
+        _error = e.toString();
         _loading = false;
+        _isLoadingMore = false;
       });
     }
   }
 
-  List<MatchItem> get _filteredMatches {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _matches;
-    return _matches
-        .where((m) => m.fullName.toLowerCase().contains(query))
-        .toList();
+  void _onSearchChanged(String value) {
+    setState(() => _searchQuery = value);
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      _loadData(reset: true);
+    });
   }
 
   void _openMessage(MatchItem match) {
@@ -99,8 +141,10 @@ class _PeoplePageState extends State<PeoplePage> {
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchChanged);
+    _searchDebounce?.cancel();
     _searchController.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -194,6 +238,7 @@ class _PeoplePageState extends State<PeoplePage> {
         ),
         child: TextField(
           controller: _searchController,
+          onChanged: _onSearchChanged,
           style: theme.textTheme.bodyLarge,
           decoration: InputDecoration(
             hintText: 'Search by name...',
@@ -206,6 +251,16 @@ class _PeoplePageState extends State<PeoplePage> {
               color: isDark ? Colors.white54 : const Color(0xFF64748B),
               size: 22,
             ),
+            suffixIcon: _searchQuery.trim().isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _searchDebounce?.cancel();
+                      _searchController.clear();
+                      _onSearchChanged('');
+                    },
+                  ),
             border: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
@@ -218,11 +273,11 @@ class _PeoplePageState extends State<PeoplePage> {
   }
 
   Widget _buildPeopleList(bool isDark, ThemeData theme) {
-    final friends = _filteredMatches;
-    if (friends.isEmpty) {
+    if (_matches.isEmpty) {
+      final query = _searchQuery.trim();
       return Center(
         child: Text(
-          'No friends yet',
+          query.isEmpty ? 'No friends yet' : 'No results for "$query"',
           style: TextStyle(
             color: isDark ? Colors.white54 : const Color(0xFF64748B),
             fontSize: 15,
@@ -232,20 +287,36 @@ class _PeoplePageState extends State<PeoplePage> {
     }
 
     return RefreshIndicator(
-      onRefresh: _loadData,
-      child: ListView(
+      onRefresh: () => _loadData(reset: true),
+      child: ListView.builder(
+        controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        children: friends.map((m) => _buildFriendTile(m, isDark, theme)).toList(),
+        itemCount: _matches.length + (_isLoadingMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (_isLoadingMore && index == _matches.length) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 14),
+              child: Center(
+                child: SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          }
+          final match = _matches[index];
+          return _buildFriendTile(match, isDark, theme);
+        },
       ),
     );
   }
 
   Widget _buildFriendTile(MatchItem match, bool isDark, ThemeData theme) {
     final name = match.fullName;
-    final username = match.username;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

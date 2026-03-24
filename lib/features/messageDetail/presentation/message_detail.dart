@@ -38,13 +38,14 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   bool _sending = false;
   bool _loadingMore = false;
   bool _hasReachedEndOfMessages = false;
+  final Set<String> _deletingMessageIds = <String>{};
 
   @override
   void initState() {
     super.initState();
-    _chatId = widget.chatId;
+    _chatId = _normalizeChatId(widget.chatId);
     _loadCurrentUser();
-    if (widget.chatId != null) {
+    if (_chatId != null) {
       _loadChat();
     } else {
       setState(() => _loading = false);
@@ -69,6 +70,22 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     }
   }
 
+  void _scrollToBottom({bool animated = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animated) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
+  }
+
   Future<void> _loadCurrentUser() async {
     try {
       final me = await AuthRepository().getMe();
@@ -77,6 +94,18 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         _currentUserId = me['id'] as String?;
       });
     } catch (_) {}
+  }
+
+  /// Boş string veya sadece boşluk gelen chatId'yi yok say (ilk mesajda createChat çalışsın).
+  String? _normalizeChatId(String? id) {
+    if (id == null) return null;
+    final t = id.trim();
+    return t.isEmpty ? null : t;
+  }
+
+  bool _isChatNotActiveError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('not active') || s.contains('chat is not active');
   }
 
   Future<void> _loadChat() async {
@@ -93,6 +122,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         _chat = detail;
         _loading = false;
       });
+      _scrollToBottom();
     } catch (e) {
       debugPrint('❌ getChat error: $e');
       if (!mounted) return;
@@ -163,29 +193,61 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
+    final otherId = widget.otherUserId.trim();
+    if (otherId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kullanıcı bilgisi eksik, mesaj gönderilemez.')),
+      );
+      return;
+    }
+
     setState(() => _sending = true);
     _messageController.clear();
 
     try {
-      if (_chatId == null) {
-        _chatId = await _repo.createChat(widget.otherUserId);
+      String? cid = _normalizeChatId(_chatId);
+      if (cid == null) {
+        cid = await _repo.createChat(otherId);
+        if (!mounted) return;
+        setState(() => _chatId = cid);
       }
-      final sent = await _repo.sendMessage(
-        _chatId!,
-        messageType: 'text',
-        text: text,
-      );
-      if (!mounted) return;
+
+      ChatMessage? sent;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          sent = await _repo.sendMessage(
+            cid!,
+            messageType: 'text',
+            text: text,
+          );
+          break;
+        } catch (e) {
+          if (attempt == 0 && _isChatNotActiveError(e)) {
+            debugPrint('⚠️ sendMessage: sohbet aktif değil, createChat ile yenileniyor...');
+            final newId = await _repo.createChat(otherId);
+            if (!mounted) return;
+            cid = newId;
+            setState(() => _chatId = cid);
+            continue;
+          }
+          rethrow;
+        }
+      }
+
+      if (!mounted || sent == null) return;
+      final sentMessage = sent;
+
       if (_chat != null) {
         setState(() {
           _chat = ChatDetail(
             id: _chat!.id,
-            messages: [..._chat!.messages, sent],
+            messages: [..._chat!.messages, sentMessage],
             otherUser: _chat!.otherUser,
             participants: _chat!.participants,
           );
           _sending = false;
         });
+        _scrollToBottom(animated: true);
       } else {
         await _loadChat();
         if (mounted) setState(() => _sending = false);
@@ -193,6 +255,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     } catch (e) {
       debugPrint('❌ sendMessage error: $e');
       if (!mounted) return;
+      _messageController.text = text;
       setState(() => _sending = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -202,6 +265,116 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         ),
       );
     }
+  }
+
+  Future<void> _deleteMessage(ChatMessage message) async {
+    final cid = _chatId;
+    if (cid == null || _chat == null) return;
+    if (_deletingMessageIds.contains(message.id)) return;
+
+    final previous = _chat!;
+    final reducedMessages =
+        previous.messages.where((m) => m.id != message.id).toList();
+    setState(() {
+      _deletingMessageIds.add(message.id);
+      _chat = ChatDetail(
+        id: previous.id,
+        messages: reducedMessages,
+        otherUser: previous.otherUser,
+        participants: previous.participants,
+      );
+    });
+
+    try {
+      await _repo.deleteMessage(cid, message.id);
+      if (!mounted) return;
+      setState(() {
+        _deletingMessageIds.remove(message.id);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deletingMessageIds.remove(message.id);
+        _chat = previous;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Mesaj silinemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<bool> _confirmDeleteMessage() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Delete message?'),
+          content: const Text(
+            'Are you sure you want to delete this message?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
+  }
+
+  Future<void> _showMessageActions(ChatMessage message, bool isMe) async {
+    final colors = Theme.of(context).colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isMe)
+                ListTile(
+                  leading: Icon(Icons.delete_outline, color: colors.error),
+                  title: const Text('Delete'),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final confirmed = await _confirmDeleteMessage();
+                    if (!confirmed) return;
+                    await _deleteMessage(message);
+                  },
+                ),
+            
+              ListTile(
+                leading: const Icon(Icons.push_pin_outlined),
+                title: const Text('Pin'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Pin will be available soon')),
+                  );
+                },
+              ),
+              const SizedBox(height: 6),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Color _avatarColor(String seed) {
@@ -372,9 +545,15 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             ? msg.imageUrl!
             : (msg.text ?? '');
         if (msg.messageType == 'image' && msg.imageUrl != null) {
-          return _buildImageBubble(msg.imageUrl!, isMe, time);
+          return GestureDetector(
+            onLongPress: () => _showMessageActions(msg, isMe),
+            child: _buildImageBubble(msg.imageUrl!, isMe, time),
+          );
         }
-        return _buildMessageBubble(message: content, isMe: isMe, time: time);
+        return GestureDetector(
+          onLongPress: () => _showMessageActions(msg, isMe),
+          child: _buildMessageBubble(message: content, isMe: isMe, time: time),
+        );
       },
     );
   }
@@ -503,6 +682,10 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             Expanded(
               child: TextField(
                 controller: _messageController,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                minLines: 1,
+                maxLines: 5,
                 decoration: InputDecoration(
                   hintText: 'Type a message...',
                   hintStyle: TextStyle(
@@ -521,7 +704,6 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                     vertical: 8,
                   ),
                 ),
-                onSubmitted: (_) => _sendMessage(),
               ),
             ),
             const SizedBox(width: 8),

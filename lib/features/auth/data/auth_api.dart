@@ -177,6 +177,39 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
+  Future<void> deleteAccount({required String accessToken}) async {
+    try {
+      await _client.delete(
+        '/users/me',
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      await _client.delete(
+        '/auth/me',
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+    }
+  }
+
+  /// Geçici hesap kapatma (kalıcı silme değil). Backend: POST /users/me/deactivate
+  Future<void> deactivateAccount({required String accessToken}) async {
+    try {
+      await _client.post(
+        '/users/me/deactivate',
+        body: <String, dynamic>{},
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      await _client.post(
+        '/auth/deactivate',
+        body: <String, dynamic>{},
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
+    }
+  }
+
   Future<Map<String, dynamic>> upsertPersonalProfile({
     required String accessToken,
     required Map<String, dynamic> data,

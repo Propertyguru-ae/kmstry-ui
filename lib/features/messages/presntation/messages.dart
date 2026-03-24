@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
@@ -13,17 +16,29 @@ class DmListPage extends StatefulWidget {
 
 class DmListPageState extends State<DmListPage> {
   final ChatRepository _repo = ChatRepository();
+  final TextEditingController _searchController = TextEditingController();
   String _selectedFilter = 'All';
   List<ChatListItem> _chats = [];
   bool _loading = true;
   String? _error;
   String? _currentUserId;
+  String _searchQuery = '';
+  Timer? _searchDebounce;
+  int _requestId = 0;
+  final Set<String> _deletingChatIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     _loadCurrentUser();
     loadChats();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -36,16 +51,18 @@ class DmListPageState extends State<DmListPage> {
 
   /// Called when returning from MessageDetailPage or when DM tab is selected (DM list refresh rule).
   Future<void> loadChats() async {
+    final activeQuery = _searchQuery.trim();
+    final requestId = ++_requestId;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      
+      final list = activeQuery.isEmpty
+          ? await _repo.getChats()
+          : await _repo.searchChatsByParticipantName(activeQuery);
 
-      final list = await _repo.getChats();
-
-      if (!mounted) return;
+      if (!mounted || requestId != _requestId) return;
       setState(() {
         _chats = list;
         _loading = false;
@@ -58,6 +75,17 @@ class DmListPageState extends State<DmListPage> {
         _loading = false;
       });
     }
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+    });
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      loadChats();
+    });
   }
 
 Color _avatarColor(String seed) {
@@ -101,11 +129,24 @@ Color _avatarColor(String seed) {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: TextField(
+              controller: _searchController,
               style: theme.textTheme.bodyLarge,
+              onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: 'Search messages',
                 hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
                 prefixIcon: Icon(Icons.search, color: isDark ? Colors.white38 : Colors.grey),
+                suffixIcon: _searchQuery.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          _searchDebounce?.cancel();
+                          _searchController.clear();
+                          _searchQuery = '';
+                          loadChats();
+                        },
+                      ),
                 filled: true,
                 fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
@@ -162,9 +203,10 @@ Color _avatarColor(String seed) {
     }
     final list = _buildFilteredChats();
     if (list.isEmpty) {
+      final query = _searchQuery.trim();
       return Center(
         child: Text(
-          'No messages yet',
+          query.isEmpty ? 'No messages yet' : 'No results for "$query"',
           style: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
         ),
       );
@@ -186,6 +228,70 @@ Color _avatarColor(String seed) {
       return _chats.where((c) => c.unreadCount > 0).toList();
     }
     return _chats;
+  }
+
+  Future<bool> _confirmDeleteDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Delete chat?'),
+          content: const Text('Are you sure you want to delete this chat?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
+  }
+
+  Future<void> _deleteChat(ChatListItem chat) async {
+    if (_deletingChatIds.contains(chat.id)) return;
+    final confirmed = await _confirmDeleteDialog();
+    if (!confirmed || !mounted) return;
+
+    final previousChats = List<ChatListItem>.from(_chats);
+    setState(() {
+      _deletingChatIds.add(chat.id);
+      _chats = _chats.where((c) => c.id != chat.id).toList();
+    });
+
+    try {
+      await _repo.deleteChat(chat.id);
+      if (!mounted) return;
+      setState(() {
+        _deletingChatIds.remove(chat.id);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chat deleted')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deletingChatIds.remove(chat.id);
+        _chats = previousChats;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Chat could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildFilterChip(String label, bool isDark, ThemeData theme) {
@@ -225,90 +331,107 @@ Color _avatarColor(String seed) {
 
     return Column(
       children: [
-        ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          leading: Container(
-            width: 55,
-            height: 55,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: isDark ? avatarColor.withOpacity(0.2) : avatarColor.withOpacity(0.15),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: isDark ? avatarColor.withOpacity(0.9) : avatarColor,
-              ),
-            ),
-          ),
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Slidable(
+          key: ValueKey(chat.id),
+          enabled: !_deletingChatIds.contains(chat.id),
+          startActionPane: ActionPane(
+            motion: const DrawerMotion(),
+            extentRatio: 0.28,
             children: [
-              Text(
-                name,
-                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              Text(
-                time,
-                style: TextStyle(color: isDark ? Colors.white38 : Colors.grey, fontSize: 12),
+              SlidableAction(
+                onPressed: (_) => _deleteChat(chat),
+                backgroundColor: theme.colorScheme.error,
+                foregroundColor: theme.colorScheme.onError,
+                icon: Icons.delete_outline,
+                label: 'Delete',
               ),
             ],
           ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    preview,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
-                  ),
-                ),
-                if (unread > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.secondary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      unread > 99 ? '99+' : unread.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          onTap: () async {
-            await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => MessageDetailPage(
-                  chatId: chat.id,
-                  otherUserId: other?.id ?? '',
-                  otherName: name,
-                  otherPhotoUrl: '',
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            leading: Container(
+              width: 55,
+              height: 55,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: isDark ? avatarColor.withOpacity(0.2) : avatarColor.withOpacity(0.15),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? avatarColor.withOpacity(0.9) : avatarColor,
                 ),
               ),
-            );
-            if (!mounted) return;
-            loadChats();
-          },
+            ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  name,
+                  style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  time,
+                  style: TextStyle(color: isDark ? Colors.white38 : Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                    ),
+                  ),
+                  if (unread > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.secondary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        unread > 99 ? '99+' : unread.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => MessageDetailPage(
+                    chatId: chat.id,
+                    otherUserId: other?.id ?? '',
+                    otherName: name,
+                    otherPhotoUrl: '',
+                  ),
+                ),
+              );
+              if (!mounted) return;
+              loadChats();
+            },
+          ),
         ),
         Divider(
-          height: 1, 
-          indent: 85, 
-          endIndent: 16, 
+          height: 1,
+          indent: 85,
+          endIndent: 16,
           color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFEEEEEE),
         ),
       ],

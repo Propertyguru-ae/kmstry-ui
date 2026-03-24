@@ -3,11 +3,14 @@ import 'dart:ui'; // Glassmorphism efekti için
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 
@@ -25,12 +28,15 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   List<CheckinProfileMedia> _media = [];
 
   final CheckinRepository _checkinRepo = CheckinRepository();
+  final VenueContextRepository _venueContextRepository = VenueContextRepository();
   String? _checkinVibe;
+  String? _activeCheckinVenueIdFromProfile;
   List<String> _checkinWhatBrings = [];
 
   bool _isExpanded = false;
 
   bool _uploadingMoment = false;
+  bool _openingVenueDetail = false;
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
   String? _profileErrorMessage;
@@ -73,7 +79,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             /// Thumbnail
             if (hasThumbnail)
               Image.network(
-                thumbnail!,
+                thumbnail,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(color: Colors.black87),
               )
@@ -189,6 +195,119 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     return normalized;
   }
 
+  String? _extractActiveCheckinVenueId(Map<String, dynamic>? activeCheckin) {
+    if (activeCheckin == null) return null;
+    final direct = activeCheckin['venueId'] ?? activeCheckin['venue_id'];
+    final directId = direct?.toString().trim();
+    if (directId != null && directId.isNotEmpty) return directId;
+    final nested = activeCheckin['venue'];
+    if (nested is Map) {
+      final nestedId = nested['id'] ?? nested['venueId'] ?? nested['venue_id'];
+      final value = nestedId?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  Venue? _venueFromActiveCheckin(Map<String, dynamic>? activeCheckin) {
+    if (activeCheckin == null) return null;
+    final nested = activeCheckin['venue'];
+    if (nested is! Map) return null;
+    final map = Map<String, dynamic>.from(nested);
+    final venueId = _extractActiveCheckinVenueId(activeCheckin);
+    if ((map['id'] == null || map['id'].toString().isEmpty) &&
+        venueId != null &&
+        venueId.isNotEmpty) {
+      map['id'] = venueId;
+    }
+    if ((map['source'] == null || map['source'].toString().isEmpty)) {
+      map['source'] = 'db';
+    }
+    if ((map['isInDb'] == null) && (map['is_in_db'] == null)) {
+      map['isInDb'] = true;
+    }
+    if ((map['canCheckin'] == null) && (map['can_checkin'] == null)) {
+      map['canCheckin'] = true;
+    }
+    final parsed = Venue.fromJson(map);
+    if (parsed.id.isEmpty) return null;
+    return parsed;
+  }
+
+  Future<String?> _resolveActiveCheckinVenueId() async {
+    final fromPayload = _extractActiveCheckinVenueId(_activeCheckin);
+    if (fromPayload != null && fromPayload.isNotEmpty) return fromPayload;
+
+    final fromProfile = _activeCheckinVenueIdFromProfile?.trim();
+    if (fromProfile != null && fromProfile.isNotEmpty) return fromProfile;
+
+    final checkinId = _activeCheckinId();
+    if (checkinId == null) return null;
+
+    try {
+      final profile = await _checkinRepo.getCheckinProfile(checkinId);
+      final venueId = profile.checkin.venueId?.trim();
+      if (venueId == null || venueId.isEmpty) return null;
+      if (mounted) {
+        setState(() => _activeCheckinVenueIdFromProfile = venueId);
+      }
+      return venueId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Venue?> _loadActiveCheckinVenue() async {
+    final fromPayload = _venueFromActiveCheckin(_activeCheckin);
+    if (fromPayload != null) return fromPayload;
+    final venueId = await _resolveActiveCheckinVenueId();
+    if (venueId == null || venueId.isEmpty) return null;
+    try {
+      final venueData = await _venueContextRepository.getVenueById(venueId);
+      final map = Map<String, dynamic>.from(venueData);
+      if ((map['id'] == null || map['id'].toString().isEmpty)) {
+        map['id'] = venueId;
+      }
+      if ((map['source'] == null || map['source'].toString().isEmpty)) {
+        map['source'] = 'db';
+      }
+      if ((map['isInDb'] == null) && (map['is_in_db'] == null)) {
+        map['isInDb'] = true;
+      }
+      if ((map['canCheckin'] == null) && (map['can_checkin'] == null)) {
+        map['canCheckin'] = true;
+      }
+      final parsed = Venue.fromJson(map);
+      if (parsed.id.isEmpty) return null;
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openActiveVenueDetail() async {
+    if (_openingVenueDetail || _activeCheckin == null) return;
+    setState(() => _openingVenueDetail = true);
+    try {
+      final venue = await _loadActiveCheckinVenue();
+      if (!mounted) return;
+      if (venue == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Active check-in venue could not be loaded.')),
+        );
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _openingVenueDetail = false);
+      }
+    }
+  }
+
   Future<void> _refreshNotificationWarningState() async {
     try {
       final permissionState = await _notificationPermissionService
@@ -244,8 +363,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       List<CheckinProfileMedia> media = [];
 
       String? checkinVibe;
+      String? activeCheckinVenueId;
       // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
       final activeCheckin = _extractActiveCheckin(me);
+      activeCheckinVenueId = _extractActiveCheckinVenueId(activeCheckin);
       final checkinId = activeCheckin?['id']?.toString();
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
@@ -253,6 +374,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           print('PROFILE :  $profile');
           //print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
           checkinVibe = profile.checkin.vibe ?? '';
+          final profileVenueId = profile.checkin.venueId?.trim();
+          if (profileVenueId != null && profileVenueId.isNotEmpty) {
+            activeCheckinVenueId = profileVenueId;
+          }
           //print('CHECKIN VIBE :  $checkinVibe');
           for (final m in profile.media) {
             print("MEDIA ITEM:");
@@ -275,6 +400,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       setState(() {
         _user = me;
         _activeCheckin = activeCheckin;
+        _activeCheckinVenueIdFromProfile = activeCheckinVenueId;
         _checkinWhatBrings = _extractWhatBrings(activeCheckin);
         _checkinVibe = checkinVibe;
         _media = media;
@@ -483,7 +609,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
+      MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
     );
   }
 
@@ -532,7 +658,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 child: Container(
                   color: isDark
                       ? Colors.black.withOpacity(0.2)
-                      : Colors.white.withOpacity(0.2),
+                      : Colors.black.withOpacity(0.16),
                 ),
               ),
             ),
@@ -545,10 +671,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: [
-                    isDark ? Colors.black : Colors.white,
+                    isDark ? Colors.black : Colors.black.withOpacity(0.92),
                     isDark
                         ? Colors.black.withOpacity(0.4)
-                        : Colors.white.withOpacity(0.6),
+                        : Colors.black.withOpacity(0.5),
                     Colors.transparent,
                   ],
                   stops: const [0.0, 0.4, 0.8],
@@ -575,9 +701,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         onPressed: _openSettings,
                         icon: Icon(
                           Icons.settings_outlined,
-                          color: isDark
-                              ? Colors.white
-                              : theme.colorScheme.onSurface,
+                          color: Colors.white,
                         ),
                       ),
                     ],
@@ -627,7 +751,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         style: TextStyle(
                           fontSize: 34,
                           fontWeight: FontWeight.w800,
-                          color: isDark ? Colors.white : Colors.black87,
+                          color: Colors.white,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -661,7 +785,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               return '@${username.toLowerCase()}';
                             })(),
                             style: TextStyle(
-                              color: isDark ? Colors.white70 : Colors.black54,
+                              color: Colors.white70,
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
                             ),
@@ -690,9 +814,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               Text(
                                 "Turn on notifications so you don't miss matches.",
                                 style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white
-                                      : theme.colorScheme.onSurface,
+                                  color: Colors.white,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -725,16 +847,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           vertical: 14,
                         ),
                         decoration: BoxDecoration(
-                          color: isDark
-                              ? Colors.white.withOpacity(hasImage ? 0.1 : 0.05)
-                              : Colors.black.withOpacity(
-                                  hasImage ? 0.05 : 0.03,
-                                ),
+                          color: Colors.white.withOpacity(hasImage ? 0.1 : 0.06),
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: isDark
-                                ? Colors.white.withOpacity(0.1)
-                                : Colors.black.withOpacity(0.05),
+                            color: Colors.white.withOpacity(0.12),
                           ),
                         ),
                         child: LayoutBuilder(
@@ -744,9 +860,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                 : '✨ You do not have an active check-in.';
 
                             final style = TextStyle(
-                              color: isDark
-                                  ? Colors.white.withOpacity(0.9)
-                                  : Colors.black.withOpacity(0.8),
+                              color: Colors.white.withOpacity(0.9),
                               fontSize: 15,
                               height: 1.4,
                             );
@@ -791,9 +905,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                                   ? 'See less'
                                                   : 'See more',
                                               style: TextStyle(
-                                                color: isDark
-                                                    ? Colors.white
-                                                    : theme.colorScheme.primary,
+                                                color: Colors.white,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),
@@ -807,9 +919,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                             child: Icon(
                                               Icons.edit_outlined,
                                               size: 18,
-                                              color: isDark
-                                                  ? Colors.white70
-                                                  : Colors.black54,
+                                              color: Colors.white70,
                                             ),
                                           ),
                                       ],
@@ -857,6 +967,35 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                           }).toList(),
                         ),
                       ],
+                      if (_activeCheckin != null) ...[
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _openingVenueDetail
+                                ? null
+                                : _openActiveVenueDetail,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withOpacity(0.35),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            icon: _openingVenueDetail
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.location_on_outlined, size: 18),
+                            label: const Text(
+                              'Open venue',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -872,7 +1011,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       Text(
                         "Moments",
                         style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
+                          color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
@@ -896,17 +1035,13 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                     Icon(
                                       Icons.camera_alt_outlined,
                                       size: 18,
-                                      color: isDark
-                                          ? Colors.white70
-                                          : theme.colorScheme.primary,
+                                      color: Colors.white70,
                                     ),
                                     const SizedBox(width: 6),
                                     Text(
                                       "Add more",
                                       style: TextStyle(
-                                        color: isDark
-                                            ? Colors.white70
-                                            : theme.colorScheme.primary,
+                                        color: Colors.white70,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/user_card.dart';
@@ -24,7 +26,9 @@ class VenuePeoplePage extends StatefulWidget {
 
 class _VenuePeoplePageState extends State<VenuePeoplePage> {
   final _repo = VenueCheckinRepository();
+  final _venueContextRepo = VenueContextRepository();
   late Future<List<VenueCheckin>> _future;
+  late Future<VenueCheckinStats> _statsFuture;
   @override
   void initState() {
     super.initState();
@@ -39,6 +43,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
   void _loadCheckins() {
     setState(() {
       _future = _repo.getWhoIsHere(_effectiveVenueIdForList);
+      _statsFuture = _venueContextRepo.getVenueCheckinStats(_effectiveVenueIdForList);
     });
   }
 
@@ -99,11 +104,10 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          FutureBuilder<List<VenueCheckin>>(
-                            future: _future,
+                          FutureBuilder<VenueCheckinStats>(
+                            future: _statsFuture,
                             builder: (_, snapshot) {
                               if (!snapshot.hasData) return const SizedBox();
-
                               return Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 8,
@@ -114,7 +118,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
-                                  snapshot.data!.length.toString(),
+                                  snapshot.data!.checkinCountActive.toString(),
                                   style: TextStyle(
                                     color: colors.onSurface,
                                     fontSize: 12,
@@ -126,27 +130,49 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                           ),
                         ],
                       ),
-                      Row(
-                        children: [
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: colors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            "Live now",
-                            style: TextStyle(
-                              color: colors.onSurface,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
+                      const SizedBox(height: 3),
+                      FutureBuilder<VenueCheckinStats>(
+                        future: _statsFuture,
+                        builder: (_, snapshot) {
+                          if (!snapshot.hasData) return const SizedBox.shrink();
+                          final stats = snapshot.data!;
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.man_rounded,
+                                size: 14,
+                                color: colors.onSurface.withValues(alpha: 0.72),
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${stats.male}',
+                                style: TextStyle(
+                                  color: colors.onSurface.withValues(alpha: 0.72),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.woman_rounded,
+                                size: 14,
+                                color: colors.onSurface.withValues(alpha: 0.72),
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${stats.female}',
+                                style: TextStyle(
+                                  color: colors.onSurface.withValues(alpha: 0.72),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
+                   
                     ],
                   ),
                 ),

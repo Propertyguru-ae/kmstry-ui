@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
 
 class VenueProfilePage extends StatefulWidget {
   final String? activeVenueName;
@@ -70,7 +70,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
+      MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
     );
   }
 

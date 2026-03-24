@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'venue_map_view.dart';
@@ -44,10 +46,12 @@ class _VenueHomePageState extends State<VenueHomePage> {
   bool _isMapSearchActive = false;
   bool _locationAvailable = false;
   bool _loadingVenues = false;
+  LatLng? _lastResolvedCenter;
   List<Venue> _mapVenues = const [];
   List<Venue> _listVenues = const [];
   String? _selectedVenueId;
   final VenueRepository _venueRepository = VenueRepository();
+  final VenueContextRepository _venueContextRepository = VenueContextRepository();
 
   Future<void> _loadNearbyVenues(LatLng center) async {
     setState(() => _loadingVenues = true);
@@ -88,12 +92,112 @@ class _VenueHomePageState extends State<VenueHomePage> {
     setState(() => _selectedVenueId = _selectionKeyForVenue(venue));
   }
 
-  void _openVenue(Venue venue) {
+  Future<void> _refreshNearbyAfterDetail() async {
+    final center = _lastResolvedCenter;
+    if (center == null || _loadingVenues) return;
+    await _loadNearbyVenues(center);
+  }
+
+  String? _extractVenueIdFromResolve(Map<String, dynamic> response) {
+    final direct = response['venueId'] ?? response['venue_id'] ?? response['id'];
+    if (direct is String && direct.isNotEmpty) return direct;
+    final venue = response['venue'];
+    if (venue is Map) {
+      final nested = venue['id'] ?? venue['venueId'] ?? venue['venue_id'];
+      if (nested is String && nested.isNotEmpty) return nested;
+    }
+    return null;
+  }
+
+  Future<String?> _resolveVenueIdForStats(Venue venue) async {
+    if (venue.id.isNotEmpty && venue.canCheckin) return venue.id;
+    final placeId = venue.placeId;
+    if (placeId == null || placeId.isEmpty) return null;
+    try {
+      final resolved = await _venueContextRepository.resolveVenueFromPlace(placeId);
+      return _extractVenueIdFromResolve(resolved);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Venue _withUpdatedStats(Venue v, VenueCheckinStats stats) {
+    return Venue(
+      id: v.id,
+      placeId: v.placeId,
+      name: v.name,
+      type: v.type,
+      status: v.status,
+      address: v.address,
+      city: v.city,
+      photoUrl: v.photoUrl,
+      latitude: v.latitude,
+      longitude: v.longitude,
+      tag: v.tag,
+      source: v.source,
+      isInDb: v.isInDb,
+      canCheckin: v.canCheckin,
+      checkinCountActive: stats.checkinCountActive,
+      checkinCountMale: stats.male,
+      checkinCountFemale: stats.female,
+      eventSummary: v.eventSummary,
+      verificationLevel: v.verificationLevel,
+      distanceMeters: v.distanceMeters,
+      openNow: v.openNow,
+      rating: v.rating,
+      types: v.types,
+    );
+  }
+
+  bool _isSamePhysicalVenue(Venue candidate, Venue target, String? resolvedVenueId) {
+    if (resolvedVenueId != null && resolvedVenueId.isNotEmpty) {
+      if (candidate.id == resolvedVenueId) return true;
+    }
+    final tp = target.placeId;
+    if (tp != null && tp.isNotEmpty && candidate.placeId == tp) return true;
+    return candidate.isSameVenueAs(target);
+  }
+
+  Future<void> _refreshVenueStatsForSurface(Venue venue) async {
+    final resolvedVenueId = await _resolveVenueIdForStats(venue);
+    if (resolvedVenueId == null || resolvedVenueId.isEmpty) return;
+    try {
+      final stats = await _venueContextRepository.getVenueCheckinStats(resolvedVenueId);
+      if (!mounted) return;
+      setState(() {
+        _mapVenues = _mapVenues
+            .map(
+              (v) => _isSamePhysicalVenue(v, venue, resolvedVenueId)
+                  ? _withUpdatedStats(v, stats)
+                  : v,
+            )
+            .toList();
+        _listVenues = _listVenues
+            .map(
+              (v) => _isSamePhysicalVenue(v, venue, resolvedVenueId)
+                  ? _withUpdatedStats(v, stats)
+                  : v,
+            )
+            .toList();
+      });
+    } catch (_) {
+      // Keep current values if stats endpoint fails.
+    }
+  }
+
+  Future<void> _handleVenueDetailClosed(Venue venue) async {
+    await _refreshNearbyAfterDetail();
+    await _refreshVenueStatsForSurface(venue);
+  }
+
+  Future<void> _openVenue(Venue venue) async {
     _selectVenue(venue);
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
     );
+    if (!mounted) return;
+    await _handleVenueDetailClosed(venue);
   }
 
   @override
@@ -115,10 +219,16 @@ class _VenueHomePageState extends State<VenueHomePage> {
                 }
               });
             },
-            onLocationResolved: _loadNearbyVenues,
+            onLocationResolved: (center) {
+              _lastResolvedCenter = center;
+              _loadNearbyVenues(center);
+            },
             onSearchActivityChanged: (active) {
               if (!mounted) return;
               setState(() => _isMapSearchActive = active);
+            },
+            onVenueDetailClosed: (venue) {
+              _handleVenueDetailClosed(venue);
             },
             venues: _mapVenues,
             selectedVenueId: _selectedVenueId,

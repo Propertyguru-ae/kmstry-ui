@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
@@ -156,6 +157,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _activeAccount = venue.name;
       _currentIndex = 0;
     });
+    _loadUnreadNotificationCount();
   }
 
  void _onItemTapped(int index) {
@@ -235,7 +237,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     'Account Settings',
                     style: TextStyle(color: colors.onSurface),
                   ),
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.of(this.context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AccountSettingsPage(),
+                      ),
+                    );
+                  },
                 ),
                 ListTile(
                   leading: Icon(Icons.person_outline, color: colors.onSurface),

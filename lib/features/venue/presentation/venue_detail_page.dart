@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -211,7 +212,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         ),
       );
       _loadActiveCheckin();
-      _refreshCheckinStats(forcedVenueId: resolvedVenueId);
+      await _refreshCheckinStats(forcedVenueId: resolvedVenueId);
+      Future.delayed(const Duration(seconds: 1), () {
+        if (!mounted) return;
+        _refreshCheckinStats(forcedVenueId: resolvedVenueId);
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -223,21 +228,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         setState(() => _resolvingVenueForCheckin = false);
       }
     }
-  }
-
-  int? _asInt(dynamic raw) {
-    if (raw is int) return raw;
-    if (raw is num) return raw.toInt();
-    if (raw is String) return int.tryParse(raw);
-    return null;
-  }
-
-  int? _firstInt(Map<String, dynamic> data, List<String> keys) {
-    for (final k in keys) {
-      final parsed = _asInt(data[k]);
-      if (parsed != null) return parsed;
-    }
-    return null;
   }
 
   Future<void> _refreshCheckinStats({String? forcedVenueId}) async {
@@ -257,32 +247,15 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         setState(() => _loadingCheckinStats = false);
         return;
       }
-      final venueData = await _venueContextRepo.getVenueById(venueId);
-      final total = _firstInt(venueData, [
-        'checkinCountActive',
-        'checkin_count_active',
-        'activeCheckinCount',
-        'active_checkin_count',
-      ]);
-      final male = _firstInt(venueData, [
-        'checkinCountMale',
-        'checkin_count_male',
-        'maleCheckinCount',
-        'male_checkin_count',
-      ]);
-      final female = _firstInt(venueData, [
-        'checkinCountFemale',
-        'checkin_count_female',
-        'femaleCheckinCount',
-        'female_checkin_count',
-      ]);
+      final VenueCheckinStats stats = await _venueContextRepo
+          .getVenueCheckinStats(venueId);
 
       if (!mounted) return;
       setState(() {
         _resolvedVenueIdForCurrentDetail ??= venueId;
-        _checkinCountActive = total ?? _checkinCountActive;
-        _checkinCountMale = male ?? _checkinCountMale;
-        _checkinCountFemale = female ?? _checkinCountFemale;
+        _checkinCountActive = stats.checkinCountActive;
+        _checkinCountMale = stats.male;
+        _checkinCountFemale = stats.female;
         _loadingCheckinStats = false;
       });
     } catch (_) {
@@ -315,12 +288,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
     if (!hasAnyData) {
       return const Text(
-        'Check-in bilgisi henuz yok',
+        'Want to be the first to check in?',
         style: TextStyle(color: Colors.grey),
       );
     }
 
-    Widget statChip(IconData icon, String label, String value) {
+    Widget statChip(IconData icon, String value) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -333,7 +306,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             Icon(icon, size: 15, color: Colors.grey.shade700),
             const SizedBox(width: 6),
             Text(
-              '$label: $value',
+              value,
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ],
@@ -345,9 +318,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        statChip(Icons.people_outline_rounded, '', '${total ?? 0}'),
-        statChip(Icons.man_rounded, '', '${male ?? 0}'),
-        statChip(Icons.woman_rounded, '', '${female ?? 0}'),
+        statChip(Icons.people_outline_rounded, '${total ?? 0}'),
+        statChip(Icons.man_rounded, '${male ?? 0}'),
+        statChip(Icons.woman_rounded, '${female ?? 0}'),
       ],
     );
   }
@@ -639,7 +612,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       ? null
                       : () async {
                           if (hasActiveCheckinHere) {
-                            Navigator.push(
+                            await Navigator.push(
                               context,
                               MaterialPageRoute(
                                 builder: (_) => VenuePeoplePage(
@@ -650,6 +623,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                 ),
                               ),
                             );
+                            _refreshCheckinStats();
                             return;
                           }
                           await _openCheckinFlow();

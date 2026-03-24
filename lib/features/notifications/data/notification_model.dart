@@ -6,6 +6,8 @@ class NotificationModel {
   final String title;
   final String body;
   final Map<String, dynamic>? data;
+  final String? contextType;
+  final String? venueId;
   final bool isRead;
   final DateTime createdAt;
   final String? dedupeKey;
@@ -16,6 +18,8 @@ class NotificationModel {
     required this.title,
     required this.body,
     this.data,
+    this.contextType,
+    this.venueId,
     this.isRead = false,
     required this.createdAt,
     this.dedupeKey,
@@ -65,12 +69,17 @@ class NotificationModel {
       }
     }
 
+    final contextTypeRaw = json['contextType'] ?? json['context_type'];
+    final venueIdRaw = json['venueId'] ?? json['venue_id'];
+
     return NotificationModel(
       id: json['id'] as String,
       type: (json['type'] as String?) ?? 'unknown',
       title: (json['title'] as String?) ?? '',
       body: (json['body'] as String?) ?? '',
       data: dataMap,
+      contextType: contextTypeRaw?.toString(),
+      venueId: venueIdRaw?.toString(),
       isRead: isReadRaw == true,
       createdAt: parseCreatedAt(createdAtRaw),
       dedupeKey: json['dedupe_key'] as String? ?? json['dedupeKey'] as String?,

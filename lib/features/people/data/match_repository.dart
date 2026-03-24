@@ -4,6 +4,18 @@ import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
 
+class MatchListResult {
+  final List<MatchItem> items;
+  final String? nextCursor;
+  final bool hasMore;
+
+  const MatchListResult({
+    required this.items,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+}
+
 class MatchRepository {
   final ApiClient _api = ApiClient();
 
@@ -11,18 +23,76 @@ class MatchRepository {
 
   /// GET /matches — list people the current user has matched with.
   Future<List<MatchItem>> getMatches() async {
+    final result = await getMatchesPage();
+    return result.items;
+  }
+
+  /// GET /matches with optional query + keyset pagination.
+  Future<MatchListResult> getMatchesPage({
+    String? query,
+    int limit = 20,
+    String? cursor,
+  }) async {
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
+    final params = <String>[];
+    final trimmedQuery = query?.trim() ?? '';
+    if (trimmedQuery.isNotEmpty) {
+      params.add('query=${Uri.encodeQueryComponent(trimmedQuery)}');
+    }
+    if (limit > 0) {
+      params.add('limit=$limit');
+    }
+    if (cursor != null && cursor.trim().isNotEmpty) {
+      params.add('cursor=${Uri.encodeQueryComponent(cursor.trim())}');
+    }
+
+    final path = params.isEmpty ? '/matches' : '/matches?${params.join('&')}';
     final data = await _api.get(
-      '/matches',
+      path,
       headers: {'Authorization': 'Bearer $token'},
     );
 
-    if (data is! List) return [];
-    return data
-        .map((e) => MatchItem.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return _parseMatchListResult(data);
+  }
+
+  MatchListResult _parseMatchListResult(dynamic data) {
+    if (data is List) {
+      final items = data
+          .whereType<Map>()
+          .map((e) => MatchItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      return MatchListResult(
+        items: items,
+        nextCursor: null,
+        hasMore: false,
+      );
+    }
+
+    if (data is Map<String, dynamic>) {
+      final payload = (data['data'] is Map<String, dynamic>)
+          ? Map<String, dynamic>.from(data['data'] as Map)
+          : data;
+      final rawItems = payload['items'];
+      final items = rawItems is List
+          ? rawItems
+                .whereType<Map>()
+                .map((e) => MatchItem.fromJson(Map<String, dynamic>.from(e)))
+                .toList()
+          : const <MatchItem>[];
+      final rawCursor = payload['nextCursor'] ?? payload['next_cursor'];
+      final nextCursor = rawCursor?.toString();
+      final rawHasMore = payload['hasMore'] ?? payload['has_more'];
+      final hasMore = rawHasMore is bool ? rawHasMore : nextCursor != null;
+      return MatchListResult(
+        items: items,
+        nextCursor: nextCursor,
+        hasMore: hasMore,
+      );
+    }
+
+    return const MatchListResult(items: [], nextCursor: null, hasMore: false);
   }
 
   Future<List<BlockedUser>> getBlockedUsers() async {

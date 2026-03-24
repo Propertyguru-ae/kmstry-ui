@@ -126,7 +126,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
     final textPainter = TextPainter(
       text: TextSpan(text: text, style: style),
-      maxLines: 2,
+      maxLines: 3,
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth);
 
@@ -616,7 +616,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername =
         (_profile?.user.username ?? widget.userUsername)?.trim();
+
+    final age = _profile != null
+        ? (DateTime.now().year - _profile!.user.birthdate.year)
+        : null;
+
     return Scaffold(
+      backgroundColor: isDark ? Colors.black : Colors.white,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -669,7 +675,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 child: Container(
                   color: isDark
                       ? Colors.black.withValues(alpha: 0.2)
-                      : Colors.white.withValues(alpha: 0.2),
+                      : Colors.black.withOpacity(0.16),
                 ),
               ),
             ),
@@ -681,10 +687,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: [
-                    isDark ? Colors.black : Colors.white,
+                    isDark ? Colors.black : Colors.black.withOpacity(0.92),
                     isDark
                         ? Colors.black.withValues(alpha: 0.4)
-                        : Colors.white.withValues(alpha: 0.6),
+                        : Colors.black.withOpacity(0.5),
                     Colors.transparent,
                   ],
                   stops: const [0.0, 0.4, 0.8],
@@ -694,261 +700,227 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
 
           /// CONTENT
-          SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                /// BACK
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          Icons.arrow_back,
-                          color: isDark ? Colors.white : Colors.black87,
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverAppBar(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                leading: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: ClipOval(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        color: Colors.black.withOpacity(0.3),
+                        child: IconButton(
+                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          onPressed: () => Navigator.pop(context),
                         ),
-                        onPressed: () => Navigator.pop(context),
                       ),
-                      TextButton(
-                        onPressed: _isBlocking ? null : _toggleBlock,
-                        style: TextButton.styleFrom(
-                          foregroundColor: isDark ? Colors.white : Colors.black87,
-                          disabledForegroundColor: isDark
-                              ? Colors.white54
-                              : Colors.black38,
-                        ),
-                        child: Text(_isBlocked ? 'Unblock' : 'Block'),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const Spacer(),
-
-                /// NAME
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    displayName,
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 6),
-
-                /// USERNAME
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    (displayUsername != null && displayUsername.isNotEmpty)
-                        ? '@$displayUsername'
-                        : '',
-                    style: TextStyle(
-                      color: isDark ? Colors.white70 : Colors.black54,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                /// VIBE (only when viewer is at same venue)
-                if (_showPostsAndVibe &&
-                    _profile != null &&
-                    _profile!.checkin.vibe != null &&
-                    _profile!.checkin.vibe!.isNotEmpty)
+                actions: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final vibeText = _profile!.checkin.vibe!;
-                        final style = TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black54,
-                          fontSize: 14,
-                        );
-
-                        _isVibeOverflowing = _checkTextOverflow(
-                          vibeText,
-                          constraints.maxWidth,
-                          style,
-                        );
-
-                        return AnimatedSize(
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeInOut,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                vibeText,
-                                style: style,
-                                maxLines: _isVibeExpanded ? null : 2,
-                                overflow: _isVibeExpanded
-                                    ? TextOverflow.visible
-                                    : TextOverflow.ellipsis,
-                              ),
-
-                              if (_isVibeOverflowing)
-                                GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _isVibeExpanded = !_isVibeExpanded;
-                                    });
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Text(
-                                      _isVibeExpanded ? 'See less' : 'See more',
-                                      style: TextStyle(
-                                        color: isDark
-                                            ? Colors.white
-                                            : theme.colorScheme.primary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
+                    padding: const EdgeInsets.all(8.0),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          color: Colors.black.withOpacity(0.3),
+                          child: TextButton(
+                            onPressed: _isBlocking ? null : _toggleBlock,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              disabledForegroundColor: Colors.white54,
+                            ),
+                            child: Text(_isBlocked ? 'Unblock' : 'Block'),
                           ),
-                        );
-                      },
-                    ),
-                  ),
-
-                const SizedBox(height: 16),
-
-                /// RECENT MOMENTS (only when viewer is at same venue)
-                if (_showPostsAndVibe && moments.isNotEmpty)
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      'Recent moments',
-                      style: TextStyle(
-                        color: isDark ? Colors.white : Colors.black87,
-                        fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
+                ],
+                expandedHeight: MediaQuery.of(context).size.height * 0.45,
+                flexibleSpace: const FlexibleSpaceBar(
+                  background: SizedBox.shrink(),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 120),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      /// NAME & AGE
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$displayName${age != null ? ', $age' : ''}',
+                              style: const TextStyle(
+                                fontSize: 36,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                letterSpacing: -1,
+                              ),
+                            ),
+                          ),
+                          if (_profile?.user.isVerified == true)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 8, left: 4),
+                              child: Icon(Icons.verified, color: Colors.blue, size: 24),
+                            ),
+                        ],
+                      ),
 
-                if (_showPostsAndVibe && moments.isNotEmpty)
-                  const SizedBox(height: 8),
+                      /// USERNAME
+                      if (displayUsername != null && displayUsername.isNotEmpty)
+                        Text(
+                          '@$displayUsername',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white.withOpacity(0.7),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
 
-                if (_showPostsAndVibe && moments.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Builder(
-                      builder: (context) {
-                        final count = moments.length;
+                      const SizedBox(height: 16),
 
-                        // 🔥 1 FOTO
-                        if (count == 1) {
-                          return _buildMomentImage(
-                            moments.first,
-                            width: double.infinity,
-                            height: 160,
-                            initialIndex: 1,
-                          );
-                        }
+                      /// ACTIONS (Kmstry, Not Kmstry, etc.)
+                      if (_actionState != null)
+                        _buildActionBar(),
 
-                        // 🔥 2 FOTO
-                        if (count == 2) {
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: _buildMomentImage(
-                                  moments[0],
-                                  height: 140,
-                                  initialIndex: 1,
+                      const SizedBox(height: 24),
+
+                      /// VIBE CARD
+                      if (_showPostsAndVibe &&
+                          _profile != null &&
+                          _profile!.checkin.vibe != null &&
+                          _profile!.checkin.vibe!.isNotEmpty)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            child: Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.15),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _buildMomentImage(
-                                  moments[1],
-                                  height: 140,
-                                  initialIndex: 2,
-                                ),
-                              ),
-                            ],
-                          );
-                        }
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final vibeText = _profile!.checkin.vibe!;
+                                  final style = const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    height: 1.5,
+                                    fontStyle: FontStyle.italic,
+                                  );
 
-                        // 🔥 3+ FOTO (scroll)
-                        return SizedBox(
-                          height: 90,
+                                  _isVibeOverflowing = _checkTextOverflow(
+                                    vibeText,
+                                    constraints.maxWidth,
+                                    style,
+                                  );
+
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(Icons.format_quote_rounded,
+                                          color: Colors.white54, size: 24),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        vibeText,
+                                        style: style,
+                                        maxLines: _isVibeExpanded ? null : 3,
+                                        overflow: _isVibeExpanded
+                                            ? TextOverflow.visible
+                                            : TextOverflow.ellipsis,
+                                      ),
+                                      if (_isVibeOverflowing)
+                                        GestureDetector(
+                                          onTap: () {
+                                            setState(() {
+                                              _isVibeExpanded = !_isVibeExpanded;
+                                            });
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(top: 12),
+                                            child: Text(
+                                              _isVibeExpanded ? 'See less' : 'See more',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                decoration: TextDecoration.underline,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      const SizedBox(height: 32),
+
+                      /// RECENT MOMENTS
+                      if (_showPostsAndVibe && moments.isNotEmpty) ...[
+                        const Text(
+                          'Moments',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          height: 180,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
-                            itemCount: count,
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: moments.length,
                             separatorBuilder: (context, index) =>
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 12),
                             itemBuilder: (_, index) {
-                              return _buildMomentImage(
-                                moments[index],
-                                width: 70,
-                                height: 90,
-                                initialIndex: index + 1,
+                              return Container(
+                                width: 130,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: _buildMomentImage(
+                                  moments[index],
+                                  height: 180,
+                                  initialIndex: index + 1,
+                                ),
                               );
                             },
                           ),
-                        );
-                      },
-                    ),
-                  ),
-
-                const SizedBox(height: 90),
-              ],
-            ),
-          ),
-
-          /// ACTION BAR
-          if (_actionState != null)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildActionBarContainer(),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionBarContainer() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: (isDark ? Colors.black : theme.colorScheme.surface).withValues(
-          alpha: 0.85,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Banner for incomingInterested
-          if (_actionState == ProfileActionState.incomingInterested)
-            Container(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Center(
-                child: Text(
-                  'Kmstry you! What do you think?',
-                  style: TextStyle(
-                    color: isDark ? Colors.white : theme.colorScheme.onSurface,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
-            ),
-
-          // Action buttons/content
-          _buildActionBar(),
+            ],
+          ),
         ],
       ),
     );
@@ -956,16 +928,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Widget _buildActionBar() {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
     if (_isBlocked) {
-      return Center(
-        child: Text(
-          'User blocked',
-          style: TextStyle(
-            color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
-            fontSize: 16,
-          ),
+      return Text(
+        'User blocked',
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 16,
         ),
       );
     }
@@ -973,62 +942,89 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     switch (_actionState!) {
       case ProfileActionState.incomingInterested:
       case ProfileActionState.showActions:
-        return Row(
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _isSendingAction
-                    ? null
-                    : () => _handleAction('interested'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: isDark
-                      ? Colors.white
-                      : theme.colorScheme.onSurface,
-                  side: BorderSide(
-                    color: isDark ? Colors.white : theme.colorScheme.onSurface,
+            if (_actionState == ProfileActionState.incomingInterested)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Kmstry you! What do you think?',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                child: const Text('Kmstry 👋'),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: _isSendingAction ? null : () => _handleAction('pass'),
-                child: const Text('Not Kmstry'),
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 40,
+                  child: OutlinedButton(
+                    onPressed: _isSendingAction
+                        ? null
+                        : () => _handleAction('interested'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    child: const Text('Kmstry 👋'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 40,
+                  child: ElevatedButton(
+                    onPressed: _isSendingAction ? null : () => _handleAction('pass'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: theme.colorScheme.onPrimary,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      elevation: 0,
+                    ),
+                    child: const Text('Not Kmstry'),
+                  ),
+                ),
+              ],
             ),
           ],
         );
 
       case ProfileActionState.proactivePass:
       case ProfileActionState.reactivePass:
-        return Center(
-          child: Text(
-            'No Kmstry already',
-            style: TextStyle(
-              color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
-              fontSize: 16,
-            ),
+        return const Text(
+          'No Kmstry already',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 16,
           ),
         );
 
       case ProfileActionState.waitingResponse:
-        return Center(
-          child: Text(
-            'Waiting response',
-            style: TextStyle(
-              color: isDark ? Colors.white70 : theme.colorScheme.onSurface,
-              fontSize: 16,
-            ),
+        return const Text(
+          'Waiting response',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 16,
           ),
         );
 
       case ProfileActionState.matched:
         return SizedBox(
-          width: double.infinity,
+          height: 40,
           child: ElevatedButton(
             onPressed: _openChat,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            ),
             child: const Text('Message'),
           ),
         );
@@ -1054,7 +1050,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         _openMediaViewerAt(initialIndex);
       },
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
         child: constrainedChild,
       ),
     );
