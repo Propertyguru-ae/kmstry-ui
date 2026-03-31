@@ -19,6 +19,7 @@ class MeContextModel {
   final String? activeVenueId;
   final bool hasPersonalProfile;
   final bool hasVenueMembership;
+  final bool canDeleteCurrentContextProfile;
   final List<MemberVenue> memberVenues;
 
   const MeContextModel({
@@ -28,6 +29,7 @@ class MeContextModel {
     required this.activeVenueId,
     required this.hasPersonalProfile,
     required this.hasVenueMembership,
+    required this.canDeleteCurrentContextProfile,
     required this.memberVenues,
   });
 
@@ -75,6 +77,9 @@ class MeContextModel {
           me['hasPersonalProfile'] == true || me['has_personal_profile'] == true,
       hasVenueMembership:
           me['hasVenueMembership'] == true || me['has_venue_membership'] == true,
+      canDeleteCurrentContextProfile:
+          me['canDeleteCurrentContextProfile'] == true ||
+          me['can_delete_current_context_profile'] == true,
       memberVenues: parseVenues(me['memberVenues'] ?? me['member_venues']),
     );
   }

@@ -28,12 +28,17 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   List<CheckinProfileMedia> _media = [];
 
   final CheckinRepository _checkinRepo = CheckinRepository();
-  final VenueContextRepository _venueContextRepository = VenueContextRepository();
+  final VenueContextRepository _venueContextRepository =
+      VenueContextRepository();
   String? _checkinVibe;
+
+  /// Sunucudaki kalıcı bio; check-in vibe boşsa gösterim için kullanılır.
+  String? _profileBio;
   String? _activeCheckinVenueIdFromProfile;
   List<String> _checkinWhatBrings = [];
 
   bool _isExpanded = false;
+  bool _areMomentsExpanded = false;
 
   bool _uploadingMoment = false;
   bool _openingVenueDetail = false;
@@ -293,7 +298,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       if (!mounted) return;
       if (venue == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Active check-in venue could not be loaded.')),
+          const SnackBar(
+            content: Text('Active check-in venue could not be loaded.'),
+          ),
         );
         return;
       }
@@ -397,8 +404,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       }
 
       if (!mounted) return;
+      final bioRaw = (me['bio'] ?? me['bio_text'])?.toString().trim();
       setState(() {
         _user = me;
+        _profileBio = (bioRaw != null && bioRaw.isNotEmpty) ? bioRaw : null;
         _activeCheckin = activeCheckin;
         _activeCheckinVenueIdFromProfile = activeCheckinVenueId;
         _checkinWhatBrings = _extractWhatBrings(activeCheckin);
@@ -488,10 +497,18 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openEditVibeModal() async {
-    if (_activeCheckin == null) return;
+  /// Merkezi bio/vibe metni: check-in varken önce vibe, yoksa profil bio’su.
+  String _centralBioVibeTextForEdit() {
+    final vibeTrim = (_checkinVibe ?? '').trim();
+    final bioTrim = (_profileBio ?? '').trim();
+    if (_activeCheckin != null) {
+      return vibeTrim.isNotEmpty ? vibeTrim : bioTrim;
+    }
+    return bioTrim;
+  }
 
-    _vibeController.text = _checkinVibe ?? "";
+  Future<void> _openEditVibeModal() async {
+    _vibeController.text = _centralBioVibeTextForEdit();
 
     await showModalBottomSheet(
       context: context,
@@ -512,7 +529,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  "Edit your vibe",
+                  'Edit bio',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -527,7 +544,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   maxLines: 4,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: "What's your vibe?",
+                    hintText:
+                        'What others see on your profile and when you check in.',
                     hintStyle: const TextStyle(color: Colors.white38),
                     filled: true,
                     fillColor: Colors.white.withOpacity(0.05),
@@ -572,35 +590,32 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Future<void> _saveVibe() async {
-    if (_activeCheckin == null) return;
     final checkinId = _activeCheckinId();
-    if (checkinId == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Active check-in data is missing.')),
-      );
-      return;
-    }
 
     setState(() => _savingVibe = true);
 
     try {
-      await _checkinRepo.updateVibe(
-        checkinId: checkinId,
-        vibe: _vibeController.text.trim(),
-      );
+      final next = _vibeController.text.trim();
+      if (checkinId != null) {
+        await _checkinRepo.updateVibe(checkinId: checkinId, vibe: next);
+      }
+      await AuthRepository().updateMe({'bio': next});
 
       if (!mounted) return;
 
       setState(() {
-        _checkinVibe = _vibeController.text.trim();
+        if (checkinId != null) {
+          _checkinVibe = next;
+        }
+        _profileBio = next.isEmpty ? null : next;
+        _user?['bio'] = next;
       });
 
       Navigator.pop(context); // modal kapanır
     } catch (e) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to update vibe")));
+      ).showSnackBar(const SnackBar(content: Text('Failed to update bio')));
     }
 
     if (mounted) setState(() => _savingVibe = false);
@@ -611,6 +626,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       context,
       MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
     );
+    if (mounted) await _loadProfile();
   }
 
   @override
@@ -638,7 +654,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         featuredMedia != null && featuredMedia.mediaType == MediaType.photo;
 
     //print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
-    //print('active ceckin geliyor mu  :  $_activeCheckin');
+    ///print('active ceckin geliyor mu  :  $_activeCheckin');
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: Stack(
@@ -683,415 +699,531 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             ),
           ),
 
-          /// 4. İÇERİK
+          /// 4. İÇERİK (scroll + min yükseklik: Spacer taşması ve küçük ekranlar)
           SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Top Action Bar with Settings
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      IconButton(
-                        onPressed: _openSettings,
-                        icon: Icon(
-                          Icons.settings_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_profileErrorMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _profileErrorMessage!,
-                              style: TextStyle(
-                                color: theme.colorScheme.onErrorContainer,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _loadProfile,
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
                     ),
-                  ),
-
-                const Spacer(),
-
-                /// KULLANICI BİLGİLERİ
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
-                        style: TextStyle(
-                          fontSize: 34,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF00FF75), // Daha canlı bir yeşil
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Color(0xFF00FF75),
-                                  blurRadius: 4,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            (() {
-                              final username = (_user?['username'] ??
-                                      _user?['user_name'])
-                                  ?.toString()
-                                  .trim();
-                              if (username == null || username.isEmpty) {
-                                return 'Online';
-                              }
-                              return '@${username.toLowerCase()}';
-                            })(),
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_showNotificationWarning) ...[
-                        const SizedBox(height: 14),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary.withValues(
-                              alpha: 0.1,
-                            ),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: theme.colorScheme.primary.withValues(
-                                alpha: 0.35,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Top Action Bar with Settings
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
                               ),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Turn on notifications so you don't miss matches.",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
-                                  ElevatedButton(
-                                    onPressed: _enableNotificationsFromProfile,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor:
-                                          theme.colorScheme.primary,
-                                      foregroundColor:
-                                          theme.colorScheme.onPrimary,
+                                  IconButton(
+                                    onPressed: _openSettings,
+                                    icon: Icon(
+                                      Icons.settings_outlined,
+                                      color: Colors.white,
                                     ),
-                                    child: const Text('Enable'),
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
+                            ),
+                            if (_profileErrorMessage != null)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.errorContainer,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          _profileErrorMessage!,
+                                          style: TextStyle(
+                                            color: theme
+                                                .colorScheme
+                                                .onErrorContainer,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                      TextButton(
+                                        onPressed: _loadProfile,
+                                        child: const Text('Retry'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                      ],
-                      const SizedBox(height: 20),
-
-                      /// BIO VEYA NO CHECK-IN UYARISI (Şık bir kutu içinde)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(hasImage ? 0.1 : 0.06),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.12),
-                          ),
-                        ),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final vibeText = _activeCheckin != null
-                                ? (_checkinVibe ?? 'Hello! This is my bio...')
-                                : '✨ You do not have an active check-in.';
-
-                            final style = TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 15,
-                              height: 1.4,
-                            );
-
-                            final isOverflowing = _checkTextOverflow(
-                              vibeText,
-                              constraints.maxWidth - 30, // 👈 ikon için boşluk
-                              style,
-                            );
-
-                            return AnimatedSize(
-                              duration: const Duration(milliseconds: 250),
-                              curve: Curves.easeInOut,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            /// KULLANICI BİLGİLERİ
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    vibeText,
-                                    style: style,
-                                    maxLines: _isExpanded ? null : 2,
-                                    overflow: _isExpanded
-                                        ? TextOverflow.visible
-                                        : TextOverflow.ellipsis,
+                                    '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
+                                    style: TextStyle(
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                      letterSpacing: -0.5,
+                                    ),
                                   ),
-
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        // 👈 See more sadece overflow varsa
-                                        if (isOverflowing)
-                                          GestureDetector(
-                                            onTap: () {
-                                              setState(() {
-                                                _isExpanded = !_isExpanded;
-                                              });
-                                            },
-                                            child: Text(
-                                              _isExpanded
-                                                  ? 'See less'
-                                                  : 'See more',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w600,
-                                              ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: const BoxDecoration(
+                                          color: Color(
+                                            0xFF00FF75,
+                                          ), // Daha canlı bir yeşil
+                                          shape: BoxShape.circle,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Color(0xFF00FF75),
+                                              blurRadius: 4,
                                             ),
-                                          )
-                                        else
-                                          const SizedBox(), // boşluk dengesi için
-                                        // 👉 Kalem HER ZAMAN
-                                        if (_activeCheckin != null)
-                                          GestureDetector(
-                                            onTap: _openEditVibeModal,
-                                            child: Icon(
-                                              Icons.edit_outlined,
-                                              size: 18,
-                                              color: Colors.white70,
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        (() {
+                                          final username =
+                                              (_user?['username'] ??
+                                                      _user?['user_name'])
+                                                  ?.toString()
+                                                  .trim();
+                                          if (username == null ||
+                                              username.isEmpty) {
+                                            return 'Online';
+                                          }
+                                          return '@${username.toLowerCase()}';
+                                        })(),
+                                        style: TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_showNotificationWarning) ...[
+                                    const SizedBox(height: 14),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.primary
+                                            .withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: theme.colorScheme.primary
+                                              .withValues(alpha: 0.35),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "Turn on notifications so you don't miss matches.",
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-
-                      if (_activeCheckin != null &&
-                          _checkinWhatBrings.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: _checkinWhatBrings.map((item) {
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primary.withValues(
-                                  alpha: isDark ? 0.22 : 0.14,
-                                ),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: theme.colorScheme.primary.withValues(
-                                    alpha: 0.45,
-                                  ),
-                                ),
-                              ),
-                              child: Text(
-                                _formatWhatBringsLabel(item),
-                                style: TextStyle(
-                                  color: theme.colorScheme.primary,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ],
-                      if (_activeCheckin != null) ...[
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: _openingVenueDetail
-                                ? null
-                                : _openActiveVenueDetail,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              side: BorderSide(
-                                color: Colors.white.withOpacity(0.35),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            icon: _openingVenueDetail
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.location_on_outlined, size: 18),
-                            label: const Text(
-                              'Open venue',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 30),
-
-                /// MOMENTS HEADER
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Moments",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-
-                      /// 📸 Add More sadece 6'dan az ise
-                      if (_activeCheckin != null && _media.length < 6)
-                        _uploadingMoment
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white70,
-                                ),
-                              )
-                            : GestureDetector(
-                                onTap: _addMomentPhoto,
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.camera_alt_outlined,
-                                      size: 18,
-                                      color: Colors.white70,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      "Add more",
-                                      style: TextStyle(
-                                        color: Colors.white70,
-                                        fontWeight: FontWeight.w600,
+                                          const SizedBox(height: 10),
+                                          Row(
+                                            children: [
+                                              ElevatedButton(
+                                                onPressed:
+                                                    _enableNotificationsFromProfile,
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor:
+                                                      theme.colorScheme.primary,
+                                                  foregroundColor: theme
+                                                      .colorScheme
+                                                      .onPrimary,
+                                                  minimumSize: const Size(
+                                                    0,
+                                                    40,
+                                                  ),
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  visualDensity:
+                                                      const VisualDensity(
+                                                        horizontal:
+                                                            VisualDensity
+                                                                .minimumDensity,
+                                                        vertical: VisualDensity
+                                                            .minimumDensity,
+                                                      ),
+                                                ),
+                                                child: const Text('Enable'),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
-                                ),
-                              ),
-                    ],
-                  ),
-                ),
+                                  const SizedBox(height: 20),
 
-                const SizedBox(height: 14),
+                                  /// BIO VEYA NO CHECK-IN UYARISI (Şık bir kutu içinde)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 14,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(
+                                        hasImage ? 0.1 : 0.06,
+                                      ),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: Colors.white.withOpacity(0.12),
+                                      ),
+                                    ),
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        final vibeTrim = (_checkinVibe ?? '')
+                                            .trim();
+                                        final bioTrim = (_profileBio ?? '')
+                                            .trim();
+                                        // Merkezi metin: check-in + vibe veya bio; yalnız bio; yoksa uyarı.
+                                        final vibeText = _activeCheckin != null
+                                            ? (vibeTrim.isNotEmpty
+                                                  ? vibeTrim
+                                                  : (bioTrim.isNotEmpty
+                                                        ? bioTrim
+                                                        : 'Hello! This is my bio...'))
+                                            : (bioTrim.isNotEmpty
+                                                  ? bioTrim
+                                                  : '✨ You do not have an active check-in.');
 
-                /// MOMENTS LIST
-                SizedBox(
-                  height: 110,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _media.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      return GestureDetector(
-                        onTap: () async {
-                          final reload = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => MomentsViewerPage(
-                                media: _media,
-                                initialIndex: index,
-                                allowFeature: true,
+                                        final style = TextStyle(
+                                          color: Colors.white.withOpacity(0.9),
+                                          fontSize: 15,
+                                          height: 1.4,
+                                        );
+
+                                        final isOverflowing =
+                                            _checkTextOverflow(
+                                              vibeText,
+                                              constraints.maxWidth -
+                                                  30, // 👈 ikon için boşluk
+                                              style,
+                                            );
+
+                                        return AnimatedSize(
+                                          duration: const Duration(
+                                            milliseconds: 250,
+                                          ),
+                                          curve: Curves.easeInOut,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                vibeText,
+                                                style: style,
+                                                maxLines: _isExpanded
+                                                    ? null
+                                                    : 2,
+                                                overflow: _isExpanded
+                                                    ? TextOverflow.visible
+                                                    : TextOverflow.ellipsis,
+                                              ),
+
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                  top: 8,
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    // 👈 See more sadece overflow varsa
+                                                    if (isOverflowing)
+                                                      GestureDetector(
+                                                        onTap: () {
+                                                          setState(() {
+                                                            _isExpanded =
+                                                                !_isExpanded;
+                                                          });
+                                                        },
+                                                        child: Text(
+                                                          _isExpanded
+                                                              ? 'See less'
+                                                              : 'See more',
+                                                          style: TextStyle(
+                                                            color: Colors.white,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      )
+                                                    else
+                                                      const SizedBox(), // boşluk dengesi için
+                                                    // Merkezi bio/vibe düzenleme (check-in olsun olmasın).
+                                                    GestureDetector(
+                                                      onTap: _openEditVibeModal,
+                                                      child: Icon(
+                                                        Icons.edit_outlined,
+                                                        size: 18,
+                                                        color: Colors.white70,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+
+                                  if (_activeCheckin != null &&
+                                      _checkinWhatBrings.isNotEmpty) ...[
+                                    const SizedBox(height: 14),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: _checkinWhatBrings.map((item) {
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: theme.colorScheme.primary
+                                                .withValues(
+                                                  alpha: isDark ? 0.22 : 0.14,
+                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: theme.colorScheme.primary
+                                                  .withValues(alpha: 0.45),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _formatWhatBringsLabel(item),
+                                            style: TextStyle(
+                                              color: theme.colorScheme.primary,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ],
+                                  if (_activeCheckin != null) ...[
+                                    const SizedBox(height: 14),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        onPressed: _openingVenueDetail
+                                            ? null
+                                            : _openActiveVenueDetail,
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.white,
+                                          side: BorderSide(
+                                            color: Colors.white.withOpacity(
+                                              0.35,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
+                                        ),
+                                        icon: _openingVenueDetail
+                                            ? const SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                              )
+                                            : const Icon(
+                                                Icons.location_on_outlined,
+                                                size: 18,
+                                              ),
+                                        label: const Text(
+                                          'Open venue',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
-                          );
 
-                          // MomentsViewerPage star ile featured seçince: Navigator.pop(context, true) dönüyor
-                          if (reload == true) {
-                            await _loadProfile();
-                          }
-                        },
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(15),
-                          child: _buildMediaThumb(_media[index]),
+                            const SizedBox(height: 6),
+
+                            if (_media.isNotEmpty ||
+                                _activeCheckin != null) ...[
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 28,
+                                  right: 24,
+                                ),
+                                child: InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      _areMomentsExpanded =
+                                          !_areMomentsExpanded;
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 6,
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _areMomentsExpanded
+                                              ? 'Close moments'
+                                              : 'See moments',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Icon(
+                                          _areMomentsExpanded
+                                              ? Icons.keyboard_arrow_up_rounded
+                                              : Icons
+                                                    .keyboard_arrow_down_rounded,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              AnimatedSize(
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeInOut,
+                                child: _areMomentsExpanded
+                                    ? Column(
+                                        children: [
+                                          const SizedBox(height: 8),
+                                          const SizedBox(height: 8),
+                                          SizedBox(
+                                            height: 110,
+                                            child: ListView.separated(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 24,
+                                                  ),
+                                              scrollDirection: Axis.horizontal,
+                                              itemCount:
+                                                  _media.length +
+                                                  ((_activeCheckin != null &&
+                                                          _media.length < 6)
+                                                      ? 1
+                                                      : 0),
+                                              separatorBuilder: (_, __) =>
+                                                  const SizedBox(width: 12),
+                                              itemBuilder: (context, index) {
+                                                final canAddMore =
+                                                    _activeCheckin != null &&
+                                                    _media.length < 6;
+                                                if (canAddMore &&
+                                                    index == _media.length) {
+                                                  return _buildAddMomentTile();
+                                                }
+                                                return GestureDetector(
+                                                  onTap: () async {
+                                                    final reload =
+                                                        await Navigator.push(
+                                                          context,
+                                                          MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                MomentsViewerPage(
+                                                                  media: _media,
+                                                                  initialIndex:
+                                                                      index,
+                                                                  allowFeature:
+                                                                      true,
+                                                                ),
+                                                          ),
+                                                        );
+
+                                                    if (reload == true) {
+                                                      await _loadProfile();
+                                                    }
+                                                  },
+                                                  child: ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          15,
+                                                        ),
+                                                    child: _buildMediaThumb(
+                                                      _media[index],
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(height: 30),
+                                        ],
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
+                          ],
                         ),
-                      );
-                    },
+                      ],
+                    ),
                   ),
-                ),
-
-                const SizedBox(height: 30),
-              ],
+                );
+              },
             ),
           ),
         ],
@@ -1138,6 +1270,41 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAddMomentTile() {
+    final colors = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: _uploadingMoment ? null : _addMomentPhoto,
+      child: Container(
+        width: 85,
+        height: 110,
+        decoration: BoxDecoration(
+          color: colors.surface.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: colors.primary.withValues(alpha: 0.35),
+            width: 1.6,
+          ),
+        ),
+        child: Center(
+          child: _uploadingMoment
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white70,
+                  ),
+                )
+              : Icon(
+                  Icons.add_rounded,
+                  size: 28,
+                  color: colors.onSurface.withValues(alpha: 0.65),
+                ),
+        ),
       ),
     );
   }

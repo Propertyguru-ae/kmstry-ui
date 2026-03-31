@@ -2,97 +2,92 @@ import 'package:flutter/material.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
-class NameDobOnboardingPage extends StatefulWidget {
-  final String? initialName;
+/// Kişisel onboarding: isteğe bağlı bio (Skip veya Continue).
+/// Metinler ürün dili: İngilizce.
+class BioOnboardingPage extends StatefulWidget {
+  final String? initialBio;
 
-  const NameDobOnboardingPage({super.key, this.initialName});
+  const BioOnboardingPage({super.key, this.initialBio});
+
+  static const int maxLength = 150;
 
   @override
-  State<NameDobOnboardingPage> createState() => _NameDobOnboardingPageState();
+  State<BioOnboardingPage> createState() => _BioOnboardingPageState();
 }
 
-class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
-  late final TextEditingController _nameController;
-  late final FocusNode _nameFocusNode;
-  DateTime? _birthdate;
+class _BioOnboardingPageState extends State<BioOnboardingPage> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
   bool _loading = false;
   bool _buttonPressed = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.initialName ?? '');
-    _nameFocusNode = FocusNode()..addListener(() => setState(() {}));
-  }
-
-  bool get _is18Plus {
-    if (_birthdate == null) return false;
-    final today = DateTime.now();
-    final age = today.year - _birthdate!.year;
-    return age >= 18;
-  }
-
-  bool get _isValid {
-    return _nameController.text.trim().isNotEmpty && _is18Plus;
-  }
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(now.year - 20),
-      firstDate: DateTime(now.year - 100),
-      lastDate: DateTime(now.year - 18),
-    );
-
-    if (picked != null) {
-      setState(() => _birthdate = picked);
-    }
-  }
-
-  Future<void> _continue() async {
-    if (!_isValid) return;
-
-    setState(() => _loading = true);
-
-    try {
-      await AuthRepository().upsertPersonalProfile({
-        'fullName': _nameController.text.trim(),
-        'birthdate': _birthdate!.toIso8601String(),
-      });
-
-      if (!mounted) return;
-
-      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
-    } catch (_) {
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Something went wrong')));
-    }
+    _controller = TextEditingController(text: widget.initialBio ?? '');
+    _focusNode = FocusNode()..addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _nameFocusNode.dispose();
+    _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
-  String _formatDate(DateTime date) {
-    final mm = date.month.toString().padLeft(2, '0');
-    final dd = date.day.toString().padLeft(2, '0');
-    return '$mm/$dd/${date.year}';
+  Future<void> _continue() async {
+    if (_loading) return;
+    final text = _controller.text.trim();
+    if (text.characters.length > BioOnboardingPage.maxLength) return;
+
+    setState(() => _loading = true);
+    try {
+      await AuthRepository().upsertPersonalProfile({'bio': text});
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Something went wrong')),
+      );
+    }
+  }
+
+  /// Backend `skipBio` / `bioOnboardingSkipped` ile adımı ilerletir; yoksa boş bio ile dene.
+  Future<void> _skip() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      await AuthRepository().upsertPersonalProfile({
+        'skipBio': true,
+        'bioOnboardingSkipped': true,
+      });
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+    } catch (_) {
+      try {
+        await AuthRepository().upsertPersonalProfile({'bio': ''});
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Something went wrong')),
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    const surface = Color(0xFF161C28);
     const surfaceBorder = Color(0xFF252D3D);
     const accent = Color.fromARGB(255, 11, 162, 237);
     const textPrimary = Color(0xFFF3F6FF);
     const textSecondary = Color(0xFF98A3BC);
-    final isFocused = _nameFocusNode.hasFocus;
+    final isFocused = _focusNode.hasFocus;
+    final len = _controller.text.characters.length;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -102,6 +97,18 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
         backgroundColor: Colors.transparent,
         foregroundColor: textPrimary,
         elevation: 0,
+        actions: [
+          TextButton(
+            onPressed: _loading ? null : _skip,
+            child: const Text(
+              'Skip',
+              style: TextStyle(
+                color: textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
       extendBodyBehindAppBar: true,
       body: Column(
@@ -113,7 +120,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'What’s your name?',
+                      'A few words about you',
                       style: TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.w600,
@@ -123,7 +130,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                     ),
                     const SizedBox(height: 10),
                     const Text(
-                      'This is how others will see you',
+                      'Optional — you can add or change this anytime in profile.',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w400,
@@ -135,7 +142,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
+                        gradient: const LinearGradient(
                           colors: [Color(0xFF161C28), Color(0xFF1A2233)],
                         ),
                         borderRadius: BorderRadius.circular(16),
@@ -146,96 +153,57 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                         boxShadow: [
                           BoxShadow(
                             color: isFocused
-                                ? accent.withOpacity(0.10)
-                                : Colors.black.withOpacity(0.10),
+                                ? accent.withValues(alpha: 0.10)
+                                : Colors.black.withValues(alpha: 0.10),
                             blurRadius: isFocused ? 24 : 12,
                             offset: const Offset(0, 8),
                           ),
                         ],
                       ),
                       child: TextField(
-                        focusNode: _nameFocusNode,
-                        controller: _nameController,
+                        focusNode: _focusNode,
+                        controller: _controller,
                         onChanged: (_) => setState(() {}),
+                        maxLines: 5,
+                        maxLength: BioOnboardingPage.maxLength,
+                        buildCounter: (
+                          context, {
+                          required currentLength,
+                          required isFocused,
+                          required maxLength,
+                        }) {
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 12, bottom: 8),
+                            child: Text(
+                              '$currentLength / $maxLength',
+                              style: const TextStyle(
+                                color: textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          );
+                        },
                         style: const TextStyle(
                           color: textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                         ),
                         decoration: const InputDecoration(
-                          hintText: 'Full name',
+                          hintText:
+                              'What should people know when you check in?',
                           hintStyle: TextStyle(color: textSecondary),
                           filled: true,
                           fillColor: Colors.transparent,
                           border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 18,
-                          ),
+                          contentPadding: EdgeInsets.fromLTRB(16, 18, 16, 8),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 28),
-                    const Text(
-                      'Date of birth',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    GestureDetector(
-                      onTap: _pickDate,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOut,
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
-                        decoration: BoxDecoration(
-                          color: surface,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: surfaceBorder),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.18),
-                              blurRadius: 16,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.calendar_month_rounded,
-                              color: accent,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              _birthdate == null
-                                  ? 'Select date'
-                                  : _formatDate(_birthdate!),
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                                color: _birthdate == null
-                                    ? textSecondary
-                                    : textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (_birthdate != null && !_is18Plus)
+                    if (len > BioOnboardingPage.maxLength)
                       const Padding(
-                        padding: EdgeInsets.only(top: 10),
+                        padding: EdgeInsets.only(top: 8),
                         child: Text(
-                          'You must be at least 18 years old',
+                          'Bio is too long.',
                           style: TextStyle(color: Color(0xFFFF8A8A)),
                         ),
                       ),
@@ -263,7 +231,10 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                         setState(() => _buttonPressed = false),
                     onPointerUp: (_) => setState(() => _buttonPressed = false),
                     child: ElevatedButton(
-                      onPressed: _isValid && !_loading ? _continue : null,
+                      onPressed: _loading ||
+                              len > BioOnboardingPage.maxLength
+                          ? null
+                          : _continue,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.transparent,
                         shadowColor: Colors.transparent,
@@ -271,15 +242,18 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       ),
                       child: Ink(
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF4DA3FF), Color(0xFF2563EB)],
-                          ),
                           borderRadius: BorderRadius.circular(16),
+                          gradient: LinearGradient(
+                            colors: [
+                              accent,
+                              accent.withValues(alpha: 0.85),
+                            ],
+                          ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF2563EB).withOpacity(0.35),
-                              blurRadius: 24,
-                              offset: const Offset(0, 12),
+                              color: accent.withValues(alpha: 0.35),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
                             ),
                           ],
                         ),
@@ -289,17 +263,16 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                                   width: 22,
                                   height: 22,
                                   child: CircularProgressIndicator(
-                                    strokeWidth: 2.4,
+                                    strokeWidth: 2,
                                     color: Colors.white,
                                   ),
                                 )
                               : const Text(
                                   'Continue',
                                   style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 16,
-                                    letterSpacing: 0.2,
                                     color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                         ),

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
@@ -59,12 +60,18 @@ class AuthApi {
         '/auth/register/otp/request',
         body: {'email': email},
       );
+      debugPrint(
+        '[requestRegisterOtp] response (primary): ${jsonEncode(res)}',
+      );
       return res as Map<String, dynamic>;
     } on ApiException catch (e) {
       if (e.statusCode != 404) rethrow;
       final res = await _client.post(
         '/auth/register/request-otp',
         body: {'email': email},
+      );
+      debugPrint(
+        '[requestRegisterOtp] response (404 fallback): ${jsonEncode(res)}',
       );
       return res as Map<String, dynamic>;
     }
@@ -96,6 +103,34 @@ class AuthApi {
       body: {'email': email},
     );
 
+    return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    final res = await _client.post(
+      '/auth/reset-password',
+      body: {'token': token, 'newPassword': newPassword},
+    );
+    return res as Map<String, dynamic>;
+  }
+
+  /// Oturum açıkken şifre değiştirme. Backend: `POST /auth/change-password` + JWT.
+  Future<Map<String, dynamic>> changePassword({
+    required String accessToken,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final res = await _client.post(
+      '/auth/change-password',
+      body: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
     return res as Map<String, dynamic>;
   }
 
@@ -190,6 +225,25 @@ class AuthApi {
         headers: {'Authorization': 'Bearer $accessToken'},
       );
     }
+  }
+
+  /// Sadece kişisel context/profil silinir. Root kimlik korunur.
+  Future<void> deletePersonalProfile({required String accessToken}) async {
+    await _client.delete(
+      '/users/me/personal-profile',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+  }
+
+  /// Sadece ilgili venue üyeliği/contexti silinir. Root kimlik korunur.
+  Future<void> removeOwnVenueMembership({
+    required String accessToken,
+    required String venueId,
+  }) async {
+    await _client.delete(
+      '/venues/$venueId/membership',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
   }
 
   /// Geçici hesap kapatma (kalıcı silme değil). Backend: POST /users/me/deactivate

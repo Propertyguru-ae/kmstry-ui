@@ -20,8 +20,34 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
   bool _sending = false;
   bool _verifying = false;
   String? _error;
+  /// Shown below the Continue button after a successful send (replaces SnackBar).
+  bool _codeSentNotice = false;
+  /// Test OTP from the server response (only shown when present).
+  String? _testOtpHint;
   int _secondsLeft = 0;
   Timer? _timer;
+
+  /// Reads OTP fields from the response for dev/test (`otp`, `code`, nested `data`, etc.).
+  String? _parseTestOtpFromResponse(Map<String, dynamic> response) {
+    const keys = ['otp', 'code', 'verificationCode', 'verification_code'];
+    for (final k in keys) {
+      final v = response[k];
+      if (v != null && v.toString().trim().isNotEmpty) {
+        return v.toString().trim();
+      }
+    }
+    final data = response['data'];
+    if (data is Map) {
+      final m = Map<String, dynamic>.from(data);
+      for (final k in keys) {
+        final v = m[k];
+        if (v != null && v.toString().trim().isNotEmpty) {
+          return v.toString().trim();
+        }
+      }
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -86,16 +112,17 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
     setState(() {
       _sending = true;
       _error = null;
+      _codeSentNotice = false;
+      _testOtpHint = null;
     });
     try {
-      await AuthRepository().requestRegisterOtp(widget.email);
+      final response = await AuthRepository().requestRegisterOtp(widget.email);
       if (!mounted) return;
+      setState(() {
+        _codeSentNotice = true;
+        _testOtpHint = _parseTestOtpFromResponse(response);
+      });
       _startCooldown();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Verification code sent. Please check your email.'),
-        ),
-      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = _friendlyError(e));
@@ -190,6 +217,27 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                         : const Text('Continue'),
                   ),
                 ),
+                if (_codeSentNotice) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Verification code sent. Please check your email.',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  if (_testOtpHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'For testing, enter this OTP: $_testOtpHint',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: colors.primary,
+                      ),
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 12),
                 TextButton(
                   onPressed: canResend ? _sendOtp : null,

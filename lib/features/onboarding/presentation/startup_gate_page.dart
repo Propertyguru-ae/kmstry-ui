@@ -26,10 +26,12 @@ class _StartupGatePageState extends State<StartupGatePage>
   bool _checking = true;
   bool _navigating = false;
 
-  static const Color _bgColor = Color(0xFF040404);
-  static const Color _cyan = Color(0xFF00E5FF);
-  static const Color _pink = Color(0xFFFF00C8);
-  static const Color _orange = Color(0xFFFF7043);
+  static const Color _bgColor = Color(0xFF0B0F17);
+  static const Color _blue = Color(0xFF4DA3FF);
+  static const Color _indigo = Color(0xFF2563EB);
+  static const Color _violet = Color(0xFF88A9FF);
+  static const Color _pink = Color(0xFFFF4FD8);
+  static const Color _orange = Color(0xFFFF8A4D);
 
   @override
   void initState() {
@@ -47,7 +49,7 @@ class _StartupGatePageState extends State<StartupGatePage>
 
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 4),
+      duration: const Duration(seconds: 2),
       lowerBound: 0.98,
       upperBound: 1.03,
     )..repeat(reverse: true);
@@ -66,17 +68,11 @@ class _StartupGatePageState extends State<StartupGatePage>
     );
 
     _slideAnimation = Tween<double>(begin: 26, end: 0).animate(
-      CurvedAnimation(
-        parent: _introController,
-        curve: Curves.easeOutCubic,
-      ),
+      CurvedAnimation(parent: _introController, curve: Curves.easeOutCubic),
     );
 
     _logoScaleAnimation = Tween<double>(begin: 0.94, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _introController,
-        curve: Curves.easeOutBack,
-      ),
+      CurvedAnimation(parent: _introController, curve: Curves.easeOutBack),
     );
 
     _buttonScaleAnimation = CurvedAnimation(
@@ -114,8 +110,12 @@ class _StartupGatePageState extends State<StartupGatePage>
 
     setState(() => _navigating = true);
 
-    await _buttonPressController.reverse();
-    await _buttonPressController.forward();
+    try {
+      await _buttonPressController.reverse();
+      await _buttonPressController.forward();
+    } on TickerCanceled {
+      return;
+    }
 
     if (!mounted) return;
 
@@ -164,7 +164,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               right: -120,
               child: Transform.rotate(
                 angle: angle,
-                child: _buildGlowSphere(_cyan.withOpacity(0.10), 420),
+                child: _buildGlowSphere(_blue.withOpacity(0.12), 420),
               ),
             ),
             Positioned(
@@ -172,7 +172,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               left: -150,
               child: Transform.rotate(
                 angle: -angle * 0.8,
-                child: _buildGlowSphere(_cyan.withOpacity(0.08), 500),
+                child: _buildGlowSphere(_indigo.withOpacity(0.10), 500),
               ),
             ),
             Positioned(
@@ -180,7 +180,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               left: -90,
               child: Transform.rotate(
                 angle: angle * 0.55,
-                child: _buildGlowSphere(_pink.withOpacity(0.045), 260),
+                child: _buildGlowSphere(_violet.withOpacity(0.06), 260),
               ),
             ),
             Positioned(
@@ -188,11 +188,20 @@ class _StartupGatePageState extends State<StartupGatePage>
               right: -80,
               child: Transform.rotate(
                 angle: -angle * 0.45,
-                child: _buildGlowSphere(_orange.withOpacity(0.05), 240),
+                child: _buildGlowSphere(_blue.withOpacity(0.06), 240),
               ),
             ),
             Container(
-              color: Colors.black.withOpacity(0.10),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color.fromARGB(46, 3, 12, 32),
+                    Color.fromARGB(82, 2, 6, 23),
+                  ],
+                ),
+              ),
             ),
           ],
         );
@@ -208,10 +217,7 @@ class _StartupGatePageState extends State<StartupGatePage>
           offset: Offset(0, _slideAnimation.value),
           child: FadeTransition(
             opacity: _fadeAnimation,
-            child: ScaleTransition(
-              scale: _logoScaleAnimation,
-              child: child,
-            ),
+            child: ScaleTransition(scale: _logoScaleAnimation, child: child),
           ),
         );
       },
@@ -231,9 +237,9 @@ class _StartupGatePageState extends State<StartupGatePage>
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: _cyan.withOpacity(0.05),
-                    blurRadius: 40,
-                    spreadRadius: 4,
+                    color: _blue.withOpacity(0.12),
+                    blurRadius: 30,
+                    spreadRadius: 2,
                   ),
                 ],
               ),
@@ -241,8 +247,8 @@ class _StartupGatePageState extends State<StartupGatePage>
                 alignment: Alignment.center,
                 children: [
                   _buildOrbitDot(const Offset(-30, -30), _pink, 12),
-                  _buildOrbitDot(const Offset(30, -30), _cyan, 12),
-                  _buildOrbitDot(const Offset(-30, 30), _cyan, 12),
+                  _buildOrbitDot(const Offset(30, -30), _blue, 12),
+                  _buildOrbitDot(const Offset(-30, 30), _indigo, 12),
                   _buildOrbitDot(const Offset(30, 30), _orange, 12),
                   Container(
                     width: 30,
@@ -252,7 +258,7 @@ class _StartupGatePageState extends State<StartupGatePage>
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: _cyan.withOpacity(0.25),
+                          color: _blue.withOpacity(0.25),
                           blurRadius: 18,
                           spreadRadius: 1,
                         ),
@@ -286,7 +292,6 @@ class _StartupGatePageState extends State<StartupGatePage>
             ),
           ),
           const SizedBox(height: 12),
-      
         ],
       ),
     );
@@ -298,10 +303,7 @@ class _StartupGatePageState extends State<StartupGatePage>
       builder: (context, child) {
         return Transform.translate(
           offset: Offset(0, _slideAnimation.value * 0.8),
-          child: FadeTransition(
-            opacity: _fadeAnimation,
-            child: child,
-          ),
+          child: FadeTransition(opacity: _fadeAnimation, child: child),
         );
       },
       child: Column(
@@ -310,7 +312,6 @@ class _StartupGatePageState extends State<StartupGatePage>
             duration: const Duration(milliseconds: 320),
             child: _checking
                 ? const SizedBox(
-                    key: ValueKey('loading'),
                     height: 60,
                     width: 60,
                     child: CircularProgressIndicator(
@@ -319,7 +320,6 @@ class _StartupGatePageState extends State<StartupGatePage>
                     ),
                   )
                 : ScaleTransition(
-                    key: const ValueKey('button'),
                     scale: _buttonScaleAnimation,
                     child: _buildContinueButton(),
                   ),
@@ -354,40 +354,66 @@ class _StartupGatePageState extends State<StartupGatePage>
       height: 62,
       child: ElevatedButton(
         onPressed: _navigating ? null : _goToIntro,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _orange,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          disabledBackgroundColor: _orange.withOpacity(0.85),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(40),
+        style: ButtonStyle(
+          animationDuration: const Duration(milliseconds: 120),
+          backgroundColor: const WidgetStatePropertyAll<Color>(
+            Colors.transparent,
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          shadowColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+          foregroundColor: const WidgetStatePropertyAll<Color>(Colors.white),
+          elevation: const WidgetStatePropertyAll<double>(0),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(
+            EdgeInsets.symmetric(horizontal: 24),
+          ),
+          shape: WidgetStatePropertyAll<RoundedRectangleBorder>(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
+          ),
+          textStyle: const WidgetStatePropertyAll<TextStyle>(
+            TextStyle(
+              inherit: false,
+              fontFamily: 'CupertinoSystemText',
+              fontWeight: FontWeight.w900,
+              letterSpacing: 2.2,
+              fontSize: 15,
+              height: 1.2,
+              color: Colors.white,
+            ),
+          ),
         ),
-        child: _navigating
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    'CONTINUE',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 3,
-                      fontSize: 15,
-                    ),
-                  ),
-                  SizedBox(width: 10),
-                  Icon(Icons.arrow_forward_rounded, size: 20),
-                ],
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4DA3FF), Color(0xFF2563EB)],
+            ),
+            borderRadius: BorderRadius.circular(40),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2563EB).withOpacity(0.30),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
               ),
+            ],
+          ),
+          child: Center(
+            child: _navigating
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('CONTINUE'),
+                      SizedBox(width: 10),
+                      Icon(Icons.arrow_forward_rounded, size: 20),
+                    ],
+                  ),
+          ),
+        ),
       ),
     );
   }
@@ -419,8 +445,8 @@ class _StartupGatePageState extends State<StartupGatePage>
           color: color,
           boxShadow: [
             BoxShadow(
-              color: color.withOpacity(0.38),
-              blurRadius: 12,
+              color: color.withOpacity(0.25),
+              blurRadius: 8,
               spreadRadius: 1,
             ),
           ],
@@ -433,10 +459,7 @@ class _StartupGatePageState extends State<StartupGatePage>
     return Container(
       width: 4,
       height: 4,
-      decoration: const BoxDecoration(
-        color: _cyan,
-        shape: BoxShape.circle,
-      ),
+      decoration: const BoxDecoration(color: _blue, shape: BoxShape.circle),
     );
   }
 }

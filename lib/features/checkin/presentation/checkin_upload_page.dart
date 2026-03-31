@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -17,8 +18,16 @@ class LocalMedia {
 
 class CheckInPage extends StatefulWidget {
   final String venueId;
+  /// Haritadan seçilen mekânın koordinatları; check-in isteğinde gönderilir (backend doğrulaması).
+  final double venueLatitude;
+  final double venueLongitude;
 
-  const CheckInPage({super.key, required this.venueId});
+  const CheckInPage({
+    super.key,
+    required this.venueId,
+    required this.venueLatitude,
+    required this.venueLongitude,
+  });
   @override
   State<CheckInPage> createState() => _CheckInPageState();
 }
@@ -212,6 +221,18 @@ class _CheckInPageState extends State<CheckInPage> {
   void initState() {
     super.initState();
     _loadWhatBringsOptions();
+    _prefillVibeFromProfileBio();
+  }
+
+  /// Kalıcı profil bio’su varsa vibe alanına varsayılan olarak yüklenir.
+  Future<void> _prefillVibeFromProfileBio() async {
+    try {
+      final me = await AuthRepository().getMe();
+      final raw = (me['bio'] ?? me['bio_text'])?.toString().trim();
+      if (!mounted || raw == null || raw.isEmpty) return;
+      if (_vibeController.text.trim().isNotEmpty) return;
+      setState(() => _vibeController.text = raw);
+    } catch (_) {}
   }
 
   Future<void> _loadWhatBringsOptions() async {
@@ -339,20 +360,24 @@ class _CheckInPageState extends State<CheckInPage> {
     setState(() => _isSubmitting = true);
 
     try {
-      // 🔴 Şimdilik sabit (sonra GPS’ten gelecek)
-      //const venueId = 'dbe83cb4-d108-4b11-b999-f34abbe39825';
-      const latitude = 25.055932;
-      const longitude = 55.203866;
+      // Seçilen venue’nun konumu; evden testte de mekânın kayıtlı koordinatı gider.
+      final latitude = widget.venueLatitude;
+      final longitude = widget.venueLongitude;
 
       // 1️⃣ Check-in oluştur
+      final vibeText = _vibeController.text.trim();
       final checkinId = await _repo.createCheckin(
         venueId: widget.venueId,
         latitude: latitude,
         longitude: longitude,
-        vibe: _vibeController.text.trim(),
+        vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
       );
       ActiveCheckinService().setActiveCheckin(checkinId);
+
+      try {
+        await AuthRepository().updateMe({'bio': vibeText});
+      } catch (_) {}
 
       // 2️⃣ Fotoğrafları yükle
       final featuredPhotoIndex = _featuredPhotoIndex;

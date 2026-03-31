@@ -208,7 +208,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => CheckInPage(venueId: resolvedVenueId),
+          builder: (_) => CheckInPage(
+            venueId: resolvedVenueId,
+            venueLatitude: widget.venue.latitude,
+            venueLongitude: widget.venue.longitude,
+          ),
         ),
       );
       _loadActiveCheckin();

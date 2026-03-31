@@ -80,10 +80,10 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Register failed');
   }
 
-  Future<void> requestRegisterOtp(String email) async {
+  /// On success, returns the server body map (e.g. test `otp`) for the UI layer.
+  Future<Map<String, dynamic>> requestRegisterOtp(String email) async {
     final response = await _api.requestRegisterOtp(email: email);
-    _log('🔥 requestRegisterOtp response = $response');
-    if (response['success'] == true) return;
+    if (response['success'] == true) return response;
     throw Exception(response['message'] ?? 'Failed to send verification code');
   }
 
@@ -172,13 +172,44 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Verification code is invalid');
   }
 
-  Future<void> forgotPassword(String email) async {
+  /// On success returns the server body (e.g. dev-only `resetUrl`) for the UI.
+  Future<Map<String, dynamic>> forgotPassword(String email) async {
     final response = await _api.forgotPassword(email: email);
 
     // Backend enumeration yapmıyor → her durumda success sayıyoruz
     if (response['success'] != true) {
       throw Exception(response['message'] ?? 'Failed to send reset email');
     }
+    return response;
+  }
+
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    final response = await _api.resetPassword(
+      token: token,
+      newPassword: newPassword,
+    );
+    if (response['success'] == true) return;
+    throw Exception(response['message'] ?? 'Failed to reset password');
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('Not signed in');
+    }
+    final response = await _api.changePassword(
+      accessToken: token,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+    if (response['success'] == true) return;
+    throw Exception(response['message'] ?? 'Failed to change password');
   }
 
   Future<bool> login(String email, String password) async {
@@ -274,13 +305,31 @@ class AuthRepository {
     ProfilePreviewPage.clearActionStateCache();
   }
 
-  Future<void> deleteAccount() async {
+  /// Root/global hesap silme: kimlik + bağlı contextler tamamen silinir.
+  Future<void> deleteRootAccount() async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
     await _googleSignIn.signOut();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
+  }
+
+  /// Geriye dönük uyumluluk.
+  Future<void> deleteAccount() async => deleteRootAccount();
+
+  /// Aktif kişisel context profilini siler (root kimlik kalır).
+  Future<void> deletePersonalContextProfile() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.deletePersonalProfile(accessToken: token);
+  }
+
+  /// Aktif venue context üyeliğini siler (root kimlik kalır).
+  Future<void> deleteVenueContextMembership({required String venueId}) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.removeOwnVenueMembership(accessToken: token, venueId: venueId);
   }
 
   Future<void> deactivateAccount() async {
@@ -384,8 +433,44 @@ class AuthRepository {
     me['lastActiveContext'] ??= me['last_active_context'];
     me['activeVenueId'] ??= me['active_venue_id'];
     me['resolvedActiveVenueId'] ??= me['resolved_active_venue_id'];
+    me['bio'] ??= me['bio_text'];
+    me['canDeleteCurrentContextProfile'] ??=
+        me['can_delete_current_context_profile'];
 
     return me;
+  }
+
+  /// `/auth/me` içinde `authProviders` / `auth_providers` listesinde `password` var mı?
+  /// Bilgi yoksa (liste boş veya alan yok) güvenli tarafta kalıp `true` döner (satır gösterilir).
+  bool hasLocalPasswordProvider(Map<String, dynamic> me) {
+    final list = _authProviderStringsFromMe(me);
+    if (list != null) {
+      if (list.isEmpty) return true;
+      return list.map((e) => e.toLowerCase()).contains('password');
+    }
+    final flag = me['hasPasswordProvider'] ?? me['has_password_provider'];
+    if (flag is bool) return flag;
+    return true;
+  }
+
+  static List<String>? _authProviderStringsFromMe(Map<String, dynamic> me) {
+    final maps = <Map<String, dynamic>>[
+      me,
+      if (me['data'] is Map) Map<String, dynamic>.from(me['data'] as Map),
+      if (me['user'] is Map) Map<String, dynamic>.from(me['user'] as Map),
+    ];
+    final data = me['data'];
+    if (data is Map) {
+      final u = data['user'];
+      if (u is Map) maps.add(Map<String, dynamic>.from(u));
+    }
+    for (final m in maps) {
+      final raw = m['authProviders'] ?? m['auth_providers'] ?? m['providers'];
+      if (raw is List) {
+        return raw.map((e) => e.toString()).toList();
+      }
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> switchContext({
@@ -433,6 +518,13 @@ class AuthRepository {
         .trim();
     if (interestedIn != null && interestedIn.isNotEmpty) {
       mirror['interested_in'] = interestedIn;
+    }
+    if (data.containsKey('bio')) {
+      mirror['bio'] = data['bio'];
+    }
+    if (data['skipBio'] == true || data['bioOnboardingSkipped'] == true) {
+      mirror['skip_bio'] = true;
+      mirror['bio_onboarding_skipped'] = true;
     }
     if (mirror.isNotEmpty) {
       await _api.updateMe(accessToken: token, data: mirror);

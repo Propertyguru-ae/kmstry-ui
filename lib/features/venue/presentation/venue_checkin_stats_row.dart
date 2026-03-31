@@ -87,7 +87,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
               fontSize: fontSize,
               fontWeight: FontWeight.w500,
               fontStyle: FontStyle.italic,
-              color: isDark ? Colors.white70 : Colors.black54,
+              color: isDark ? Colors.white70 : const Color.fromARGB(137, 244, 241, 241),
             ),
           ),
         ),

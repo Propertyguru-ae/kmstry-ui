@@ -3,7 +3,7 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/auth/presentation/forgot_password_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/change_password_page.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -17,6 +17,28 @@ class AccountSettingsPage extends StatefulWidget {
 class _AccountSettingsPageState extends State<AccountSettingsPage> {
   bool _deleting = false;
   bool _deactivating = false;
+  bool _showChangePasswordTile = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccountFlags();
+  }
+
+  Future<void> _loadAccountFlags() async {
+    try {
+      final me = await AuthRepository().getMe();
+      if (!mounted) return;
+      setState(() {
+        _showChangePasswordTile = AuthRepository().hasLocalPasswordProvider(me);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _showChangePasswordTile = true;
+      });
+    }
+  }
 
   Widget _buildThemeModeTile({
     required String title,
@@ -70,9 +92,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     }
   }
 
-  Future<void> _openForgotPassword() async {
+  Future<void> _openChangePassword() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+      MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
     );
   }
 
@@ -123,9 +145,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete account?'),
+        title: const Text('Deletee account?'),
         content: const Text(
-          'This action is permanent. All account data may be removed. Are you sure?',
+          'This permanently removes your full account identity and all linked data. Are you sure?',
         ),
         actions: [
           TextButton(
@@ -143,7 +165,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
 
     setState(() => _deleting = true);
     try {
-      await AuthRepository().deleteAccount();
+      await AuthRepository().deleteRootAccount();
       if (!mounted) return;
       Navigator.of(
         context,
@@ -214,13 +236,17 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          ListTile(
-            leading: const Icon(Icons.lock_reset_outlined),
-            title: const Text('Forgot Password'),
-            subtitle: const Text('Send password reset email'),
-            onTap: _openForgotPassword,
-          ),
-          const Divider(height: 1),
+          // İlk açılışta satır kaybolup sonradan belirmesin:
+          // loading sürecinde de varsayılan olarak göster, sadece kesin bilgi gelince gizle.
+          if (_showChangePasswordTile) ...[
+            ListTile(
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('Change password'),
+              subtitle: const Text('Update password for this account'),
+              onTap: _openChangePassword,
+            ),
+            const Divider(height: 1),
+          ],
           ListTile(
             leading: Icon(Icons.privacy_tip_outlined, color: colors.primary),
             title: const Text('Privacy Policy'),
@@ -259,10 +285,12 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           ListTile(
             leading: Icon(Icons.delete_forever_outlined, color: colors.error),
             title: Text(
-              'Delete Account',
+              'Delete account',
               style: TextStyle(color: colors.error, fontWeight: FontWeight.w600),
             ),
-            subtitle: const Text('Permanently remove your account'),
+            subtitle: const Text(
+              'Delete identity and all linked contexts',
+            ),
             trailing: _deleting
                 ? const SizedBox(
                     height: 18,

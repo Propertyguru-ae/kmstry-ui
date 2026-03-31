@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
-import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/auth_repository.dart';
@@ -194,10 +194,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
         consentSource: 'MOBILE',
       );
 
+      // Registration sırasında mod seçimi gizli: default PERSONAL context.
+      await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ContextChoicePage()),
-      );
+      Navigator.of(context).pushReplacementNamed(AuthRoutes.onboardingUsername);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = _friendlySignupError(e));

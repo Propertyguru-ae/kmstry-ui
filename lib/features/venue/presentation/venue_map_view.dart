@@ -108,6 +108,14 @@ class _VenueMapViewState extends State<VenueMapView> {
       if (!mounted) return;
       if (_searchFocusNode.hasFocus) {
         setState(() => _showSearchResults = true);
+        // Kullanıcı aynı sorguya tekrar dokunduğunda liste boşsa yeniden getir.
+        final query = _searchController.text.trim();
+        if (query.isNotEmpty &&
+            _searchResults.isEmpty &&
+            !_searchLoading &&
+            _searchError == null) {
+          _performSearch(query);
+        }
       }
       _notifySearchActivity();
     });
@@ -650,7 +658,6 @@ class _VenueMapViewState extends State<VenueMapView> {
     setState(() {
       _selectedSearchVenue = venue;
       _showSearchResults = false;
-      _searchResults = const [];
       _searchError = null;
       _searchController.text = venue.name;
       _searchController.selection = TextSelection.fromPosition(

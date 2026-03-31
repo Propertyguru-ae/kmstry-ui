@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // Requested style:
-  // - Matte black background
-  // - Turquoise glow accents
-  // - Orange CTA
-  static const Color matteBlack = Color(0xFF0B0B0D);
-  static const Color darkSurface = Color(0xFF15161A);
-  static const Color turquoiseGlow = Color(0xFF1FE4D2);
-  //static const Color darkCtaOrange = Color(0xFFFF8A2A);
-  static const Color darkCtaOrange = Color(0xFFFF6B4A);
+  // Dark premium palette (modern, soft, high-end)
+  static const Color matteBlack = Color(0xFF0B0F17);
+  static const Color darkSurface = Color(0xFF161C28);
+  static const Color turquoiseGlow = Color(0xFF5D8CFF);
+  static const Color darkCtaOrange = Color(0xFF4DA3FF);
   static const Color darkTextPrimary = Color(0xFFF4F6F8);
   static const Color darkTextSecondary = Color(0xFFA6B1BA);
 
@@ -89,28 +85,64 @@ class AppTheme {
     primaryColor: turquoiseGlow,
     colorScheme: const ColorScheme.dark(
       primary: turquoiseGlow,
-      secondary: darkCtaOrange,
+      secondary: Color(0xFF88A9FF),
       surface: darkSurface,
-      error: darkCtaOrange,
-      onPrimary: Colors.white,
-      onSecondary: Colors.white,
+      error: Color(0xFFFF7D9A),
+      onPrimary: Color(0xFF0D1322),
+      onSecondary: Color(0xFF0D1322),
       onSurface: darkTextPrimary,
       onError: Colors.white,
     ),
     scaffoldBackgroundColor: matteBlack,
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: const Color(0xFF161C28),
+      hintStyle: const TextStyle(color: darkTextSecondary),
+      labelStyle: const TextStyle(color: darkTextSecondary),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFF252D3D)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFF88A9FF), width: 1.3),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFFFF8A8A)),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFFFF8A8A), width: 1.2),
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFF252D3D)),
+      ),
+    ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: darkCtaOrange,
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        elevation: 0,
+        foregroundColor: const Color(0xFF0D1322),
+        minimumSize: const Size.fromHeight(54),
+        textStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.15,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 0.5,
+        shadowColor: const Color(0x334DA3FF),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        side: const BorderSide(color: turquoiseGlow),
+        side: const BorderSide(color: Color(0xFF88A9FF)),
         foregroundColor: turquoiseGlow,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        minimumSize: const Size.fromHeight(52),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     ),
     cardTheme: CardThemeData(
@@ -127,7 +159,7 @@ class AppTheme {
       titleTextStyle: TextStyle(
         color: darkTextPrimary,
         fontSize: 20,
-        fontWeight: FontWeight.bold,
+        fontWeight: FontWeight.w700,
       ),
     ),
     textTheme: const TextTheme(

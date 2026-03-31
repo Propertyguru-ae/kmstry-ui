@@ -4,6 +4,7 @@ import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
 import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/bio_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flow_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
@@ -55,6 +56,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           await SecureStorage.isDevicePermissionsOnboardingDone();
       final hasNameDob = fullName.isNotEmpty && birthdate.isNotEmpty;
       final hasUsername = username.isNotEmpty;
+      final hasGenderInterest = gender.isNotEmpty && interestedIn.isNotEmpty;
       final hasInferredPersonalProfile = fullName.isNotEmpty &&
           birthdate.isNotEmpty &&
           gender.isNotEmpty &&
@@ -121,7 +123,17 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST') {
+        if (onboardingStep == 'BIO') {
+          if (!hasNameDob) {
+            _logDecision('personal_home_bio_requires_name_dob');
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            return;
+          }
+          _logDecision('personal_home_step_bio');
+          _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
+          return;
+        }
+        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
           _logDecision('personal_home_step_gender_interest');
           _go(const GenderInterestOnboardingPage());
           return;
@@ -153,7 +165,22 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST') {
+        if (onboardingStep == 'NAME_DOB' && !hasNameDob) {
+          _logDecision('server_route_personal_onboarding_name_dob');
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          return;
+        }
+        if (onboardingStep == 'BIO') {
+          if (!hasNameDob) {
+            _logDecision('server_route_personal_onboarding_bio_requires_name_dob');
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            return;
+          }
+          _logDecision('server_route_personal_onboarding_bio');
+          _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
+          return;
+        }
+        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
           _logDecision('server_route_personal_onboarding_gender_interest');
           _go(const GenderInterestOnboardingPage());
           return;
@@ -223,9 +250,29 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
           return;
 
+        case 'BIO':
+          if (!hasUsername) {
+            _logDecision('legacy_username_before_bio');
+            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+            return;
+          }
+          if (!hasNameDob) {
+            _logDecision('legacy_bio_requires_name_dob');
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            return;
+          }
+          _logDecision('legacy_bio');
+          _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
+          return;
+
         case 'GENDER_INTEREST':
-          _logDecision('legacy_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+          if (!hasGenderInterest) {
+            _logDecision('legacy_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          _logDecision('legacy_gender_interest_skip_already_completed');
+          await _routeToPersonalHome();
           return;
 
       /*case 'PHOTO':
@@ -279,6 +326,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
     final username = (me['username'] ?? me['user_name'])?.toString().trim();
     if (username == null || username.isEmpty) return null;
     return username;
+  }
+
+  String? _bioPrefill(Map<String, dynamic> me) {
+    final raw = (me['bio'] ?? me['bio_text'])?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
   }
 
   void _logDecision(String branch) {

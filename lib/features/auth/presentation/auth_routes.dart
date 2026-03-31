@@ -22,6 +22,8 @@ class AuthRoutes {
   static const login = '/login';
   static const signup = '/signup';
   static const forgotPassword = '/forgot-password';
+  /// Query: e-posta linki `.../auth/reset-password?token=`. [arguments] ile `String` token verilir.
+  static const resetPassword = '/reset-password';
   static const home = '/home';
   static const authGate = '/auth-gate';
   static const profile = '/profile';

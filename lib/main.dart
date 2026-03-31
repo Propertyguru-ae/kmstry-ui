@@ -5,6 +5,7 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'features/auth/presentation/auth_routes.dart';
+import 'features/auth/presentation/reset_password_page.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -53,6 +54,22 @@ class MyApp extends StatelessWidget {
       themeMode: themeProvider.themeMode,
       initialRoute: AuthRoutes.startupGate,
       routes: AuthRoutes.routes,
+      onGenerateRoute: (RouteSettings settings) {
+        if (settings.name == AuthRoutes.resetPassword) {
+          final args = settings.arguments;
+          String? token;
+          if (args is String) {
+            token = args;
+          } else if (args is Map && args['token'] is String) {
+            token = args['token'] as String;
+          }
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => ResetPasswordPage(resetToken: token),
+          );
+        }
+        return null;
+      },
     );
   }
 }

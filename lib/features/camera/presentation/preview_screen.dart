@@ -20,25 +20,53 @@ class PreviewScreen extends StatelessWidget {
           ),
 
           Positioned(
-            bottom: 40,
-            left: 30,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context); // retake
-              },
-              child: const Text("Retake"),
-            ),
-          ),
-
-          Positioned(
-            bottom: 40,
-            right: 30,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context); 
-                Navigator.pop(context, file);
-              },
-              child: const Text("Use Photo"),
+            left: 24,
+            right: 24,
+            bottom: 24,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(context); // retake
+                      },
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        side: const BorderSide(color: Colors.white70),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text("Retake"),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.pop(context, file);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                      ),
+                      child: const Text("Use Photo"),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

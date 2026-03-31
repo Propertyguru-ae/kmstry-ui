@@ -26,6 +26,9 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   int _blockedUsersCount = 0;
   bool _isVenueContext = false;
   bool _deletingAccount = false;
+  bool _hasVenueMembership = false;
+  bool _canDeleteCurrentContextProfile = false;
+  String? _activeVenueId;
 
   @override
   void initState() {
@@ -52,6 +55,11 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
         _systemNotificationsEnabled = permissionState.systemGranted;
         _blockedUsersCount = blockedUsers.length;
         _isVenueContext = meContext.lastActiveContext?.toUpperCase() == 'VENUE';
+        _hasVenueMembership = meContext.hasVenueMembership;
+        _canDeleteCurrentContextProfile = meContext.canDeleteCurrentContextProfile;
+        _activeVenueId =
+            meContext.activeVenueId ??
+            (meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null);
         _loading = false;
       });
     } catch (_) {
@@ -103,17 +111,25 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
 
   Future<void> _deleteAccount() async {
     if (_deletingAccount) return;
+    if (!_canDeleteCurrentContextProfile) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No deletable context profile found for this account.'),
+        ),
+      );
+      return;
+    }
     final isVenue = _isVenueContext;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          isVenue ? 'Delete venue account?' : 'Delete personal account?',
+          isVenue ? 'Delete venue profile?' : 'Delete personal profile?',
         ),
         content: Text(
           isVenue
-              ? 'This action is permanent. Your venue account and related access may be removed. Are you sure?'
-              : 'This action is permanent. Your personal account and data may be removed. Are you sure?',
+              ? 'This action is permanent. Your membership for this venue will be removed, but root account stays. Are you sure?'
+              : 'This action is permanent. Your personal profile will be removed, but root account stays. Are you sure?',
         ),
         actions: [
           TextButton(
@@ -131,17 +147,26 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
 
     setState(() => _deletingAccount = true);
     try {
-      await AuthRepository().deleteAccount();
+      if (isVenue) {
+        final venueId = _activeVenueId;
+        if (venueId == null || venueId.isEmpty) {
+          throw Exception('Active venue id is missing');
+        }
+        await AuthRepository().deleteVenueContextMembership(venueId: venueId);
+      } else {
+        await AuthRepository().deletePersonalContextProfile();
+      }
       if (!mounted) return;
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        AuthRoutes.authGate,
+        (route) => false,
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Could not delete ${_isVenueContext ? 'venue' : 'personal'} account: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Could not delete ${_isVenueContext ? 'venue' : 'personal'} profile: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
           ),
         ),
       );
@@ -258,51 +283,122 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                   ),
                 ],
                 const SizedBox(height: 22),
-                Text(
+                /*Text(
                   'Account',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: ListTile(
-                    leading: Icon(Icons.delete_forever_outlined, color: colors.error),
-                    title: Text(
-                      _isVenueContext
-                          ? 'Delete venue account'
-                          : 'Delete personal account',
-                      style: TextStyle(
-                        color: colors.error,
-                        fontWeight: FontWeight.w600,
+                if (!_isVenueContext) ...[
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: colors.primary.withValues(alpha: 0.12),
                       ),
                     ),
-                    subtitle: Text(
-                      _isVenueContext
-                          ? 'Remove venue operator access'
-                          : 'Permanently remove your personal profile',
-                      style: TextStyle(
-                        color: colors.onSurface.withValues(alpha: 0.65),
-                        fontSize: 13,
+                    child: ListTile(
+                      leading: Icon(Icons.edit_note_outlined, color: colors.primary),
+                      title: Text(
+                        'Bio',
+                        style: TextStyle(
+                          color: colors.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
+                      subtitle: Text(
+                        _profileBio == null || _profileBio!.isEmpty
+                            ? 'Add a short bio'
+                            : _profileBio!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.65),
+                          fontSize: 13,
+                        ),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _openEditBio,
                     ),
-                    trailing: _deletingAccount
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : null,
-                    onTap: _deletingAccount ? null : _deleteAccount,
                   ),
-                ),
+                  const SizedBox(height: 8),
+                ], */
+                if (_hasVenueMembership)
+                  (_canDeleteCurrentContextProfile
+                      ? Container(
+                          decoration: BoxDecoration(
+                            color: colors.surface,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.12),
+                            ),
+                          ),
+                          child: ListTile(
+                            leading: Icon(
+                              Icons.delete_forever_outlined,
+                              color: colors.error,
+                            ),
+                            title: Text(
+                              _isVenueContext
+                                  ? 'Delete venue profile'
+                                  : 'Delete personal profile',
+                              style: TextStyle(
+                                color: colors.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              _isVenueContext
+                                  ? 'Remove only this venue context'
+                                  : 'Remove only your personal context',
+                              style: TextStyle(
+                                color: colors.onSurface.withValues(alpha: 0.65),
+                                fontSize: 13,
+                              ),
+                            ),
+                            trailing: _deletingAccount
+                                ? const SizedBox(
+                                    height: 18,
+                                    width: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : null,
+                            onTap: _deletingAccount ? null : _deleteAccount,
+                          ),
+                        )
+                      : Container(
+                          decoration: BoxDecoration(
+                            color: colors.surface,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.12),
+                            ),
+                          ),
+                          child: ListTile(
+                            leading: Icon(
+                              Icons.info_outline,
+                              color: colors.onSurface.withValues(alpha: 0.7),
+                            ),
+                            title: Text(
+                              'No removable venue context',
+                              style: TextStyle(
+                                color: colors.onSurface,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Switch to venue context to manage deletion.',
+                              style: TextStyle(
+                                color: colors.onSurface.withValues(alpha: 0.65),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        )),
               ],
             ),
     );

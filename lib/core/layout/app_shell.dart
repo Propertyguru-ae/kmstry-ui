@@ -12,7 +12,6 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
@@ -277,27 +276,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                         ),
                       );
                     }
-                  },
-                ),
-                ListTile(
-                  leading: Icon(
-                    Icons.add_circle_outline,
-                    color: colors.primary,
-                  ),
-                  title: Text(
-                    'Add Venue',
-                    style: TextStyle(
-                      color: colors.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const VenueContextOnboardingPage(),
-                      ),
-                    );
                   },
                 ),
                 ListTile(

@@ -62,8 +62,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
   final _matchRepo = MatchRepository();
   final _venueRepo = VenueCheckinRepository();
+  static const Color _darkBg = Color(0xFF0B0F17);
+  static const Color _darkSurface = Color(0xFF161C28);
+  static const Color _darkBorder = Color(0xFF252D3D);
+  static const Color _darkPrimary = Color(0xFF4DA3FF);
+  static const Color _darkPrimary2 = Color(0xFF2563EB);
   bool _isVibeExpanded = false;
   bool _isVibeOverflowing = false;
+  bool _areMomentsExpanded = false;
 
   CheckinProfile? _profile;
   bool _loading = true;
@@ -137,9 +143,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     try {
       bool showPostsAndVibe = false;
       String? resolvedVenueId = widget.venueId;
-      final shouldCheckActive = (widget.checkinId != null && widget.checkinId!.isNotEmpty) ||
+      final shouldCheckActive =
+          (widget.checkinId != null && widget.checkinId!.isNotEmpty) ||
           (widget.venueId != null && widget.venueId!.isNotEmpty);
-      final active = shouldCheckActive ? await _venueRepo.getActiveCheckin() : null;
+      final active = shouldCheckActive
+          ? await _venueRepo.getActiveCheckin()
+          : null;
       if (resolvedVenueId == null || resolvedVenueId.isEmpty) {
         resolvedVenueId = active?.venueId;
       }
@@ -155,13 +164,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           } else {
             resolvedVenueId ??= active?.venueId;
           }
-          final sameVenueAsCheckin = profileVenueId != null &&
+          final sameVenueAsCheckin =
+              profileVenueId != null &&
               profileVenueId.isNotEmpty &&
               active != null &&
               active.isActive &&
               active.venueId == profileVenueId;
-          final sameVenueFallback = (profileVenueId == null ||
-                  profileVenueId.isEmpty) &&
+          final sameVenueFallback =
+              (profileVenueId == null || profileVenueId.isEmpty) &&
               active != null &&
               active.isActive &&
               resolvedVenueId != null &&
@@ -304,7 +314,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (_actionState != ProfileActionState.showActions &&
         _actionState != ProfileActionState.incomingInterested) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bu profile şu an yeni aksiyon gönderilemez.')),
+        const SnackBar(
+          content: Text('Bu profile şu an yeni aksiyon gönderilemez.'),
+        ),
       );
       return;
     }
@@ -343,9 +355,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         SnackBar(
           content: Text(
             action == 'interested'
-                ? (isAcceptFlow
-                      ? 'Kmstry accepted.'
-                      : 'Interested gönderildi.')
+                ? (isAcceptFlow ? 'Kmstry accepted.' : 'Interested gönderildi.')
                 : 'Not Kmstry gönderildi.',
           ),
         ),
@@ -354,7 +364,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       debugPrint('❌ feed action error: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Aksiyon gönderilemedi. Lütfen tekrar dene.')),
+        const SnackBar(
+          content: Text('Aksiyon gönderilemedi. Lütfen tekrar dene.'),
+        ),
       );
     } finally {
       if (mounted) {
@@ -372,6 +384,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     final profile = _profile;
+    debugPrint('🔥 profile: $profile');
     if (profile == null) {
       final userId = widget.userId;
       if (userId == null || userId.isEmpty) {
@@ -480,7 +493,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   void _openMediaViewerAt(int index) {
-    if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty) return;
+    if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty)
+      return;
     final mediaForViewer = _mediaForViewer();
     Navigator.push(
       context,
@@ -536,8 +550,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F0F0F),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF111827), Color(0xFF0B0F17)],
+        ),
       ),
       child: Stack(
         children: [
@@ -549,7 +567,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               height: 320,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF1FE4D2).withValues(alpha: 0.25),
+                color: _darkPrimary.withValues(alpha: 0.22),
               ),
             ),
           ),
@@ -562,7 +580,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               height: 350,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFFFF6B4A).withValues(alpha: 0.18),
+                color: _darkPrimary2.withValues(alpha: 0.18),
               ),
             ),
           ),
@@ -614,15 +632,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ? _profile!.media.where((p) => !p.isFeatured).toList()
         : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
-    final displayUsername =
-        (_profile?.user.username ?? widget.userUsername)?.trim();
+    final displayUsername = (_profile?.user.username ?? widget.userUsername)
+        ?.trim();
 
     final age = _profile != null
         ? (DateTime.now().year - _profile!.user.birthdate.year)
         : null;
 
     return Scaffold(
-      backgroundColor: isDark ? Colors.black : Colors.white,
+      backgroundColor: isDark ? _darkBg : Colors.white,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -674,7 +692,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
                 child: Container(
                   color: isDark
-                      ? Colors.black.withValues(alpha: 0.2)
+                      ? Colors.black.withValues(alpha: 0.18)
                       : Colors.black.withOpacity(0.16),
                 ),
               ),
@@ -687,9 +705,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: [
-                    isDark ? Colors.black : Colors.black.withOpacity(0.92),
+                    isDark ? _darkBg : Colors.black.withOpacity(0.92),
                     isDark
-                        ? Colors.black.withValues(alpha: 0.4)
+                        ? Colors.black.withValues(alpha: 0.48)
                         : Colors.black.withOpacity(0.5),
                     Colors.transparent,
                   ],
@@ -701,7 +719,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
           /// CONTENT
           CustomScrollView(
-            physics: const BouncingScrollPhysics(),
+            // Kullanıcı scroll etmesin; içerik toggle ile konumlansın.
+            physics: const NeverScrollableScrollPhysics(),
             slivers: [
               SliverAppBar(
                 backgroundColor: Colors.transparent,
@@ -712,9 +731,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                       child: Container(
-                        color: Colors.black.withOpacity(0.3),
+                        color: isDark
+                            ? _darkSurface.withValues(alpha: 0.72)
+                            : Colors.black.withOpacity(0.3),
                         child: IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: Colors.white,
+                          ),
                           onPressed: () => Navigator.pop(context),
                         ),
                       ),
@@ -729,7 +753,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       child: BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                         child: Container(
-                          color: Colors.black.withOpacity(0.3),
+                          color: isDark
+                              ? _darkSurface.withValues(alpha: 0.72)
+                              : Colors.black.withOpacity(0.3),
                           child: TextButton(
                             onPressed: _isBlocking ? null : _toggleBlock,
                             style: TextButton.styleFrom(
@@ -743,14 +769,23 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ),
                   ),
                 ],
-                expandedHeight: MediaQuery.of(context).size.height * 0.45,
+                // Kapalı durumda içerik aşağıda kalsın (resim daha çok görünsün),
+                // moments açılınca üst boşluk azalır ve içerik yukarı kayar.
+                expandedHeight:
+                    MediaQuery.of(context).size.height *
+                    (_areMomentsExpanded ? 0.30 : 0.56),
                 flexibleSpace: const FlexibleSpaceBar(
                   background: SizedBox.shrink(),
                 ),
               ),
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 120),
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    _areMomentsExpanded ? 0 : 6,
+                    20,
+                    _areMomentsExpanded ? 28 : 80,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -772,7 +807,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           if (_profile?.user.isVerified == true)
                             const Padding(
                               padding: EdgeInsets.only(bottom: 8, left: 4),
-                              child: Icon(Icons.verified, color: Colors.blue, size: 24),
+                              child: Icon(
+                                Icons.verified,
+                                color: Colors.blue,
+                                size: 24,
+                              ),
                             ),
                         ],
                       ),
@@ -791,8 +830,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       const SizedBox(height: 16),
 
                       /// ACTIONS (Kmstry, Not Kmstry, etc.)
-                      if (_actionState != null)
-                        _buildActionBar(),
+                      if (_actionState != null) _buildActionBar(),
 
                       const SizedBox(height: 24),
 
@@ -808,10 +846,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                             child: Container(
                               padding: const EdgeInsets.all(20),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.1),
+                                color: isDark
+                                    ? _darkSurface.withValues(alpha: 0.56)
+                                    : Colors.white.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(24),
                                 border: Border.all(
-                                  color: Colors.white.withOpacity(0.15),
+                                  color: isDark
+                                      ? _darkBorder.withValues(alpha: 0.9)
+                                      : Colors.white.withOpacity(0.15),
                                 ),
                               ),
                               child: LayoutBuilder(
@@ -831,10 +873,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                   );
 
                                   return Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      const Icon(Icons.format_quote_rounded,
-                                          color: Colors.white54, size: 24),
+                                      const Icon(
+                                        Icons.format_quote_rounded,
+                                        color: Colors.white54,
+                                        size: 24,
+                                      ),
                                       const SizedBox(height: 8),
                                       Text(
                                         vibeText,
@@ -848,17 +894,23 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                         GestureDetector(
                                           onTap: () {
                                             setState(() {
-                                              _isVibeExpanded = !_isVibeExpanded;
+                                              _isVibeExpanded =
+                                                  !_isVibeExpanded;
                                             });
                                           },
                                           child: Padding(
-                                            padding: const EdgeInsets.only(top: 12),
+                                            padding: const EdgeInsets.only(
+                                              top: 12,
+                                            ),
                                             child: Text(
-                                              _isVibeExpanded ? 'See less' : 'See more',
+                                              _isVibeExpanded
+                                                  ? 'See less'
+                                                  : 'See more',
                                               style: const TextStyle(
                                                 color: Colors.white,
                                                 fontWeight: FontWeight.bold,
-                                                decoration: TextDecoration.underline,
+                                                decoration:
+                                                    TextDecoration.underline,
                                               ),
                                             ),
                                           ),
@@ -871,48 +923,91 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           ),
                         ),
 
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 8),
 
-                      /// RECENT MOMENTS
+                      /// RECENT MOMENTS (toggle)
                       if (_showPostsAndVibe && moments.isNotEmpty) ...[
-                        const Text(
-                          'Moments',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: InkWell(
+                            onTap: () {
+                              setState(() {
+                                _areMomentsExpanded = !_areMomentsExpanded;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _areMomentsExpanded
+                                        ? 'Close moments'
+                                        : 'See moments',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    _areMomentsExpanded
+                                        ? Icons.keyboard_arrow_up_rounded
+                                        : Icons.keyboard_arrow_down_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          height: 180,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            itemCount: moments.length,
-                            separatorBuilder: (context, index) =>
-                                const SizedBox(width: 12),
-                            itemBuilder: (_, index) {
-                              return Container(
-                                width: 130,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(20),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
+
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeInOut,
+                          child: _areMomentsExpanded
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      height: 180,
+                                      child: ListView.separated(
+                                        scrollDirection: Axis.horizontal,
+                                        physics: const BouncingScrollPhysics(),
+                                        itemCount: moments.length,
+                                        separatorBuilder: (context, index) =>
+                                            const SizedBox(width: 12),
+                                        itemBuilder: (_, index) {
+                                          return Container(
+                                            width: 130,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withOpacity(0.2),
+                                                  blurRadius: 10,
+                                                  offset: const Offset(0, 4),
+                                                ),
+                                              ],
+                                            ),
+                                            child: _buildMomentImage(
+                                              moments[index],
+                                              height: 180,
+                                              initialIndex: index + 1,
+                                            ),
+                                          );
+                                        },
+                                      ),
                                     ),
                                   ],
-                                ),
-                                child: _buildMomentImage(
-                                  moments[index],
-                                  height: 180,
-                                  initialIndex: index + 1,
-                                ),
-                              );
-                            },
-                          ),
+                                )
+                              : const SizedBox.shrink(),
                         ),
                       ],
                     ],
@@ -932,10 +1027,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (_isBlocked) {
       return Text(
         'User blocked',
-        style: const TextStyle(
-          color: Colors.white70,
-          fontSize: 16,
-        ),
+        style: const TextStyle(color: Colors.white70, fontSize: 16),
       );
     }
 
@@ -970,7 +1062,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white),
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      minimumSize: const Size(0, 40),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: const VisualDensity(
+                        horizontal: VisualDensity.minimumDensity,
+                        vertical: VisualDensity.minimumDensity,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                     ),
                     child: const Text('Kmstry 👋'),
                   ),
@@ -979,12 +1079,22 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 SizedBox(
                   height: 40,
                   child: ElevatedButton(
-                    onPressed: _isSendingAction ? null : () => _handleAction('pass'),
+                    onPressed: _isSendingAction
+                        ? null
+                        : () => _handleAction('pass'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.colorScheme.primary,
                       foregroundColor: theme.colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      minimumSize: const Size(0, 40),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: const VisualDensity(
+                        horizontal: VisualDensity.minimumDensity,
+                        vertical: VisualDensity.minimumDensity,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                       elevation: 0,
                     ),
                     child: const Text('Not Kmstry'),
@@ -999,19 +1109,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       case ProfileActionState.reactivePass:
         return const Text(
           'No Kmstry already',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 16,
-          ),
+          style: TextStyle(color: Colors.white70, fontSize: 16),
         );
 
       case ProfileActionState.waitingResponse:
         return const Text(
           'Waiting response',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 16,
-          ),
+          style: TextStyle(color: Colors.white70, fontSize: 16),
         );
 
       case ProfileActionState.matched:
@@ -1023,7 +1127,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               backgroundColor: theme.colorScheme.primary,
               foregroundColor: theme.colorScheme.onPrimary,
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              minimumSize: const Size(0, 40),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: const VisualDensity(
+                horizontal: VisualDensity.minimumDensity,
+                vertical: VisualDensity.minimumDensity,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
             ),
             child: const Text('Message'),
           ),
