@@ -196,7 +196,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     final otherId = widget.otherUserId.trim();
     if (otherId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kullanıcı bilgisi eksik, mesaj gönderilemez.')),
+        const SnackBar(
+          content: Text('Kullanıcı bilgisi eksik, mesaj gönderilemez.'),
+        ),
       );
       return;
     }
@@ -215,15 +217,13 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       ChatMessage? sent;
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
-          sent = await _repo.sendMessage(
-            cid!,
-            messageType: 'text',
-            text: text,
-          );
+          sent = await _repo.sendMessage(cid!, messageType: 'text', text: text);
           break;
         } catch (e) {
           if (attempt == 0 && _isChatNotActiveError(e)) {
-            debugPrint('⚠️ sendMessage: sohbet aktif değil, createChat ile yenileniyor...');
+            debugPrint(
+              '⚠️ sendMessage: sohbet aktif değil, createChat ile yenileniyor...',
+            );
             final newId = await _repo.createChat(otherId);
             if (!mounted) return;
             cid = newId;
@@ -273,8 +273,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     if (_deletingMessageIds.contains(message.id)) return;
 
     final previous = _chat!;
-    final reducedMessages =
-        previous.messages.where((m) => m.id != message.id).toList();
+    final reducedMessages = previous.messages
+        .where((m) => m.id != message.id)
+        .toList();
     setState(() {
       _deletingMessageIds.add(message.id);
       _chat = ChatDetail(
@@ -314,9 +315,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         final colors = Theme.of(ctx).colorScheme;
         return AlertDialog(
           title: const Text('Delete message?'),
-          content: const Text(
-            'Are you sure you want to delete this message?',
-          ),
+          content: const Text('Are you sure you want to delete this message?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -358,7 +357,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                     await _deleteMessage(message);
                   },
                 ),
-            
+
               ListTile(
                 leading: const Icon(Icons.push_pin_outlined),
                 title: const Text('Pin'),
@@ -385,7 +384,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       const Color(0xFFF59E0B),
       const Color(0xFFEF4444),
       const Color(0xFF8B5CF6),
-      const Color(0xFF14B8A6),
+      const Color(0xFF5D8CFF),
     ];
 
     final index = seed.hashCode.abs() % colors.length;
@@ -407,11 +406,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0.5,
         leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_ios,
-            color: colors.onSurface,
-            size: 20,
-          ),
+          icon: Icon(Icons.arrow_back_ios, color: colors.onSurface, size: 20),
           onPressed: () => Navigator.pop(context),
         ),
         title: Row(
@@ -446,10 +441,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 ),
                 Text(
                   'Online',
-                  style: TextStyle(
-                    color: colors.primary,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: colors.primary, fontSize: 12),
                 ),
               ],
             ),
@@ -510,9 +502,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
           child: Text(
             'Henüz chat açılmadı / eşleşme yok.\nİlk mesajı göndererek başlayabilirsin.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: colors.onSurface.withValues(alpha: 0.7),
-            ),
+            style: TextStyle(color: colors.onSurface.withValues(alpha: 0.7)),
           ),
         ),
       );

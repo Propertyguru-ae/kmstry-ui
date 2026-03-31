@@ -9,6 +9,7 @@ class UsernameSearchItem {
   final String? myAction;
   final String? theirAction;
   final String? relationshipState;
+  final String? bio;
 
   UsernameSearchItem({
     required this.id,
@@ -21,6 +22,7 @@ class UsernameSearchItem {
     this.myAction,
     this.theirAction,
     this.relationshipState,
+    this.bio,
   });
 
   factory UsernameSearchItem.fromJson(Map<String, dynamic> json) {
@@ -110,6 +112,12 @@ class UsernameSearchItem {
       myAction: myAction?.toLowerCase(),
       theirAction: theirAction?.toLowerCase(),
       relationshipState: status,
+      bio: readString(json, const [
+        'bio',
+        'bio_text',
+        'about',
+        'aboutMe',
+      ]),
     );
   }
 }

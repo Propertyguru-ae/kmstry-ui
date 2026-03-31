@@ -288,8 +288,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     ),
                   ),
                   onTap: () async {
+                    final rootContext = this.context;
                     Navigator.pop(context);
-                    await _logout(context);
+                    await _logout(rootContext);
                   },
                 ),
               ],
@@ -458,7 +459,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
             decoration: const BoxDecoration(
-              color: AppTheme.darkCtaOrange,
+              color: AppTheme.brandCta,
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,

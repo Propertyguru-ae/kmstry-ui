@@ -1,4 +1,6 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
@@ -63,11 +65,7 @@ class MatchRepository {
           .whereType<Map>()
           .map((e) => MatchItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
-      return MatchListResult(
-        items: items,
-        nextCursor: null,
-        hasMore: false,
-      );
+      return MatchListResult(items: items, nextCursor: null, hasMore: false);
     }
 
     if (data is Map<String, dynamic>) {
@@ -161,6 +159,54 @@ class MatchRepository {
         .whereType<Map>()
         .map((e) => UsernameSearchItem.fromJson(Map<String, dynamic>.from(e)))
         .where((e) => e.id.isNotEmpty && e.username.isNotEmpty)
+        .toList();
+  }
+
+  Future<List<NearbyVenueUserItem>> listNearbyVenueUsers({
+    int? radiusMeters,
+  }) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+
+    final params = <String>[];
+    if (radiusMeters != null && radiusMeters > 0) {
+      params.add('radiusMeters=$radiusMeters');
+    }
+    final path = params.isEmpty
+        ? '/checkins/nearby-venues/users'
+        : '/checkins/nearby-venues/users?${params.join('&')}';
+
+    dynamic data;
+    try {
+      data = await _api.get(path, headers: {'Authorization': 'Bearer $token'});
+    } on ApiException catch (e) {
+      final message = e.data['message']?.toString().toLowerCase() ?? '';
+      final activeCheckinMissing = message.contains(
+        'active check-in is required',
+      );
+      if (e.statusCode == 400 && activeCheckinMissing) {
+        return const [];
+      }
+      rethrow;
+    }
+
+    List<dynamic> items = const [];
+    if (data is Map<String, dynamic>) {
+      final nestedItems = data['items'];
+      if (nestedItems is List) {
+        items = nestedItems;
+      } else if (data['data'] is Map<String, dynamic>) {
+        final nestedData = (data['data'] as Map<String, dynamic>)['items'];
+        if (nestedData is List) {
+          items = nestedData;
+        }
+      }
+    }
+
+    return items
+        .whereType<Map>()
+        .map((e) => NearbyVenueUserItem.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.userId.isNotEmpty && e.checkinId.isNotEmpty)
         .toList();
   }
 

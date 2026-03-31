@@ -277,55 +277,112 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Widget _buildCheckinStatsSection() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
     final total = _displayCheckinTotal;
     final male = _checkinCountMale;
     final female = _checkinCountFemale;
     final hasAnyData = total != null || male != null || female != null;
+    final cardColor = isDark
+        ? colors.surface.withValues(alpha: 0.82)
+        : Colors.white;
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.14)
+        : Colors.black.withValues(alpha: 0.08);
 
-    if (!hasAnyData && _loadingCheckinStats) {
-      return const SizedBox(
-        height: 18,
-        width: 18,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      );
-    }
-
-    if (!hasAnyData) {
-      return const Text(
-        'Want to be the first to check in?',
-        style: TextStyle(color: Colors.grey),
-      );
-    }
-
-    Widget statChip(IconData icon, String value) {
+    Widget statTile({
+      required IconData icon,
+      required String label,
+      required String value,
+    }) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(18),
+          color: isDark
+              ? colors.surface.withValues(alpha: 0.96)
+              : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 15, color: Colors.grey.shade700),
-            const SizedBox(width: 6),
+            Icon(icon, size: 16, color: colors.onSurface.withValues(alpha: 0.8)),
+            const SizedBox(width: 8),
             Text(
-              value,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              '$label: $value',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurface,
+              ),
             ),
           ],
         ),
       );
     }
 
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        statChip(Icons.people_outline_rounded, '${total ?? 0}'),
-        statChip(Icons.man_rounded, '${male ?? 0}'),
-        statChip(Icons.woman_rounded, '${female ?? 0}'),
-      ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.28)
+                : Colors.black.withValues(alpha: 0.06),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+        
+          if (!hasAnyData && _loadingCheckinStats)
+            const SizedBox(
+              height: 18,
+              width: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else if (!hasAnyData)
+            Text(
+              'Be the first to check in.',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: colors.onSurface.withValues(alpha: 0.72),
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                statTile(
+                  icon: Icons.people_outline_rounded,
+                  label: 'Total',
+                  value: '${total ?? 0}',
+                ),
+                statTile(
+                  icon: Icons.man_rounded,
+                  label: 'Men',
+                  value: '${male ?? 0}',
+                ),
+                statTile(
+                  icon: Icons.woman_rounded,
+                  label: 'Women',
+                  value: '${female ?? 0}',
+                ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 
@@ -639,7 +696,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                         ? "Loading..."
                         : hasActiveCheckinHere
                         ? "Who's here?"
-                        : "Check in first",
+                        : "Check in",
                   ),
                 ),
               ),

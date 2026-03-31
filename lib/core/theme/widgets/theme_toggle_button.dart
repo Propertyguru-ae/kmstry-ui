@@ -26,7 +26,9 @@ class ThemeToggleButton extends StatelessWidget {
           return ListTile(
             leading: Icon(
               icon,
-              color: selected ? colors.primary : colors.onSurface.withValues(alpha: 0.7),
+              color: selected
+                  ? colors.primary
+                  : colors.onSurface.withValues(alpha: 0.7),
             ),
             title: Text(title),
             subtitle: Text(subtitle),
@@ -63,13 +65,13 @@ class ThemeToggleButton extends StatelessWidget {
                 const SizedBox(height: 6),
                 item(
                   title: 'Light',
-                  subtitle: 'Fresh turquoise highlights',
+                  subtitle: 'Bright background, same accent palette',
                   icon: Icons.wb_sunny_rounded,
                   mode: ThemeMode.light,
                 ),
                 item(
                   title: 'Dark',
-                  subtitle: 'Matte black, turquoise glow',
+                  subtitle: 'Matte black, same accent palette',
                   icon: Icons.dark_mode_rounded,
                   mode: ThemeMode.dark,
                 ),
@@ -89,16 +91,14 @@ class ThemeToggleButton extends StatelessWidget {
     return IconButton(
       tooltip: 'Appearance',
       onPressed: () => _openThemeSheet(context),
-      icon: Icon(
-        isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-      ),
+      icon: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
       color: isDark
           ? const Color(0xFF1FE4D2)
           : Theme.of(context).colorScheme.primary,
       style: IconButton.styleFrom(
-        backgroundColor: Theme.of(context).colorScheme.surface.withValues(
-          alpha: isDark ? 0.65 : 0.95,
-        ),
+        backgroundColor: Theme.of(
+          context,
+        ).colorScheme.surface.withValues(alpha: isDark ? 0.65 : 0.95),
       ),
     );
   }

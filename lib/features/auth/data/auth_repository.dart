@@ -25,6 +25,7 @@ class AuthRepository {
     String email,
     String password,
     String otpProof, {
+    bool marketingEmailOptIn = false,
     required bool consentGiven,
     required String termsVersionId,
     required String privacyVersionId,
@@ -34,6 +35,7 @@ class AuthRepository {
       email: email,
       password: password,
       otpProof: otpProof,
+      marketingEmailOptIn: marketingEmailOptIn,
       consentGiven: consentGiven,
       termsVersionId: termsVersionId,
       privacyVersionId: privacyVersionId,
@@ -54,6 +56,7 @@ class AuthRepository {
     String email,
     String password,
     String otpProof, {
+    bool marketingEmailOptIn = false,
     required bool consentGiven,
     required String termsVersionId,
     required String privacyVersionId,
@@ -63,6 +66,7 @@ class AuthRepository {
       email: email,
       password: password,
       otpProof: otpProof,
+      marketingEmailOptIn: marketingEmailOptIn,
       consentGiven: consentGiven,
       termsVersionId: termsVersionId,
       privacyVersionId: privacyVersionId,
@@ -297,7 +301,11 @@ class AuthRepository {
   Future<void> logout() async {
     final refreshToken = await SecureStorage.getRefreshToken();
     if (refreshToken != null) {
-      await _api.logout(refreshToken: refreshToken);
+      try {
+        await _api.logout(refreshToken: refreshToken);
+      } catch (_) {
+        // Backend logout başarısız olsa da lokal oturumu kapatmaya devam et.
+      }
     }
     await _googleSignIn.signOut();
 
@@ -434,6 +442,8 @@ class AuthRepository {
     me['activeVenueId'] ??= me['active_venue_id'];
     me['resolvedActiveVenueId'] ??= me['resolved_active_venue_id'];
     me['bio'] ??= me['bio_text'];
+    me['marketingEmailOptIn'] ??= me['marketing_email_opt_in'];
+    me['hasPassword'] ??= me['has_password'];
     me['canDeleteCurrentContextProfile'] ??=
         me['can_delete_current_context_profile'];
 
@@ -443,6 +453,9 @@ class AuthRepository {
   /// `/auth/me` içinde `authProviders` / `auth_providers` listesinde `password` var mı?
   /// Bilgi yoksa (liste boş veya alan yok) güvenli tarafta kalıp `true` döner (satır gösterilir).
   bool hasLocalPasswordProvider(Map<String, dynamic> me) {
+    final hasPassword = me['hasPassword'] ?? me['has_password'];
+    if (hasPassword is bool) return hasPassword;
+
     final list = _authProviderStringsFromMe(me);
     if (list != null) {
       if (list.isEmpty) return true;

@@ -27,7 +27,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   final _confirmCtrl = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
-  bool _marketingOptIn = true;
+  bool marketingEmailOptIn = false;
   bool _legalConsent = false;
   bool _loadingLegalVersions = true;
   String? _termsVersionId;
@@ -188,6 +188,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
         widget.email,
         _passwordCtrl.text,
         widget.otpProof,
+        marketingEmailOptIn: marketingEmailOptIn,
         consentGiven: true,
         termsVersionId: _termsVersionId!,
         privacyVersionId: _privacyVersionId!,
@@ -210,7 +211,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colors.surface,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text('Create Account')),
       body: SafeArea(
         child: Padding(
@@ -218,7 +219,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
           child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: colors.surface,
+              color: colors.surface.withValues(alpha: 0.7),
               borderRadius: BorderRadius.circular(20),
             ),
             child: SingleChildScrollView(
@@ -306,9 +307,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Checkbox(
-                          value: _marketingOptIn,
+                          value: marketingEmailOptIn,
                           onChanged: (v) =>
-                              setState(() => _marketingOptIn = v ?? false),
+                              setState(() => marketingEmailOptIn = v ?? false),
                         ),
                         const Expanded(
                           child: Padding(

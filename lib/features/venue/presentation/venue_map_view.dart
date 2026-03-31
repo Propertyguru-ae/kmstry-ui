@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
@@ -46,7 +47,8 @@ class _VenueMapViewState extends State<VenueMapView> {
       LocationPermissionService();
   final VenueClusterService _clusterService = const VenueClusterService();
   final VenueRepository _venueRepository = VenueRepository();
-  final VenueContextRepository _venueContextRepository = VenueContextRepository();
+  final VenueContextRepository _venueContextRepository =
+      VenueContextRepository();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
@@ -63,15 +65,20 @@ class _VenueMapViewState extends State<VenueMapView> {
   String _lastSelectedKey = '';
 
   final Map<String, BitmapDescriptor> _clusterIconCache = {};
+  final Map<String, BitmapDescriptor> _photoMarkerIconCache = {};
+  final Set<String> _photoMarkerIconLoadingKeys = <String>{};
   BitmapDescriptor? _singleDefaultIcon;
   BitmapDescriptor? _singleSelectedIcon;
   BitmapDescriptor? _singlePressedIcon;
+
   /// While the venue pin popup is open, that marker uses a different hue.
   String? _pressedMarkerVenueKey;
   Timer? _searchDebounce;
+  Timer? _photoIconRefreshDebounce;
   bool _searchLoading = false;
   String? _searchError;
   List<Venue> _searchResults = const [];
+
   /// Last venue chosen from type search — shown as a normal map pin if not already on the map.
   Venue? _selectedSearchVenue;
   int _searchRequestToken = 0;
@@ -154,6 +161,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   void dispose() {
     widget.onSearchActivityChanged?.call(false);
     _searchDebounce?.cancel();
+    _photoIconRefreshDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _mapController?.dispose();
@@ -319,14 +327,11 @@ class _VenueMapViewState extends State<VenueMapView> {
         final vid = _venueIdentity(venue);
         final isSelected = _matchesSelectedVenue(venue);
         final isPressed = _pressedMarkerVenueKey == vid;
-        final BitmapDescriptor venueIcon;
-        if (isPressed) {
-          venueIcon = _pressedSingleIcon();
-        } else if (isSelected) {
-          venueIcon = _selectedSingleIcon();
-        } else {
-          venueIcon = _defaultSingleIcon();
-        }
+        final venueIcon = _singleVenueIcon(
+          venue: venue,
+          isSelected: isSelected,
+          isPressed: isPressed,
+        );
         builtMarkers.add(
           Marker(
             markerId: MarkerId('venue:$vid'),
@@ -340,7 +345,9 @@ class _VenueMapViewState extends State<VenueMapView> {
             onTap: () async {
               final refreshed = await _refreshLiveStatsForVenue(venue);
               if (!mounted) return;
-              await _mapController?.showMarkerInfoWindow(MarkerId('venue:$vid'));
+              await _mapController?.showMarkerInfoWindow(
+                MarkerId('venue:$vid'),
+              );
               await _showVenueMarkerPopup(refreshed);
             },
           ),
@@ -361,20 +368,150 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   BitmapDescriptor _defaultSingleIcon() {
     return _singleDefaultIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueRed,
+      BitmapDescriptor.hueAzure,
     );
   }
 
   BitmapDescriptor _selectedSingleIcon() {
     return _singleSelectedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueAzure,
+      BitmapDescriptor.hueBlue,
     );
   }
 
   BitmapDescriptor _pressedSingleIcon() {
     return _singlePressedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueYellow,
+      BitmapDescriptor.hueGreen,
     );
+  }
+
+  BitmapDescriptor _singleVenueIcon({
+    required Venue venue,
+    required bool isSelected,
+    required bool isPressed,
+  }) {
+    final photoUrl = venue.photoUrl.trim();
+    if (photoUrl.isEmpty) {
+      return _fallbackSingleIcon(isSelected: isSelected, isPressed: isPressed);
+    }
+
+    final ringColor = isPressed
+        ? const Color(0xFF22C55E)
+        : isSelected
+        ? const Color(0xFF60A5FA)
+        : const Color(0xFF94A3B8);
+    final cacheKey =
+        '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed';
+    final cached = _photoMarkerIconCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    _schedulePhotoMarkerIconBuild(
+      cacheKey: cacheKey,
+      photoUrl: photoUrl,
+      ringColor: ringColor,
+    );
+    return _fallbackSingleIcon(isSelected: isSelected, isPressed: isPressed);
+  }
+
+  BitmapDescriptor _fallbackSingleIcon({
+    required bool isSelected,
+    required bool isPressed,
+  }) {
+    if (isPressed) return _pressedSingleIcon();
+    if (isSelected) return _selectedSingleIcon();
+    return _defaultSingleIcon();
+  }
+
+  void _schedulePhotoMarkerIconBuild({
+    required String cacheKey,
+    required String photoUrl,
+    required Color ringColor,
+  }) {
+    if (_photoMarkerIconLoadingKeys.contains(cacheKey)) return;
+    _photoMarkerIconLoadingKeys.add(cacheKey);
+    _buildPhotoMarkerIcon(photoUrl: photoUrl, ringColor: ringColor)
+        .then((icon) {
+          if (icon == null || !mounted) return;
+          _photoMarkerIconCache[cacheKey] = icon;
+          _schedulePhotoIconRefresh();
+        })
+        .whenComplete(() {
+          _photoMarkerIconLoadingKeys.remove(cacheKey);
+        });
+  }
+
+  void _schedulePhotoIconRefresh() {
+    _photoIconRefreshDebounce?.cancel();
+    _photoIconRefreshDebounce = Timer(const Duration(milliseconds: 120), () {
+      if (!mounted) return;
+      _recomputeClusters(force: true);
+    });
+  }
+
+  Future<BitmapDescriptor?> _buildPhotoMarkerIcon({
+    required String photoUrl,
+    required Color ringColor,
+  }) async {
+    try {
+      final uri = Uri.tryParse(photoUrl);
+      if (uri == null) return null;
+      final data = await NetworkAssetBundle(uri).load(uri.toString());
+      final bytes = data.buffer.asUint8List();
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: 56,
+        targetHeight: 56,
+      );
+      final frame = await codec.getNextFrame();
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      const size = 56.0;
+      const center = Offset(size / 2, size / 2);
+      const outerR = 26.0;
+      const imageR = 20.5;
+
+      final shadowPaint = Paint()
+        ..color = Colors.black.withValues(alpha: 0.30)
+        ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 4);
+      canvas.drawCircle(center.translate(0, 2), outerR, shadowPaint);
+
+      canvas.drawCircle(
+        center,
+        outerR,
+        Paint()..color = const Color(0xFF0F172A),
+      );
+      canvas.drawCircle(
+        center,
+        outerR,
+        Paint()
+          ..color = ringColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+      );
+
+      final clipPath = Path()
+        ..addOval(Rect.fromCircle(center: center, radius: imageR));
+      canvas.save();
+      canvas.clipPath(clipPath);
+      paintImage(
+        canvas: canvas,
+        rect: Rect.fromCircle(center: center, radius: imageR),
+        image: frame.image,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+      );
+      canvas.restore();
+
+      final image = await recorder.endRecording().toImage(56, 56);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final pngBytes = byteData?.buffer.asUint8List();
+      if (pngBytes == null || pngBytes.isEmpty) return null;
+      return BitmapDescriptor.bytes(pngBytes);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<BitmapDescriptor> _clusterIcon({
@@ -392,18 +529,18 @@ class _VenueMapViewState extends State<VenueMapView> {
     Color fill;
 
     if (highlighted) {
-      fill = const Color(0xFFEA580C); // strong orange
+      fill = const Color(0xFF2563EB); // vivid premium blue
     } else if (count > 50) {
-      fill = const Color(0xFF9A3412); // dark burnt orange
+      fill = const Color(0xFF0F172A); // deep slate
     } else if (count > 20) {
-      fill = const Color(0xFFC2410C); // mid orange
+      fill = const Color(0xFF1D4ED8); // strong cobalt
     } else {
-      fill = const Color(0xFFFB923C); // soft orange
+      fill = const Color(0xFF334155); // muted blue-slate
     }
 
     final stroke = highlighted
-        ? const Color(0xFF90CDF4)
-        : const Color(0xFFD6BCFA);
+        ? const Color(0xFFBFDBFE)
+        : const Color(0xFF93C5FD);
 
     final icon = await _drawClusterBitmap(
       size: size,
@@ -687,7 +824,8 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   String? _extractVenueIdFromResolve(Map<String, dynamic> response) {
-    final direct = response['venueId'] ?? response['venue_id'] ?? response['id'];
+    final direct =
+        response['venueId'] ?? response['venue_id'] ?? response['id'];
     if (direct is String && direct.isNotEmpty) return direct;
     final nested = response['venue'];
     if (nested is Map) {
@@ -702,7 +840,9 @@ class _VenueMapViewState extends State<VenueMapView> {
     final placeId = venue.placeId;
     if (placeId == null || placeId.isEmpty) return null;
     try {
-      final resolved = await _venueContextRepository.resolveVenueFromPlace(placeId);
+      final resolved = await _venueContextRepository.resolveVenueFromPlace(
+        placeId,
+      );
       return _extractVenueIdFromResolve(resolved);
     } catch (_) {
       return null;
@@ -827,84 +967,184 @@ class _VenueMapViewState extends State<VenueMapView> {
 
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
     final hasRating = liveVenue.rating != null && liveVenue.rating! > 0;
+    final surface = isDark
+        ? colors.surface.withValues(alpha: 0.94)
+        : Colors.white.withValues(alpha: 0.97);
+    final border = isDark
+        ? Colors.white.withValues(alpha: 0.14)
+        : Colors.black.withValues(alpha: 0.08);
+    final subtitleColor = colors.onSurface.withValues(alpha: 0.72);
 
     await showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
       builder: (sheetContext) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  liveVenue.name,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (liveVenue.address.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    liveVenue.address,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.72),
-                    ),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: border),
+                boxShadow: [
+                  BoxShadow(
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
+                    color: isDark
+                        ? Colors.black.withValues(alpha: 0.52)
+                        : Colors.black.withValues(alpha: 0.12),
                   ),
                 ],
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 10,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (hasRating) ...[
-                      Icon(
-                        Icons.star_rounded,
-                        size: 18,
-                        color: isDark
-                            ? Colors.amber.shade300
-                            : Colors.amber.shade700,
-                      ),
-                      Text(
-                        liveVenue.rating!.toStringAsFixed(1),
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white70 : Colors.black87,
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.onSurface.withValues(alpha: 0.24),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                    ] else
-                      Text(
-                        'No rating',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isDark ? Colors.white54 : Colors.grey,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: border),
+                            color: colors.surface.withValues(alpha: 0.8),
+                            image: liveVenue.photoUrl.isNotEmpty
+                                ? DecorationImage(
+                                    image: NetworkImage(liveVenue.photoUrl),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
+                          ),
+                          child: liveVenue.photoUrl.isEmpty
+                              ? Icon(
+                                  Icons.storefront_rounded,
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.74,
+                                  ),
+                                )
+                              : null,
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                liveVenue.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 21,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                              if (liveVenue.address.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  liveVenue.address,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: subtitleColor,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
                       ),
-                    VenueCheckinStatsRow(
-                      venue: liveVenue,
-                      isDark: isDark,
-                      iconSize: 16,
-                      fontSize: 14,
-                      treatMissingStatsAsCheckInPrompt: true,
+                      decoration: BoxDecoration(
+                        color: colors.surface.withValues(
+                          alpha: isDark ? 0.86 : 0.7,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: border),
+                      ),
+                      child: Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (hasRating) ...[
+                            Icon(
+                              Icons.star_rounded,
+                              size: 18,
+                              color: isDark
+                                  ? Colors.amber.shade300
+                                  : Colors.amber.shade700,
+                            ),
+                            Text(
+                              'Google rating',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: subtitleColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              liveVenue.rating!.toStringAsFixed(1),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: colors.onSurface,
+                              ),
+                            ),
+                          ] else
+                            Text(
+                              'No rating',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: subtitleColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          VenueCheckinStatsRow(
+                            venue: liveVenue,
+                            isDark: isDark,
+                            iconSize: 16,
+                            fontSize: 14,
+                            treatMissingStatsAsCheckInPrompt: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _openVenueDetailFromMap(liveVenue);
+                      },
+                      child: const Text('Open'),
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(sheetContext);
-                    _openVenueDetailFromMap(liveVenue);
-                  },
-                  child: const Text('Open'),
-                ),
-              ],
+              ),
             ),
           ),
         );
@@ -976,8 +1216,17 @@ class _VenueMapViewState extends State<VenueMapView> {
               decoration: InputDecoration(
                 hintText: 'Search places on map',
                 hintStyle: TextStyle(color: hintColor),
+                filled: false,
+                fillColor: Colors.transparent,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
                 isDense: true,
+                isCollapsed: true,
+                contentPadding: EdgeInsets.zero,
               ),
             ),
           ),
@@ -988,12 +1237,16 @@ class _VenueMapViewState extends State<VenueMapView> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else if (_searchController.text.trim().isNotEmpty)
-            IconButton(
-              onPressed: () {
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
                 _searchController.clear();
                 _onSearchChanged('');
               },
-              icon: Icon(Icons.close, size: 18, color: iconColor),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 18, color: iconColor),
+              ),
             ),
         ],
       ),
@@ -1072,7 +1325,10 @@ class _VenueMapViewState extends State<VenueMapView> {
         final hasRating = item.rating != null && item.rating! > 0;
         return ListTile(
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 4,
+          ),
           leading: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: Image.network(
@@ -1080,18 +1336,11 @@ class _VenueMapViewState extends State<VenueMapView> {
               width: 24,
               height: 24,
               fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const Icon(
-                Icons.map_rounded,
-                size: 18,
-                color: Colors.grey,
-              ),
+              errorBuilder: (context, error, stackTrace) =>
+                  const Icon(Icons.map_rounded, size: 18, color: Colors.grey),
             ),
           ),
-          title: Text(
-            item.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -1297,10 +1546,7 @@ class _CircleIcon extends StatelessWidget {
       ),
       child: IconButton(
         onPressed: onTap,
-        icon: Icon(
-          icon,
-          color: isDark ? Colors.white : Colors.black87,
-        ),
+        icon: Icon(icon, color: isDark ? Colors.white : Colors.black87),
       ),
     );
   }

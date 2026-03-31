@@ -18,6 +18,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   bool _deleting = false;
   bool _deactivating = false;
   bool _showChangePasswordTile = true;
+  bool _marketingEmailOptIn = false;
+  bool _updatingMarketingOptIn = false;
 
   @override
   void initState() {
@@ -29,14 +31,43 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     try {
       final me = await AuthRepository().getMe();
       if (!mounted) return;
+      final marketingOptIn =
+          me['marketingEmailOptIn'] == true ||
+          me['marketing_email_opt_in'] == true;
       setState(() {
         _showChangePasswordTile = AuthRepository().hasLocalPasswordProvider(me);
+        _marketingEmailOptIn = marketingOptIn;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _showChangePasswordTile = true;
+        _marketingEmailOptIn = false;
       });
+    }
+  }
+
+  Future<void> _setMarketingEmailOptIn(bool enabled) async {
+    if (_updatingMarketingOptIn) return;
+    final previous = _marketingEmailOptIn;
+    setState(() {
+      _marketingEmailOptIn = enabled;
+      _updatingMarketingOptIn = true;
+    });
+    try {
+      await AuthRepository().updatePermissions({
+        'marketingEmailOptIn': enabled,
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _marketingEmailOptIn = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Marketing email preference could not be saved.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _updatingMarketingOptIn = false);
     }
   }
 
@@ -61,10 +92,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       ),
       title: Text(
         title,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          color: colors.onSurface,
-        ),
+        style: TextStyle(fontWeight: FontWeight.w600, color: colors.onSurface),
       ),
       subtitle: Text(
         subtitle,
@@ -86,16 +114,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     final uri = Uri.parse('${AppConfig.baseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open link.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Unable to open link.')));
     }
   }
 
   Future<void> _openChangePassword() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ChangePasswordPage()));
   }
 
   Future<void> _deactivateAccount() async {
@@ -247,6 +275,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             ),
             const Divider(height: 1),
           ],
+          SwitchListTile(
+            secondary: Icon(Icons.campaign_outlined, color: colors.primary),
+            title: const Text('Marketing emails'),
+            subtitle: const Text(
+              'Receive occasional product updates and special offers',
+            ),
+            value: _marketingEmailOptIn,
+            onChanged: _updatingMarketingOptIn ? null : _setMarketingEmailOptIn,
+          ),
+          const Divider(height: 1),
           ListTile(
             leading: Icon(Icons.privacy_tip_outlined, color: colors.primary),
             title: const Text('Privacy Policy'),
@@ -286,11 +324,12 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             leading: Icon(Icons.delete_forever_outlined, color: colors.error),
             title: Text(
               'Delete account',
-              style: TextStyle(color: colors.error, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: colors.error,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            subtitle: const Text(
-              'Delete identity and all linked contexts',
-            ),
+            subtitle: const Text('Delete identity and all linked contexts'),
             trailing: _deleting
                 ? const SizedBox(
                     height: 18,

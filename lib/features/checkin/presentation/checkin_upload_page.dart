@@ -565,7 +565,26 @@ class _CheckInPageState extends State<CheckInPage> {
                 contentPadding: const EdgeInsets.all(16),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+                  borderSide: BorderSide(
+                    color: theme.brightness == Brightness.dark
+                        ? colors.onSurface.withValues(alpha: 0.14)
+                        : colors.outline.withValues(alpha: 0.28),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: theme.brightness == Brightness.dark
+                        ? colors.onSurface.withValues(alpha: 0.14)
+                        : colors.outline.withValues(alpha: 0.28),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: colors.primary.withValues(alpha: 0.45),
+                    width: 1.1,
+                  ),
                 ),
               ),
             ),
@@ -680,6 +699,7 @@ class _CheckInPageState extends State<CheckInPage> {
     required LocalMedia media,
   }) {
     final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     double size = (MediaQuery.of(context).size.width - 64) / 3;
 
     final child = media.type == MediaType.photo
@@ -734,8 +754,14 @@ class _CheckInPageState extends State<CheckInPage> {
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: colors.surface,
+                color: isDark
+                    ? Colors.black.withValues(alpha: 0.72)
+                    : Colors.black.withValues(alpha: 0.64),
                 shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  width: 0.8,
+                ),
               ),
               child: const Icon(Icons.close, size: 12, color: Colors.white),
             ),

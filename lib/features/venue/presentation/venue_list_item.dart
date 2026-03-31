@@ -22,7 +22,6 @@ class VenueListItem extends StatelessWidget {
     final displayAddress = venue.address.isNotEmpty
         ? venue.address
         : (venue.city.isNotEmpty ? venue.city : '-');
-    final displayType = venue.type.isNotEmpty ? venue.type : 'venue';
     final hasRating = venue.rating != null && venue.rating! > 0;
 
     return Material(
@@ -34,9 +33,7 @@ class VenueListItem extends StatelessWidget {
           if (onTap != null) return;
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => VenueDetailPage(venue: venue),
-            ),
+            MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
           );
         },
         child: Container(
@@ -45,15 +42,20 @@ class VenueListItem extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? theme.colorScheme.primary.withValues(alpha: 0.10)
-                : (isDark ? theme.colorScheme.surface : const Color(0xFFF7F3FB)),
+                : (isDark
+                      ? theme.colorScheme.surface
+                      : const Color(0xFFF8FBFD)),
             borderRadius: BorderRadius.circular(16),
             border: isDark
                 ? Border.all(color: Colors.white.withValues(alpha: 0.05))
-                : null,
+                : Border.all(color: const Color(0xFFE6EEF4)),
           ),
           child: Row(
             children: [
-              _SourceAvatar(isDark: isDark, isGoogleVenue: venue.source == 'google'),
+              _SourceAvatar(
+                isDark: isDark,
+                isGoogleVenue: venue.source == 'google',
+              ),
 
               const SizedBox(width: 12),
 
@@ -142,7 +144,7 @@ class _SourceAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         color: isDark
             ? Colors.white.withValues(alpha: 0.05)
-            : const Color(0xFFE8E1F3),
+            : const Color(0xFFEAF5FA),
         borderRadius: BorderRadius.circular(12),
       ),
       child: isGoogleVenue
@@ -161,41 +163,10 @@ class _SourceAvatar extends StatelessWidget {
           : Icon(
               Icons.place,
               size: 18,
-              color: isDark ? Theme.of(context).colorScheme.primary : Colors.black87,
+              color: isDark
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.black87,
             ),
-    );
-  }
-}
-
-class _TypeChip extends StatelessWidget {
-  final String label;
-  final bool isDark;
-  final ThemeData theme;
-
-  const _TypeChip({
-    required this.label,
-    required this.isDark,
-    required this.theme,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isDark
-            ? theme.colorScheme.primary.withValues(alpha: 0.2)
-            : Colors.deepPurple.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: isDark ? theme.colorScheme.primary : Colors.deepPurple,
-        ),
-      ),
     );
   }
 }

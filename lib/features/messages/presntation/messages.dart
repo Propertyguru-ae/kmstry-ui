@@ -88,20 +88,20 @@ class DmListPageState extends State<DmListPage> {
     });
   }
 
-Color _avatarColor(String seed) {
-  final colors = <Color>[
-    const Color(0xFF4F46E5), // indigo
-    const Color(0xFF0EA5E9), // sky
-    const Color(0xFF10B981), // emerald
-    const Color(0xFFF59E0B), // amber
-    const Color(0xFFEF4444), // red
-    const Color(0xFF8B5CF6), // violet
-    const Color(0xFF14B8A6), // teal
-  ];
+  Color _avatarColor(String seed) {
+    final colors = <Color>[
+      const Color(0xFF4F46E5), // indigo
+      const Color(0xFF0EA5E9), // sky
+      const Color(0xFF10B981), // emerald
+      const Color(0xFFF59E0B), // amber
+      const Color(0xFFEF4444), // red
+      const Color(0xFF8B5CF6), // violet
+      const Color(0xFF5D8CFF), // brand blue
+    ];
 
-  final index = seed.hashCode.abs() % colors.length;
-  return colors[index];
-}
+    final index = seed.hashCode.abs() % colors.length;
+    return colors[index];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -115,11 +115,16 @@ Color _avatarColor(String seed) {
         elevation: 0,
         title: Text(
           'Messages',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.more_horiz, color: isDark ? Colors.white70 : Colors.black),
+            icon: Icon(
+              Icons.more_horiz,
+              color: isDark ? Colors.white70 : Colors.black,
+            ),
             onPressed: () {},
           ),
         ],
@@ -127,15 +132,23 @@ Color _avatarColor(String seed) {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
             child: TextField(
               controller: _searchController,
               style: theme.textTheme.bodyLarge,
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: 'Search messages',
-                hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
-                prefixIcon: Icon(Icons.search, color: isDark ? Colors.white38 : Colors.grey),
+                hintStyle: TextStyle(
+                  color: isDark ? Colors.white38 : Colors.grey,
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: isDark ? Colors.white38 : Colors.grey,
+                ),
                 suffixIcon: _searchQuery.trim().isEmpty
                     ? null
                     : IconButton(
@@ -148,7 +161,9 @@ Color _avatarColor(String seed) {
                         },
                       ),
                 filled: true,
-                fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+                fillColor: isDark
+                    ? Colors.white.withOpacity(0.05)
+                    : Colors.grey[100],
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -158,7 +173,10 @@ Color _avatarColor(String seed) {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
             child: Row(
               children: [
                 _buildFilterChip('All', isDark, theme),
@@ -168,9 +186,7 @@ Color _avatarColor(String seed) {
             ),
           ),
           const SizedBox(height: 8),
-          Expanded(
-            child: _buildListContent(isDark, theme),
-          ),
+          Expanded(child: _buildListContent(isDark, theme)),
         ],
       ),
     );
@@ -178,7 +194,9 @@ Color _avatarColor(String seed) {
 
   Widget _buildListContent(bool isDark, ThemeData theme) {
     if (_loading && _chats.isEmpty) {
-      return Center(child: CircularProgressIndicator(color: theme.colorScheme.primary));
+      return Center(
+        child: CircularProgressIndicator(color: theme.colorScheme.primary),
+      );
     }
     if (_error != null && _chats.isEmpty) {
       return Center(
@@ -187,15 +205,9 @@ Color _avatarColor(String seed) {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                'Could not load chats',
-                style: theme.textTheme.bodyMedium,
-              ),
+              Text('Could not load chats', style: theme.textTheme.bodyMedium),
               const SizedBox(height: 12),
-              TextButton(
-                onPressed: loadChats,
-                child: const Text('Retry'),
-              ),
+              TextButton(onPressed: loadChats, child: const Text('Retry')),
             ],
           ),
         ),
@@ -275,9 +287,9 @@ Color _avatarColor(String seed) {
       setState(() {
         _deletingChatIds.remove(chat.id);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chat deleted')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Chat deleted')));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -305,15 +317,17 @@ Color _avatarColor(String seed) {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected 
-            ? (isDark ? theme.colorScheme.primary : const Color(0xFF2D5BD0)) 
-            : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]),
+          color: isSelected
+              ? (isDark ? theme.colorScheme.primary : const Color(0xFF2D5BD0))
+              : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black54),
+            color: isSelected
+                ? Colors.white
+                : (isDark ? Colors.white70 : Colors.black54),
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -348,13 +362,18 @@ Color _avatarColor(String seed) {
             ],
           ),
           child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 4,
+            ),
             leading: Container(
               width: 55,
               height: 55,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                color: isDark ? avatarColor.withOpacity(0.2) : avatarColor.withOpacity(0.15),
+                color: isDark
+                    ? avatarColor.withOpacity(0.2)
+                    : avatarColor.withOpacity(0.15),
               ),
               alignment: Alignment.center,
               child: Text(
@@ -371,11 +390,16 @@ Color _avatarColor(String seed) {
               children: [
                 Text(
                   name,
-                  style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 Text(
                   time,
-                  style: TextStyle(color: isDark ? Colors.white38 : Colors.grey, fontSize: 12),
+                  style: TextStyle(
+                    color: isDark ? Colors.white38 : Colors.grey,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -389,12 +413,17 @@ Color _avatarColor(String seed) {
                       preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                      style: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.black87,
+                      ),
                     ),
                   ),
                   if (unread > 0)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.secondary,
                         borderRadius: BorderRadius.circular(12),
@@ -432,7 +461,9 @@ Color _avatarColor(String seed) {
           height: 1,
           indent: 85,
           endIndent: 16,
-          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFEEEEEE),
+          color: isDark
+              ? Colors.white.withOpacity(0.05)
+              : const Color(0xFFEEEEEE),
         ),
       ],
     );

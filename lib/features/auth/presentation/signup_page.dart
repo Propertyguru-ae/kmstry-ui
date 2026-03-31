@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/register_email_otp_page.dart';
 
 class SignupPage extends StatefulWidget {
@@ -28,13 +30,20 @@ class _SignupPageState extends State<SignupPage> {
       _error = null;
     });
     try {
+      final response = await AuthRepository().requestRegisterOtp(email);
+      if (!mounted) return;
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => RegisterEmailOtpPage(email: email)),
+        MaterialPageRoute(
+          builder: (_) => RegisterEmailOtpPage(
+            email: email,
+            initialOtpResponse: response,
+          ),
+        ),
       );
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Unable to continue. Please try again.';
+          _error = _friendlyError(e);
         });
       }
     } finally {
@@ -42,11 +51,38 @@ class _SignupPageState extends State<SignupPage> {
     }
   }
 
+  String _friendlyError(Object error) {
+    if (error is ApiException) {
+      final message = _extractBackendMessage(error.data).toLowerCase();
+      final code = error.data['errorCode']?.toString().toUpperCase();
+      if (code == 'EMAIL_ALREADY_IN_USE' ||
+          code == 'USER_ALREADY_EXISTS' ||
+          message.contains('email already in use') ||
+          message.contains('already registered')) {
+        return 'This email is already in use. Please sign in instead.';
+      }
+      if (message.isNotEmpty) {
+        return _extractBackendMessage(error.data);
+      }
+    }
+    return 'Unable to continue. Please try again.';
+  }
+
+  String _extractBackendMessage(Map<String, dynamic> data) {
+    final raw = data['message'];
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    if (raw is List && raw.isNotEmpty) {
+      final text = raw.first?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colors.surface,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -63,7 +99,7 @@ class _SignupPageState extends State<SignupPage> {
               child: Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: colors.surface,
+                  color: colors.surface.withValues(alpha: 0.7),
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: SingleChildScrollView(

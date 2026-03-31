@@ -30,8 +30,8 @@ class _StartupGatePageState extends State<StartupGatePage>
   static const Color _blue = Color(0xFF4DA3FF);
   static const Color _indigo = Color(0xFF2563EB);
   static const Color _violet = Color(0xFF88A9FF);
-  static const Color _pink = Color(0xFFFF4FD8);
-  static const Color _orange = Color(0xFFFF8A4D);
+  static const Color _accentA = Color(0xFF5D8CFF);
+  static const Color _accentB = Color(0xFF88A9FF);
 
   @override
   void initState() {
@@ -246,10 +246,10 @@ class _StartupGatePageState extends State<StartupGatePage>
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  _buildOrbitDot(const Offset(-30, -30), _pink, 12),
+                  _buildOrbitDot(const Offset(-30, -30), _accentA, 12),
                   _buildOrbitDot(const Offset(30, -30), _blue, 12),
                   _buildOrbitDot(const Offset(-30, 30), _indigo, 12),
-                  _buildOrbitDot(const Offset(30, 30), _orange, 12),
+                  _buildOrbitDot(const Offset(30, 30), _accentB, 12),
                   Container(
                     width: 30,
                     height: 30,

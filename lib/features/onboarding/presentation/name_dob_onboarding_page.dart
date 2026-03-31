@@ -87,15 +87,25 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
 
   @override
   Widget build(BuildContext context) {
-    const surface = Color(0xFF161C28);
-    const surfaceBorder = Color(0xFF252D3D);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final surface = isDark
+        ? const Color(0xFF161C28)
+        : theme.colorScheme.surface.withValues(alpha: 0.96);
+    final surfaceBorder = isDark
+        ? const Color(0xFF252D3D)
+        : theme.colorScheme.outline.withValues(alpha: 0.28);
     const accent = Color.fromARGB(255, 11, 162, 237);
-    const textPrimary = Color(0xFFF3F6FF);
-    const textSecondary = Color(0xFF98A3BC);
+    final textPrimary = isDark
+        ? const Color(0xFFF3F6FF)
+        : theme.colorScheme.onSurface;
+    final textSecondary = isDark
+        ? const Color(0xFF98A3BC)
+        : theme.colorScheme.onSurface.withValues(alpha: 0.68);
     final isFocused = _nameFocusNode.hasFocus;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('About you'),
         automaticallyImplyLeading: false,
@@ -112,7 +122,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'What’s your name?',
                       style: TextStyle(
                         fontSize: 30,
@@ -122,7 +132,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                    Text(
                       'This is how others will see you',
                       style: TextStyle(
                         fontSize: 15,
@@ -136,7 +146,14 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       curve: Curves.easeOutCubic,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [Color(0xFF161C28), Color(0xFF1A2233)],
+                          colors: isDark
+                              ? const [Color(0xFF161C28), Color(0xFF1A2233)]
+                              : [
+                                  theme.colorScheme.surface,
+                                  theme.colorScheme.surface.withValues(
+                                    alpha: 0.94,
+                                  ),
+                                ],
                         ),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
@@ -146,8 +163,10 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                         boxShadow: [
                           BoxShadow(
                             color: isFocused
-                                ? accent.withOpacity(0.10)
-                                : Colors.black.withOpacity(0.10),
+                                ? accent.withValues(alpha: 0.10)
+                                : Colors.black.withValues(
+                                    alpha: isDark ? 0.10 : 0.05,
+                                  ),
                             blurRadius: isFocused ? 24 : 12,
                             offset: const Offset(0, 8),
                           ),
@@ -157,12 +176,12 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                         focusNode: _nameFocusNode,
                         controller: _nameController,
                         onChanged: (_) => setState(() {}),
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                         ),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: 'Full name',
                           hintStyle: TextStyle(color: textSecondary),
                           filled: true,
@@ -176,7 +195,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       ),
                     ),
                     const SizedBox(height: 28),
-                    const Text(
+                    Text(
                       'Date of birth',
                       style: TextStyle(
                         fontSize: 16,
@@ -201,7 +220,9 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                           border: Border.all(color: surfaceBorder),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.18),
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.18 : 0.06,
+                              ),
                               blurRadius: 16,
                               offset: const Offset(0, 10),
                             ),
@@ -265,45 +286,26 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                     child: ElevatedButton(
                       onPressed: _isValid && !_loading ? _continue : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
-                        padding: EdgeInsets.zero,
-                      ),
-                      child: Ink(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF4DA3FF), Color(0xFF2563EB)],
-                          ),
+                        shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF2563EB).withOpacity(0.35),
-                              blurRadius: 24,
-                              offset: const Offset(0, 12),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: _loading
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.4,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'Continue',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 16,
-                                    letterSpacing: 0.2,
-                                    color: Colors.white,
-                                  ),
-                                ),
                         ),
                       ),
+                      child: _loading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                              ),
+                            )
+                          : const Text(
+                              'Continue',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
                     ),
                   ),
                 ),

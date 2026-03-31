@@ -4,46 +4,45 @@ class AppTheme {
   // Dark premium palette (modern, soft, high-end)
   static const Color matteBlack = Color(0xFF0B0F17);
   static const Color darkSurface = Color(0xFF161C28);
-  static const Color turquoiseGlow = Color(0xFF5D8CFF);
-  static const Color darkCtaOrange = Color(0xFF4DA3FF);
+  static const Color brandPrimary = Color(0xFF5D8CFF);
+  static const Color brandCta = Color(0xFF4DA3FF);
   static const Color darkTextPrimary = Color(0xFFF4F6F8);
   static const Color darkTextSecondary = Color(0xFFA6B1BA);
 
   // Light palette derived from same tones.
   static const Color lightBg = Colors.white;
   static const Color lightSurface = Colors.white;
-  static const Color lightPrimaryTurquoise = Color(0xFF0AAFA0);
-  //static const Color lightCtaOrange = Color(0xFFF17A1A);
-  static const Color lightCtaOrange = Color(0xFFE85D2A);
+  static const Color lightPrimary = Color(0xFF5D8CFF);
+  static const Color lightCta = Color(0xFF4DA3FF);
   static const Color lightTextPrimary = Color(0xFF111827);
   static const Color lightTextSecondary = Color(0xFF5D6B7B);
 
   static ThemeData lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
-    primaryColor: lightPrimaryTurquoise,
+    primaryColor: lightPrimary,
     colorScheme: const ColorScheme.light(
-      primary: lightPrimaryTurquoise,
-      secondary: lightCtaOrange,
+      primary: lightPrimary,
+      secondary: Color(0xFF88A9FF),
       surface: lightSurface,
-      error: lightCtaOrange,
-      onPrimary: Colors.white,
-      onSecondary: Colors.white,
+      error: Color(0xFFEF4444),
+      onPrimary: Color(0xFF0D1322),
+      onSecondary: Color(0xFF0D1322),
       onSurface: lightTextPrimary,
       onError: Colors.white,
     ),
     scaffoldBackgroundColor: lightBg,
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
-        backgroundColor: lightCtaOrange,
-        foregroundColor: Colors.white,
+        backgroundColor: lightCta,
+        foregroundColor: const Color(0xFF0D1322),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        side: const BorderSide(color: lightPrimaryTurquoise),
-        foregroundColor: lightPrimaryTurquoise,
+        side: const BorderSide(color: Color(0xFF88A9FF)),
+        foregroundColor: lightPrimary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     ),
@@ -57,7 +56,7 @@ class AppTheme {
       backgroundColor: Colors.transparent,
       elevation: 0,
       centerTitle: true,
-      iconTheme: IconThemeData(color: lightTextPrimary),
+      iconTheme: IconThemeData(color: lightPrimary),
       titleTextStyle: TextStyle(
         color: lightTextPrimary,
         fontSize: 20,
@@ -76,18 +75,18 @@ class AppTheme {
       bodyLarge: TextStyle(color: lightTextPrimary),
       bodyMedium: TextStyle(color: lightTextSecondary),
     ),
-    iconTheme: const IconThemeData(color: lightTextPrimary),
+    iconTheme: const IconThemeData(color: lightPrimary),
   );
 
   static ThemeData darkTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
-    primaryColor: turquoiseGlow,
+    primaryColor: brandPrimary,
     colorScheme: const ColorScheme.dark(
-      primary: turquoiseGlow,
+      primary: brandPrimary,
       secondary: Color(0xFF88A9FF),
       surface: darkSurface,
-      error: Color(0xFFFF7D9A),
+      error: Color(0xFFEF4444),
       onPrimary: Color(0xFF0D1322),
       onSecondary: Color(0xFF0D1322),
       onSurface: darkTextPrimary,
@@ -123,7 +122,7 @@ class AppTheme {
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
-        backgroundColor: darkCtaOrange,
+        backgroundColor: brandCta,
         foregroundColor: const Color(0xFF0D1322),
         minimumSize: const Size.fromHeight(54),
         textStyle: const TextStyle(
@@ -139,7 +138,7 @@ class AppTheme {
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         side: const BorderSide(color: Color(0xFF88A9FF)),
-        foregroundColor: turquoiseGlow,
+        foregroundColor: brandPrimary,
         minimumSize: const Size.fromHeight(52),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -155,7 +154,7 @@ class AppTheme {
       backgroundColor: Colors.transparent,
       elevation: 0,
       centerTitle: true,
-      iconTheme: IconThemeData(color: darkTextPrimary),
+      iconTheme: IconThemeData(color: brandPrimary),
       titleTextStyle: TextStyle(
         color: darkTextPrimary,
         fontSize: 20,
@@ -174,6 +173,6 @@ class AppTheme {
       bodyLarge: TextStyle(color: darkTextPrimary),
       bodyMedium: TextStyle(color: darkTextSecondary),
     ),
-    iconTheme: const IconThemeData(color: darkTextPrimary),
+    iconTheme: const IconThemeData(color: brandPrimary),
   );
 }

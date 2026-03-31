@@ -515,73 +515,97 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
+        final theme = Theme.of(context);
+        final colors = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
         return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom,
           ),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              color: Color(0xFF1A1A1A),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Edit bio',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF121925).withValues(alpha: 0.92)
+                      : colors.surface.withValues(alpha: 0.94),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : colors.onSurface.withValues(alpha: 0.08),
                   ),
                 ),
-                const SizedBox(height: 16),
-
-                TextField(
-                  controller: _vibeController,
-                  maxLength: 150,
-                  maxLines: 4,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText:
-                        'What others see on your profile and when you check in.',
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.05),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _savingVibe ? null : _saveVibe,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Edit bio',
+                      style: TextStyle(
+                        color: colors.onSurface,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    child: _savingVibe
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.black,
-                            ),
-                          )
-                        : const Text("Save"),
-                  ),
+                    const SizedBox(height: 16),
+
+                    TextField(
+                      controller: _vibeController,
+                      maxLength: 150,
+                      maxLines: 4,
+                      style: TextStyle(color: colors.onSurface),
+                      decoration: InputDecoration(
+                        hintText:
+                            'What others see on your profile and when you check in.',
+                        hintStyle: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                        ),
+                        filled: true,
+                        fillColor: isDark
+                            ? Colors.white.withValues(alpha: 0.04)
+                            : colors.surfaceContainerHighest.withValues(
+                                alpha: 0.45,
+                              ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _savingVibe ? null : _saveVibe,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colors.primary,
+                          foregroundColor: colors.onPrimary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: _savingVibe
+                            ? SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colors.onPrimary,
+                                ),
+                              )
+                            : const Text("Save"),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         );
@@ -784,14 +808,71 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
-                                    style: TextStyle(
-                                      fontSize: 34,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.white,
-                                      letterSpacing: -0.5,
+                                  if (_activeCheckin != null) ...[
+                                    OutlinedButton.icon(
+                                      onPressed: _openingVenueDetail
+                                          ? null
+                                          : _openActiveVenueDetail,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        side: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.4,
+                                          ),
+                                        ),
+                                        backgroundColor: Colors.black.withValues(
+                                          alpha: 0.22,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 7,
+                                        ),
+                                        minimumSize: const Size(0, 34),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        visualDensity: const VisualDensity(
+                                          horizontal: -1,
+                                          vertical: -1,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        textStyle: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      icon: _openingVenueDetail
+                                          ? const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.location_on_outlined,
+                                              size: 15,
+                                            ),
+                                      label: const Text('Open venue'),
                                     ),
+                                    const SizedBox(height: 10),
+                                  ],
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
+                                          style: TextStyle(
+                                            fontSize: 34,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white,
+                                            letterSpacing: -0.5,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 8),
                                   Row(
@@ -898,22 +979,42 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                   ],
                                   const SizedBox(height: 20),
 
-                                  /// BIO VEYA NO CHECK-IN UYARISI (Şık bir kutu içinde)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 14,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(
-                                        hasImage ? 0.1 : 0.06,
+                                  /// BIO / VIBE glass kartı (şeffaf + blur)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: BackdropFilter(
+                                      filter: ImageFilter.blur(
+                                        sigmaX: 14,
+                                        sigmaY: 14,
                                       ),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: Colors.white.withOpacity(0.12),
-                                      ),
-                                    ),
-                                    child: LayoutBuilder(
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 14,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              Colors.white.withValues(
+                                                alpha: hasImage ? 0.14 : 0.10,
+                                              ),
+                                              Colors.white.withValues(
+                                                alpha: hasImage ? 0.06 : 0.03,
+                                              ),
+                                            ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                          ),
+                                        ),
+                                        child: LayoutBuilder(
                                       builder: (context, constraints) {
                                         final vibeTrim = (_checkinVibe ?? '')
                                             .trim();
@@ -944,7 +1045,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                               style,
                                             );
 
-                                        return AnimatedSize(
+                                          return AnimatedSize(
                                           duration: const Duration(
                                             milliseconds: 250,
                                           ),
@@ -1009,9 +1110,11 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                               ),
                                             ],
                                           ),
-                                        );
-                                      },
+                                          );
+                                        },
+                                      ),
                                     ),
+                                  ),
                                   ),
 
                                   if (_activeCheckin != null &&
@@ -1049,47 +1152,6 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                           ),
                                         );
                                       }).toList(),
-                                    ),
-                                  ],
-                                  if (_activeCheckin != null) ...[
-                                    const SizedBox(height: 14),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: OutlinedButton.icon(
-                                        onPressed: _openingVenueDetail
-                                            ? null
-                                            : _openActiveVenueDetail,
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.white,
-                                          side: BorderSide(
-                                            color: Colors.white.withOpacity(
-                                              0.35,
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 12,
-                                          ),
-                                        ),
-                                        icon: _openingVenueDetail
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                    ),
-                                              )
-                                            : const Icon(
-                                                Icons.location_on_outlined,
-                                                size: 18,
-                                              ),
-                                        label: const Text(
-                                          'Open venue',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
                                     ),
                                   ],
                                 ],
@@ -1217,6 +1279,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                     : const SizedBox.shrink(),
                               ),
                             ],
+                            const SizedBox(height: 26),
                           ],
                         ),
                       ],

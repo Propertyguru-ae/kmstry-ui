@@ -7,7 +7,9 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 
 enum ProfileActionState {
   showActions,
@@ -38,6 +40,11 @@ class ProfilePreviewPage extends StatefulWidget {
   final bool isMatchedHint;
   final String? chatIdHint;
   final ProfileActionState? actionStateHint;
+  final String? fallbackBio;
+  final String? hintVenueId;
+  final String? hintVenueName;
+  final String? hintVenueType;
+  final String? hintVenuePhoto;
 
   const ProfilePreviewPage({
     super.key,
@@ -49,6 +56,11 @@ class ProfilePreviewPage extends StatefulWidget {
     this.isMatchedHint = false,
     this.chatIdHint,
     this.actionStateHint,
+    this.fallbackBio,
+    this.hintVenueId,
+    this.hintVenueName,
+    this.hintVenueType,
+    this.hintVenuePhoto,
   }) : assert(
          checkinId != null || userId != null,
          'Either checkinId or userId must be provided.',
@@ -67,8 +79,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   static const Color _darkBorder = Color(0xFF252D3D);
   static const Color _darkPrimary = Color(0xFF4DA3FF);
   static const Color _darkPrimary2 = Color(0xFF2563EB);
-  bool _isVibeExpanded = false;
-  bool _isVibeOverflowing = false;
   bool _areMomentsExpanded = false;
 
   CheckinProfile? _profile;
@@ -449,6 +459,33 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
   }
 
+  Future<void> _openHintVenueDetail() async {
+    final venueId = (widget.hintVenueId ?? _resolvedVenueId ?? '').trim();
+    if (venueId.isEmpty) return;
+    final venue = Venue(
+      id: venueId,
+      name: ((widget.hintVenueName ?? '').trim().isNotEmpty)
+          ? widget.hintVenueName!.trim()
+          : 'Venue',
+      type: ((widget.hintVenueType ?? '').trim().isNotEmpty)
+          ? widget.hintVenueType!.trim()
+          : 'venue',
+      status: 'Open',
+      address: '',
+      city: '',
+      photoUrl: (widget.hintVenuePhoto ?? '').trim(),
+      latitude: 0.0,
+      longitude: 0.0,
+      tag: '#NearbyNow',
+      source: 'db',
+      isInDb: true,
+      canCheckin: true,
+    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)));
+  }
+
   Future<void> _toggleBlock() async {
     final targetUserId = _profile?.user.id ?? widget.userId;
     if (targetUserId == null || targetUserId.isEmpty) {
@@ -543,6 +580,107 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     );
   }
 
+  Future<void> _openBioVibeSheet(String text, bool isDark) async {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final sheetTitleColor = isDark ? Colors.white : Colors.black;
+    final sheetBodyColor = isDark
+        ? Colors.white.withValues(alpha: 0.92)
+        : Colors.black.withValues(alpha: 0.88);
+    final sheetActionColor = isDark ? Colors.white : Colors.black;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark
+                    ? _darkSurface.withValues(alpha: 0.95)
+                    : colors.surface,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark
+                      ? _darkBorder.withValues(alpha: 0.92)
+                      : colors.outline.withValues(alpha: 0.22),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.1),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'About',
+                      style: TextStyle(
+                        color: sheetTitleColor,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+                      ),
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: Text(
+                          text,
+                          style: TextStyle(
+                            color: sheetBodyColor,
+                            fontSize: 16,
+                            height: 1.5,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(ctx),
+                        child: Text(
+                          'See less',
+                          style: TextStyle(
+                            color: sheetActionColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildEmptyGradientBackground(bool isDark) {
     if (!isDark) {
       // Light mode must stay clean white.
@@ -620,24 +758,28 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     final hasMedia = _profile != null && _profile!.media.isNotEmpty;
-    final canShowMedia = _showPostsAndVibe && hasMedia;
-    final featuredMedia = canShowMedia
+    final canShowHeroMedia = hasMedia;
+    final canShowMoments = _showPostsAndVibe && hasMedia;
+    final featuredMedia = canShowHeroMedia
         ? _profile!.media.firstWhere(
             (m) => m.isFeatured,
             orElse: () => _profile!.media.first,
           )
         : null;
 
-    final moments = canShowMedia
+    final moments = canShowMoments
         ? _profile!.media.where((p) => !p.isFeatured).toList()
         : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername = (_profile?.user.username ?? widget.userUsername)
         ?.trim();
+    final fallbackBio = (widget.fallbackBio ?? '').trim();
+    final profileVibe = (_profile?.checkin.vibe ?? '').trim();
+    final inlineBio = profileVibe.isNotEmpty ? profileVibe : fallbackBio;
 
-    final age = _profile != null
-        ? (DateTime.now().year - _profile!.user.birthdate.year)
-        : null;
+    final canOpenVenue =
+        (widget.hintVenueId != null && widget.hintVenueId!.trim().isNotEmpty) ||
+        (_resolvedVenueId != null && _resolvedVenueId!.trim().isNotEmpty);
 
     return Scaffold(
       backgroundColor: isDark ? _darkBg : Colors.white,
@@ -647,8 +789,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           /// HERO MEDIA (FEATURED)
           Positioned.fill(
             child: GestureDetector(
-              onTap: canShowMedia ? () => _openMediaViewerAt(0) : null,
-              child: !canShowMedia
+              onTap: canShowMoments ? () => _openMediaViewerAt(0) : null,
+              child: !canShowHeroMedia
                   ? Stack(
                       fit: StackFit.expand,
                       children: [
@@ -686,7 +828,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
 
           /// ProfilePage ile ayni blur + gradient katmani
-          if (!canShowMedia)
+          if (!canShowHeroMedia)
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
@@ -789,13 +931,45 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      /// NAME & AGE
+                      if (canOpenVenue) ...[
+                        OutlinedButton.icon(
+                          onPressed: _openHintVenueDetail,
+                          icon: const Icon(Icons.place_outlined, size: 15),
+                          label: const Text('Venue'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.4),
+                            ),
+                            backgroundColor: Colors.black.withValues(alpha: 0.22),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 7,
+                            ),
+                            minimumSize: const Size(0, 34),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: const VisualDensity(
+                              horizontal: -1,
+                              vertical: -1,
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      /// NAME
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Expanded(
                             child: Text(
-                              '$displayName${age != null ? ', $age' : ''}',
+                              displayName,
                               style: const TextStyle(
                                 fontSize: 36,
                                 fontWeight: FontWeight.w900,
@@ -834,11 +1008,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
                       const SizedBox(height: 24),
 
-                      /// VIBE CARD
-                      if (_showPostsAndVibe &&
-                          _profile != null &&
-                          _profile!.checkin.vibe != null &&
-                          _profile!.checkin.vibe!.isNotEmpty)
+                      /// ABOUT CARD (vibe > bio): check-in olsa da olmasa da aynı premium görünüm.
+                      if (inlineBio.isNotEmpty)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(24),
                           child: BackdropFilter(
@@ -858,7 +1029,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                               ),
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
-                                  final vibeText = _profile!.checkin.vibe!;
+                                  final vibeText = inlineBio;
                                   final style = const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -866,7 +1037,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                     fontStyle: FontStyle.italic,
                                   );
 
-                                  _isVibeOverflowing = _checkTextOverflow(
+                                  final isVibeOverflowing = _checkTextOverflow(
                                     vibeText,
                                     constraints.maxWidth,
                                     style,
@@ -885,32 +1056,30 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                       Text(
                                         vibeText,
                                         style: style,
-                                        maxLines: _isVibeExpanded ? null : 3,
-                                        overflow: _isVibeExpanded
-                                            ? TextOverflow.visible
-                                            : TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      if (_isVibeOverflowing)
+                                      if (isVibeOverflowing)
                                         GestureDetector(
                                           onTap: () {
-                                            setState(() {
-                                              _isVibeExpanded =
-                                                  !_isVibeExpanded;
-                                            });
+                                            _openBioVibeSheet(vibeText, isDark);
                                           },
                                           child: Padding(
                                             padding: const EdgeInsets.only(
                                               top: 12,
                                             ),
                                             child: Text(
-                                              _isVibeExpanded
-                                                  ? 'See less'
-                                                  : 'See more',
-                                              style: const TextStyle(
-                                                color: Colors.white,
+                                              'See more',
+                                              style: TextStyle(
+                                                color: isDark
+                                                    ? Colors.white
+                                                    : const Color.fromARGB(
+                                                        255,
+                                                        250,
+                                                        250,
+                                                        250,
+                                                      ),
                                                 fontWeight: FontWeight.bold,
-                                                decoration:
-                                                    TextDecoration.underline,
                                               ),
                                             ),
                                           ),

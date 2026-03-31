@@ -58,7 +58,8 @@ class VenueCheckinStatsRow extends StatelessWidget {
 
   /// Not in our DB yet, or Google/community row with no aggregates (API may set isInDb true wrongly).
   bool get _showNotInDbNoStatsCta {
-    final noStats = venue.checkinCountActive == null &&
+    final noStats =
+        venue.checkinCountActive == null &&
         venue.checkinCountMale == null &&
         venue.checkinCountFemale == null;
     if (!noStats) return false;
@@ -67,10 +68,12 @@ class VenueCheckinStatsRow extends StatelessWidget {
     return false;
   }
 
-  bool get _showCheckInPrompt =>
-      _showFirstCheckInCta || _showNotInDbNoStatsCta;
+  bool get _showCheckInPrompt => _showFirstCheckInCta || _showNotInDbNoStatsCta;
 
-  Widget _buildCheckInPromptRow() {
+  Widget _buildCheckInPromptRow(BuildContext context) {
+    final promptColor = isDark
+        ? Colors.white70
+        : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -87,7 +90,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
               fontSize: fontSize,
               fontWeight: FontWeight.w500,
               fontStyle: FontStyle.italic,
-              color: isDark ? Colors.white70 : const Color.fromARGB(137, 244, 241, 241),
+              color: promptColor,
             ),
           ),
         ),
@@ -98,12 +101,12 @@ class VenueCheckinStatsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (_showCheckInPrompt) {
-      return _buildCheckInPromptRow();
+      return _buildCheckInPromptRow(context);
     }
 
     if (!_showTotal && !_showGender) {
       if (treatMissingStatsAsCheckInPrompt) {
-        return _buildCheckInPromptRow();
+        return _buildCheckInPromptRow(context);
       }
       return const SizedBox.shrink();
     }
@@ -112,10 +115,10 @@ class VenueCheckinStatsRow extends StatelessWidget {
     final strong = isDark ? Colors.white70 : Colors.black87;
 
     TextStyle countStyle([bool emphasize = true]) => TextStyle(
-          fontSize: fontSize,
-          fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500,
-          color: emphasize ? strong : muted,
-        );
+      fontSize: fontSize,
+      fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500,
+      color: emphasize ? strong : muted,
+    );
 
     return Wrap(
       spacing: 10,
@@ -126,12 +129,13 @@ class VenueCheckinStatsRow extends StatelessWidget {
           Icon(
             Icons.people_outline_rounded,
             size: iconSize,
-            color: isDark ? Colors.tealAccent.shade100 : Colors.teal.shade700,
+            color: isDark ? const Color(0xFF88A9FF) : const Color(0xFF5D8CFF),
           ),
           Text('$_displayTotal', style: countStyle()),
         ],
         if (_showGender) ...[
-          if (venue.checkinCountMale != null && venue.checkinCountMale! > 0) ...[
+          if (venue.checkinCountMale != null &&
+              venue.checkinCountMale! > 0) ...[
             Icon(
               Icons.man_rounded,
               size: iconSize,
@@ -144,7 +148,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
             Icon(
               Icons.woman_rounded,
               size: iconSize,
-              color: isDark ? Colors.pink.shade200 : Colors.pink.shade700,
+              color: isDark ? const Color(0xFF88A9FF) : const Color(0xFF5D8CFF),
             ),
             Text('${venue.checkinCountFemale}', style: countStyle()),
           ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
@@ -48,9 +49,9 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Something went wrong')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Something went wrong')));
     }
   }
 
@@ -73,24 +74,32 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
       } catch (_) {
         if (!mounted) return;
         setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Something went wrong')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Something went wrong')));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    const surfaceBorder = Color(0xFF252D3D);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final surfaceBorder = isDark
+        ? const Color(0xFF252D3D)
+        : theme.colorScheme.outline.withValues(alpha: 0.28);
     const accent = Color.fromARGB(255, 11, 162, 237);
-    const textPrimary = Color(0xFFF3F6FF);
-    const textSecondary = Color(0xFF98A3BC);
+    final textPrimary = isDark
+        ? const Color(0xFFF3F6FF)
+        : theme.colorScheme.onSurface;
+    final textSecondary = isDark
+        ? const Color(0xFF98A3BC)
+        : theme.colorScheme.onSurface.withValues(alpha: 0.68);
     final isFocused = _focusNode.hasFocus;
     final len = _controller.text.characters.length;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('About you'),
         automaticallyImplyLeading: false,
@@ -100,7 +109,7 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
         actions: [
           TextButton(
             onPressed: _loading ? null : _skip,
-            child: const Text(
+            child: Text(
               'Skip',
               style: TextStyle(
                 color: textSecondary,
@@ -112,178 +121,180 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
       ),
       extendBodyBehindAppBar: true,
       body: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 112, 24, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'A few words about you',
-                      style: TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.4,
-                        color: textPrimary,
-                      ),
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 112, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Make your first impression',
+                    style: TextStyle(
+                      fontSize: 27,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.4,
+                      color: textPrimary,
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Optional — you can add or change this anytime in profile.',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        color: textSecondary,
-                      ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Add a few words that make your presence unforgettable.',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: textSecondary,
                     ),
-                    const SizedBox(height: 28),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF161C28), Color(0xFF1A2233)],
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: isFocused ? accent : surfaceBorder,
-                          width: isFocused ? 1.3 : 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: isFocused
-                                ? accent.withValues(alpha: 0.10)
-                                : Colors.black.withValues(alpha: 0.10),
-                            blurRadius: isFocused ? 24 : 12,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
+                  ),
+                  const SizedBox(height: 28),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: isDark
+                            ? const [Color(0xFF161C28), Color(0xFF1A2233)]
+                            : [
+                                theme.colorScheme.surface,
+                                theme.colorScheme.surface.withValues(
+                                  alpha: 0.95,
+                                ),
+                              ],
                       ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isFocused ? accent : surfaceBorder,
+                        width: isFocused ? 1.3 : 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: isFocused
+                              ? accent.withValues(alpha: 0.10)
+                              : Colors.black.withValues(
+                                  alpha: isDark ? 0.10 : 0.05,
+                                ),
+                          blurRadius: isFocused ? 24 : 12,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
                       child: TextField(
                         focusNode: _focusNode,
                         controller: _controller,
                         onChanged: (_) => setState(() {}),
                         maxLines: 5,
-                        maxLength: BioOnboardingPage.maxLength,
-                        buildCounter: (
-                          context, {
-                          required currentLength,
-                          required isFocused,
-                          required maxLength,
-                        }) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 12, bottom: 8),
-                            child: Text(
-                              '$currentLength / $maxLength',
-                              style: const TextStyle(
-                                color: textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                          );
-                        },
-                        style: const TextStyle(
+                        inputFormatters: [
+                          LengthLimitingTextInputFormatter(
+                            BioOnboardingPage.maxLength,
+                          ),
+                        ],
+                        style: TextStyle(
                           color: textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
+                          height: 1.45,
                         ),
-                        decoration: const InputDecoration(
-                          hintText:
-                              'What should people know when you check in?',
+                        decoration: InputDecoration(
+                          hintText: 'Confident energy, good coffee, great conversations...',
                           hintStyle: TextStyle(color: textSecondary),
-                          filled: true,
-                          fillColor: Colors.transparent,
                           border: InputBorder.none,
-                          contentPadding: EdgeInsets.fromLTRB(16, 18, 16, 8),
+                          contentPadding: EdgeInsets.fromLTRB(18, 18, 18, 16),
                         ),
                       ),
                     ),
-                    if (len > BioOnboardingPage.maxLength)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
                         child: Text(
-                          'Bio is too long.',
-                          style: TextStyle(color: Color(0xFFFF8A8A)),
+                          'This can be changed anytime from your profile.',
+                          style: TextStyle(color: textSecondary, fontSize: 12),
                         ),
                       ),
-                  ],
-                ),
+                      Text(
+                        '$len / ${BioOnboardingPage.maxLength}',
+                        style: TextStyle(
+                          color: textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            SafeArea(
-              top: false,
-              minimum: EdgeInsets.fromLTRB(
-                24,
-                12,
-                24,
-                MediaQuery.of(context).padding.bottom + 12,
-              ),
-              child: AnimatedScale(
-                duration: const Duration(milliseconds: 120),
-                scale: _buttonPressed ? 0.985 : 1,
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: Listener(
-                    onPointerDown: (_) => setState(() => _buttonPressed = true),
-                    onPointerCancel: (_) =>
-                        setState(() => _buttonPressed = false),
-                    onPointerUp: (_) => setState(() => _buttonPressed = false),
-                    child: ElevatedButton(
-                      onPressed: _loading ||
-                              len > BioOnboardingPage.maxLength
-                          ? null
-                          : _continue,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
-                        padding: EdgeInsets.zero,
-                      ),
-                      child: Ink(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: LinearGradient(
-                            colors: [
-                              accent,
-                              accent.withValues(alpha: 0.85),
-                            ],
+          ),
+          SafeArea(
+            top: false,
+            minimum: EdgeInsets.fromLTRB(
+              24,
+              12,
+              24,
+              MediaQuery.of(context).padding.bottom + 12,
+            ),
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 120),
+              scale: _buttonPressed ? 0.985 : 1,
+              child: SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: Listener(
+                  onPointerDown: (_) => setState(() => _buttonPressed = true),
+                  onPointerCancel: (_) =>
+                      setState(() => _buttonPressed = false),
+                  onPointerUp: (_) => setState(() => _buttonPressed = false),
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _continue,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          colors: [accent, accent.withValues(alpha: 0.85)],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: accent.withValues(alpha: 0.35),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: accent.withValues(alpha: 0.35),
-                              blurRadius: 20,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: _loading
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'Continue',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                        ],
+                      ),
+                      child: Center(
+                        child: _loading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
                                 ),
-                        ),
+                              )
+                            : const Text(
+                                'Continue',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
     );
   }
 }

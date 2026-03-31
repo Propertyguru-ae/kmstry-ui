@@ -235,8 +235,17 @@ class _ExpandedHeader extends StatelessWidget {
                       onChanged: onSearchChanged,
                       decoration: InputDecoration(
                         hintText: 'Search venues or areas',
+                        filled: false,
+                        fillColor: Colors.transparent,
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
                         isDense: true,
+                        isCollapsed: true,
+                        contentPadding: EdgeInsets.zero,
                         hintStyle: TextStyle(
                           color: isDark ? Colors.white54 : Colors.grey,
                         ),
@@ -248,21 +257,21 @@ class _ExpandedHeader extends StatelessWidget {
                   ),
                   if (hasQuery)
                     InkWell(
+                      borderRadius: BorderRadius.circular(12),
                       onTap: onClearSearch,
-                      child: Icon(
-                        Icons.close,
-                        size: 18,
-                        color: isDark ? Colors.white54 : Colors.grey,
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: isDark ? Colors.white54 : Colors.grey,
+                        ),
                       ),
                     ),
                 ],
               ),
             ),
           ),
-
-          const SizedBox(width: 12),
-
-       
         ],
       ),
     );
