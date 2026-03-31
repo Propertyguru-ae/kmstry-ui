@@ -1338,35 +1338,46 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Widget _buildAddMomentTile() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final colors = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: _uploadingMoment ? null : _addMomentPhoto,
-      child: Container(
-        width: 85,
-        height: 110,
-        decoration: BoxDecoration(
-          color: colors.surface.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: colors.primary.withValues(alpha: 0.35),
-            width: 1.6,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            width: 85,
+            height: 110,
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(
+                color: isDark
+                    ? colors.primary.withValues(alpha: 0.38)
+                    : colors.primary.withValues(alpha: 0.28),
+                width: 1.6,
+              ),
+            ),
+            child: Center(
+              child: _uploadingMoment
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onSurface.withValues(alpha: 0.75),
+                      ),
+                    )
+                  : Icon(
+                      Icons.add_rounded,
+                      size: 28,
+                      color: colors.onSurface.withValues(alpha: 0.72),
+                    ),
+            ),
           ),
-        ),
-        child: Center(
-          child: _uploadingMoment
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white70,
-                  ),
-                )
-              : Icon(
-                  Icons.add_rounded,
-                  size: 28,
-                  color: colors.onSurface.withValues(alpha: 0.65),
-                ),
         ),
       ),
     );

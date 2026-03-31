@@ -361,15 +361,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       await _loadProfile();
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            action == 'interested'
-                ? (isAcceptFlow ? 'Kmstry accepted.' : 'Interested gönderildi.')
-                : 'Not Kmstry gönderildi.',
-          ),
-        ),
-      );
+      if (action != 'interested') {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Not Kmstry gönderildi.')));
+      }
     } catch (e) {
       debugPrint('❌ feed action error: $e');
       if (!mounted) return;
@@ -1282,9 +1278,20 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         );
 
       case ProfileActionState.waitingResponse:
-        return const Text(
-          'Waiting response',
-          style: TextStyle(color: Colors.white70, fontSize: 16),
+        return const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF22C55E)),
+            SizedBox(width: 6),
+            Text(
+              'Request sent',
+              style: TextStyle(
+                color: Color(0xFF22C55E),
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         );
 
       case ProfileActionState.matched:
