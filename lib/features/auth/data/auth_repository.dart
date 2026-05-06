@@ -216,6 +216,40 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Failed to change password');
   }
 
+  Future<Map<String, dynamic>> requestChangeEmail({
+    required String newEmail,
+    required String currentPassword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('Not signed in');
+    }
+    final response = await _api.requestChangeEmail(
+      accessToken: token,
+      newEmail: newEmail,
+      currentPassword: currentPassword,
+    );
+    if (response['success'] == true) return response;
+    throw Exception(response['message'] ?? 'Failed to request email change');
+  }
+
+  Future<void> confirmChangeEmail({
+    required String newEmail,
+    required String otp,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('Not signed in');
+    }
+    final response = await _api.confirmChangeEmail(
+      accessToken: token,
+      newEmail: newEmail,
+      otp: otp,
+    );
+    if (response['success'] == true) return;
+    throw Exception(response['message'] ?? 'Failed to confirm email change');
+  }
+
   Future<bool> login(String email, String password) async {
     _log('🔥 Password login started');
 

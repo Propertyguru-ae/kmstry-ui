@@ -266,6 +266,28 @@ class CheckinRepository {
     );
   }
 
+  Future<void> reportUser({
+    required String targetUserId,
+    required String reason,
+    String? details,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final body = <String, dynamic>{
+      'reported_user_id': targetUserId,
+      'reason': reason,
+      if (details != null && details.trim().isNotEmpty)
+        'details': details.trim(),
+    };
+
+    await _api.post(
+      '/reports/users',
+      headers: {'Authorization': 'Bearer $token'},
+      body: body,
+    );
+  }
+
   Future<void> unblockUser(String targetUserId) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');

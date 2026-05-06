@@ -39,6 +39,7 @@ class PreviewScreen extends StatelessWidget {
                           horizontal: VisualDensity.minimumDensity,
                           vertical: VisualDensity.minimumDensity,
                         ),
+                        backgroundColor: Colors.transparent,
                         side: const BorderSide(color: Colors.white70),
                         foregroundColor: Colors.white,
                       ),

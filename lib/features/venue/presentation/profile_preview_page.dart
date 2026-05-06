@@ -1,6 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -77,8 +80,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   static const Color _darkBg = Color(0xFF0B0F17);
   static const Color _darkSurface = Color(0xFF161C28);
   static const Color _darkBorder = Color(0xFF252D3D);
-  static const Color _darkPrimary = Color(0xFF4DA3FF);
-  static const Color _darkPrimary2 = Color(0xFF2563EB);
+  static const Color _darkPrimary = AppTheme.brandPrimary;
+  static const Color _darkPrimary2 = AppTheme.brandPrimary;
   bool _areMomentsExpanded = false;
 
   CheckinProfile? _profile;
@@ -90,7 +93,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _showPostsAndVibe = false;
   bool _isBlocked = false;
   bool _isBlocking = false;
+  bool _isReporting = false;
   bool _isSendingAction = false;
+  String? _sendingActionType;
 
   ProfileActionState? _cachedActionStateFor(String? userId) {
     return ProfilePreviewPage.peekCachedActionState(userId);
@@ -314,7 +319,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     debugPrint("🔥 ACTION SENT: $action");
 
     final targetUserId = _profile?.user.id ?? widget.userId;
-    final venueId = _resolvedVenueId ?? _profile?.checkin.venueId;
+    final venueIdForAction = _resolvedVenueId ?? _profile?.checkin.venueId;
     if (targetUserId == null || targetUserId.isEmpty) return;
     final isAcceptFlow =
         action == 'interested' &&
@@ -332,10 +337,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     try {
-      setState(() => _isSendingAction = true);
+      setState(() {
+        _isSendingAction = true;
+        _sendingActionType = action;
+      });
+      bool isVenueContext = false;
+      try {
+        final me = await AuthRepository().getMe();
+        final contextRaw =
+            (me['lastActiveContext'] ?? me['last_active_context'])?.toString();
+        isVenueContext = contextRaw?.toUpperCase() == 'VENUE';
+      } catch (_) {
+        // Context okunamazsa güvenli varsayım: PERSONAL gibi davran.
+        isVenueContext = false;
+      }
+
       await _repo.sendFeedAction(
         targetUserId: targetUserId,
-        venueId: venueId,
+        venueId: isVenueContext ? venueIdForAction : null,
         //checkinId: widget.checkinId,
         action: action,
       );
@@ -376,7 +395,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     } finally {
       if (mounted) {
-        setState(() => _isSendingAction = false);
+        setState(() {
+          _isSendingAction = false;
+          _sendingActionType = null;
+        });
       }
     }
   }
@@ -493,26 +515,593 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
     if (_isBlocking) return;
 
-    setState(() => _isBlocking = true);
+    if (!_isBlocked) {
+      await _openBlockConfirmDialog(targetUserId);
+      return;
+    }
+    await _openUnblockConfirmDialog(targetUserId);
+  }
+
+  Future<void> _openBlockConfirmDialog(String targetUserId) async {
+    bool submitting = false;
+    bool submitted = false;
+    String? submitError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final isDark = theme.brightness == Brightness.dark;
+        final colors = theme.colorScheme;
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              backgroundColor: isDark ? _darkSurface : colors.surface,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+              contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: isDark
+                      ? _darkBorder.withValues(alpha: 0.9)
+                      : colors.outline.withValues(alpha: 0.24),
+                ),
+              ),
+              title: Text(
+                submitted ? 'Blocked' : 'Block user?',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white : colors.onSurface,
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!submitted)
+                    Text(
+                      "Once blocked, you will no longer see each other in the app and your conversation will be closed.",
+                      style: TextStyle(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.86)
+                            : colors.onSurface.withValues(alpha: 0.85),
+                        height: 1.35,
+                      ),
+                    ),
+                  if (submitted)
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          size: 20,
+                          color: Color(0xFF22C55E),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'This user has been blocked. You will no longer see each other in the app.',
+                            style: TextStyle(
+                              color: isDark ? Colors.white : colors.onSurface,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (submitError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      submitError!,
+                      style: TextStyle(
+                        color: colors.error,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (!submitted) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: submitting
+                            ? null
+                            : () async {
+                                setModalState(() {
+                                  submitting = true;
+                                  submitError = null;
+                                });
+                                if (mounted) {
+                                  setState(() => _isBlocking = true);
+                                }
+                                try {
+                                  await _repo.blockUser(targetUserId);
+                                  if (!mounted) return;
+                                  setState(() => _isBlocked = true);
+                                  setModalState(() {
+                                    submitting = false;
+                                    submitted = true;
+                                  });
+                                  await Future<void>.delayed(
+                                    const Duration(seconds: 2),
+                                  );
+                                  if (ctx.mounted) Navigator.of(ctx).pop();
+                                } catch (_) {
+                                  setModalState(() {
+                                    submitting = false;
+                                    submitError = 'Could not block user.';
+                                  });
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _isBlocking = false);
+                                  }
+                                }
+                              },
+                        child: submitting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Block'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton(
+                        onPressed: submitting
+                            ? null
+                            : () => Navigator.of(ctx).pop(),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 32),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: const VisualDensity(
+                            horizontal: VisualDensity.minimumDensity,
+                            vertical: VisualDensity.minimumDensity,
+                          ),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: const [],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openUnblockConfirmDialog(String targetUserId) async {
+    bool submitting = false;
+    bool submitted = false;
+    String? submitError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final isDark = theme.brightness == Brightness.dark;
+        final colors = theme.colorScheme;
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return AlertDialog(
+              backgroundColor: isDark ? _darkSurface : colors.surface,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+              contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: isDark
+                      ? _darkBorder.withValues(alpha: 0.9)
+                      : colors.outline.withValues(alpha: 0.24),
+                ),
+              ),
+              title: Text(
+                submitted ? 'Unblocked' : 'Unblock user?',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white : colors.onSurface,
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!submitted)
+                    Text(
+                      'If you unblock this user, you may be able to see each other again in the app and continue messaging.',
+                      style: TextStyle(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.86)
+                            : colors.onSurface.withValues(alpha: 0.85),
+                        height: 1.35,
+                      ),
+                    ),
+                  if (submitted)
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          size: 20,
+                          color: Color(0xFF22C55E),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'This user has been unblocked. You may now see each other again in the app.',
+                            style: TextStyle(
+                              color: isDark ? Colors.white : colors.onSurface,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (submitError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      submitError!,
+                      style: TextStyle(
+                        color: colors.error,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (!submitted) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: submitting
+                            ? null
+                            : () async {
+                                setModalState(() {
+                                  submitting = true;
+                                  submitError = null;
+                                });
+                                if (mounted) {
+                                  setState(() => _isBlocking = true);
+                                }
+                                try {
+                                  await _repo.unblockUser(targetUserId);
+                                  if (!mounted) return;
+                                  setState(() => _isBlocked = false);
+                                  setModalState(() {
+                                    submitting = false;
+                                    submitted = true;
+                                  });
+                                  await Future<void>.delayed(
+                                    const Duration(seconds: 2),
+                                  );
+                                  if (ctx.mounted) Navigator.of(ctx).pop();
+                                } catch (_) {
+                                  setModalState(() {
+                                    submitting = false;
+                                    submitError = 'Could not unblock user.';
+                                  });
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _isBlocking = false);
+                                  }
+                                }
+                              },
+                        child: submitting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Unblock'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: TextButton(
+                        onPressed: submitting
+                            ? null
+                            : () => Navigator.of(ctx).pop(),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 32),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: const VisualDensity(
+                            horizontal: VisualDensity.minimumDensity,
+                            vertical: VisualDensity.minimumDensity,
+                          ),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: const [],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openReportSheet() async {
+    final targetUserId = _profile?.user.id ?? widget.userId;
+    if (targetUserId == null || targetUserId.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('User is not available.')));
+      return;
+    }
+    if (_isReporting) return;
+
+    final options = <({String key, String label})>[
+      (key: 'FAKE_PROFILE', label: 'Fake profile'),
+      (key: 'INAPPROPRIATE_CONTENT', label: 'Inappropriate content'),
+      (key: 'HARASSMENT', label: 'Harassment'),
+      (key: 'SPAM_SCAM', label: 'Spam / scam'),
+      (key: 'UNDERAGE_ACCOUNT', label: 'Underage account'),
+      (key: 'OTHER', label: 'Other'),
+    ];
+
+    String selected = options.first.key;
+    final otherCtrl = TextEditingController();
+    bool submitting = false;
+    bool submitted = false;
+    String? submitError;
+
+    if (mounted) setState(() => _isReporting = true);
     try {
-      if (_isBlocked) {
-        await _repo.unblockUser(targetUserId);
-      } else {
-        await _repo.blockUser(targetUserId);
-      }
-      if (!mounted) return;
-      setState(() => _isBlocked = !_isBlocked);
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isBlocked ? 'Could not unblock user.' : 'Could not block user.',
-          ),
-        ),
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) {
+          final theme = Theme.of(ctx);
+          final colors = theme.colorScheme;
+          final isDark = theme.brightness == Brightness.dark;
+          return StatefulBuilder(
+            builder: (ctx, setModalState) {
+              final isOther = selected == 'OTHER';
+              final canSubmit =
+                  !submitting && (!isOther || otherCtrl.text.trim().isNotEmpty);
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  0,
+                  16,
+                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? _darkSurface.withValues(alpha: 0.96)
+                        : colors.surface,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: isDark
+                          ? _darkBorder.withValues(alpha: 0.9)
+                          : colors.outline.withValues(alpha: 0.2),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.35 : 0.12,
+                        ),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: colors.onSurface.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (!submitted) ...[
+                        Text(
+                          'What do you want to report?',
+                          style: TextStyle(
+                            color: colors.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ...options.map(
+                          (o) => RadioListTile<String>(
+                            value: o.key,
+                            groupValue: selected,
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            activeColor: colors.primary,
+                            title: Text(
+                              o.label,
+                              style: TextStyle(color: colors.onSurface),
+                            ),
+                            onChanged: submitting
+                                ? null
+                                : (v) {
+                                    if (v == null) return;
+                                    setModalState(() => selected = v);
+                                  },
+                          ),
+                        ),
+                        if (isOther) ...[
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: otherCtrl,
+                            enabled: !submitting,
+                            maxLines: 3,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(150),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Help us understand what happened',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (_) => setModalState(() {}),
+                          ),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '${otherCtrl.text.characters.length}/150',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.onSurface.withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (submitError != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            submitError!,
+                            style: TextStyle(color: colors.error, fontSize: 13),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: canSubmit
+                                ? () async {
+                                    setModalState(() {
+                                      submitting = true;
+                                      submitError = null;
+                                    });
+                                    var reportSucceeded = false;
+                                    try {
+                                      await _repo.reportUser(
+                                        targetUserId: targetUserId,
+                                        reason: selected,
+                                        details: selected == 'OTHER'
+                                            ? otherCtrl.text.trim()
+                                            : null,
+                                      );
+                                      reportSucceeded = true;
+                                    } catch (_) {
+                                      setModalState(() {
+                                        submitting = false;
+                                        submitError =
+                                            'Could not submit report. Please try again.';
+                                      });
+                                    }
+                                    if (!reportSucceeded) return;
+
+                                    // Report başarılıysa block adımı best-effort:
+                                    // block çağrısı hata verse bile kullanıcıya report hatası göstermeyelim.
+                                    if (!_isBlocked) {
+                                      try {
+                                        await _repo.blockUser(targetUserId);
+                                      } catch (_) {}
+                                      if (mounted) {
+                                        setState(() => _isBlocked = true);
+                                      }
+                                    }
+                                    setModalState(() {
+                                      submitting = false;
+                                      submitted = true;
+                                    });
+                                  }
+                                : null,
+                            child: submitting
+                                ? SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: colors.onPrimary,
+                                    ),
+                                  )
+                                : const Text('Report'),
+                          ),
+                        ),
+                      ] else ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: colors.primary.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.32),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(
+                                Icons.verified_user_rounded,
+                                color: Color(0xFF22C55E),
+                                size: 20,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Thanks for your report. This user has been blocked automatically, and your chat has been closed for your safety.',
+                                  style: TextStyle(
+                                    color: colors.onSurface,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Done'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
       );
     } finally {
-      if (mounted) setState(() => _isBlocking = false);
+      otherCtrl.dispose();
+      if (mounted) setState(() => _isReporting = false);
     }
   }
 
@@ -886,24 +1475,80 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 actions: [
                   Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          color: isDark
-                              ? _darkSurface.withValues(alpha: 0.72)
-                              : Colors.black.withOpacity(0.3),
-                          child: TextButton(
-                            onPressed: _isBlocking ? null : _toggleBlock,
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              disabledForegroundColor: Colors.white54,
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(
+                              color: isDark
+                                  ? _darkSurface.withValues(alpha: 0.72)
+                                  : Colors.black.withOpacity(0.3),
+                              child: TextButton(
+                                onPressed: _isReporting
+                                    ? null
+                                    : _openReportSheet,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  disabledForegroundColor: Colors.white54,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  minimumSize: const Size(0, 40),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: const VisualDensity(
+                                    horizontal: VisualDensity.minimumDensity,
+                                    vertical: VisualDensity.minimumDensity,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                child: Text(
+                                  _isReporting ? 'Reporting...' : 'Report',
+                                ),
+                              ),
                             ),
-                            child: Text(_isBlocked ? 'Unblock' : 'Block'),
                           ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(
+                              color: isDark
+                                  ? _darkSurface.withValues(alpha: 0.72)
+                                  : Colors.black.withOpacity(0.3),
+                              child: TextButton(
+                                onPressed: _isBlocking ? null : _toggleBlock,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  disabledForegroundColor: Colors.white54,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  minimumSize: const Size(0, 40),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: const VisualDensity(
+                                    horizontal: VisualDensity.minimumDensity,
+                                    vertical: VisualDensity.minimumDensity,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                child: Text(_isBlocked ? 'Unblock' : 'Block'),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -937,7 +1582,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                             side: BorderSide(
                               color: Colors.white.withValues(alpha: 0.4),
                             ),
-                            backgroundColor: Colors.black.withValues(alpha: 0.22),
+                            backgroundColor: Colors.black.withValues(
+                              alpha: 0.22,
+                            ),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
                               vertical: 7,
@@ -959,6 +1606,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                         ),
                         const SizedBox(height: 10),
                       ],
+
                       /// NAME
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
@@ -979,7 +1627,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                               padding: EdgeInsets.only(bottom: 8, left: 4),
                               child: Icon(
                                 Icons.verified,
-                                color: Colors.blue,
+                                color: AppTheme.brandPrimary,
                                 size: 24,
                               ),
                             ),
@@ -1187,8 +1835,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildActionBar() {
-    final theme = Theme.of(context);
-
     if (_isBlocked) {
       return Text(
         'User blocked',
@@ -1199,6 +1845,30 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     switch (_actionState!) {
       case ProfileActionState.incomingInterested:
       case ProfileActionState.showActions:
+        if (_isSendingAction && _sendingActionType == 'interested') {
+          return const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.1,
+                  color: AppTheme.brandPrimary,
+                ),
+              ),
+              SizedBox(width: 8),
+              Text(
+                'Request sending...',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          );
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1218,47 +1888,44 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 40,
+                  height: 52,
                   child: OutlinedButton(
                     onPressed: _isSendingAction
                         ? null
                         : () => _handleAction('interested'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white),
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      minimumSize: const Size(0, 52),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: const VisualDensity(
                         horizontal: VisualDensity.minimumDensity,
                         vertical: VisualDensity.minimumDensity,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(16),
                       ),
+                      elevation: 0.5,
                     ),
                     child: const Text('Kmstry 👋'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  height: 40,
+                  height: 52,
                   child: ElevatedButton(
                     onPressed: _isSendingAction
                         ? null
                         : () => _handleAction('pass'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.colorScheme.primary,
-                      foregroundColor: theme.colorScheme.onPrimary,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      minimumSize: const Size(0, 52),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: const VisualDensity(
                         horizontal: VisualDensity.minimumDensity,
                         vertical: VisualDensity.minimumDensity,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(16),
                       ),
                       elevation: 0,
                     ),
@@ -1281,7 +1948,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         return const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF22C55E)),
+            Icon(
+              Icons.check_circle_rounded,
+              size: 18,
+              color: Color(0xFF22C55E),
+            ),
             SizedBox(width: 6),
             Text(
               'Request sent',
@@ -1296,21 +1967,19 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       case ProfileActionState.matched:
         return SizedBox(
-          height: 40,
+          height: 52,
           child: ElevatedButton(
             onPressed: _openChat,
             style: ElevatedButton.styleFrom(
-              backgroundColor: theme.colorScheme.primary,
-              foregroundColor: theme.colorScheme.onPrimary,
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              minimumSize: const Size(0, 52),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: const VisualDensity(
                 horizontal: VisualDensity.minimumDensity,
                 vertical: VisualDensity.minimumDensity,
               ),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(16),
               ),
             ),
             child: const Text('Message'),

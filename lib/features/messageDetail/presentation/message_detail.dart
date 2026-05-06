@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
@@ -378,13 +379,13 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
 
   Color _avatarColor(String seed) {
     final colors = <Color>[
-      const Color(0xFF4F46E5),
+      AppTheme.brandPrimary,
       const Color(0xFF0EA5E9),
       const Color(0xFF10B981),
       const Color(0xFFF59E0B),
       const Color(0xFFEF4444),
-      const Color(0xFF8B5CF6),
-      const Color(0xFF5D8CFF),
+      AppTheme.brandPrimary,
+      AppTheme.brandPrimary,
     ];
 
     final index = seed.hashCode.abs() % colors.length;
@@ -447,16 +448,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.videocam_outlined, color: colors.onSurface),
-            onPressed: () {},
-          ),
-          IconButton(
-            icon: Icon(Icons.call_outlined, color: colors.onSurface),
-            onPressed: () {},
-          ),
-        ],
+        actions: const [],
       ),
       body: Column(
         children: [
@@ -556,8 +548,8 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final incomingBubble = theme.brightness == Brightness.dark
-        ? colors.surface.withValues(alpha: 0.8)
-        : colors.surface.withValues(alpha: 0.95);
+        ? colors.surface
+        : const Color(0xFFF8FBFD);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -665,10 +657,6 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       child: SafeArea(
         child: Row(
           children: [
-            IconButton(
-              icon: Icon(Icons.add_circle_outline, color: colors.primary),
-              onPressed: () {},
-            ),
             Expanded(
               child: TextField(
                 controller: _messageController,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui'; // Glassmorphism efekti için
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
@@ -754,7 +755,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                     onPressed: _openSettings,
                                     icon: Icon(
                                       Icons.settings_outlined,
-                                      color: Colors.white,
+                                      color: isDark ? Colors.white : Colors.black,
                                     ),
                                   ),
                                 ],
@@ -1130,22 +1131,26 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                             vertical: 4,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: theme.colorScheme.primary
-                                                .withValues(
-                                                  alpha: isDark ? 0.22 : 0.14,
-                                                ),
+                                            color: isDark
+                                                ? AppTheme.brandPrimary
+                                                      .withValues(alpha: 0.22)
+                                                : const Color(
+                                                    0xFFEAF1FF,
+                                                  ),
                                             borderRadius: BorderRadius.circular(
                                               999,
                                             ),
                                             border: Border.all(
-                                              color: theme.colorScheme.primary
+                                              color: AppTheme.brandPrimary
                                                   .withValues(alpha: 0.45),
                                             ),
                                           ),
                                           child: Text(
                                             _formatWhatBringsLabel(item),
                                             style: TextStyle(
-                                              color: theme.colorScheme.primary,
+                                              color: isDark
+                                                  ? Colors.white
+                                                  : AppTheme.brandPrimary,
                                               fontSize: 11,
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -1327,7 +1332,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: isDark
-                    ? Colors.blueAccent.withOpacity(0.15)
+                    ? AppTheme.brandPrimary.withOpacity(0.15)
                     : theme.colorScheme.secondary.withOpacity(0.15),
               ),
             ),
@@ -1355,9 +1360,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   : Colors.white.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(15),
               border: Border.all(
-                color: isDark
-                    ? colors.primary.withValues(alpha: 0.38)
-                    : colors.primary.withValues(alpha: 0.28),
+                color: AppTheme.brandPrimary.withValues(
+                  alpha: isDark ? 0.38 : 0.28,
+                ),
                 width: 1.6,
               ),
             ),

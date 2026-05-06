@@ -62,9 +62,7 @@ class AuthApi {
         '/auth/register/otp/request',
         body: {'email': email},
       );
-      debugPrint(
-        '[requestRegisterOtp] response (primary): ${jsonEncode(res)}',
-      );
+      debugPrint('[requestRegisterOtp] response (primary): ${jsonEncode(res)}');
       return res as Map<String, dynamic>;
     } on ApiException catch (e) {
       if (e.statusCode != 404) rethrow;
@@ -127,10 +125,33 @@ class AuthApi {
   }) async {
     final res = await _client.post(
       '/auth/change-password',
-      body: {
-        'currentPassword': currentPassword,
-        'newPassword': newPassword,
-      },
+      body: {'currentPassword': currentPassword, 'newPassword': newPassword},
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestChangeEmail({
+    required String accessToken,
+    required String newEmail,
+    required String currentPassword,
+  }) async {
+    final res = await _client.post(
+      '/auth/change-email/request',
+      body: {'newEmail': newEmail, 'currentPassword': currentPassword},
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> confirmChangeEmail({
+    required String accessToken,
+    required String newEmail,
+    required String otp,
+  }) async {
+    final res = await _client.post(
+      '/auth/change-email/confirm',
+      body: {'newEmail': newEmail, 'otp': otp},
       headers: {'Authorization': 'Bearer $accessToken'},
     );
     return res as Map<String, dynamic>;

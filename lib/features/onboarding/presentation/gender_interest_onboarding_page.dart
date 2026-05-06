@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
@@ -49,7 +50,7 @@ class _GenderInterestOnboardingPageState
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final active = selected == value;
-    const accent = Color.fromARGB(255, 11, 162, 237);
+    const accent = AppTheme.brandPrimary;
     final textPrimary = isDark
         ? const Color(0xFFF3F6FF)
         : theme.colorScheme.onSurface;
@@ -162,7 +163,6 @@ class _GenderInterestOnboardingPageState
     final textSecondary = isDark
         ? const Color(0xFF98A3BC)
         : theme.colorScheme.onSurface.withValues(alpha: 0.68);
-    const accent = Color.fromARGB(255, 11, 162, 237);
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -244,55 +244,23 @@ class _GenderInterestOnboardingPageState
               scale: _buttonPressed ? 0.985 : 1,
               child: SizedBox(
                 width: double.infinity,
-                height: 56,
+                height: 54,
                 child: Listener(
                   onPointerDown: (_) => setState(() => _buttonPressed = true),
                   onPointerCancel: (_) => setState(() => _buttonPressed = false),
                   onPointerUp: (_) => setState(() => _buttonPressed = false),
                   child: ElevatedButton(
                     onPressed: valid && !loading ? submit : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        gradient: LinearGradient(
-                          colors: [
-                            accent,
-                            accent.withValues(alpha: 0.85),
-                          ],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: accent.withValues(alpha: 0.35),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: loading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text(
-                                'Continue',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                      ),
-                    ),
+                    child: loading
+                        ? SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: isDark ? Colors.black : Colors.white,
+                            ),
+                          )
+                        : const Text('Continue'),
                   ),
                 ),
               ),

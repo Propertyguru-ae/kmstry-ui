@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
@@ -96,7 +97,7 @@ class DmListPageState extends State<DmListPage> {
       const Color(0xFFF59E0B), // amber
       const Color(0xFFEF4444), // red
       const Color(0xFF8B5CF6), // violet
-      const Color(0xFF5D8CFF), // brand blue
+      AppTheme.brandPrimary, // brand blue
     ];
 
     final index = seed.hashCode.abs() % colors.length;
@@ -318,7 +319,7 @@ class DmListPageState extends State<DmListPage> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
-              ? (isDark ? theme.colorScheme.primary : const Color(0xFF2D5BD0))
+              ? AppTheme.brandPrimary
               : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]),
           borderRadius: BorderRadius.circular(20),
         ),
@@ -326,7 +327,7 @@ class DmListPageState extends State<DmListPage> {
           label,
           style: TextStyle(
             color: isSelected
-                ? Colors.white
+                ? const Color(0xFF0D1322)
                 : (isDark ? Colors.white70 : Colors.black54),
             fontWeight: FontWeight.w600,
           ),

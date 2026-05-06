@@ -34,6 +34,14 @@ class _CameraScreenState extends State<CameraScreen> {
   CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
 
+  Future<void> _forceFlashOff() async {
+    try {
+      await _controller.setFlashMode(FlashMode.off);
+    } catch (_) {
+      // Some devices/cameras may not support flash mode control.
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +83,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     try {
       await _controller.initialize();
+      await _forceFlashOff();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -110,6 +119,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
 
     await _controller.initialize();
+    await _forceFlashOff();
 
     _currentCamera = newCamera;
 

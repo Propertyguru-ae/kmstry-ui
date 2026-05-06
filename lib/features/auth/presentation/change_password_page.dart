@@ -21,6 +21,42 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   bool _loading = false;
   String? _error;
 
+  void _showPremiumSuccess(String message) {
+    final colors = Theme.of(context).colorScheme;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearMaterialBanners();
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        backgroundColor: colors.surface,
+        elevation: 1,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        content: Row(
+          children: [
+            const Icon(
+              Icons.check_circle_rounded,
+              size: 18,
+              color: Color(0xFF22C55E),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: const [SizedBox.shrink()],
+      ),
+    );
+    Future.delayed(const Duration(seconds: 2), () {
+      messenger.clearMaterialBanners();
+    });
+  }
+
   @override
   void dispose() {
     _currentCtrl.dispose();
@@ -75,11 +111,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         newPassword: _newCtrl.text.trim(),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Your password has been updated.'),
-        ),
-      );
+      _showPremiumSuccess('Your password has been updated.');
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;

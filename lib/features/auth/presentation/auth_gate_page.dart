@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
 import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/bio_onboarding_page.dart';
@@ -148,8 +147,37 @@ class _AuthGatePageState extends State<AuthGatePage> {
         return;
       }
       if (homeRoute == 'CONTEXT_CHOICE' || nextAction == 'SHOW_CONTEXT_CHOICE') {
-        _logDecision('server_route_context_choice');
-        _go(const ContextChoicePage());
+        _logDecision('server_route_context_choice_force_personal');
+        try {
+          await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+        } catch (_) {}
+
+        if (!hasUsername) {
+          _logDecision('context_choice_force_personal_username');
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          return;
+        }
+        if (!hasNameDob) {
+          _logDecision('context_choice_force_personal_name_dob');
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          return;
+        }
+        if (onboardingStep == 'BIO') {
+          _logDecision('context_choice_force_personal_bio');
+          _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
+          return;
+        }
+        if (!hasGenderInterest) {
+          _logDecision('context_choice_force_personal_gender_interest');
+          _go(const GenderInterestOnboardingPage());
+          return;
+        }
+        if (onboardingStep == 'PERMISSIONS') {
+          _logDecision('context_choice_force_personal_permissions');
+          _go(const PermissionsFlowPage());
+          return;
+        }
+        await _routeToPersonalHome();
         return;
       }
       if (homeRoute == 'VENUE_ONBOARDING' ||

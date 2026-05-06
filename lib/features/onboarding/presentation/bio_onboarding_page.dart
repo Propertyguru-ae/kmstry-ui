@@ -241,7 +241,7 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
               scale: _buttonPressed ? 0.985 : 1,
               child: SizedBox(
                 width: double.infinity,
-                height: 56,
+                height: 54,
                 child: Listener(
                   onPointerDown: (_) => setState(() => _buttonPressed = true),
                   onPointerCancel: (_) =>
@@ -249,45 +249,16 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
                   onPointerUp: (_) => setState(() => _buttonPressed = false),
                   child: ElevatedButton(
                     onPressed: _loading ? null : _continue,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        gradient: LinearGradient(
-                          colors: [accent, accent.withValues(alpha: 0.85)],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: accent.withValues(alpha: 0.35),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: _loading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text(
-                                'Continue',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                      ),
-                    ),
+                    child: _loading
+                        ? SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: isDark ? Colors.black : Colors.white,
+                            ),
+                          )
+                        : const Text('Continue'),
                   ),
                 ),
               ),

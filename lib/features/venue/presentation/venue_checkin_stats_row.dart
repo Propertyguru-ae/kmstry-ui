@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 
 /// Compact check-in counts next to rating: total + ♂ / ♀ when API provides them.
@@ -129,7 +130,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
           Icon(
             Icons.people_outline_rounded,
             size: iconSize,
-            color: isDark ? const Color(0xFF88A9FF) : const Color(0xFF5D8CFF),
+            color: AppTheme.brandPrimary,
           ),
           Text('$_displayTotal', style: countStyle()),
         ],
@@ -139,7 +140,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
             Icon(
               Icons.man_rounded,
               size: iconSize,
-              color: isDark ? Colors.lightBlue.shade200 : Colors.blue.shade700,
+              color: AppTheme.brandPrimary,
             ),
             Text('${venue.checkinCountMale}', style: countStyle()),
           ],
@@ -148,7 +149,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
             Icon(
               Icons.woman_rounded,
               size: iconSize,
-              color: isDark ? const Color(0xFF88A9FF) : const Color(0xFF5D8CFF),
+              color: AppTheme.brandPrimary,
             ),
             Text('${venue.checkinCountFemale}', style: countStyle()),
           ],

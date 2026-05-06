@@ -26,12 +26,25 @@ List<Venue> _enrichVenuesWithPoolCheckins(
   return targets.map((t) {
     var merged = t;
     for (final p in pool) {
-      if (t.isSameVenueAs(p)) {
+      if (_isStrictVenueMatch(t, p)) {
         merged = merged.mergeCheckinFieldsFrom(p);
       }
     }
     return merged;
   }).toList();
+}
+
+bool _isStrictVenueMatch(Venue a, Venue b) {
+  if (a.id.isNotEmpty && b.id.isNotEmpty && a.id == b.id) return true;
+  final ap = a.placeId;
+  final bp = b.placeId;
+  if (ap != null && ap.isNotEmpty && bp != null && bp.isNotEmpty && ap == bp) {
+    return true;
+  }
+  // Some rows can carry place id in `id`.
+  if (ap != null && ap.isNotEmpty && b.id == ap) return true;
+  if (bp != null && bp.isNotEmpty && a.id == bp) return true;
+  return false;
 }
 
 class _VenueHomePageState extends State<VenueHomePage> {
@@ -154,8 +167,11 @@ class _VenueHomePageState extends State<VenueHomePage> {
       if (candidate.id == resolvedVenueId) return true;
     }
     final tp = target.placeId;
-    if (tp != null && tp.isNotEmpty && candidate.placeId == tp) return true;
-    return candidate.isSameVenueAs(target);
+    if (tp != null && tp.isNotEmpty) {
+      if (candidate.placeId == tp) return true;
+      if (candidate.id == tp) return true;
+    }
+    return false;
   }
 
   Future<void> _refreshVenueStatsForSurface(Venue venue) async {

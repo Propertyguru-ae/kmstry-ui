@@ -154,11 +154,21 @@ class _VenueBottomSheetState extends State<VenueBottomSheet> {
                         : ListView.builder(
                             controller: controller,
                             itemCount: visibleVenues.length,
-                            itemBuilder: (_, i) => VenueListItem(
-                              venue: visibleVenues[i],
-                              isSelected: _isSelectedVenue(visibleVenues[i]),
+                            itemBuilder: (_, i) {
+                              final venue = visibleVenues[i];
+                              final stableKey = venue.id.isNotEmpty
+                                  ? venue.id
+                                  : ((venue.placeId != null &&
+                                            venue.placeId!.isNotEmpty)
+                                        ? venue.placeId!
+                                        : '${venue.name}:${venue.latitude}:${venue.longitude}');
+                              return VenueListItem(
+                              key: ValueKey(stableKey),
+                              venue: venue,
+                              isSelected: _isSelectedVenue(venue),
                               onTap: widget.onVenueTap,
-                            ),
+                              );
+                            },
                           ),
                   ),
                 ],

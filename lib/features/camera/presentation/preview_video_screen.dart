@@ -13,16 +13,23 @@ class PreviewVideoScreen extends StatefulWidget {
 
 class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
   late VideoPlayerController _videoController;
+  bool _ready = false;
 
   @override
   void initState() {
     super.initState();
-    _videoController = VideoPlayerController.file(widget.file)
-      ..initialize().then((_) {
-        setState(() {});
-        _videoController.play();
-        _videoController.setLooping(true);
+    _videoController = VideoPlayerController.file(widget.file);
+    _videoController.initialize().then((_) {
+      if (!mounted) return;
+      // Avoid triggering setState during an active layout pass.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _videoController
+          ..setLooping(true)
+          ..play();
+        setState(() => _ready = true);
       });
+    });
   }
 
   @override
@@ -37,32 +44,70 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          if (_videoController.value.isInitialized)
-            Center(
-              child: AspectRatio(
-                aspectRatio: _videoController.value.aspectRatio,
-                child: VideoPlayer(_videoController),
-              ),
-            ),
-
-          Positioned(
-            bottom: 40,
-            left: 30,
-            child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Retake"),
-            ),
+          Positioned.fill(
+            child: _ready
+                ? Center(
+                    child: AspectRatio(
+                      aspectRatio: _videoController.value.aspectRatio,
+                      child: VideoPlayer(_videoController),
+                    ),
+                  )
+                : const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2.2),
+                    ),
+                  ),
           ),
 
           Positioned(
-            bottom: 40,
-            right: 30,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context, widget.file);
-              },
-              child: const Text("Use Video"),
+            left: 24,
+            right: 24,
+            bottom: 24,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        backgroundColor: Colors.transparent,
+                        side: const BorderSide(color: Colors.white70),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text("Retake"),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.pop(context, widget.file);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                      ),
+                      child: const Text("Use Video"),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
