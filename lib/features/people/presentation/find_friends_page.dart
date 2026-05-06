@@ -452,8 +452,6 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                                   const SizedBox(height: 10),
                               itemBuilder: (context, index) {
                                 final item = _items[index];
-                                final hasActiveCheckin =
-                                    item.activeCheckin != null;
                                 return Material(
                                   color: Colors.transparent,
                                   child: InkWell(
@@ -493,40 +491,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                                               ? item.fullName!
                                               : 'No name yet',
                                         ),
-                                        trailing: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 6,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: hasActiveCheckin
-                                                ? Colors.green.withValues(
-                                                    alpha: 0.18,
-                                                  )
-                                                : Colors.transparent,
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                            border: Border.all(
-                                              color: hasActiveCheckin
-                                                  ? Colors.green.withValues(
-                                                      alpha: 0.35,
-                                                    )
-                                                  : borderColor,
-                                            ),
-                                          ),
-                                          child: Icon(
-                                            hasActiveCheckin
-                                                ? Icons.radio_button_checked
-                                                : Icons.circle_outlined,
-                                            size: 12,
-                                            color: hasActiveCheckin
-                                                ? Colors.green
-                                                : theme
-                                                      .colorScheme
-                                                      .onSurfaceVariant,
-                                          ),
-                                        ),
+                                        trailing: const SizedBox.shrink(),
                                       ),
                                     ),
                                   ),

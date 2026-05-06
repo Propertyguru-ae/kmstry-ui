@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -368,7 +369,7 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   BitmapDescriptor _defaultSingleIcon() {
     return _singleDefaultIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueAzure,
+      BitmapDescriptor.hueBlue,
     );
   }
 
@@ -380,7 +381,7 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   BitmapDescriptor _pressedSingleIcon() {
     return _singlePressedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueGreen,
+      BitmapDescriptor.hueBlue,
     );
   }
 
@@ -395,10 +396,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     }
 
     final ringColor = isPressed
-        ? const Color(0xFF22C55E)
+        ? AppTheme.brandPrimary
         : isSelected
-        ? const Color(0xFF60A5FA)
-        : const Color(0xFF94A3B8);
+        ? AppTheme.brandPrimary
+        : Colors.transparent;
     final cacheKey =
         '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed';
     final cached = _photoMarkerIconCache[cacheKey];
@@ -482,14 +483,16 @@ class _VenueMapViewState extends State<VenueMapView> {
         outerR,
         Paint()..color = const Color(0xFF0F172A),
       );
-      canvas.drawCircle(
-        center,
-        outerR,
-        Paint()
-          ..color = ringColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3,
-      );
+      if (ringColor.alpha > 0) {
+        canvas.drawCircle(
+          center,
+          outerR,
+          Paint()
+            ..color = ringColor
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3,
+        );
+      }
 
       final clipPath = Path()
         ..addOval(Rect.fromCircle(center: center, radius: imageR));
@@ -529,7 +532,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     Color fill;
 
     if (highlighted) {
-      fill = const Color(0xFF2563EB); // vivid premium blue
+      fill = AppTheme.brandPrimary;
     } else if (count > 50) {
       fill = const Color(0xFF0F172A); // deep slate
     } else if (count > 20) {
@@ -538,9 +541,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       fill = const Color(0xFF334155); // muted blue-slate
     }
 
-    final stroke = highlighted
-        ? const Color(0xFFBFDBFE)
-        : const Color(0xFF93C5FD);
+    const stroke = Colors.transparent;
 
     final icon = await _drawClusterBitmap(
       size: size,
@@ -571,7 +572,9 @@ class _VenueMapViewState extends State<VenueMapView> {
       ..strokeWidth = 4;
 
     canvas.drawCircle(center, radius - 2, fillPaint);
-    canvas.drawCircle(center, radius - 3, strokePaint);
+    if (stroke.alpha > 0) {
+      canvas.drawCircle(center, radius - 3, strokePaint);
+    }
 
     final tp = TextPainter(
       text: TextSpan(
@@ -665,7 +668,11 @@ class _VenueMapViewState extends State<VenueMapView> {
     if (alreadyPinned) return;
 
     final searchPressed = _pressedMarkerVenueKey == searchId;
-    final icon = searchPressed ? _pressedSingleIcon() : _defaultSingleIcon();
+    final icon = _singleVenueIcon(
+      venue: sv,
+      isSelected: true,
+      isPressed: searchPressed,
+    );
     builtMarkers.add(
       Marker(
         markerId: MarkerId('search:$searchId'),
@@ -1263,20 +1270,22 @@ class _VenueMapViewState extends State<VenueMapView> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 320),
       decoration: BoxDecoration(
-        color: isDark ? theme.colorScheme.surface : Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: isDark
+            ? theme.colorScheme.surface.withValues(alpha: 0.96)
+            : const Color(0xFFF8FBFD),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: isDark
-              ? Colors.white.withValues(alpha: 0.2)
-              : Colors.black.withValues(alpha: 0.06),
+              ? Colors.white.withValues(alpha: 0.14)
+              : const Color(0xFFE6EEF4),
         ),
         boxShadow: [
           BoxShadow(
-            blurRadius: 14,
-            offset: Offset(0, 4),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
             color: isDark
-                ? Colors.black.withValues(alpha: 0.45)
-                : Colors.black12,
+                ? Colors.black.withValues(alpha: 0.42)
+                : Colors.black.withValues(alpha: 0.08),
           ),
         ],
       ),
@@ -1285,18 +1294,27 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   Widget _buildSearchResultsContent() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
     if (_searchLoading) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
+      return Padding(
+        padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            SizedBox(
+            const SizedBox(
               height: 18,
               width: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            SizedBox(width: 12),
-            Text('Searching venues...'),
+            const SizedBox(width: 12),
+            Text(
+              'Searching venues...',
+              style: TextStyle(
+                color: colors.onSurface.withValues(alpha: 0.85),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       );
@@ -1306,85 +1324,132 @@ class _VenueMapViewState extends State<VenueMapView> {
         padding: const EdgeInsets.all(16),
         child: Text(
           _searchError!,
-          style: const TextStyle(color: Colors.redAccent),
+          style: TextStyle(
+            color: colors.error,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       );
     }
     if (_searchResults.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('No venues found for this query.'),
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          'No venues found for this query.',
+          style: TextStyle(color: colors.onSurface.withValues(alpha: 0.72)),
+        ),
       );
     }
-    return ListView.separated(
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       shrinkWrap: true,
       itemCount: _searchResults.length,
-      separatorBuilder: (context, index) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final item = _searchResults[index];
         final hasRating = item.rating != null && item.rating! > 0;
-        return ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 4,
-          ),
-          leading: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
-              width: 24,
-              height: 24,
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) =>
-                  const Icon(Icons.map_rounded, size: 18, color: Colors.grey),
-            ),
-          ),
-          title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                item.address.isNotEmpty ? item.address : '-',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Row(
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => _onSearchResultTap(item),
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? colors.surface.withValues(alpha: 0.92)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : const Color(0xFFE6EEF4),
+                  ),
+                ),
+                child: ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
+                  leading: Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
+                        width: 24,
+                        height: 24,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => Icon(
+                          Icons.map_rounded,
+                          size: 18,
+                          color: colors.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface,
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.star_rounded,
-                        size: 14,
-                        color: Colors.amber,
-                      ),
-                      const SizedBox(width: 3),
                       Text(
-                        hasRating
-                            ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
-                            : 'Google rating unavailable',
-                        style: const TextStyle(fontSize: 11),
+                        item.address.isNotEmpty ? item.address : '-',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.star_rounded,
+                                size: 14,
+                                color: Colors.amber,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                hasRating
+                                    ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
+                                    : 'Google rating unavailable',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ],
+                          ),
+                          VenueCheckinStatsRow(
+                            venue: item,
+                            isDark: isDark,
+                            iconSize: 13,
+                            fontSize: 11,
+                            treatMissingStatsAsCheckInPrompt: true,
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  VenueCheckinStatsRow(
-                    venue: item,
-                    isDark: false,
-                    iconSize: 13,
-                    fontSize: 11,
-                    treatMissingStatsAsCheckInPrompt: true,
-                  ),
-                ],
+                ),
               ),
-            ],
+            ),
           ),
-          onTap: () => _onSearchResultTap(item),
         );
       },
     );

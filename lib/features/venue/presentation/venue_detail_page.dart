@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -612,7 +613,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               Text(
                 '#${widget.venue.tag}',
                 style: const TextStyle(
-                  color: Colors.blue,
+                  color: Colors.black,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -659,6 +660,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               TextButton.icon(
                 onPressed: _canOpenDirections ? () => _openDirections() : null,
+                style: TextButton.styleFrom(foregroundColor: AppTheme.brandPrimary),
                 icon: const Icon(Icons.map),
                 label: const Text('Get Directions'),
               ),
@@ -692,8 +694,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   child: Text(
                     _resolvingVenueForCheckin
                         ? 'Preparing venue...'
-                        : _loadingActiveCheckin
-                        ? "Loading..."
                         : hasActiveCheckinHere
                         ? "Who's here?"
                         : "Check in",

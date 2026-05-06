@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
@@ -377,8 +378,6 @@ class _PeoplePageState extends State<PeoplePage> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildActionButton(Icons.call_rounded, () {}, isDark, theme),
-              const SizedBox(width: 8),
               _buildActionButton(
                 Icons.chat_bubble_rounded,
                 () => _openMessage(match),
@@ -402,7 +401,7 @@ class _PeoplePageState extends State<PeoplePage> {
         visualDensity: VisualDensity.compact,
         icon: Icon(
           icon,
-          color: isDark ? theme.colorScheme.primary : Colors.blueAccent,
+          color: isDark ? theme.colorScheme.primary : AppTheme.brandPrimary,
           size: 20,
         ),
         onPressed: onTap,

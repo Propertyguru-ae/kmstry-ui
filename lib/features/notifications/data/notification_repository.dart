@@ -17,11 +17,28 @@ class NotificationRepository {
       path,
       headers: {'Authorization': 'Bearer $token'},
     );
-
-    if (data is! List) return [];
-    return (data as List)
-        .map((e) => NotificationModel.fromJson(e as Map<String, dynamic>))
+    final items = _extractItems(data);
+    return items
+        .whereType<Map>()
+        .map((e) => NotificationModel.fromJson(Map<String, dynamic>.from(e)))
         .toList();
+  }
+
+  List<dynamic> _extractItems(dynamic data) {
+    if (data is List) return data;
+    if (data is Map<String, dynamic>) {
+      final nested =
+          data['items'] ??
+          data['notifications'] ??
+          data['results'] ??
+          (data['data'] is List
+              ? data['data']
+              : (data['data'] is Map<String, dynamic>
+                    ? (data['data'] as Map<String, dynamic>)['items']
+                    : null));
+      if (nested is List) return nested;
+    }
+    return const [];
   }
 
   /// PATCH /notifications/read — mark all as read.

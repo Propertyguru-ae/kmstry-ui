@@ -280,10 +280,14 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final outerBackground = isDark
+        ? theme.scaffoldBackgroundColor
+        : Colors.white;
     final bottomSheetRadius = BorderRadius.circular(24);
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: outerBackground,
       body: SafeArea(
         child: Stack(
           children: [
@@ -295,7 +299,7 @@ class _LoginPageState extends State<LoginPage> {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: colors.surface,
+                        color: isDark ? colors.surface : const Color(0xFFF8FBFD),
                         borderRadius: bottomSheetRadius,
                       ),
                       padding: const EdgeInsets.all(24),

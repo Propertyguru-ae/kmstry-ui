@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
@@ -26,12 +27,12 @@ class _StartupGatePageState extends State<StartupGatePage>
   bool _checking = true;
   bool _navigating = false;
 
-  static const Color _bgColor = Color(0xFF0B0F17);
-  static const Color _blue = Color(0xFF4DA3FF);
-  static const Color _indigo = Color(0xFF2563EB);
-  static const Color _violet = Color(0xFF88A9FF);
-  static const Color _accentA = Color(0xFF5D8CFF);
-  static const Color _accentB = Color(0xFF88A9FF);
+  static const Color _bgColor = AppTheme.matteBlack;
+  static const Color _blue = AppTheme.brandPrimary;
+  static const Color _indigo = AppTheme.brandPrimary;
+  static const Color _violet = AppTheme.brandPrimary;
+  static const Color _accentA = AppTheme.brandPrimary;
+  static const Color _accentB = AppTheme.brandPrimary;
 
   @override
   void initState() {
@@ -197,8 +198,8 @@ class _StartupGatePageState extends State<StartupGatePage>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Color.fromARGB(46, 3, 12, 32),
-                    Color.fromARGB(82, 2, 6, 23),
+                    Color.fromARGB(0, 0, 0, 0),
+                    Color.fromARGB(0, 0, 0, 0),
                   ],
                 ),
               ),
@@ -360,7 +361,7 @@ class _StartupGatePageState extends State<StartupGatePage>
             Colors.transparent,
           ),
           shadowColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
-          foregroundColor: const WidgetStatePropertyAll<Color>(Colors.white),
+          foregroundColor: const WidgetStatePropertyAll<Color>(Colors.black),
           elevation: const WidgetStatePropertyAll<double>(0),
           padding: const WidgetStatePropertyAll<EdgeInsets>(
             EdgeInsets.symmetric(horizontal: 24),
@@ -376,23 +377,17 @@ class _StartupGatePageState extends State<StartupGatePage>
               letterSpacing: 2.2,
               fontSize: 15,
               height: 1.2,
-              color: Colors.white,
+              color: Colors.black,
             ),
           ),
         ),
         child: Ink(
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFF4DA3FF), Color(0xFF2563EB)],
+              colors: [Colors.white, Colors.white],
             ),
             borderRadius: BorderRadius.circular(40),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF2563EB).withOpacity(0.30),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
+            boxShadow: [ ],
           ),
           child: Center(
             child: _navigating

@@ -45,11 +45,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>We need camera access to let you take photos and share moments.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>We need microphone access to record videos with audio.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We use your location to show nearby venues and improve discovery.</string>
-	
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need microphone access to record videos with audio.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -79,7 +80,11 @@ class _CheckInPageState extends State<CheckInPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) {
-        final colors = Theme.of(context).colorScheme;
+        final theme = Theme.of(context);
+        final colors = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        const lightCardFill = Color(0xFFF8FBFD);
+        const lightCardBorder = Color(0xFFE6EEF4);
 
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -133,13 +138,17 @@ class _CheckInPageState extends State<CheckInPage> {
                             ),
                             decoration: BoxDecoration(
                               color: selected
-                                  ? colors.primary.withValues(alpha: 0.12)
-                                  : colors.surface,
+                                  ? AppTheme.brandPrimary.withValues(alpha: 0.12)
+                                  : (isDark ? colors.surface : lightCardFill),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
                                 color: selected
-                                    ? colors.primary
-                                    : colors.onSurface.withValues(alpha: 0.1),
+                                    ? AppTheme.brandPrimary
+                                    : (isDark
+                                          ? colors.onSurface.withValues(
+                                              alpha: 0.1,
+                                            )
+                                          : lightCardBorder),
                               ),
                             ),
                             child: Row(
@@ -155,7 +164,7 @@ class _CheckInPageState extends State<CheckInPage> {
                                 if (selected)
                                   Icon(
                                     Icons.check_circle,
-                                    color: colors.primary,
+                                    color: AppTheme.brandPrimary,
                                   ),
                               ],
                             ),
@@ -441,6 +450,7 @@ class _CheckInPageState extends State<CheckInPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -561,14 +571,14 @@ class _CheckInPageState extends State<CheckInPage> {
                 filled: true,
                 fillColor: theme.brightness == Brightness.dark
                     ? colors.surface.withValues(alpha: 0.75)
-                    : colors.surface.withValues(alpha: 0.95),
+                    : const Color(0xFFF8FBFD),
                 contentPadding: const EdgeInsets.all(16),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
                     color: theme.brightness == Brightness.dark
                         ? colors.onSurface.withValues(alpha: 0.14)
-                        : colors.outline.withValues(alpha: 0.28),
+                        : const Color(0xFFE6EEF4),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
@@ -576,13 +586,13 @@ class _CheckInPageState extends State<CheckInPage> {
                   borderSide: BorderSide(
                     color: theme.brightness == Brightness.dark
                         ? colors.onSurface.withValues(alpha: 0.14)
-                        : colors.outline.withValues(alpha: 0.28),
+                        : const Color(0xFFE6EEF4),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide(
-                    color: colors.primary.withValues(alpha: 0.45),
+                    color: AppTheme.brandPrimary.withValues(alpha: 0.45),
                     width: 1.1,
                   ),
                 ),
@@ -628,10 +638,10 @@ class _CheckInPageState extends State<CheckInPage> {
                     vertical: 14,
                   ),
                   decoration: BoxDecoration(
-                    color: colors.surface,
+                    color: isDark ? colors.surface : const Color(0xFFF8FBFD),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.25),
+                      color: AppTheme.brandPrimary.withValues(alpha: 0.25),
                     ),
                   ),
                   child: Row(
@@ -669,16 +679,25 @@ class _CheckInPageState extends State<CheckInPage> {
                     ? null
                     : _submitCheckin,
                 style: ElevatedButton.styleFrom(
+                  foregroundColor: theme.brightness == Brightness.dark
+                      ? Colors.black
+                      : Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
                 child: _isSubmitting
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? CircularProgressIndicator(
+                        color: theme.brightness == Brightness.dark
+                            ? Colors.black
+                            : Colors.white,
+                      )
                     : Text(
                         'Check in',
                         style: TextStyle(
-                          color: colors.onSecondary,
+                          color: theme.brightness == Brightness.dark
+                              ? Colors.black
+                              : Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
@@ -715,7 +734,7 @@ class _CheckInPageState extends State<CheckInPage> {
         : ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Container(
-              color: colors.surface,
+              color: isDark ? colors.surface : const Color(0xFFF8FBFD),
               child: const Center(
                 child: Icon(
                   Icons.play_circle_fill,
@@ -736,9 +755,11 @@ class _CheckInPageState extends State<CheckInPage> {
             height: size * 1.3,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              color: colors.surface.withValues(alpha: 0.8),
+              color: isDark
+                  ? colors.surface.withValues(alpha: 0.8)
+                  : const Color(0xFFF8FBFD),
               border: isFeatured
-                  ? Border.all(color: colors.secondary, width: 2.5)
+                  ? Border.all(color: AppTheme.brandPrimary, width: 2.5)
                   : null,
             ),
             child: child,
@@ -776,7 +797,7 @@ class _CheckInPageState extends State<CheckInPage> {
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: colors.surface,
+                color: isDark ? colors.surface : const Color(0xFFF8FBFD),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Icon(Icons.star, size: 14, color: Color(0xFFFFD700)),
@@ -789,6 +810,7 @@ class _CheckInPageState extends State<CheckInPage> {
   /// Yeni fotoğraf ekleme kutusu
   Widget _buildAddBox() {
     final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     double size = (MediaQuery.of(context).size.width - 64) / 3;
 
     return GestureDetector(
@@ -797,7 +819,7 @@ class _CheckInPageState extends State<CheckInPage> {
         width: size,
         height: size * 1.3,
         decoration: BoxDecoration(
-          color: colors.surface,
+          color: isDark ? colors.surface : const Color(0xFFF8FBFD),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: colors.primary.withValues(alpha: 0.25),

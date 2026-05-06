@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
 import '../data/venue_model.dart';
@@ -41,14 +42,19 @@ class VenueListItem extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: isSelected
-                ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                ? AppTheme.brandPrimary.withValues(alpha: 0.14)
                 : (isDark
                       ? theme.colorScheme.surface
                       : const Color(0xFFF8FBFD)),
             borderRadius: BorderRadius.circular(16),
-            border: isDark
-                ? Border.all(color: Colors.white.withValues(alpha: 0.05))
-                : Border.all(color: const Color(0xFFE6EEF4)),
+            border: isSelected
+                ? Border.all(
+                    color: AppTheme.brandPrimary.withValues(alpha: 0.14),
+                    width: 1.0,
+                  )
+                : (isDark
+                      ? Border.all(color: Colors.white.withValues(alpha: 0.05))
+                      : Border.all(color: const Color(0xFFE6EEF4))),
           ),
           child: Row(
             children: [
