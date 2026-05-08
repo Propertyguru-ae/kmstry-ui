@@ -4,6 +4,7 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/auth_repository.dart';
 import 'auth_routes.dart';
+import 'dart:io' show Platform;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -256,7 +257,10 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      await AuthRepository().login(_emailCtrl.text.trim().toLowerCase(), _passCtrl.text);
+      await AuthRepository().login(
+        _emailCtrl.text.trim().toLowerCase(),
+        _passCtrl.text,
+      );
       if (!mounted) return;
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
@@ -299,7 +303,9 @@ class _LoginPageState extends State<LoginPage> {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: isDark ? colors.surface : const Color(0xFFF8FBFD),
+                        color: isDark
+                            ? colors.surface
+                            : const Color(0xFFF8FBFD),
                         borderRadius: bottomSheetRadius,
                       ),
                       padding: const EdgeInsets.all(24),
@@ -462,8 +468,10 @@ class _LoginPageState extends State<LoginPage> {
                                     },
                                   ),
 
-                                  const SizedBox(width: 14),
-                                  _SocialCircle(label: '', onTap: () {}),
+                                  if (Platform.isIOS) ...[
+                                    const SizedBox(width: 14),
+                                    _SocialCircle(label: '', onTap: () {}),
+                                  ],
                                   const SizedBox(width: 14),
                                   _SocialCircle(label: 'f', onTap: () {}),
                                 ],
