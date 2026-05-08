@@ -151,9 +151,9 @@ class Venue {
       if (count >= 8) return 'Buzzing';
       if (count > 0) return 'Active';
     }
-    final source = (json['source'] ?? '').toString().toLowerCase();
-    if (source == 'google') return 'Community data pending';
-    return 'Open';
+    //final source = (json['source'] ?? '').toString().toLowerCase();
+    // if (source == 'google') return 'Community data pending'; //Bu mekan bulundu ama henüz community activity oluşmadı.
+    return 'Quiet right now';
   }
 
   static String _computeTag(Map<String, dynamic> json) {

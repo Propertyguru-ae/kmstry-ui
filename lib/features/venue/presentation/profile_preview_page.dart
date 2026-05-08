@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -10,6 +11,7 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
@@ -77,12 +79,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final _repo = CheckinRepository();
   final _matchRepo = MatchRepository();
   final _venueRepo = VenueCheckinRepository();
+  final _venueContextRepository = VenueContextRepository();
   static const Color _darkBg = Color(0xFF0B0F17);
   static const Color _darkSurface = Color(0xFF161C28);
   static const Color _darkBorder = Color(0xFF252D3D);
   static const Color _darkPrimary = AppTheme.brandPrimary;
   static const Color _darkPrimary2 = AppTheme.brandPrimary;
   bool _areMomentsExpanded = false;
+  bool _areWhatBringsExpanded = false;
 
   CheckinProfile? _profile;
   bool _loading = true;
@@ -147,11 +151,137 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
     final textPainter = TextPainter(
       text: TextSpan(text: text, style: style),
-      maxLines: 3,
+      maxLines: 2,
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth);
 
     return textPainter.didExceedMaxLines;
+  }
+
+  String _formatWhatBringsLabel(String raw) {
+    final normalized = raw.trim();
+    if (normalized.isEmpty) return normalized;
+    final parts = normalized
+        .split(RegExp(r'[_\s]+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return normalized;
+    return parts
+        .map(
+          (word) =>
+              '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  String _whatBringsQuestionByGender(String? gender) {
+    final normalized = (gender ?? '').trim().toLowerCase();
+    if (normalized == 'male') {
+      return 'What brings him to Kmstry?';
+    }
+    if (normalized == 'female') {
+      return 'What brings her to Kmstry?';
+    }
+    return 'What brings them to Kmstry?';
+  }
+
+  double _contentExpandedHeightFactor() {
+    if (_areMomentsExpanded && _areWhatBringsExpanded) return 0.30;
+    if (_areMomentsExpanded) return 0.33;
+    if (_areWhatBringsExpanded) return 0.48;
+    return 0.53;
+  }
+
+  double _contentTopPadding() {
+    if (_areMomentsExpanded && _areWhatBringsExpanded) return 6;
+    if (_areMomentsExpanded) return 5;
+    if (_areWhatBringsExpanded) return 12;
+    return 14;
+  }
+
+  double _contentBottomPadding() {
+    if (_areMomentsExpanded && _areWhatBringsExpanded) return 8;
+    if (_areMomentsExpanded) return 14;
+    return 72;
+  }
+
+  double _momentCardHeight() {
+    if (_areMomentsExpanded && _areWhatBringsExpanded) return 170;
+    return 180;
+  }
+
+  Future<void> _openBioVibeSheet(String text, bool isDark) async {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark
+                    ? _darkSurface.withValues(alpha: 0.95)
+                    : colors.surface,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark
+                      ? _darkBorder.withValues(alpha: 0.92)
+                      : colors.outline.withValues(alpha: 0.22),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.onSurface.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'About',
+                      style: TextStyle(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+                      ),
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: Text(
+                          text,
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.9),
+                            fontSize: 16,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _loadProfile() async {
@@ -308,9 +438,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Future<void> _handleAction(String action) async {
     if (_isBlocked) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unblock user to send actions.')),
-      );
       return;
     }
 
@@ -328,11 +455,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     // Only allow actions in showActions or incomingInterested states
     if (_actionState != ProfileActionState.showActions &&
         _actionState != ProfileActionState.incomingInterested) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Bu profile şu an yeni aksiyon gönderilemez.'),
-        ),
-      );
       return;
     }
 
@@ -378,21 +500,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       // Best effort reload profile to sync authoritative server state.
       await _loadProfile();
-
-      if (!mounted) return;
-      if (action != 'interested') {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Not Kmstry gönderildi.')));
-      }
     } catch (e) {
       debugPrint('❌ feed action error: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Aksiyon gönderilemedi. Lütfen tekrar dene.'),
-        ),
-      );
     } finally {
       if (mounted) {
         setState(() {
@@ -405,8 +514,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Future<void> _openChat() async {
     if (_isBlocked) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User is blocked. Unblock to message.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'User is blocked. Unblock to message.',
       );
       return;
     }
@@ -416,9 +526,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (profile == null) {
       final userId = widget.userId;
       if (userId == null || userId.isEmpty) {
-        ScaffoldMessenger.of(
+        await showPremiumErrorDialog(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Chat is not available.')));
+          message: 'Chat is not available.',
+        );
         return;
       }
       String? fallbackChatId = widget.chatIdHint;
@@ -465,51 +576,71 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       ),
     );
     if ((resolvedChatId == null || resolvedChatId.isEmpty) && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isMatched
-                ? 'Henüz chat açılmadı. İlk mesajı göndererek başlatabilirsin.'
-                : 'Henüz chat açılmadı / eşleşme yok.',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message: isMatched
+            ? 'Henüz chat açılmadı. İlk mesajı göndererek başlatabilirsin.'
+            : 'Henüz chat açılmadı / eşleşme yok.',
       );
     }
   }
 
   Future<void> _openHintVenueDetail() async {
-    final venueId = (widget.hintVenueId ?? _resolvedVenueId ?? '').trim();
+    final venueId = (_resolvedVenueId ?? widget.hintVenueId ?? '').trim();
     if (venueId.isEmpty) return;
-    final venue = Venue(
-      id: venueId,
-      name: ((widget.hintVenueName ?? '').trim().isNotEmpty)
-          ? widget.hintVenueName!.trim()
-          : 'Venue',
-      type: ((widget.hintVenueType ?? '').trim().isNotEmpty)
-          ? widget.hintVenueType!.trim()
-          : 'venue',
-      status: 'Open',
-      address: '',
-      city: '',
-      photoUrl: (widget.hintVenuePhoto ?? '').trim(),
-      latitude: 0.0,
-      longitude: 0.0,
-      tag: '#NearbyNow',
-      source: 'db',
-      isInDb: true,
-      canCheckin: true,
+    Venue? venue;
+    try {
+      final venueData = await _venueContextRepository.getVenueById(venueId);
+      final map = Map<String, dynamic>.from(venueData);
+      if ((map['id'] == null || map['id'].toString().isEmpty)) {
+        map['id'] = venueId;
+      }
+      if ((map['source'] == null || map['source'].toString().isEmpty)) {
+        map['source'] = 'db';
+      }
+      if ((map['isInDb'] == null) && (map['is_in_db'] == null)) {
+        map['isInDb'] = true;
+      }
+      if ((map['canCheckin'] == null) && (map['can_checkin'] == null)) {
+        map['canCheckin'] = true;
+      }
+      venue = Venue.fromJson(map);
+      if (venue.id.isEmpty) venue = null;
+    } catch (_) {
+      venue = null;
+    }
+    final resolvedVenue =
+        venue ??
+        Venue(
+          id: venueId,
+          name: ((widget.hintVenueName ?? '').trim().isNotEmpty)
+              ? widget.hintVenueName!.trim()
+              : 'Venue',
+          type: ((widget.hintVenueType ?? '').trim().isNotEmpty)
+              ? widget.hintVenueType!.trim()
+              : 'venue',
+          status: 'Open',
+          address: '',
+          city: '',
+          photoUrl: (widget.hintVenuePhoto ?? '').trim(),
+          latitude: 0.0,
+          longitude: 0.0,
+          tag: '#NearbyNow',
+          source: 'db',
+          isInDb: true,
+          canCheckin: true,
+        );
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
     );
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)));
   }
+
+  bool get _isMatchedActionState => _actionState == ProfileActionState.matched;
 
   Future<void> _toggleBlock() async {
     final targetUserId = _profile?.user.id ?? widget.userId;
     if (targetUserId == null || targetUserId.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('User is not available.')));
+      await showPremiumErrorDialog(context, message: 'User is not available.');
       return;
     }
 
@@ -539,7 +670,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           builder: (ctx, setModalState) {
             return AlertDialog(
               backgroundColor: isDark ? _darkSurface : colors.surface,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 20,
+              ),
               titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
               contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
               shape: RoundedRectangleBorder(
@@ -700,7 +834,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           builder: (ctx, setModalState) {
             return AlertDialog(
               backgroundColor: isDark ? _darkSurface : colors.surface,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 20,
+              ),
               titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
               contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
               shape: RoundedRectangleBorder(
@@ -847,9 +984,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   Future<void> _openReportSheet() async {
     final targetUserId = _profile?.user.id ?? widget.userId;
     if (targetUserId == null || targetUserId.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('User is not available.')));
+      await showPremiumErrorDialog(context, message: 'User is not available.');
       return;
     }
     if (_isReporting) return;
@@ -1105,6 +1240,73 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
   }
 
+  Future<void> _openTopActionsSheet() async {
+    if (_isReporting || _isBlocking) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final colors = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? _darkSurface.withValues(alpha: 0.90)
+                        : Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.10)
+                          : colors.onSurface.withValues(alpha: 0.08),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: Icon(
+                          Icons.flag_outlined,
+                          color: colors.onSurface.withValues(alpha: 0.9),
+                        ),
+                        title: const Text('Report'),
+                        onTap: () async {
+                          Navigator.of(ctx).pop();
+                          await _openReportSheet();
+                        },
+                      ),
+                      ListTile(
+                        leading: Icon(
+                          Icons.block_rounded,
+                          color: _isBlocked
+                              ? colors.tertiary
+                              : colors.onSurface.withValues(alpha: 0.9),
+                        ),
+                        title: Text(_isBlocked ? 'Unblock' : 'Block'),
+                        onTap: () async {
+                          Navigator.of(ctx).pop();
+                          await _toggleBlock();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   List<CheckinProfileMedia> _mediaForViewer() {
     final featured = _profile!.media.firstWhere(
       (m) => m.isFeatured,
@@ -1162,107 +1364,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
         ),
       ],
-    );
-  }
-
-  Future<void> _openBioVibeSheet(String text, bool isDark) async {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final sheetTitleColor = isDark ? Colors.white : Colors.black;
-    final sheetBodyColor = isDark
-        ? Colors.white.withValues(alpha: 0.92)
-        : Colors.black.withValues(alpha: 0.88);
-    final sheetActionColor = isDark ? Colors.white : Colors.black;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Container(
-              decoration: BoxDecoration(
-                color: isDark
-                    ? _darkSurface.withValues(alpha: 0.95)
-                    : colors.surface,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isDark
-                      ? _darkBorder.withValues(alpha: 0.92)
-                      : colors.outline.withValues(alpha: 0.22),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.1),
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'About',
-                      style: TextStyle(
-                        color: sheetTitleColor,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: MediaQuery.of(ctx).size.height * 0.45,
-                      ),
-                      child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        child: Text(
-                          text,
-                          style: TextStyle(
-                            color: sheetBodyColor,
-                            fontSize: 16,
-                            height: 1.5,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: GestureDetector(
-                        onTap: () => Navigator.pop(ctx),
-                        child: Text(
-                          'See less',
-                          style: TextStyle(
-                            color: sheetActionColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 
@@ -1343,6 +1444,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     final hasMedia = _profile != null && _profile!.media.isNotEmpty;
+    final shouldShowCenteredLogo = !hasMedia;
     final canShowHeroMedia = hasMedia;
     final canShowMoments = _showPostsAndVibe && hasMedia;
     final featuredMedia = canShowHeroMedia
@@ -1353,7 +1455,16 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         : null;
 
     final moments = canShowMoments
-        ? _profile!.media.where((p) => !p.isFeatured).toList()
+        ? (() {
+            final nonFeatured = _profile!.media
+                .where((p) => !p.isFeatured)
+                .toList();
+            // Tek medya varsa (featured olsa bile) moments içinde de göster.
+            if (nonFeatured.isEmpty && _profile!.media.length == 1) {
+              return List<CheckinProfileMedia>.from(_profile!.media);
+            }
+            return nonFeatured;
+          })()
         : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername = (_profile?.user.username ?? widget.userUsername)
@@ -1361,6 +1472,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final fallbackBio = (widget.fallbackBio ?? '').trim();
     final profileVibe = (_profile?.checkin.vibe ?? '').trim();
     final inlineBio = profileVibe.isNotEmpty ? profileVibe : fallbackBio;
+    final checkinWhatBrings = _profile?.checkin.whatBringsToKmstry ?? const [];
 
     final canOpenVenue =
         (widget.hintVenueId != null && widget.hintVenueId!.trim().isNotEmpty) ||
@@ -1380,12 +1492,37 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       fit: StackFit.expand,
                       children: [
                         _buildEmptyGradientBackground(isDark),
-                        Center(
-                          child: Icon(
-                            Icons.person,
-                            color: isDark ? Colors.white70 : Colors.black45,
-                            size: 48,
+                        ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                            child: Container(
+                              color: isDark
+                                  ? Colors.black.withValues(alpha: 0.18)
+                                  : Colors.black.withOpacity(0.16),
+                            ),
                           ),
+                        ),
+                        Align(
+                          alignment: const Alignment(0, -0.22),
+                          child: shouldShowCenteredLogo
+                              ? SizedBox(
+                                  width: 138,
+                                  height: 138,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Image.asset(
+                                      'assets/images/kmstrylogo.png',
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.person,
+                                  color: isDark
+                                      ? Colors.white70
+                                      : Colors.black45,
+                                  size: 48,
+                                ),
                         ),
                       ],
                     )
@@ -1412,19 +1549,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
           ),
 
-          /// ProfilePage ile ayni blur + gradient katmani
-          if (!canShowHeroMedia)
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                child: Container(
-                  color: isDark
-                      ? Colors.black.withValues(alpha: 0.18)
-                      : Colors.black.withOpacity(0.16),
-                ),
-              ),
-            ),
-
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
@@ -1446,7 +1570,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
           /// CONTENT
           CustomScrollView(
-            // Kullanıcı scroll etmesin; içerik toggle ile konumlansın.
+            // Bu sayfada içerik toggle ile konumlansın; manuel kaydırma olmasın.
             physics: const NeverScrollableScrollPhysics(),
             slivers: [
               SliverAppBar(
@@ -1475,80 +1599,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 actions: [
                   Padding(
                     padding: const EdgeInsets.all(8.0),
-                    child: Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                            child: Container(
-                              color: isDark
-                                  ? _darkSurface.withValues(alpha: 0.72)
-                                  : Colors.black.withOpacity(0.3),
-                              child: TextButton(
-                                onPressed: _isReporting
-                                    ? null
-                                    : _openReportSheet,
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  disabledForegroundColor: Colors.white54,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  minimumSize: const Size(0, 40),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: const VisualDensity(
-                                    horizontal: VisualDensity.minimumDensity,
-                                    vertical: VisualDensity.minimumDensity,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                child: Text(
-                                  _isReporting ? 'Reporting...' : 'Report',
-                                ),
-                              ),
+                    child: ClipOval(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          color: isDark
+                              ? _darkSurface.withValues(alpha: 0.72)
+                              : Colors.black.withOpacity(0.3),
+                          child: IconButton(
+                            onPressed: (_isReporting || _isBlocking)
+                                ? null
+                                : _openTopActionsSheet,
+                            icon: const Icon(
+                              Icons.more_horiz_rounded,
+                              color: Colors.white,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                            child: Container(
-                              color: isDark
-                                  ? _darkSurface.withValues(alpha: 0.72)
-                                  : Colors.black.withOpacity(0.3),
-                              child: TextButton(
-                                onPressed: _isBlocking ? null : _toggleBlock,
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  disabledForegroundColor: Colors.white54,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  minimumSize: const Size(0, 40),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: const VisualDensity(
-                                    horizontal: VisualDensity.minimumDensity,
-                                    vertical: VisualDensity.minimumDensity,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                child: Text(_isBlocked ? 'Unblock' : 'Block'),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ],
@@ -1556,7 +1624,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 // moments açılınca üst boşluk azalır ve içerik yukarı kayar.
                 expandedHeight:
                     MediaQuery.of(context).size.height *
-                    (_areMomentsExpanded ? 0.30 : 0.56),
+                    _contentExpandedHeightFactor(),
                 flexibleSpace: const FlexibleSpaceBar(
                   background: SizedBox.shrink(),
                 ),
@@ -1565,44 +1633,92 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     20,
-                    _areMomentsExpanded ? 0 : 6,
+                    _contentTopPadding(),
                     20,
-                    _areMomentsExpanded ? 28 : 80,
+                    _contentBottomPadding(),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (canOpenVenue) ...[
-                        OutlinedButton.icon(
-                          onPressed: _openHintVenueDetail,
-                          icon: const Icon(Icons.place_outlined, size: 15),
-                          label: const Text('Venue'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.4),
-                            ),
-                            backgroundColor: Colors.black.withValues(
-                              alpha: 0.22,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 7,
-                            ),
-                            minimumSize: const Size(0, 34),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: const VisualDensity(
-                              horizontal: -1,
-                              vertical: -1,
-                            ),
-                            textStyle: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
+                      if (canOpenVenue || _isMatchedActionState) ...[
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (canOpenVenue)
+                              OutlinedButton.icon(
+                                onPressed: _openHintVenueDetail,
+                                icon: const Icon(
+                                  Icons.place_outlined,
+                                  size: 15,
+                                ),
+                                label: const Text('Here now'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                  ),
+                                  backgroundColor: Colors.black.withValues(
+                                    alpha: 0.22,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 7,
+                                  ),
+                                  minimumSize: const Size(0, 34),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: const VisualDensity(
+                                    horizontal: -1,
+                                    vertical: -1,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            if (canOpenVenue && _isMatchedActionState)
+                              const SizedBox(width: 8),
+                            if (_isMatchedActionState)
+                              OutlinedButton.icon(
+                                onPressed: _openChat,
+                                icon: const Icon(
+                                  Icons.chat_bubble_outline,
+                                  size: 15,
+                                ),
+                                label: const Text('Message'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white,
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                  ),
+                                  backgroundColor: Colors.black.withValues(
+                                    alpha: 0.22,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 7,
+                                  ),
+                                  minimumSize: const Size(0, 34),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: const VisualDensity(
+                                    horizontal: -1,
+                                    vertical: -1,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 10),
                       ],
@@ -1645,40 +1761,49 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           ),
                         ),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 10),
 
                       /// ACTIONS (Kmstry, Not Kmstry, etc.)
                       if (_actionState != null) _buildActionBar(),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 10),
 
                       /// ABOUT CARD (vibe > bio): check-in olsa da olmasa da aynı premium görünüm.
                       if (inlineBio.isNotEmpty)
                         ClipRRect(
-                          borderRadius: BorderRadius.circular(24),
+                          borderRadius: BorderRadius.circular(16),
                           child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
                             child: Container(
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
                               decoration: BoxDecoration(
-                                color: isDark
-                                    ? _darkSurface.withValues(alpha: 0.56)
-                                    : Colors.white.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(24),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Colors.white.withValues(
+                                      alpha: hasMedia ? 0.14 : 0.10,
+                                    ),
+                                    Colors.white.withValues(
+                                      alpha: hasMedia ? 0.06 : 0.03,
+                                    ),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: isDark
-                                      ? _darkBorder.withValues(alpha: 0.9)
-                                      : Colors.white.withOpacity(0.15),
+                                  color: Colors.white.withValues(alpha: 0.18),
                                 ),
                               ),
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   final vibeText = inlineBio;
-                                  final style = const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    height: 1.5,
-                                    fontStyle: FontStyle.italic,
+                                  final style = TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 15,
+                                    height: 1.4,
                                   );
 
                                   final isVibeOverflowing = _checkTextOverflow(
@@ -1691,16 +1816,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const Icon(
-                                        Icons.format_quote_rounded,
-                                        color: Colors.white54,
-                                        size: 24,
-                                      ),
-                                      const SizedBox(height: 8),
                                       Text(
                                         vibeText,
                                         style: style,
-                                        maxLines: 1,
+                                        maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                       if (isVibeOverflowing)
@@ -1708,22 +1827,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                           onTap: () {
                                             _openBioVibeSheet(vibeText, isDark);
                                           },
-                                          child: Padding(
-                                            padding: const EdgeInsets.only(
-                                              top: 12,
-                                            ),
+                                          child: const Padding(
+                                            padding: EdgeInsets.only(top: 12),
                                             child: Text(
                                               'See more',
                                               style: TextStyle(
-                                                color: isDark
-                                                    ? Colors.white
-                                                    : const Color.fromARGB(
-                                                        255,
-                                                        250,
-                                                        250,
-                                                        250,
-                                                      ),
-                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w600,
                                               ),
                                             ),
                                           ),
@@ -1736,7 +1846,93 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           ),
                         ),
 
-                      const SizedBox(height: 8),
+                      if (_showPostsAndVibe && checkinWhatBrings.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: InkWell(
+                            onTap: () {
+                              setState(() {
+                                _areWhatBringsExpanded =
+                                    !_areWhatBringsExpanded;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _whatBringsQuestionByGender(
+                                      _profile?.user.gender,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    _areWhatBringsExpanded
+                                        ? Icons.keyboard_arrow_up_rounded
+                                        : Icons.keyboard_arrow_down_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeInOut,
+                          child: _areWhatBringsExpanded
+                              ? Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: checkinWhatBrings.map((item) {
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isDark
+                                              ? AppTheme.brandPrimary
+                                                    .withValues(alpha: 0.22)
+                                              : const Color(0xFFEAF1FF),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                          border: Border.all(
+                                            color: AppTheme.brandPrimary
+                                                .withValues(alpha: 0.45),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          _formatWhatBringsLabel(item),
+                                          style: TextStyle(
+                                            color: isDark
+                                                ? Colors.white
+                                                : AppTheme.brandPrimary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                      ],
+
+                      const SizedBox(height: 10),
 
                       /// RECENT MOMENTS (toggle)
                       if (_showPostsAndVibe && moments.isNotEmpty) ...[
@@ -1785,9 +1981,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                               ? Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const SizedBox(height: 16),
+                                    const SizedBox(height: 4),
                                     SizedBox(
-                                      height: 180,
+                                      height: _momentCardHeight(),
                                       child: ListView.separated(
                                         scrollDirection: Axis.horizontal,
                                         physics: const BouncingScrollPhysics(),
@@ -1811,7 +2007,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                             ),
                                             child: _buildMomentImage(
                                               moments[index],
-                                              height: 180,
+                                              height: _momentCardHeight(),
                                               initialIndex: index + 1,
                                             ),
                                           );
@@ -1859,7 +2055,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               ),
               SizedBox(width: 8),
               Text(
-                'Request sending...',
+                'Sending interest...',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -1876,7 +2072,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text(
-                  'Kmstry you! What do you think?',
+                  'You caught their attention.',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 14,
@@ -1906,7 +2102,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       ),
                       elevation: 0.5,
                     ),
-                    child: const Text('Kmstry 👋'),
+                    child: const Text('Interested'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1929,7 +2125,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       ),
                       elevation: 0,
                     ),
-                    child: const Text('Not Kmstry'),
+                    child: const Text('Pass'),
                   ),
                 ),
               ],
@@ -1940,7 +2136,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       case ProfileActionState.proactivePass:
       case ProfileActionState.reactivePass:
         return const Text(
-          'No Kmstry already',
+          'You passed.',
           style: TextStyle(color: Colors.white70, fontSize: 16),
         );
 
@@ -1955,7 +2151,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
             SizedBox(width: 6),
             Text(
-              'Request sent',
+              'Interest sent',
               style: TextStyle(
                 color: Color(0xFF22C55E),
                 fontSize: 16,
@@ -1966,25 +2162,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         );
 
       case ProfileActionState.matched:
-        return SizedBox(
-          height: 52,
-          child: ElevatedButton(
-            onPressed: _openChat,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              minimumSize: const Size(0, 52),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: const VisualDensity(
-                horizontal: VisualDensity.minimumDensity,
-                vertical: VisualDensity.minimumDensity,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            child: const Text('Message'),
-          ),
-        );
+        return const SizedBox.shrink();
     }
   }
 

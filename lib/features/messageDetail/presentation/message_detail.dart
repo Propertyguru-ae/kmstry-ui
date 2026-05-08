@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
@@ -196,10 +197,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     if (text.isEmpty || _sending) return;
     final otherId = widget.otherUserId.trim();
     if (otherId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Kullanıcı bilgisi eksik, mesaj gönderilemez.'),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Kullanıcı bilgisi eksik, mesaj gönderilemez.',
       );
       return;
     }
@@ -258,12 +258,10 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       if (!mounted) return;
       _messageController.text = text;
       setState(() => _sending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     }
   }
@@ -299,12 +297,10 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         _deletingMessageIds.remove(message.id);
         _chat = previous;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Mesaj silinemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Mesaj silinemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     }
   }
@@ -315,20 +311,26 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
         return AlertDialog(
-          title: const Text('Delete message?'),
-          content: const Text('Are you sure you want to delete this message?'),
+          title: const Text('Delete message'),
+          content: const Text('This message will be permanently removed.'),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: colors.error,
-                foregroundColor: colors.onError,
-              ),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Delete'),
+            Row(
+              children: [
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.brandPrimary,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                const Spacer(),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: colors.error),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
             ),
           ],
         );
@@ -360,14 +362,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 ),
 
               ListTile(
-                leading: const Icon(Icons.push_pin_outlined),
-                title: const Text('Pin'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Pin will be available soon')),
-                  );
-                },
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit'),
+                onTap: () => Navigator.pop(sheetContext),
               ),
               const SizedBox(height: 6),
             ],
@@ -492,7 +489,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'Henüz chat açılmadı / eşleşme yok.\nİlk mesajı göndererek başlayabilirsin.',
+            'Start the conversation.',
             textAlign: TextAlign.center,
             style: TextStyle(color: colors.onSurface.withValues(alpha: 0.7)),
           ),
@@ -665,7 +662,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                 minLines: 1,
                 maxLines: 5,
                 decoration: InputDecoration(
-                  hintText: 'Type a message...',
+                  hintText: 'Say something...',
                   hintStyle: TextStyle(
                     color: colors.onSurface.withValues(alpha: 0.6),
                   ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 /// Profilden bio düzenleme. Ürün metinleri İngilizce.
@@ -41,9 +42,7 @@ class _EditBioPageState extends State<EditBioPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not save bio')),
-      );
+      await showPremiumErrorDialog(context, message: 'Could not save bio');
     }
   }
 

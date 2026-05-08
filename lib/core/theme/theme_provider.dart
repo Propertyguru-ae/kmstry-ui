@@ -4,7 +4,7 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 
 class ThemeProvider with ChangeNotifier {
   static const String _themeKey = 'theme_mode';
-  bool _isDarkMode = false;
+  bool _isDarkMode = true;
 
   bool get isDarkMode => _isDarkMode;
 

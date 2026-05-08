@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
@@ -48,9 +49,7 @@ class _BlockedUsersPageState extends State<BlockedUsersPage> {
       });
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not unblock user.')),
-      );
+      await showPremiumErrorDialog(context, message: 'Could not unblock user.');
     } finally {
       if (mounted) {
         setState(() => _unblockingUserIds.remove(user.userId));

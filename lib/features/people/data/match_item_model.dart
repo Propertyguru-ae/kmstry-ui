@@ -8,6 +8,7 @@ class MatchItem {
   final String fullName;
   final String? checkinId;
   final String? venueId;
+  final String? bio;
 
   MatchItem({
     required this.matchId,
@@ -17,6 +18,7 @@ class MatchItem {
     required this.fullName,
     this.checkinId,
     this.venueId,
+    this.bio,
   });
 
   factory MatchItem.fromJson(Map<String, dynamic> json) {
@@ -44,6 +46,16 @@ class MatchItem {
         '';
     final checkinId = json['checkin_id'] as String? ?? json['checkinId'] as String?;
     final venueId = json['venue_id'] as String? ?? json['venueId'] as String?;
+    final bio = (json['bio'] ??
+            json['bio_text'] ??
+            json['about'] ??
+            json['aboutMe'] ??
+            user?['bio'] ??
+            user?['bio_text'] ??
+            user?['about'] ??
+            user?['aboutMe'])
+        ?.toString()
+        .trim();
 
     return MatchItem(
       matchId: matchId,
@@ -53,6 +65,7 @@ class MatchItem {
       fullName: fullName,
       checkinId: checkinId,
       venueId: venueId,
+      bio: (bio != null && bio.isNotEmpty) ? bio : null,
     );
   }
 }

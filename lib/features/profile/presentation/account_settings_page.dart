@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/change_email_page.dart';
@@ -76,10 +77,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _marketingEmailOptIn = previous);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Marketing email preference could not be saved.'),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Marketing email preference could not be saved.',
       );
     } finally {
       if (mounted) setState(() => _updatingMarketingOptIn = false);
@@ -129,9 +129,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     final uri = Uri.parse('${AppConfig.baseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      ScaffoldMessenger.of(
+      await showPremiumErrorDialog(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Unable to open link.')));
+        message: 'Unable to open link.',
+      );
     }
   }
 
@@ -179,12 +180,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not deactivate account: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Could not deactivate account: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     } finally {
       if (mounted) setState(() => _deactivating = false);
@@ -222,12 +221,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not delete account: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Could not delete account: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     } finally {
       if (mounted) setState(() => _deleting = false);

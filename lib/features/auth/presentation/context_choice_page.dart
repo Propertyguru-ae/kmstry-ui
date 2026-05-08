@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
@@ -64,8 +65,9 @@ class _ContextChoicePageState extends State<ContextChoicePage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not create a venue test account.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Could not create a venue test account.',
       );
     }
 

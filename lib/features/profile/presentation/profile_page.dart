@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -298,10 +299,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       final venue = await _loadActiveCheckinVenue();
       if (!mounted) return;
       if (venue == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Active check-in venue could not be loaded.'),
-          ),
+        await showPremiumErrorDialog(
+          context,
+          message: 'Active check-in venue could not be loaded.',
         );
         return;
       }
@@ -442,8 +442,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final checkinId = _activeCheckinId();
     if (checkinId == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Active check-in data is missing.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Active check-in data is missing.',
       );
       return;
     }
@@ -452,8 +453,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       final hasPermission = await _ensureCameraPermission();
       if (!hasPermission) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Camera permission is required.')),
+        await showPremiumErrorDialog(
+          context,
+          message: 'Camera permission is required.',
         );
         return;
       }
@@ -474,8 +476,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       if (_isVideoFile(capturedMedia.path) &&
           _media.any((m) => m.mediaType == MediaType.video)) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("You can upload only 1 video.")),
+        await showPremiumErrorDialog(
+          context,
+          message: 'You can upload only 1 video.',
         );
         return;
       }
@@ -638,9 +641,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
       Navigator.pop(context); // modal kapanır
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Failed to update bio')));
+      await showPremiumErrorDialog(context, message: 'Failed to update bio');
     }
 
     if (mounted) setState(() => _savingVibe = false);
@@ -855,7 +856,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                               Icons.location_on_outlined,
                                               size: 15,
                                             ),
-                                      label: const Text('Open venue'),
+                                      label: const Text('Here now'),
                                     ),
                                     const SizedBox(height: 10),
                                   ],

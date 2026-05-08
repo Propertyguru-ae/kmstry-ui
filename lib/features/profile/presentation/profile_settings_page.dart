@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -92,10 +93,9 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
           status.isGranted || status == PermissionStatus.provisional;
       setState(() => _systemNotificationsEnabled = granted);
       if (!granted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Enable system notifications to turn this on.'),
-          ),
+        await showPremiumErrorDialog(
+          context,
+          message: 'Enable system notifications to turn this on.',
         );
         if (status.isPermanentlyDenied) {
           await openAppSettings();
@@ -112,10 +112,9 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   Future<void> _deleteAccount() async {
     if (_deletingAccount) return;
     if (!_canDeleteCurrentContextProfile) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No deletable context profile found for this account.'),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message: 'No deletable context profile found for this account.',
       );
       return;
     }
@@ -163,12 +162,10 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not delete ${_isVenueContext ? 'venue' : 'personal'} profile: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Could not delete ${_isVenueContext ? 'venue' : 'personal'} profile: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     } finally {
       if (mounted) setState(() => _deletingAccount = false);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/auth_repository.dart';
 import 'auth_routes.dart';
@@ -34,8 +35,9 @@ class _LoginPageState extends State<LoginPage> {
     final uri = Uri.parse('${AppConfig.baseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open policy link.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Unable to open policy link.',
       );
     }
   }
@@ -219,8 +221,6 @@ class _LoginPageState extends State<LoginPage> {
                 ElevatedButton(
                   onPressed: () async {
                     final navigator = Navigator.of(context);
-                    final messenger = ScaffoldMessenger.of(context);
-
                     try {
                       final success = await _loginWithGoogleWithConsentFlow();
                       if (!context.mounted) return;
@@ -230,8 +230,9 @@ class _LoginPageState extends State<LoginPage> {
                       }
                     } catch (e) {
                       if (!context.mounted) return;
-                      messenger.showSnackBar(
-                        SnackBar(content: Text(_friendlyLoginError(e))),
+                      await showPremiumErrorDialog(
+                        context,
+                        message: _friendlyLoginError(e),
                       );
                     }
                   },
@@ -442,9 +443,6 @@ class _LoginPageState extends State<LoginPage> {
                                     label: 'G',
                                     onTap: () async {
                                       final navigator = Navigator.of(context);
-                                      final messenger = ScaffoldMessenger.of(
-                                        context,
-                                      );
                                       try {
                                         final success =
                                             await _loginWithGoogleWithConsentFlow();
@@ -457,12 +455,9 @@ class _LoginPageState extends State<LoginPage> {
                                         }
                                       } catch (e) {
                                         if (!mounted) return;
-                                        messenger.showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              _friendlyLoginError(e),
-                                            ),
-                                          ),
+                                        await showPremiumErrorDialog(
+                                          context,
+                                          message: _friendlyLoginError(e),
                                         );
                                       }
                                     },

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
@@ -35,9 +36,7 @@ class _GenderInterestOnboardingPageState
     } catch (_) {
       if (!mounted) return;
       setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Something went wrong')),
-      );
+      await showPremiumErrorDialog(context, message: 'Something went wrong');
     }
   }
 

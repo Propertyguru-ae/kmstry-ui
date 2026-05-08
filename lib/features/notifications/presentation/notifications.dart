@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
@@ -23,6 +24,7 @@ class _NotificationPageState extends State<NotificationPage> {
   String? _error;
   String _activeContextType = 'PERSONAL';
   String? _activeVenueId;
+  static const int _daysWindow = 30;
 
   @override
   void initState() {
@@ -38,9 +40,10 @@ class _NotificationPageState extends State<NotificationPage> {
     try {
       try {
         final me = await AuthRepository().getMe();
-        final lastContext = (me['lastActiveContext'] ?? me['last_active_context'])
-            ?.toString()
-            .toUpperCase();
+        final lastContext =
+            (me['lastActiveContext'] ?? me['last_active_context'])
+                ?.toString()
+                .toUpperCase();
         _activeContextType = lastContext == 'VENUE' ? 'VENUE' : 'PERSONAL';
         _activeVenueId = (me['activeVenueId'] ?? me['active_venue_id'])
             ?.toString()
@@ -75,9 +78,21 @@ class _NotificationPageState extends State<NotificationPage> {
             (n) => NotificationModel(
               id: n.id,
               type: n.type,
-              title: _enrichedTitle(n, matchById: matchById, matchByUserId: matchByUserId),
-              body: _enrichedBody(n, matchById: matchById, matchByUserId: matchByUserId),
-              data: _enrichedData(n, matchById: matchById, matchByUserId: matchByUserId),
+              title: _enrichedTitle(
+                n,
+                matchById: matchById,
+                matchByUserId: matchByUserId,
+              ),
+              body: _enrichedBody(
+                n,
+                matchById: matchById,
+                matchByUserId: matchByUserId,
+              ),
+              data: _enrichedData(
+                n,
+                matchById: matchById,
+                matchByUserId: matchByUserId,
+              ),
               contextType: n.contextType,
               venueId: n.venueId,
               isRead: true,
@@ -113,14 +128,11 @@ class _NotificationPageState extends State<NotificationPage> {
     return true;
   }
 
-  void _onNotificationTap(NotificationModel n) {
+  Future<void> _onNotificationTap(NotificationModel n) async {
     final data = _profileContextData(n);
 
     if (n.type == 'new_message' && n.data != null) {
-      final chatId = _firstNonEmptyString(data, const [
-        'chatId',
-        'chat_id',
-      ]);
+      final chatId = _firstNonEmptyString(data, const ['chatId', 'chat_id']);
       final senderId = _firstNonEmptyString(data, const [
         'senderId',
         'sender_id',
@@ -180,10 +192,7 @@ class _NotificationPageState extends State<NotificationPage> {
         'checkin_id',
         'checkinId',
       ]);
-      final venueId = _firstNonEmptyString(data, const [
-        'venue_id',
-        'venueId',
-      ]);
+      final venueId = _firstNonEmptyString(data, const ['venue_id', 'venueId']);
       final userId = _firstNonEmptyString(data, const [
         'user_id',
         'sender_id',
@@ -217,7 +226,8 @@ class _NotificationPageState extends State<NotificationPage> {
               userId: userId,
               userName: userName,
               userUsername: username,
-              actionStateHint: actionHint ?? ProfileActionState.incomingInterested,
+              actionStateHint:
+                  actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
@@ -231,21 +241,25 @@ class _NotificationPageState extends State<NotificationPage> {
               userId: userId,
               userName: userName ?? n.title,
               userUsername: username,
-              actionStateHint: actionHint ?? ProfileActionState.incomingInterested,
+              actionStateHint:
+                  actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile data is not available for this notification.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Profile data is not available for this notification.',
       );
     }
   }
 
   Map<String, dynamic> _normalizeNotificationData(Map<String, dynamic>? data) {
-    final source = data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
+    final source = data == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(data);
     final nested = source['data'];
     if (nested is Map) {
       source.addAll(Map<String, dynamic>.from(nested));
@@ -259,7 +273,8 @@ class _NotificationPageState extends State<NotificationPage> {
 
   Map<String, dynamic> _profileContextData(NotificationModel n) {
     final source = _normalizeNotificationData(n.data);
-    final relatedUser = _asMap(source['relatedUser']) ?? _asMap(source['related_user']);
+    final relatedUser =
+        _asMap(source['relatedUser']) ?? _asMap(source['related_user']);
     if (relatedUser != null) {
       source['userId'] = source['userId'] ?? relatedUser['id'];
       source['user_id'] = source['user_id'] ?? relatedUser['id'];
@@ -269,7 +284,8 @@ class _NotificationPageState extends State<NotificationPage> {
       source['full_name'] = source['full_name'] ?? relatedUser['full_name'];
     }
 
-    final activeCheckin = _asMap(source['activeCheckin']) ?? _asMap(source['active_checkin']);
+    final activeCheckin =
+        _asMap(source['activeCheckin']) ?? _asMap(source['active_checkin']);
     if (activeCheckin != null) {
       source['checkinId'] = source['checkinId'] ?? activeCheckin['id'];
       source['checkin_id'] = source['checkin_id'] ?? activeCheckin['id'];
@@ -310,13 +326,16 @@ class _NotificationPageState extends State<NotificationPage> {
       'feedAction',
       'feed_action',
     ])?.toLowerCase();
-    final theirAction = _firstNonEmptyString(theirActionObj ?? rel ?? data, const [
-      'action',
-      'theirAction',
-      'their_action',
-      'incomingAction',
-      'incoming_action',
-    ])?.toLowerCase();
+    final theirAction = _firstNonEmptyString(
+      theirActionObj ?? rel ?? data,
+      const [
+        'action',
+        'theirAction',
+        'their_action',
+        'incomingAction',
+        'incoming_action',
+      ],
+    )?.toLowerCase();
     final chatId = _firstNonEmptyString(matchObj ?? rel ?? data, const [
       'chatId',
       'chat_id',
@@ -325,7 +344,8 @@ class _NotificationPageState extends State<NotificationPage> {
     bool hasAny(String? value, List<String> candidates) =>
         value != null && value.isNotEmpty && candidates.contains(value);
 
-    if (hasAny(status, const ['matched']) || (chatId != null && chatId.isNotEmpty)) {
+    if (hasAny(status, const ['matched']) ||
+        (chatId != null && chatId.isNotEmpty)) {
       return ProfileActionState.matched;
     }
     if (hasAny(status, const [
@@ -411,7 +431,8 @@ class _NotificationPageState extends State<NotificationPage> {
         ? <String, dynamic>{}
         : Map<String, dynamic>.from(n.data!);
 
-    final matchId = source['match_id'] as String? ?? source['matchId'] as String?;
+    final matchId =
+        source['match_id'] as String? ?? source['matchId'] as String?;
     final userId =
         source['user_id'] as String? ??
         source['target_user_id'] as String? ??
@@ -434,7 +455,7 @@ class _NotificationPageState extends State<NotificationPage> {
     required Map<String, MatchItem> matchByUserId,
   }) {
     if (n.type != 'match_created') return n.title;
-    return 'New Kmstry';
+    return 'Connection made';
   }
 
   String _enrichedBody(
@@ -456,7 +477,7 @@ class _NotificationPageState extends State<NotificationPage> {
                 '')
             .trim();
     final safeName = name.isEmpty ? 'your match' : name;
-    return "You've matched with $safeName. Start chat!";
+    return "You and $safeName are now connected. Say hi when you're ready.";
   }
 
   String _displayTitle(NotificationModel n) {
@@ -465,7 +486,7 @@ class _NotificationPageState extends State<NotificationPage> {
 
   String _displayBody(NotificationModel n) {
     if (n.type == 'match_created') {
-      return "You've matched with ${_matchedName(n)}. Start chat!";
+      return "You and ${_matchedName(n)} are now connected. Say hi when you're ready.";
     }
     return n.body;
   }
@@ -473,11 +494,11 @@ class _NotificationPageState extends State<NotificationPage> {
   IconData _iconForType(String type) {
     switch (type) {
       case 'match_created':
-        return Icons.favorite;
+        return Icons.auto_awesome_rounded;
       case 'new_message':
         return Icons.chat_bubble_outline;
       case 'liked_you':
-        return Icons.favorite_rounded;
+        return Icons.visibility_rounded;
       default:
         return Icons.notifications_none;
     }
@@ -493,7 +514,9 @@ class _NotificationPageState extends State<NotificationPage> {
         elevation: 0,
         title: Text(
           'Notifications',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: _buildBody(),
@@ -503,6 +526,11 @@ class _NotificationPageState extends State<NotificationPage> {
   Widget _buildBody() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(days: _daysWindow));
+    final recentList = _list
+        .where((n) => !n.createdAt.isBefore(cutoff))
+        .toList();
     if (_loading && _list.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -530,10 +558,10 @@ class _NotificationPageState extends State<NotificationPage> {
         ),
       );
     }
-    if (_list.isEmpty) {
+    if (recentList.isEmpty) {
       return Center(
         child: Text(
-          'No notifications',
+          'No notifications in last 30 days',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: colors.onSurface.withValues(alpha: 0.65),
           ),
@@ -544,9 +572,22 @@ class _NotificationPageState extends State<NotificationPage> {
       onRefresh: _loadNotifications,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: _list.length,
+        itemCount: recentList.length + 1,
         itemBuilder: (context, index) {
-          final n = _list[index];
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(2, 4, 2, 12),
+              child: Text(
+                'Last 30 days',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: colors.onSurface.withValues(alpha: 0.88),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            );
+          }
+          final n = recentList[index - 1];
           return _buildNotificationItem(n);
         },
       ),
@@ -569,9 +610,7 @@ class _NotificationPageState extends State<NotificationPage> {
         decoration: BoxDecoration(
           color: colors.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: colors.primary.withValues(alpha: 0.15),
-          ),
+          border: Border.all(color: colors.primary.withValues(alpha: 0.15)),
         ),
         child: Row(
           children: [

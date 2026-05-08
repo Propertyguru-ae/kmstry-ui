@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -72,10 +73,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
     final token = _extractTokenFromUrl(rawUrl);
     if (token == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Invalid reset link (missing token).'),
-        ),
+      showPremiumErrorDialog(
+        context,
+        message: 'Invalid reset link (missing token).',
       );
       return;
     }

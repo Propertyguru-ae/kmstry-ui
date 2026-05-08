@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
 import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
@@ -217,10 +218,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                         await _switchToVenue(venue);
                       } catch (_) {
                         if (!rootContext.mounted) return;
-                        ScaffoldMessenger.of(rootContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('Could not switch to venue account.'),
-                          ),
+                        await showPremiumErrorDialog(
+                          rootContext,
+                          message: 'Could not switch to venue account.',
                         );
                       }
                     },
@@ -268,12 +268,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       await _switchToPersonal();
                     } catch (_) {
                       if (!rootContext.mounted) return;
-                      ScaffoldMessenger.of(rootContext).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Could not switch to personal account.',
-                          ),
-                        ),
+                      await showPremiumErrorDialog(
+                        rootContext,
+                        message: 'Could not switch to personal account.',
                       );
                     }
                   },

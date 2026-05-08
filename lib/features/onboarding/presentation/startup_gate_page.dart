@@ -31,8 +31,6 @@ class _StartupGatePageState extends State<StartupGatePage>
   static const Color _blue = AppTheme.brandPrimary;
   static const Color _indigo = AppTheme.brandPrimary;
   static const Color _violet = AppTheme.brandPrimary;
-  static const Color _accentA = AppTheme.brandPrimary;
-  static const Color _accentB = AppTheme.brandPrimary;
 
   @override
   void initState() {
@@ -244,29 +242,13 @@ class _StartupGatePageState extends State<StartupGatePage>
                   ),
                 ],
               ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  _buildOrbitDot(const Offset(-30, -30), _accentA, 12),
-                  _buildOrbitDot(const Offset(30, -30), _blue, 12),
-                  _buildOrbitDot(const Offset(-30, 30), _indigo, 12),
-                  _buildOrbitDot(const Offset(30, 30), _accentB, 12),
-                  Container(
-                    width: 30,
-                    height: 30,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: _blue.withOpacity(0.25),
-                          blurRadius: 18,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Image.asset(
+                  'assets/images/kmstrylogo.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                ),
               ),
             ),
           ),
@@ -332,7 +314,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               _buildTinyDot(),
               const SizedBox(width: 10),
               Text(
-                'AUTHENTIC CONNECTION',
+                'KNOW BEFORE YOU GO',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.28),
                   fontSize: 11,
@@ -424,27 +406,6 @@ class _StartupGatePageState extends State<StartupGatePage>
             colors: [color, Colors.transparent],
             stops: const [0.18, 1.0],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOrbitDot(Offset offset, Color color, double size) {
-    return Transform.translate(
-      offset: offset,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: color,
-          boxShadow: [
-            BoxShadow(
-              color: color.withOpacity(0.25),
-              blurRadius: 8,
-              spreadRadius: 1,
-            ),
-          ],
         ),
       ),
     );

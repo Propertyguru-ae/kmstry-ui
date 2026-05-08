@@ -72,6 +72,11 @@ class _PeoplePageState extends State<PeoplePage> {
       final blockedIds = blocked.map((b) => b.userId).toSet();
       final pageItems =
           result.items.where((m) => !blockedIds.contains(m.userId)).toList();
+      for (final m in pageItems.take(8)) {
+        debugPrint(
+          '[PeoplePage] match userId=${m.userId} username=${m.username} bio="${m.bio ?? ''}"',
+        );
+      }
       if (!mounted || requestId != _requestId) return;
       setState(() {
         if (reset) {
@@ -122,7 +127,42 @@ class _PeoplePageState extends State<PeoplePage> {
     );
   }
 
-  void _openProfile(MatchItem match) {
+  Future<void> _openProfile(MatchItem match) async {
+    String? resolvedBio = match.bio?.trim();
+    debugPrint(
+      '[PeoplePage] openProfile initial bio for userId=${match.userId}: "${resolvedBio ?? ''}"',
+    );
+    if ((resolvedBio == null || resolvedBio.isEmpty) &&
+        match.username != null &&
+        match.username!.trim().isNotEmpty) {
+      try {
+        final candidates = await _repo.findByUsername(match.username!.trim());
+        final byId = candidates.where((c) => c.id == match.userId).toList();
+        final byUsername = candidates
+            .where(
+              (c) =>
+                  c.username.toLowerCase() ==
+                  match.username!.trim().toLowerCase(),
+            )
+            .toList();
+        final exact = byId.isNotEmpty
+            ? byId.first
+            : (byUsername.isNotEmpty ? byUsername.first : null);
+        if (exact != null) {
+          resolvedBio = exact.bio?.trim();
+          debugPrint(
+            '[PeoplePage] resolved bio via username search for userId=${match.userId}: "${resolvedBio ?? ''}"',
+          );
+        } else {
+          debugPrint(
+            '[PeoplePage] username search returned no exact user for userId=${match.userId}',
+          );
+        }
+      } catch (e) {
+        debugPrint('[PeoplePage] bio fallback fetch failed: $e');
+      }
+    }
+    if (!mounted) return;
     Navigator.of(context)
         .push(
       MaterialPageRoute(
@@ -134,6 +174,9 @@ class _PeoplePageState extends State<PeoplePage> {
           userUsername: match.username,
           isMatchedHint: true,
           chatIdHint: match.chatId,
+          fallbackBio: (resolvedBio != null && resolvedBio.isNotEmpty)
+              ? resolvedBio
+              : null,
         ),
       ),
     )

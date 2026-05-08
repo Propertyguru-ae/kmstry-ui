@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:camera/camera.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
@@ -208,12 +209,10 @@ class _CameraScreenState extends State<CameraScreen> {
 
     if (!micStatus.isGranted) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+      await showPremiumErrorDialog(
+        context,
+        message:
             'Microphone permission is required for video with sound. Photo mode can still be used.',
-          ),
-        ),
       );
       return;
     }
