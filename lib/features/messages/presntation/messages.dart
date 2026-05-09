@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 
@@ -16,8 +18,9 @@ class DmListPage extends StatefulWidget {
   State<DmListPage> createState() => DmListPageState();
 }
 
-class DmListPageState extends State<DmListPage> {
+class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   final ChatRepository _repo = ChatRepository();
+  final ChatRealtimeService _realtime = ChatRealtimeService();
   final TextEditingController _searchController = TextEditingController();
   String _selectedFilter = 'All';
   List<ChatListItem> _chats = [];
@@ -28,19 +31,179 @@ class DmListPageState extends State<DmListPage> {
   Timer? _searchDebounce;
   int _requestId = 0;
   final Set<String> _deletingChatIds = <String>{};
+  StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
+  StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
+  Timer? _realtimeRefreshDebounce;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    debugPrint('💬 [Messages] Listener baglaniyor');
+    _bindRealtimeStreams();
+    unawaited(_connectRealtime());
     _loadCurrentUser();
     loadChats();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    debugPrint('💬 [Messages] Listener temizleniyor');
+    _realtimeEventsSub?.cancel();
+    _realtimeStateSub?.cancel();
+    _realtimeRefreshDebounce?.cancel();
     _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_connectRealtime());
+    _scheduleRealtimeRefresh();
+  }
+
+  void _bindRealtimeStreams() {
+    _realtimeStateSub = _realtime.connectionState.listen((state) {
+      if (!mounted) return;
+      if (state == ChatRealtimeConnectionState.connected) {
+        debugPrint('💬 [Messages] Socket connected, liste yenileniyor');
+        _scheduleRealtimeRefresh();
+      }
+      if (state == ChatRealtimeConnectionState.reconnecting) {
+        debugPrint('💬 [Messages] Socket reconnecting');
+        _scheduleRealtimeRefresh();
+      }
+    });
+
+    _realtimeEventsSub = _realtime.events.listen((envelope) {
+      if (!mounted) return;
+      debugPrint(
+        '💬 [Messages] Event yakalandi: ${envelope.event}, payload=${envelope.payload}',
+      );
+      switch (envelope.event) {
+        case 'chat.unread.updated':
+          if (!_applyChatRowUpdate(envelope.payload)) {
+            debugPrint('💬 [Messages] Local update yok, fallback refresh');
+            _scheduleRealtimeRefresh();
+          }
+          return;
+        case 'chat.updated':
+          if (!_applyChatRowUpdate(envelope.payload)) {
+            debugPrint('💬 [Messages] chat.updated local update yok, refresh');
+            _scheduleRealtimeRefresh();
+          }
+          return;
+        case 'message.created':
+          if (!_applyChatRowUpdate(envelope.payload)) {
+            debugPrint('💬 [Messages] message.created fallback refresh');
+            _scheduleRealtimeRefresh();
+          }
+          return;
+        case 'message.updated':
+        case 'message.deleted':
+        case 'chat.read':
+        case 'socket.reconnected':
+          debugPrint('💬 [Messages] Liste refresh tetiklendi');
+          _scheduleRealtimeRefresh();
+          return;
+      }
+    });
+  }
+
+  Future<void> _connectRealtime() async {
+    final token = await SecureStorage.getAccessToken();
+    if (!mounted || token == null || token.trim().isEmpty) return;
+    await _realtime.connectWithToken(token: token);
+  }
+
+  void _scheduleRealtimeRefresh() {
+    _realtimeRefreshDebounce?.cancel();
+    _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      debugPrint('💬 [Messages] GET /chats refresh calisti');
+      loadChats();
+    });
+  }
+
+  String? _readStringField(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  int? _readIntField(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value == null) continue;
+      final parsed = int.tryParse(value.toString());
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  DateTime? _readDateField(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value == null) continue;
+      final parsed = DateTime.tryParse(value.toString());
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  bool _applyChatRowUpdate(Map<String, dynamic> payload) {
+    final chatId = _readStringField(payload, const ['chatId', 'chat_id']);
+    if (chatId == null) return false;
+    final unread = _readIntField(payload, const ['unreadCount', 'unread_count']);
+    final preview = _readStringField(
+      payload,
+      const ['lastMessagePreview', 'last_message_preview'],
+    );
+    final lastMessageAt = _readDateField(
+      payload,
+      const ['lastMessageAt', 'last_message_at', 'createdAt', 'created_at'],
+    );
+    final hasAnyPatchData = unread != null || preview != null || lastMessageAt != null;
+    if (!hasAnyPatchData) return false;
+
+    final index = _chats.indexWhere((chat) => chat.id == chatId);
+    if (index < 0) return false;
+    final current = _chats[index];
+    final updated = ChatListItem(
+      id: current.id,
+      lastMessageAt: lastMessageAt ?? current.lastMessageAt,
+      unreadCount: unread ?? current.unreadCount,
+      lastMessagePreview: preview ?? current.lastMessagePreview,
+      otherUser: current.otherUser,
+      user1: current.user1,
+      user2: current.user2,
+    );
+
+    if (!mounted) return true;
+    setState(() {
+      final next = List<ChatListItem>.from(_chats);
+      next[index] = updated;
+      next.sort((a, b) {
+        final ad = a.lastMessageAt;
+        final bd = b.lastMessageAt;
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return bd.compareTo(ad);
+      });
+      _chats = next;
+    });
+    debugPrint(
+      '💬 [Messages] Local row guncellendi: chatId=$chatId unread=${updated.unreadCount}',
+    );
+    return true;
   }
 
   Future<void> _loadCurrentUser() async {
@@ -158,7 +321,7 @@ class DmListPageState extends State<DmListPage> {
                       ),
                 filled: true,
                 fillColor: isDark
-                    ? Colors.white.withOpacity(0.05)
+                    ? Colors.white.withValues(alpha: 0.05)
                     : Colors.grey[100],
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 border: OutlineInputBorder(
@@ -320,7 +483,7 @@ class DmListPageState extends State<DmListPage> {
         decoration: BoxDecoration(
           color: isSelected
               ? AppTheme.brandPrimary
-              : (isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200]),
+              : (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200]),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
@@ -373,8 +536,8 @@ class DmListPageState extends State<DmListPage> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 color: isDark
-                    ? avatarColor.withOpacity(0.2)
-                    : avatarColor.withOpacity(0.15),
+                    ? avatarColor.withValues(alpha: 0.2)
+                    : avatarColor.withValues(alpha: 0.15),
               ),
               alignment: Alignment.center,
               child: Text(
@@ -382,7 +545,7 @@ class DmListPageState extends State<DmListPage> {
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
-                  color: isDark ? avatarColor.withOpacity(0.9) : avatarColor,
+                  color: isDark ? avatarColor.withValues(alpha: 0.9) : avatarColor,
                 ),
               ),
             ),
@@ -463,7 +626,7 @@ class DmListPageState extends State<DmListPage> {
           indent: 85,
           endIndent: 16,
           color: isDark
-              ? Colors.white.withOpacity(0.05)
+              ? Colors.white.withValues(alpha: 0.05)
               : const Color(0xFFEEEEEE),
         ),
       ],

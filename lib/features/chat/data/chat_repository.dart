@@ -1,4 +1,5 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
@@ -128,6 +129,7 @@ class ChatRepository {
     required String messageType,
     String? text,
     String? imageUrl,
+    String? clientMessageId,
   }) async {
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
@@ -141,14 +143,71 @@ class ChatRepository {
     if (messageType == 'image' && imageUrl != null) {
       body['image_url'] = imageUrl;
     }
+    if (clientMessageId != null && clientMessageId.trim().isNotEmpty) {
+      body['client_message_id'] = clientMessageId.trim();
+    }
 
-    final data = await _api.post(
-      '/chats/$chatId/messages',
+    try {
+      final data = await _api.post(
+        '/chats/$chatId/messages',
+        headers: {'Authorization': 'Bearer $token'},
+        body: body,
+      );
+      return ChatMessage.fromJson(data as Map<String, dynamic>);
+    } on ApiException catch (e) {
+      // Backward compatibility: some backend versions still reject client_message_id.
+      final hasClientMessageId =
+          clientMessageId != null && clientMessageId.trim().isNotEmpty;
+      final shouldRetryWithoutClientMessageId =
+          hasClientMessageId &&
+          e.toString().toLowerCase().contains('client_message_id');
+      if (!shouldRetryWithoutClientMessageId) rethrow;
+
+      final fallbackBody = Map<String, dynamic>.from(body)
+        ..remove('client_message_id');
+      final fallbackData = await _api.post(
+        '/chats/$chatId/messages',
+        headers: {'Authorization': 'Bearer $token'},
+        body: fallbackBody,
+      );
+      return ChatMessage.fromJson(fallbackData as Map<String, dynamic>);
+    }
+  }
+
+  /// GET `/chats/:id/messages?cursor=ISO_DATE&limit=1-100`
+  Future<ChatMessagesPage> getMessagesSince(
+    String chatId, {
+    String? cursor,
+    int limit = 50,
+  }) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+
+    final safeLimit = limit.clamp(1, 100);
+    final query = <String>['limit=$safeLimit'];
+    if (cursor != null && cursor.trim().isNotEmpty) {
+      query.add('cursor=${Uri.encodeQueryComponent(cursor.trim())}');
+    }
+    final path = '/chats/$chatId/messages?${query.join('&')}';
+
+    final data = await _api.get(
+      path,
       headers: {'Authorization': 'Bearer $token'},
-      body: body,
     );
+    if (data is! Map<String, dynamic>) {
+      return const ChatMessagesPage(items: <ChatMessage>[], nextCursor: null);
+    }
 
-    return ChatMessage.fromJson(data as Map<String, dynamic>);
+    final itemsRaw = data['items'];
+    final items = itemsRaw is List
+        ? itemsRaw
+              .whereType<Map>()
+              .map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+        : <ChatMessage>[];
+
+    final nextCursor = data['nextCursor']?.toString();
+    return ChatMessagesPage(items: items, nextCursor: nextCursor);
   }
 
   /// PATCH /chats/:id/messages/:messageId — edit own message (optional).
@@ -192,4 +251,14 @@ class ChatRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
   }
+}
+
+class ChatMessagesPage {
+  final List<ChatMessage> items;
+  final String? nextCursor;
+
+  const ChatMessagesPage({
+    required this.items,
+    required this.nextCursor,
+  });
 }
