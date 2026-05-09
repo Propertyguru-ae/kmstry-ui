@@ -74,6 +74,7 @@ class _NotificationPageState extends State<NotificationPage> {
       NotificationUnreadScope.of(context)?.updateUnreadCount(0);
       final asRead = list
           .where(_isVisibleForCurrentContext)
+          .where((n) => n.type != 'new_message')
           .map(
             (n) => NotificationModel(
               id: n.id,

@@ -1,9 +1,15 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 
 class MessageDetailPage extends StatefulWidget {
@@ -25,10 +31,12 @@ class MessageDetailPage extends StatefulWidget {
   State<MessageDetailPage> createState() => _MessageDetailPageState();
 }
 
-class _MessageDetailPageState extends State<MessageDetailPage> {
+class _MessageDetailPageState extends State<MessageDetailPage>
+    with WidgetsBindingObserver {
   final ChatRepository _repo = ChatRepository();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final ChatRealtimeService _realtime = ChatRealtimeService();
 
   ChatDetail? _chat;
 
@@ -41,11 +49,27 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   bool _loadingMore = false;
   bool _hasReachedEndOfMessages = false;
   final Set<String> _deletingMessageIds = <String>{};
+  StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
+  StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
+  Timer? _typingStartDebounce;
+  Timer? _typingStopDebounce;
+  Timer? _remoteTypingTimeout;
+  DateTime? _lastCursor;
+  DateTime? _otherUserReadAt;
+  bool _typingStartSent = false;
+  bool _isOtherTyping = false;
+  bool _isOtherOnline = true;
+  bool _isSocketConnected = false;
+  bool _isSocketReconnecting = false;
+  int _localMessageCounter = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    debugPrint('💬 [Detail] Listener baglaniyor');
     _chatId = _normalizeChatId(widget.chatId);
+    _bindRealtimeStreams();
     _loadCurrentUser();
     if (_chatId != null) {
       _loadChat();
@@ -57,10 +81,40 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    debugPrint('💬 [Detail] Listener temizleniyor');
+    final cid = _chatId;
+    if (cid != null && cid.isNotEmpty) {
+      debugPrint('💬 [Detail] chat.leave => $cid');
+      _realtime.leaveChat(cid);
+    }
+    _typingStartDebounce?.cancel();
+    _typingStopDebounce?.cancel();
+    _remoteTypingTimeout?.cancel();
+    _realtimeEventsSub?.cancel();
+    _realtimeStateSub?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _messageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_connectRealtimeIfPossible());
+    unawaited(_catchUpMessages());
+  }
+
+  void _bindRealtimeStreams() {
+    _realtimeEventsSub = _realtime.events.listen(_handleRealtimeEvent);
+    _realtimeStateSub = _realtime.connectionState.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _isSocketConnected = state == ChatRealtimeConnectionState.connected;
+        _isSocketReconnecting = state == ChatRealtimeConnectionState.reconnecting;
+      });
+    });
   }
 
   void _onScroll() {
@@ -95,19 +149,291 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       setState(() {
         _currentUserId = me['id'] as String?;
       });
+      unawaited(_connectRealtimeIfPossible());
     } catch (_) {}
   }
 
-  /// Boş string veya sadece boşluk gelen chatId'yi yok say (ilk mesajda createChat çalışsın).
+  /// Boş string veya sadece boşluk gelen chatId'yi yok say.
   String? _normalizeChatId(String? id) {
     if (id == null) return null;
     final t = id.trim();
     return t.isEmpty ? null : t;
   }
 
-  bool _isChatNotActiveError(Object e) {
-    final s = e.toString().toLowerCase();
-    return s.contains('not active') || s.contains('chat is not active');
+  String _nextClientMessageId() {
+    _localMessageCounter += 1;
+    final random = Random.secure();
+    String hex(int length) {
+      const chars = '0123456789abcdef';
+      return List<String>.generate(
+        length,
+        (_) => chars[random.nextInt(chars.length)],
+      ).join();
+    }
+
+    final timePart = DateTime.now().microsecondsSinceEpoch
+        .toRadixString(16)
+        .padLeft(12, '0');
+    final counterPart = _localMessageCounter.toRadixString(16).padLeft(4, '0');
+    // UUID-benzeri format: 8-4-4-4-12
+    return '${hex(8)}-${hex(4)}-4${hex(3)}-${hex(4)}-$timePart$counterPart';
+  }
+
+  DateTime? _parseIsoDateTime(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
+  }
+
+  String? _readStringField(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  void _touchCursor(DateTime? ts) {
+    if (ts == null) return;
+    if (_lastCursor == null || ts.isAfter(_lastCursor!)) {
+      _lastCursor = ts;
+    }
+  }
+
+  void _refreshCursorFromMessages(List<ChatMessage> messages) {
+    for (final message in messages) {
+      _touchCursor(message.createdAt);
+    }
+  }
+
+  Future<void> _connectRealtimeIfPossible() async {
+    final cid = _chatId;
+    if (cid == null || cid.isEmpty) return;
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) return;
+    await _realtime.connectWithToken(token: token);
+    debugPrint('💬 [Detail] chat.join => $cid');
+    _realtime.joinChat(cid);
+    try {
+      await _repo.markChatRead(cid);
+    } catch (_) {}
+  }
+
+  Future<void> _catchUpMessages() async {
+    final cid = _chatId;
+    if (cid == null || cid.isEmpty) return;
+
+    try {
+      String? cursor = _lastCursor?.toUtc().toIso8601String();
+      var loops = 0;
+      while (loops < 6) {
+        loops += 1;
+        final page = await _repo.getMessagesSince(
+          cid,
+          cursor: cursor,
+          limit: 100,
+        );
+        if (page.items.isEmpty) break;
+        if (!mounted) return;
+        for (final message in page.items) {
+          _mergeOrInsertMessage(message, shouldScroll: false);
+        }
+        if (page.nextCursor == null || page.nextCursor!.isEmpty) break;
+        cursor = page.nextCursor;
+        _touchCursor(_parseIsoDateTime(page.nextCursor));
+      }
+    } catch (_) {}
+  }
+
+  void _handleRealtimeEvent(ChatRealtimeEnvelope envelope) {
+    if (!mounted) return;
+    final payload = envelope.payload;
+    final eventChatId = _readStringField(payload, const ['chatId', 'chat_id']);
+    final activeChatId = _chatId;
+    final isChatEvent = envelope.event.startsWith('message.') ||
+        envelope.event == 'chat.updated' ||
+        envelope.event == 'chat.read' ||
+        envelope.event.startsWith('typing.');
+
+    if (isChatEvent &&
+        activeChatId != null &&
+        eventChatId != null &&
+        eventChatId != activeChatId) {
+      return;
+    }
+
+    _touchCursor(
+      _parseIsoDateTime(payload['serverTimestamp'] ?? payload['server_timestamp']),
+    );
+
+    switch (envelope.event) {
+      case 'socket.reconnected':
+        unawaited(_catchUpMessages());
+        return;
+      case 'message.created':
+      case 'message.updated':
+        final rawMessage = payload['message'];
+        if (rawMessage is! Map) return;
+        final message = ChatMessage.fromJson(Map<String, dynamic>.from(rawMessage));
+        _mergeOrInsertMessage(message);
+        return;
+      case 'message.deleted':
+        final messageId = _readStringField(payload, const ['messageId', 'message_id']);
+        if (messageId == null || messageId.isEmpty) return;
+        _removeMessageById(messageId);
+        return;
+      case 'chat.updated':
+        _touchCursor(
+          _parseIsoDateTime(payload['lastMessageAt'] ?? payload['last_message_at']),
+        );
+        return;
+      case 'chat.read':
+        final userId = _readStringField(payload, const ['userId', 'user_id']);
+        if (userId == null || userId != widget.otherUserId) return;
+        final readAt = _parseIsoDateTime(payload['readAt'] ?? payload['read_at']);
+        if (readAt == null) return;
+        if (!mounted) return;
+        setState(() {
+          if (_otherUserReadAt == null || readAt.isAfter(_otherUserReadAt!)) {
+            _otherUserReadAt = readAt;
+          }
+        });
+        return;
+      case 'presence.online':
+      case 'presence.offline':
+        final userId = _readStringField(payload, const ['userId', 'user_id']);
+        if (userId == null || userId != widget.otherUserId) return;
+        if (!mounted) return;
+        setState(() {
+          _isOtherOnline = envelope.event == 'presence.online';
+        });
+        return;
+      case 'typing.start':
+        final userId = _readStringField(payload, const ['userId', 'user_id']);
+        if (userId == null || userId != widget.otherUserId) return;
+        _remoteTypingTimeout?.cancel();
+        setState(() => _isOtherTyping = true);
+        _remoteTypingTimeout = Timer(const Duration(seconds: 4), () {
+          if (!mounted) return;
+          setState(() => _isOtherTyping = false);
+        });
+        return;
+      case 'typing.stop':
+        final userId = _readStringField(payload, const ['userId', 'user_id']);
+        if (userId == null || userId != widget.otherUserId) return;
+        _remoteTypingTimeout?.cancel();
+        setState(() => _isOtherTyping = false);
+        return;
+      default:
+        return;
+    }
+  }
+
+  void _removeMessageById(String messageId) {
+    if (messageId.isEmpty || _chat == null) return;
+    final next = _chat!.messages.where((m) => m.id != messageId).toList();
+    setState(() {
+      _chat = ChatDetail(
+        id: _chat!.id,
+        messages: next,
+        otherUser: _chat!.otherUser,
+        participants: _chat!.participants,
+      );
+    });
+  }
+
+  void _mergeOrInsertMessage(
+    ChatMessage incoming, {
+    bool shouldScroll = true,
+  }) {
+    final current = _chat;
+    if (current == null) {
+      setState(() {
+        _chat = ChatDetail(
+          id: _chatId ?? '',
+          messages: [incoming],
+          otherUser: ChatListItemUser(
+            id: widget.otherUserId,
+            fullName: widget.otherName,
+            photo: widget.otherPhotoUrl,
+          ),
+          participants: null,
+        );
+      });
+      _touchCursor(incoming.createdAt);
+      if (shouldScroll) _scrollToBottom(animated: true);
+      return;
+    }
+
+    final messages = List<ChatMessage>.from(current.messages);
+    var replaced = false;
+    for (var i = 0; i < messages.length; i++) {
+      if (messages[i].id == incoming.id && incoming.id.isNotEmpty) {
+        messages[i] = incoming;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced &&
+        incoming.clientMessageId != null &&
+        incoming.clientMessageId!.isNotEmpty) {
+      for (var i = 0; i < messages.length; i++) {
+        if (messages[i].clientMessageId == incoming.clientMessageId) {
+          messages[i] = incoming;
+          replaced = true;
+          break;
+        }
+      }
+    }
+    if (!replaced) {
+      messages.add(incoming);
+    }
+
+    setState(() {
+      _chat = ChatDetail(
+        id: current.id,
+        messages: messages,
+        otherUser: current.otherUser,
+        participants: current.participants,
+      );
+    });
+    _touchCursor(incoming.createdAt);
+    if (shouldScroll) _scrollToBottom(animated: true);
+  }
+
+  void _emitTypingStopIfNeeded() {
+    final cid = _chatId;
+    if (!_typingStartSent || cid == null || cid.isEmpty) return;
+    _typingStartSent = false;
+    _realtime.sendTypingStop(chatId: cid);
+  }
+
+  void _onMessageTextChanged(String raw) {
+    final cid = _chatId;
+    if (cid == null || cid.isEmpty) return;
+
+    final hasText = raw.trim().isNotEmpty;
+    if (!hasText) {
+      _typingStartDebounce?.cancel();
+      _typingStopDebounce?.cancel();
+      _emitTypingStopIfNeeded();
+      return;
+    }
+
+    if (!_typingStartSent) {
+      _typingStartDebounce?.cancel();
+      _typingStartDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (!mounted) return;
+        if (_messageController.text.trim().isEmpty) return;
+        _typingStartSent = true;
+        _realtime.sendTypingStart(chatId: cid);
+      });
+    }
+
+    _typingStopDebounce?.cancel();
+    _typingStopDebounce = Timer(const Duration(milliseconds: 1400), () {
+      _emitTypingStopIfNeeded();
+    });
   }
 
   Future<void> _loadChat() async {
@@ -124,6 +450,8 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         _chat = detail;
         _loading = false;
       });
+      _refreshCursorFromMessages(detail.messages);
+      unawaited(_connectRealtimeIfPossible());
       _scrollToBottom();
     } catch (e) {
       debugPrint('❌ getChat error: $e');
@@ -195,8 +523,16 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
-    final otherId = widget.otherUserId.trim();
-    if (otherId.isEmpty) {
+    final cid = _normalizeChatId(_chatId);
+    if (cid == null) {
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+      );
+      return;
+    }
+    if (widget.otherUserId.trim().isEmpty) {
       await showPremiumErrorDialog(
         context,
         message: 'Kullanıcı bilgisi eksik, mesaj gönderilemez.',
@@ -206,56 +542,41 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
 
     setState(() => _sending = true);
     _messageController.clear();
+    _emitTypingStopIfNeeded();
+    String? optimisticTempId;
 
     try {
-      String? cid = _normalizeChatId(_chatId);
-      if (cid == null) {
-        cid = await _repo.createChat(otherId);
-        if (!mounted) return;
-        setState(() => _chatId = cid);
-      }
+      final clientMessageId = _nextClientMessageId();
+      optimisticTempId = 'temp-$clientMessageId';
+      final optimistic = ChatMessage(
+        id: optimisticTempId,
+        messageType: 'text',
+        text: text,
+        imageUrl: null,
+        createdAt: DateTime.now(),
+        senderId: _currentUserId,
+        isMe: true,
+        clientMessageId: clientMessageId,
+      );
+      _mergeOrInsertMessage(optimistic);
 
-      ChatMessage? sent;
-      for (var attempt = 0; attempt < 2; attempt++) {
-        try {
-          sent = await _repo.sendMessage(cid!, messageType: 'text', text: text);
-          break;
-        } catch (e) {
-          if (attempt == 0 && _isChatNotActiveError(e)) {
-            debugPrint(
-              '⚠️ sendMessage: sohbet aktif değil, createChat ile yenileniyor...',
-            );
-            final newId = await _repo.createChat(otherId);
-            if (!mounted) return;
-            cid = newId;
-            setState(() => _chatId = cid);
-            continue;
-          }
-          rethrow;
-        }
-      }
+      final sentMessage = await _repo.sendMessage(
+        cid,
+        messageType: 'text',
+        text: text,
+        clientMessageId: clientMessageId,
+      );
+      if (!mounted) return;
 
-      if (!mounted || sent == null) return;
-      final sentMessage = sent;
-
-      if (_chat != null) {
-        setState(() {
-          _chat = ChatDetail(
-            id: _chat!.id,
-            messages: [..._chat!.messages, sentMessage],
-            otherUser: _chat!.otherUser,
-            participants: _chat!.participants,
-          );
-          _sending = false;
-        });
-        _scrollToBottom(animated: true);
-      } else {
-        await _loadChat();
-        if (mounted) setState(() => _sending = false);
-      }
+      _removeMessageById(optimisticTempId);
+      _mergeOrInsertMessage(sentMessage);
+      if (mounted) setState(() => _sending = false);
     } catch (e) {
       debugPrint('❌ sendMessage error: $e');
       if (!mounted) return;
+      if (optimisticTempId != null) {
+        _removeMessageById(optimisticTempId);
+      }
       _messageController.text = text;
       setState(() => _sending = false);
       await showPremiumErrorDialog(
@@ -398,6 +719,13 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     final avatarSeed = name.isNotEmpty ? name : widget.otherUserId;
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
+    final statusText = _isOtherTyping
+        ? 'Typing...'
+        : _isSocketReconnecting
+        ? 'Reconnecting...'
+        : (_isSocketConnected
+              ? (_isOtherOnline ? 'Online' : 'Offline')
+              : 'Connecting...');
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -438,7 +766,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                   ),
                 ),
                 Text(
-                  'Online',
+                  statusText,
                   style: TextStyle(color: colors.primary, fontSize: 12),
                 ),
               ],
@@ -520,18 +848,27 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         final msg = ordered[msgIndex];
         final isMe = msg.isSentByMe(_currentUserId);
         final time = _formatTime(msg.createdAt);
+        final isSeenByOther =
+            isMe &&
+            _otherUserReadAt != null &&
+            !msg.createdAt.isAfter(_otherUserReadAt!);
         final content = msg.messageType == 'image' && msg.imageUrl != null
             ? msg.imageUrl!
             : (msg.text ?? '');
         if (msg.messageType == 'image' && msg.imageUrl != null) {
           return GestureDetector(
             onLongPress: () => _showMessageActions(msg, isMe),
-            child: _buildImageBubble(msg.imageUrl!, isMe, time),
+            child: _buildImageBubble(msg.imageUrl!, isMe, time, isSeenByOther),
           );
         }
         return GestureDetector(
           onLongPress: () => _showMessageActions(msg, isMe),
-          child: _buildMessageBubble(message: content, isMe: isMe, time: time),
+          child: _buildMessageBubble(
+            message: content,
+            isMe: isMe,
+            time: time,
+            isSeenByOther: isSeenByOther,
+          ),
         );
       },
     );
@@ -541,6 +878,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     required String message,
     required bool isMe,
     required String time,
+    required bool isSeenByOther,
   }) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
@@ -577,7 +915,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              time,
+              isSeenByOther ? 'Seen • $time' : time,
               style: TextStyle(
                 color: isMe
                     ? colors.onSecondary.withValues(alpha: 0.75)
@@ -591,7 +929,12 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     );
   }
 
-  Widget _buildImageBubble(String imageUrl, bool isMe, String time) {
+  Widget _buildImageBubble(
+    String imageUrl,
+    bool isMe,
+    String time,
+    bool isSeenByOther,
+  ) {
     final colors = Theme.of(context).colorScheme;
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -618,7 +961,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              time,
+              isSeenByOther ? 'Seen • $time' : time,
               style: TextStyle(
                 color: colors.onSurface.withValues(alpha: 0.55),
                 fontSize: 10,
@@ -657,6 +1000,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
             Expanded(
               child: TextField(
                 controller: _messageController,
+                onChanged: _onMessageTextChanged,
                 keyboardType: TextInputType.multiline,
                 textInputAction: TextInputAction.newline,
                 minLines: 1,
