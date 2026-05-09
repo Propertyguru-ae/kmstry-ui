@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
@@ -224,8 +225,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not prepare venue for check-in')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Could not prepare venue for check-in',
       );
       debugPrint('❌ Check-in venue resolve error: $e');
     } finally {
@@ -413,8 +415,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
     if (destinationForUrl.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No location available for directions')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'No location available for directions',
       );
       return;
     }
@@ -465,9 +468,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Could not open maps')));
+    await showPremiumErrorDialog(context, message: 'Could not open maps');
   }
 
   bool _isActiveCheckinAtCurrentVenue() {
@@ -609,16 +610,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               const SizedBox(height: 16),
 
-              /// TAG
-              Text(
-                '#${widget.venue.tag}',
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-
-              const SizedBox(height: 8),
+              // Tag alanini simdilik gizliyoruz.
 
               /// ADDRESS
               Text(

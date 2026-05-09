@@ -197,21 +197,45 @@ class CheckinProfileCheckin {
   final String id;
   final String? venueId;
   final String? vibe;
+  final List<String> whatBringsToKmstry;
   final DateTime expiresAt;
 
   CheckinProfileCheckin({
     required this.id,
     required this.venueId,
     required this.vibe,
+    this.whatBringsToKmstry = const [],
     required this.expiresAt,
   });
 
   factory CheckinProfileCheckin.fromJson(Map<String, dynamic> json) {
     final expiresAtRaw = (json['expires_at'] ?? json['expiresAt'])?.toString();
+    List<String> parseWhatBrings(dynamic value) {
+      if (value is List) {
+        return value
+            .map((e) => e?.toString().trim() ?? '')
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
+      if (value is String) {
+        final v = value.trim();
+        return v.isEmpty ? const [] : [v];
+      }
+      return const [];
+    }
+    final whatBrings = parseWhatBrings(
+      json['whatBringsToKmstry'] ??
+          json['what_brings_to_kmstry'] ??
+          json['whatBrings'] ??
+          json['what_brings'] ??
+          json['whatBringsYou'] ??
+          json['what_brings_you'],
+    );
     return CheckinProfileCheckin(
       id: json['id']?.toString() ?? '',
       venueId: (json['venue_id'] ?? json['venueId'])?.toString(),
       vibe: json['vibe']?.toString(),
+      whatBringsToKmstry: whatBrings,
       expiresAt:
           DateTime.tryParse(expiresAtRaw ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),

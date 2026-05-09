@@ -1,5 +1,6 @@
 import 'dart:developer';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:video_player/video_player.dart';
@@ -29,6 +30,13 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   bool _hasChanged = false;
   VideoPlayerController? _videoController;
 
+  int _safeInitialIndex(List<CheckinProfileMedia> media, int requestedIndex) {
+    if (media.isEmpty) return 0;
+    if (requestedIndex < 0) return 0;
+    if (requestedIndex >= media.length) return media.length - 1;
+    return requestedIndex;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -36,8 +44,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     // 🔥 HATA BURADAYDI
     _media = List.from(widget.media);
 
-    _currentIndex = widget.initialIndex;
-    _controller = PageController(initialPage: widget.initialIndex);
+    _currentIndex = _safeInitialIndex(_media, widget.initialIndex);
+    _controller = PageController(initialPage: _currentIndex);
 
     // İlk item video ise başlat
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -46,6 +54,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   }
 
   Future<void> _setupVideoIfNeeded(int index) async {
+    if (_media.isEmpty) return;
+    if (index < 0 || index >= _media.length) return;
     final item = _media[index];
 
     _videoController?.dispose();
@@ -66,8 +76,9 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   Future<void> _setFeatured() async {
     final selected = _media[_currentIndex];
     if (selected.mediaType != MediaType.photo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only photos can be featured.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Only photos can be featured.',
       );
       return;
     }
@@ -87,8 +98,9 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       });
     } catch (e) {
       log("Feature error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to set featured media")),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Failed to set featured media',
       );
     }
 
@@ -109,9 +121,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       Navigator.pop(context, true);
     } catch (e) {
       log("Delete error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to delete media")),
-      );
+      await showPremiumErrorDialog(context, message: 'Failed to delete media');
     }
 
     if (mounted) setState(() => _loading = false);
@@ -150,6 +160,32 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_media.isEmpty) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              const Center(
+                child: Text(
+                  'No moments available',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+              Positioned(
+                top: 16,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.pop(context, _hasChanged),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final currentMedia = _media[_currentIndex];
     final canFeaturePhoto =
         currentMedia.mediaType == MediaType.photo && !currentMedia.isFeatured;

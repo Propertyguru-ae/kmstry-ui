@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
@@ -121,13 +122,7 @@ class DmListPageState extends State<DmListPage> {
           ),
         ),
         actions: [
-          IconButton(
-            icon: Icon(
-              Icons.more_horiz,
-              color: isDark ? Colors.white70 : Colors.black,
-            ),
-            onPressed: () {},
-          ),
+       
         ],
       ),
       body: Column(
@@ -249,20 +244,27 @@ class DmListPageState extends State<DmListPage> {
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
         return AlertDialog(
-          title: const Text('Delete chat?'),
-          content: const Text('Are you sure you want to delete this chat?'),
+          title: const Text('Delete conversation'),
+
+          content: const Text('This conversation will be permanently removed.'),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: colors.error,
-                foregroundColor: colors.onError,
-              ),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Delete'),
+            Row(
+              children: [
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.brandPrimary,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                const Spacer(),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: colors.error),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
             ),
           ],
         );
@@ -297,12 +299,10 @@ class DmListPageState extends State<DmListPage> {
         _deletingChatIds.remove(chat.id);
         _chats = previousChats;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Chat could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
-          ),
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Chat could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     }
   }

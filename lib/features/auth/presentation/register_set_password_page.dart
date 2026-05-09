@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -155,8 +156,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     final uri = Uri.parse('${AppConfig.baseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open policy link.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Unable to open policy link.',
       );
     }
   }

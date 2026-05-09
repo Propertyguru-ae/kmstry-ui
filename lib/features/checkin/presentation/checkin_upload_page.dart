@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -270,8 +271,9 @@ class _CheckInPageState extends State<CheckInPage> {
 
   Future<void> _openCameraAndAddMedia() async {
     if (_media.length >= _maxMedia) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You can add up to 6 items.")),
+      await showPremiumErrorDialog(
+        context,
+        message: 'You can add up to 6 items.',
       );
       return;
     }
@@ -293,8 +295,9 @@ class _CheckInPageState extends State<CheckInPage> {
     final hasExistingVideo = _media.any((m) => m.type == MediaType.video);
     if (selectedType == MediaType.video && hasExistingVideo) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You can upload only 1 video.")),
+      await showPremiumErrorDialog(
+        context,
+        message: 'You can upload only 1 video.',
       );
       return;
     }
@@ -317,8 +320,9 @@ class _CheckInPageState extends State<CheckInPage> {
   /// Fotoğrafı öne çıkan olarak işaretleme
   void _setFeatured(int index) {
     if (_media[index].type != MediaType.photo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only photos can be featured.')),
+      showPremiumErrorDialog(
+        context,
+        message: 'Only photos can be featured.',
       );
       return;
     }
@@ -357,9 +361,7 @@ class _CheckInPageState extends State<CheckInPage> {
       return;
     }
     if (_vibeController.text.trim().characters.length > _vibeMaxLength) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Vibe is too long.")));
+      await showPremiumErrorDialog(context, message: 'Vibe is too long.');
       return;
     }
 
@@ -405,9 +407,7 @@ class _CheckInPageState extends State<CheckInPage> {
     } catch (e) {
       debugPrint('❌ Check-in error: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Check-in failed')));
+      await showPremiumErrorDialog(context, message: 'Check-in failed');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

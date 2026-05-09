@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
@@ -42,7 +43,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
       context: context,
       initialDate: DateTime(now.year - 20),
       firstDate: DateTime(now.year - 100),
-      lastDate: DateTime(now.year - 18),
+      lastDate: now,
     );
 
     if (picked != null) {
@@ -66,9 +67,7 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
     } catch (_) {
       setState(() => _loading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Something went wrong')));
+      await showPremiumErrorDialog(context, message: 'Something went wrong');
     }
   }
 

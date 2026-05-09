@@ -21,6 +21,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool _loading = false;
+  bool _success = false;
   String? _error;
 
   @override
@@ -77,15 +78,9 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         newPassword: _passwordCtrl.text,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Password updated. You can sign in with your new password.'),
-        ),
-      );
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        AuthRoutes.login,
-        (route) => false,
-      );
+      setState(() {
+        _success = true;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = _friendlyError(e));
@@ -122,6 +117,63 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                       child: const Text('Back to sign in'),
                     ),
                   ],
+                )
+              : _success
+              ? Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          width: 84,
+                          height: 84,
+                          margin: const EdgeInsets.only(bottom: 20),
+                          decoration: BoxDecoration(
+                            color: colors.primary.withValues(alpha: 0.16),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.check_rounded,
+                            size: 44,
+                            color: colors.primary,
+                          ),
+                        ),
+                        const Text(
+                          'Password updated',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Your password has been updated successfully. You can now sign in with your new password.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.78),
+                            fontSize: 15,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        SizedBox(
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.of(
+                              context,
+                            ).pushNamedAndRemoveUntil(
+                              AuthRoutes.login,
+                              (route) => false,
+                            ),
+                            child: const Text('Go to sign in'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 )
               : Form(
                   key: _formKey,

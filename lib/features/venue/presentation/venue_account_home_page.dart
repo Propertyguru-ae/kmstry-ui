@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
@@ -47,8 +48,9 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not start personal onboarding.')),
+      await showPremiumErrorDialog(
+        context,
+        message: 'Could not start personal onboarding.',
       );
     } finally {
       if (!mounted) return;
