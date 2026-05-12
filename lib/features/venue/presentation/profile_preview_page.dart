@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dar
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 enum ProfileActionState {
   showActions,
@@ -100,6 +102,74 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _isReporting = false;
   bool _isSendingAction = false;
   String? _sendingActionType;
+  final Map<String, String?> _videoPosterPathByUrl = {};
+  final Map<String, Future<String?>> _videoPosterFutureByUrl = {};
+
+  Future<String?> _getVideoPoster(String url) {
+    final cached = _videoPosterPathByUrl[url];
+    if (cached != null && cached.isNotEmpty) return Future.value(cached);
+    final pending = _videoPosterFutureByUrl[url];
+    if (pending != null) return pending;
+    final future = _generateVideoPoster(url);
+    _videoPosterFutureByUrl[url] = future;
+    return future;
+  }
+
+  Future<String?> _generateVideoPoster(String url) async {
+    try {
+      final path = await VideoThumbnail.thumbnailFile(
+        video: url,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 420,
+        quality: 72,
+      );
+      _videoPosterPathByUrl[url] = path;
+      return path;
+    } catch (_) {
+      _videoPosterPathByUrl[url] = null;
+      return null;
+    } finally {
+      _videoPosterFutureByUrl.remove(url);
+    }
+  }
+
+  Widget _buildVideoPosterLayer(
+    CheckinProfileMedia media, {
+    required BoxFit fit,
+    double? width,
+    double? height,
+  }) {
+    final thumb = media.thumbnailUrl;
+    final hasThumb = thumb != null && thumb.isNotEmpty;
+    if (hasThumb) {
+      return Image.network(
+        thumb,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) =>
+            Container(color: Colors.black87),
+      );
+    }
+
+    return FutureBuilder<String?>(
+      future: _getVideoPoster(media.url),
+      builder: (context, snap) {
+        final localPoster = snap.data;
+        if (localPoster != null && localPoster.isNotEmpty) {
+          return Image.file(
+            File(localPoster),
+            width: width,
+            height: height,
+            fit: fit,
+            errorBuilder: (context, error, stackTrace) =>
+                Container(color: Colors.black87),
+          );
+        }
+        return Container(color: Colors.black87);
+      },
+    );
+  }
 
   ProfileActionState? _cachedActionStateFor(String? userId) {
     return ProfilePreviewPage.peekCachedActionState(userId);
@@ -1332,23 +1402,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     double? height,
     double iconSize = 42,
   }) {
-    final thumbnail = media.thumbnailUrl;
-    final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
-
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (hasThumbnail)
-          Image.network(
-            thumbnail,
-            width: width,
-            height: height,
-            fit: fit,
-            errorBuilder: (context, error, stackTrace) =>
-                Container(color: Colors.black87),
-          )
-        else
-          Container(color: Colors.black87),
+        _buildVideoPosterLayer(
+          media,
+          fit: fit,
+          width: width,
+          height: height,
+        ),
         Center(
           child: Icon(
             Icons.play_circle_fill,
