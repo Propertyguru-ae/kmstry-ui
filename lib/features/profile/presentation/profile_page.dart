@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/profile/presentation/profile_settings_p
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -50,10 +51,80 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   final NotificationPermissionService _notificationPermissionService =
       NotificationPermissionService();
   bool _showNotificationWarning = false;
+  final Map<String, String?> _videoPosterPathByUrl = {};
+  final Map<String, Future<String?>> _videoPosterFutureByUrl = {};
   String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
     return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  Future<String?> _getVideoPoster(String url) {
+    final cachedPath = _videoPosterPathByUrl[url];
+    if (cachedPath != null && cachedPath.isNotEmpty) {
+      return Future.value(cachedPath);
+    }
+    final pending = _videoPosterFutureByUrl[url];
+    if (pending != null) return pending;
+
+    final future = _generateVideoPoster(url);
+    _videoPosterFutureByUrl[url] = future;
+    return future;
+  }
+
+  Future<String?> _generateVideoPoster(String url) async {
+    try {
+      final path = await VideoThumbnail.thumbnailFile(
+        video: url,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 420,
+        quality: 72,
+      );
+      _videoPosterPathByUrl[url] = path;
+      return path;
+    } catch (_) {
+      _videoPosterPathByUrl[url] = null;
+      return null;
+    } finally {
+      _videoPosterFutureByUrl.remove(url);
+    }
+  }
+
+  Widget _buildVideoPosterLayer(
+    CheckinProfileMedia media, {
+    required BoxFit fit,
+    double? width,
+    double? height,
+  }) {
+    final thumbnail = media.thumbnailUrl;
+    final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
+    if (hasThumbnail) {
+      return Image.network(
+        thumbnail,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) => Container(color: Colors.black87),
+      );
+    }
+
+    return FutureBuilder<String?>(
+      future: _getVideoPoster(media.url),
+      builder: (context, snapshot) {
+        final posterPath = snapshot.data;
+        if (posterPath != null && posterPath.isNotEmpty) {
+          return Image.file(
+            File(posterPath),
+            width: width,
+            height: height,
+            fit: fit,
+            errorBuilder: (context, error, stackTrace) =>
+                Container(color: Colors.black87),
+          );
+        }
+        return Container(color: Colors.black87);
+      },
+    );
   }
 
   bool _isVideoFile(String path) {
@@ -76,24 +147,13 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     const thumbHeight = 110.0;
 
     if (media.mediaType == MediaType.video) {
-      final thumbnail = media.thumbnailUrl;
-      final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
-
       return SizedBox(
         width: thumbWidth,
         height: thumbHeight,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            /// Thumbnail
-            if (hasThumbnail)
-              Image.network(
-                thumbnail,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(color: Colors.black87),
-              )
-            else
-              Container(color: Colors.black87),
+            _buildVideoPosterLayer(media, fit: BoxFit.cover),
 
             /// Play icon
             const Center(
@@ -151,23 +211,15 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     double? height,
     double iconSize = 52,
   }) {
-    final thumbnail = media.thumbnailUrl;
-    final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
-
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (hasThumbnail)
-          Image.network(
-            thumbnail,
-            width: width,
-            height: height,
-            fit: fit,
-            errorBuilder: (context, error, stackTrace) =>
-                Container(color: Colors.black87),
-          )
-        else
-          Container(color: Colors.black87),
+        _buildVideoPosterLayer(
+          media,
+          fit: fit,
+          width: width,
+          height: height,
+        ),
         Center(
           child: Icon(
             Icons.play_circle_fill,
