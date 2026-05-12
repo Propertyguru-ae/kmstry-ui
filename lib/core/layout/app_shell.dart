@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
+import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -37,12 +38,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _unreadNotificationCount = 0;
   int _unreadDmCount = 0;
   final NotificationRepository _notificationRepo = NotificationRepository();
+  final NotificationRealtimeService _notificationRealtime =
+      NotificationRealtimeService();
   final ChatRepository _chatRepo = ChatRepository();
   final ChatRealtimeService _chatRealtime = ChatRealtimeService();
   final Map<String, int> _chatUnreadById = <String, int>{};
   StreamSubscription<ChatRealtimeEnvelope>? _chatEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _chatStateSub;
+  StreamSubscription<NotificationRealtimeEnvelope>? _notificationEventsSub;
+  StreamSubscription<ChatRealtimeConnectionState>? _notificationStateSub;
+  StreamSubscription<dynamic>? _foregroundPushSub;
   Timer? _dmRefreshDebounce;
+  Timer? _notificationRefreshDebounce;
 
   final GlobalKey<DmListPageState> _dmListKey =
       GlobalKey<
@@ -59,7 +66,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _currentIndex = widget.initialIndex;
     WidgetsBinding.instance.addObserver(this);
     _bindChatRealtime();
+    _bindNotificationRealtime();
     unawaited(_connectChatRealtime());
+    unawaited(_notificationRealtime.ensureConnected());
     _loadUserInitial();
     _loadUnreadNotificationCount();
     _loadUnreadDmCount();
@@ -71,7 +80,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _chatEventsSub?.cancel();
     _chatStateSub?.cancel();
+    _notificationEventsSub?.cancel();
+    _notificationStateSub?.cancel();
+    _foregroundPushSub?.cancel();
     _dmRefreshDebounce?.cancel();
+    _notificationRefreshDebounce?.cancel();
     super.dispose();
   }
 
@@ -79,6 +92,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_connectChatRealtime());
+      unawaited(_notificationRealtime.ensureConnected());
       PushManager.instance.reconcileNotificationState();
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
@@ -87,11 +101,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _loadUnreadNotificationCount() async {
     try {
-      final list = await _notificationRepo.getNotifications(limit: 50);
+      final count = await _notificationRepo.getUnreadCount();
       if (!mounted) return;
-      final count = list.where((n) => !n.isRead && n.type != 'new_message').length;
       setState(() => _unreadNotificationCount = count);
-    } catch (_) {}
+    } catch (_) {
+      try {
+        final list = await _notificationRepo.getNotifications(limit: 50);
+        if (!mounted) return;
+        final count = list
+            .where((n) => !n.isRead && n.type != 'new_message')
+            .length;
+        setState(() => _unreadNotificationCount = count);
+      } catch (_) {}
+    }
   }
 
   Future<void> _loadUnreadDmCount() async {
@@ -156,11 +178,57 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
+  void _bindNotificationRealtime() {
+    _notificationStateSub = _notificationRealtime.connectionState.listen((state) {
+      if (!mounted) return;
+      if (state == ChatRealtimeConnectionState.connected ||
+          state == ChatRealtimeConnectionState.reconnecting) {
+        _scheduleNotificationRefresh();
+      }
+    });
+
+    _notificationEventsSub = _notificationRealtime.events.listen((envelope) {
+      if (!mounted) return;
+      switch (envelope.event) {
+        case 'notification.created':
+          if (!_applyNotificationUnreadPatch(envelope.payload)) {
+            final type = _readStringField(envelope.payload, const ['type']);
+            if (type != 'new_message') {
+              setState(() {
+                _unreadNotificationCount += 1;
+              });
+            }
+          }
+          return;
+        case 'notification.updated':
+        case 'notification.read':
+        case 'socket.reconnected':
+          if (!_applyNotificationUnreadPatch(envelope.payload)) {
+            _scheduleNotificationRefresh();
+          }
+          return;
+      }
+    });
+
+    _foregroundPushSub = PushManager.instance.foregroundMessages.listen((_) {
+      if (!mounted) return;
+      _scheduleNotificationRefresh();
+    });
+  }
+
   void _scheduleDmRefresh() {
     _dmRefreshDebounce?.cancel();
     _dmRefreshDebounce = Timer(const Duration(milliseconds: 200), () {
       if (!mounted) return;
       _loadUnreadDmCount();
+    });
+  }
+
+  void _scheduleNotificationRefresh() {
+    _notificationRefreshDebounce?.cancel();
+    _notificationRefreshDebounce = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      _loadUnreadNotificationCount();
     });
   }
 
@@ -196,6 +264,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _chatUnreadById[chatId] = unread;
       final nextTotal = _unreadDmCount + delta;
       _unreadDmCount = nextTotal < 0 ? 0 : nextTotal;
+    });
+    return true;
+  }
+
+  bool _applyNotificationUnreadPatch(Map<String, dynamic> payload) {
+    final type = _readStringField(payload, const ['type']);
+    if (type == 'new_message') return true;
+    final unread = _readIntField(payload, const ['unreadCount', 'unread_count']);
+    if (unread == null) return false;
+    if (!mounted) return true;
+    setState(() {
+      _unreadNotificationCount = unread < 0 ? 0 : unread;
     });
     return true;
   }

@@ -1,6 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
+import 'dart:async';
 import '../network/api_client.dart';
 import '../storage/secure_storage.dart';
 import '../../features/auth/data/auth_repository.dart';
@@ -17,6 +18,11 @@ class PushManager {
 
   bool _initialized = false;
   String? _lastRegisteredToken;
+  final StreamController<RemoteMessage> _foregroundMessagesController =
+      StreamController<RemoteMessage>.broadcast();
+
+  Stream<RemoteMessage> get foregroundMessages =>
+      _foregroundMessagesController.stream;
 
   Future<void> init() async {
     if (_initialized) return;
@@ -27,6 +33,13 @@ class PushManager {
         debugPrint("🔄 FCM token refreshed: $token");
       }
       await _tryRegisterToken(token);
+    });
+
+    FirebaseMessaging.onMessage.listen((message) {
+      if (kDebugMode) {
+        debugPrint("🔔 Foreground push alindi: ${message.messageId}");
+      }
+      _foregroundMessagesController.add(message);
     });
   }
 

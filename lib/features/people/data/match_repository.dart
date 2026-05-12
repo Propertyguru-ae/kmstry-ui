@@ -103,11 +103,13 @@ class MatchRepository {
         '/blocks/me',
         headers: {'Authorization': 'Bearer $token'},
       );
-    } catch (_) {
-      data = await _api.get(
-        '/blocks/me',
-        headers: {'Authorization': 'Bearer $token'},
-      );
+    } on ApiException catch (e) {
+      // Some environments may not expose blocks endpoint.
+      // Blocking list should not prevent loading matches.
+      if (e.statusCode == 404 || e.statusCode == 400) {
+        return const [];
+      }
+      rethrow;
     }
     final list = _extractList(data);
     return list
@@ -226,6 +228,18 @@ class MatchRepository {
 
     await _api.delete(
       '/blocks/$userId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  Future<void> deleteMatch(String matchId) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    final normalized = matchId.trim();
+    if (normalized.isEmpty) throw Exception('Invalid match id');
+
+    await _api.delete(
+      '/matches/$normalized',
       headers: {'Authorization': 'Bearer $token'},
     );
   }

@@ -64,4 +64,20 @@ class NotificationRepository {
       body: {},
     );
   }
+
+  Future<int> getUnreadCount() async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+
+    final data = await _api.get(
+      '/notifications/unread-count',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (data is Map<String, dynamic>) {
+      final raw = data['unreadCount'] ?? data['unread_count'] ?? data['count'];
+      if (raw is int) return raw;
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+    return 0;
+  }
 }

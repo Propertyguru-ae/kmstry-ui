@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
@@ -31,6 +33,7 @@ class _PeoplePageState extends State<PeoplePage> {
   bool _loading = true;
   String? _error;
   int _requestId = 0;
+  final Set<String> _deletingMatchIds = <String>{};
 
   @override
   void initState() {
@@ -63,7 +66,15 @@ class _PeoplePageState extends State<PeoplePage> {
       });
     }
     try {
-      final blocked = reset ? await _repo.getBlockedUsers() : _blockedUsers;
+      List<BlockedUser> blocked = _blockedUsers;
+      if (reset) {
+        try {
+          blocked = await _repo.getBlockedUsers();
+        } catch (e) {
+          debugPrint('[PeoplePage] getBlockedUsers failed, continue: $e');
+          blocked = _blockedUsers;
+        }
+      }
       final result = await _repo.getMatchesPage(
         query: query.isEmpty ? null : query,
         limit: _pageSize,
@@ -96,6 +107,7 @@ class _PeoplePageState extends State<PeoplePage> {
         _error = null;
       });
     } catch (e) {
+      debugPrint('[PeoplePage] _loadData failed: $e');
       if (!mounted || requestId != _requestId) return;
       setState(() {
         _error = e.toString();
@@ -125,6 +137,75 @@ class _PeoplePageState extends State<PeoplePage> {
         ),
       ),
     );
+  }
+
+  Future<bool> _confirmDeleteFriendDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Delete friend'),
+          content: const Text(
+            'You will return to the non-matched state with this user.',
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          actions: [
+            Row(
+              children: [
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.brandPrimary,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                const Spacer(),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: colors.error),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
+  }
+
+  Future<void> _deleteFriend(MatchItem match) async {
+    final key = match.matchId;
+    if (key.isEmpty || _deletingMatchIds.contains(key)) return;
+
+    final confirmed = await _confirmDeleteFriendDialog();
+    if (!confirmed || !mounted) return;
+
+    final previousMatches = List<MatchItem>.from(_matches);
+    setState(() {
+      _deletingMatchIds.add(key);
+      _matches = _matches.where((m) => m.matchId != key).toList();
+    });
+
+    try {
+      await _repo.deleteMatch(key);
+      if (!mounted) return;
+      setState(() {
+        _deletingMatchIds.remove(key);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deletingMatchIds.remove(key);
+        _matches = previousMatches;
+      });
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Friend could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+      );
+    }
   }
 
   Future<void> _openProfile(MatchItem match) async {
@@ -222,7 +303,7 @@ class _PeoplePageState extends State<PeoplePage> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(
-            color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[200], 
+            color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200], 
             height: 1,
           ),
         ),
@@ -270,11 +351,11 @@ class _PeoplePageState extends State<PeoplePage> {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       child: Container(
         decoration: BoxDecoration(
-          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFF1F5F9),
+          color: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFF1F5F9),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.02),
+              color: Colors.black.withValues(alpha: 0.02),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -364,70 +445,94 @@ class _PeoplePageState extends State<PeoplePage> {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: isDark ? theme.colorScheme.surface : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFE2E8F0),
-          width: 1,
+      child: Slidable(
+        key: ValueKey(match.matchId),
+        enabled: !_deletingMatchIds.contains(match.matchId),
+        startActionPane: ActionPane(
+          motion: const DrawerMotion(),
+          extentRatio: 0.28,
+          children: [
+            SlidableAction(
+              onPressed: (_) => _deleteFriend(match),
+              backgroundColor: theme.colorScheme.error,
+              foregroundColor: theme.colorScheme.onError,
+              icon: Icons.delete_outline,
+              label: 'Delete',
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: ListTile(
-          contentPadding: const EdgeInsets.all(12),
-          shape: RoundedRectangleBorder(
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark ? theme.colorScheme.surface : Colors.white,
             borderRadius: BorderRadius.circular(20),
-          ),
-          onTap: () => _openProfile(match),
-          leading: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: theme.colorScheme.primary.withOpacity(0.2),
-                width: 2,
-              ),
-              color: isDark ? theme.colorScheme.primary.withOpacity(0.1) : const Color(0xFFEFF6FF),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : const Color(0xFFE2E8F0),
+              width: 1,
             ),
-            child: CircleAvatar(
-              radius: 28,
-              backgroundColor: Colors.transparent,
-              child: Text(
-                initial,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 22,
-                  color: isDark ? theme.colorScheme.primary : const Color(0xFF1E293B),
-                ),
-              ),
-            ),
-          ),
-          title: Text(
-            name,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-              color: isDark ? Colors.white : const Color(0xFF0F172A),
-            ),
-          ),
-          
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildActionButton(
-                Icons.chat_bubble_rounded,
-                () => _openMessage(match),
-                isDark,
-                theme,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.02),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
             ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: ListTile(
+              contentPadding: const EdgeInsets.all(12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              onTap: () => _openProfile(match),
+              leading: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.2),
+                    width: 2,
+                  ),
+                  color: isDark
+                      ? theme.colorScheme.primary.withValues(alpha: 0.1)
+                      : const Color(0xFFEFF6FF),
+                ),
+                child: CircleAvatar(
+                  radius: 28,
+                  backgroundColor: Colors.transparent,
+                  child: Text(
+                    initial,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 22,
+                      color: isDark
+                          ? theme.colorScheme.primary
+                          : const Color(0xFF1E293B),
+                    ),
+                  ),
+                ),
+              ),
+              title: Text(
+                name,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                ),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildActionButton(
+                    Icons.chat_bubble_rounded,
+                    () => _openMessage(match),
+                    isDark,
+                    theme,
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -437,7 +542,7 @@ class _PeoplePageState extends State<PeoplePage> {
   Widget _buildActionButton(IconData icon, VoidCallback onTap, bool isDark, ThemeData theme) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFEFF6FF),
+        color: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFEFF6FF),
         borderRadius: BorderRadius.circular(12),
       ),
       child: IconButton(
