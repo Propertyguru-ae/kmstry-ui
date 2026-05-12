@@ -563,6 +563,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         MaterialPageRoute(
           builder: (_) => const CameraScreen(
             useFrontCamera: true, // selfie
+            optimizeForUpload: true,
           ),
         ),
       );
@@ -592,6 +593,16 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       await _loadProfile();
     } catch (e) {
       final raw = e.toString();
+      if (raw.contains('Media upload failed (413)') ||
+          raw.contains('413 Request Entity Too Large')) {
+        if (!mounted) return;
+        await showPremiumErrorDialog(
+          this.context,
+          message:
+              'Video boyutu sunucu limitini asiyor. Lutfen daha kisa bir video cekin.',
+        );
+        return;
+      }
       final clean = raw
           .replaceAll(RegExp(r'^Exception:\s*'), '')
           .replaceAll(RegExp(r'^Media upload failed \(\d+\):\s*'), '')

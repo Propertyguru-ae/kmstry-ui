@@ -51,6 +51,7 @@ class _CheckInPageState extends State<CheckInPage> {
   final LocationPermissionService _locationPermissionService =
       LocationPermissionService();
   bool _isSubmitting = false;
+  static const int _maxVideoUploadBytes = 8 * 1024 * 1024;
   static const int _vibeMaxLength = 150;
 
   // Öne çıkarılan fotoğrafın indeksi (varsayılan olarak ilk fotoğraf)
@@ -302,7 +303,8 @@ class _CheckInPageState extends State<CheckInPage> {
     final File? captured = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => const CameraScreen(useFrontCamera: false),
+        builder: (_) =>
+            const CameraScreen(useFrontCamera: false, optimizeForUpload: true),
       ),
     );
 
@@ -420,6 +422,18 @@ class _CheckInPageState extends State<CheckInPage> {
       // 2️⃣ Fotoğrafları yükle
       final featuredPhotoIndex = _featuredPhotoIndex;
       for (int i = 0; i < _media.length; i++) {
+        if (_media[i].type == MediaType.video) {
+          final sizeBytes = await _media[i].file.length();
+          if (sizeBytes > _maxVideoUploadBytes) {
+            if (!mounted) return;
+            await showPremiumErrorDialog(
+              context,
+              message:
+                  'Video dosyasi cok buyuk. Lutfen daha kisa bir video cekin.',
+            );
+            return;
+          }
+        }
         await _repo.uploadCheckinMedia(
           checkinId: checkinId,
           file: _media[i].file,
@@ -434,7 +448,20 @@ class _CheckInPageState extends State<CheckInPage> {
     } catch (e) {
       debugPrint('❌ Check-in error: $e');
       if (!mounted) return;
-      await showPremiumErrorDialog(context, message: 'Check-in failed');
+      final raw = e.toString();
+      if (raw.contains('Media upload failed (413)') ||
+          raw.contains('413 Request Entity Too Large')) {
+        await showPremiumErrorDialog(
+          context,
+          message:
+              'Video boyutu sunucu limitini asiyor. Lutfen daha kisa bir video cekin.',
+        );
+      } else {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Check-in su an tamamlanamadi. Lutfen tekrar deneyin.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

@@ -15,8 +15,13 @@ enum CaptureMode { photo, video }
 
 class CameraScreen extends StatefulWidget {
   final bool useFrontCamera;
+  final bool optimizeForUpload;
 
-  const CameraScreen({super.key, this.useFrontCamera = false});
+  const CameraScreen({
+    super.key,
+    this.useFrontCamera = false,
+    this.optimizeForUpload = false,
+  });
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -34,6 +39,13 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _microphoneGranted = false;
   CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
+
+  ResolutionPreset _captureResolutionPreset() {
+    if (!widget.optimizeForUpload) return ResolutionPreset.medium;
+    // Android'de video yükleme limitine takılmamak için daha düşük bitrate/çözünürlük.
+    if (Platform.isAndroid) return ResolutionPreset.low;
+    return ResolutionPreset.medium;
+  }
 
   Future<void> _forceFlashOff() async {
     try {
@@ -78,7 +90,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     _controller = CameraController(
       _currentCamera,
-      ResolutionPreset.medium,
+      _captureResolutionPreset(),
       enableAudio: true,
     );
 
@@ -115,7 +127,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
     _controller = CameraController(
       newCamera,
-      ResolutionPreset.high,
+      _captureResolutionPreset(),
       enableAudio: true,
     );
 
