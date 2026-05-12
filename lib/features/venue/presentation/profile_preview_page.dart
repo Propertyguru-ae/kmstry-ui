@@ -1308,17 +1308,29 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   List<CheckinProfileMedia> _mediaForViewer() {
-    final featured = _profile!.media.firstWhere(
+    final media = List<CheckinProfileMedia>.from(_profile!.media);
+    if (media.isEmpty) return media;
+    final featured = media.firstWhere(
       (m) => m.isFeatured,
-      orElse: () => _profile!.media.first,
+      orElse: () => media.first,
     );
-    final moments = _profile!.media.where((m) => !m.isFeatured).toList();
-    return [featured, ...moments];
+    final featuredIndex = media.indexWhere((m) {
+      if (featured.id.isNotEmpty && m.id.isNotEmpty) {
+        return m.id == featured.id;
+      }
+      return identical(m, featured);
+    });
+    if (featuredIndex > 0) {
+      final item = media.removeAt(featuredIndex);
+      media.insert(0, item);
+    }
+    return media;
   }
 
   void _openMediaViewerAt(int index) {
-    if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty)
+    if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty) {
       return;
+    }
     final mediaForViewer = _mediaForViewer();
     Navigator.push(
       context,
@@ -1454,18 +1466,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           )
         : null;
 
-    final moments = canShowMoments
-        ? (() {
-            final nonFeatured = _profile!.media
-                .where((p) => !p.isFeatured)
-                .toList();
-            // Tek medya varsa (featured olsa bile) moments içinde de göster.
-            if (nonFeatured.isEmpty && _profile!.media.length == 1) {
-              return List<CheckinProfileMedia>.from(_profile!.media);
-            }
-            return nonFeatured;
-          })()
-        : <CheckinProfileMedia>[];
+    final moments = canShowMoments ? _mediaForViewer() : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername = (_profile?.user.username ?? widget.userUsername)
         ?.trim();

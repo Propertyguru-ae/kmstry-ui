@@ -765,10 +765,10 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                Text(
-                  statusText,
-                  style: TextStyle(color: colors.primary, fontSize: 12),
-                ),
+                //Text(
+                  //statusText,
+                  //style: TextStyle(color: colors.primary, fontSize: 12),
+                //),
               ],
             ),
           ],

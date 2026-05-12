@@ -19,6 +19,7 @@ class CheckinProfileMedia {
 
   factory CheckinProfileMedia.fromJson(Map<String, dynamic> json) {
     final rawType = (json['media_type'] ?? json['mediaType'])?.toString();
+    final normalizedType = rawType?.trim().toLowerCase();
     final rawDuration = json['duration_seconds'] ?? json['durationSeconds'];
     int? duration;
     if (rawDuration is num) {
@@ -29,7 +30,10 @@ class CheckinProfileMedia {
     return CheckinProfileMedia(
       id: json['id']?.toString() ?? '',
       url: json['url']?.toString() ?? '',
-      mediaType: rawType == 'video' ? MediaType.video : MediaType.photo,
+      mediaType:
+          (normalizedType == 'video' || normalizedType?.startsWith('video/') == true)
+          ? MediaType.video
+          : MediaType.photo,
       isFeatured: json['is_featured'] == true || json['isFeatured'] == true,
       thumbnailUrl:
           (json['thumbnail_url'] ?? json['thumbnailUrl'])?.toString(),

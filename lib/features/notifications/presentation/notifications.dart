@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
+import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
@@ -19,17 +23,29 @@ class NotificationPage extends StatefulWidget {
 class _NotificationPageState extends State<NotificationPage> {
   final NotificationRepository _repo = NotificationRepository();
   final MatchRepository _matchRepo = MatchRepository();
+  final NotificationRealtimeService _realtime = NotificationRealtimeService();
   List<NotificationModel> _list = [];
   bool _loading = true;
   String? _error;
   String _activeContextType = 'PERSONAL';
   String? _activeVenueId;
   static const int _daysWindow = 30;
+  StreamSubscription<NotificationRealtimeEnvelope>? _eventsSub;
+  StreamSubscription<ChatRealtimeConnectionState>? _stateSub;
 
   @override
   void initState() {
     super.initState();
+    _bindRealtime();
+    unawaited(_realtime.ensureConnected());
     _loadNotifications();
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    _stateSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadNotifications() async {
@@ -126,6 +142,68 @@ class _NotificationPageState extends State<NotificationPage> {
       if (itemVenueId == null || itemVenueId.isEmpty) return true;
       return itemVenueId == _activeVenueId;
     }
+    return true;
+  }
+
+  void _bindRealtime() {
+    _stateSub = _realtime.connectionState.listen((state) {
+      if (!mounted) return;
+      if (state == ChatRealtimeConnectionState.connected ||
+          state == ChatRealtimeConnectionState.reconnecting) {
+        unawaited(_loadNotifications());
+      }
+    });
+
+    _eventsSub = _realtime.events.listen((envelope) {
+      if (!mounted) return;
+      final unread = _readUnreadCount(envelope.payload);
+      if (unread != null) {
+        NotificationUnreadScope.of(context)?.updateUnreadCount(unread);
+      }
+
+      switch (envelope.event) {
+        case 'notification.created':
+        case 'notification.updated':
+        case 'notification.read':
+          if (!_applyNotificationEvent(envelope.payload)) {
+            unawaited(_loadNotifications());
+          }
+          return;
+        case 'socket.reconnected':
+          unawaited(_loadNotifications());
+          return;
+      }
+    });
+  }
+
+  int? _readUnreadCount(Map<String, dynamic> payload) {
+    final raw = payload['unreadCount'] ?? payload['unread_count'];
+    if (raw is int) return raw;
+    if (raw == null) return null;
+    return int.tryParse(raw.toString());
+  }
+
+  bool _applyNotificationEvent(Map<String, dynamic> payload) {
+    final rawNotification = payload['notification'];
+    final notificationMap = rawNotification is Map
+        ? Map<String, dynamic>.from(rawNotification)
+        : Map<String, dynamic>.from(payload);
+    if (notificationMap['id'] == null) return false;
+    final model = NotificationModel.fromJson(notificationMap);
+    if (model.type == 'new_message') return true;
+    if (!_isVisibleForCurrentContext(model)) return true;
+    if (_isStaleInterestedAfterMatch(model)) return true;
+
+    if (!mounted) return true;
+    setState(() {
+      final existingIndex = _list.indexWhere((n) => n.id == model.id);
+      if (existingIndex >= 0) {
+        _list[existingIndex] = model;
+      } else {
+        _list.insert(0, model);
+      }
+      _list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    });
     return true;
   }
 

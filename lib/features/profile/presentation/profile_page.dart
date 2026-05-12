@@ -61,7 +61,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     return lower.endsWith('.mp4') ||
         lower.endsWith('.mov') ||
         lower.endsWith('.m4v') ||
-        lower.endsWith('.webm');
+        lower.endsWith('.webm') ||
+        lower.endsWith('.3gp') ||
+        lower.endsWith('.mkv');
   }
 
   Future<bool> _ensureCameraPermission() async {
@@ -140,6 +142,41 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     }
 
     return const SizedBox(width: thumbWidth, height: thumbHeight);
+  }
+
+  Widget _buildVideoCover({
+    required CheckinProfileMedia media,
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    double iconSize = 52,
+  }) {
+    final thumbnail = media.thumbnailUrl;
+    final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (hasThumbnail)
+          Image.network(
+            thumbnail,
+            width: width,
+            height: height,
+            fit: fit,
+            errorBuilder: (context, error, stackTrace) =>
+                Container(color: Colors.black87),
+          )
+        else
+          Container(color: Colors.black87),
+        Center(
+          child: Icon(
+            Icons.play_circle_fill,
+            color: Colors.white,
+            size: iconSize,
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -438,7 +475,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Future<void> _addMomentPhoto() async {
-    if (_activeCheckin == null) return;
+    if (_activeCheckin == null) {
+      if (!mounted) return;
+      await showPremiumErrorDialog(
+        context,
+        message: 'To add moments, you need an active check-in first.',
+      );
+      return;
+    }
     final checkinId = _activeCheckinId();
     if (checkinId == null) {
       if (!mounted) return;
@@ -460,9 +504,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         return;
       }
 
+      if (!mounted) return;
+      final navigator = Navigator.of(this.context);
       // 🔥 Kendi kamera ekranımızı açıyoruz
-      final File? capturedMedia = await Navigator.push(
-        context,
+      final File? capturedMedia = await navigator.push<File>(
         MaterialPageRoute(
           builder: (_) => const CameraScreen(
             useFrontCamera: true, // selfie
@@ -470,6 +515,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ),
       );
 
+      if (!mounted) return;
       if (capturedMedia == null) return;
 
       // Check-in aninda tek video kurali profile'a da uygulaniyor.
@@ -477,7 +523,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           _media.any((m) => m.mediaType == MediaType.video)) {
         if (!mounted) return;
         await showPremiumErrorDialog(
-          context,
+          this.context,
           message: 'You can upload only 1 video.',
         );
         return;
@@ -493,7 +539,18 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
 
       await _loadProfile();
     } catch (e) {
-      print("Moment upload error: $e");
+      final raw = e.toString();
+      final clean = raw
+          .replaceAll(RegExp(r'^Exception:\s*'), '')
+          .replaceAll(RegExp(r'^Media upload failed \(\d+\):\s*'), '')
+          .trim();
+      if (!mounted) return;
+      await showPremiumErrorDialog(
+        this.context,
+        message: clean.isEmpty
+            ? 'Video could not be uploaded. Please try again.'
+            : clean,
+      );
     } finally {
       if (mounted) {
         setState(() => _uploadingMoment = false);
@@ -676,7 +733,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
     }
 
-    final bool hasImage =
+    final bool hasFeaturedMedia = featuredMedia != null;
+    final bool hasFeaturedPhoto =
         featuredMedia != null && featuredMedia.mediaType == MediaType.photo;
 
     //print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
@@ -687,13 +745,24 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         children: [
           /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
           Positioned.fill(
-            child: hasImage
-                ? Image.network(featuredMedia.url, fit: BoxFit.cover)
-                : _buildModernEmptyStateBackground(isDark, theme),
+            child: !hasFeaturedMedia
+                ? _buildModernEmptyStateBackground(isDark, theme)
+                : hasFeaturedPhoto
+                ? Image.network(
+                    featuredMedia.url,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _buildModernEmptyStateBackground(isDark, theme),
+                  )
+                : _buildVideoCover(
+                    media: featuredMedia,
+                    fit: BoxFit.cover,
+                    iconSize: 60,
+                  ),
           ),
 
           /// 2. BLUR & GRADIENT KATMANI (Daha derin bir görünüm için)
-          if (!hasImage)
+          if (!hasFeaturedPhoto)
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
@@ -1000,10 +1069,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                                             end: Alignment.bottomRight,
                                             colors: [
                                               Colors.white.withValues(
-                                                alpha: hasImage ? 0.14 : 0.10,
+                                                alpha: hasFeaturedPhoto ? 0.14 : 0.10,
                                               ),
                                               Colors.white.withValues(
-                                                alpha: hasImage ? 0.06 : 0.03,
+                                                alpha: hasFeaturedPhoto ? 0.06 : 0.03,
                                               ),
                                             ],
                                           ),
