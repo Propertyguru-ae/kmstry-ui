@@ -185,29 +185,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return 'What brings them to Kmstry?';
   }
 
-  double _contentExpandedHeightFactor() {
-    if (_areMomentsExpanded && _areWhatBringsExpanded) return 0.30;
-    if (_areMomentsExpanded) return 0.33;
-    if (_areWhatBringsExpanded) return 0.48;
-    return 0.53;
-  }
-
-  double _contentTopPadding() {
-    if (_areMomentsExpanded && _areWhatBringsExpanded) return 6;
-    if (_areMomentsExpanded) return 5;
-    if (_areWhatBringsExpanded) return 12;
-    return 14;
-  }
-
-  double _contentBottomPadding() {
-    if (_areMomentsExpanded && _areWhatBringsExpanded) return 8;
-    if (_areMomentsExpanded) return 14;
-    return 72;
-  }
-
-  double _momentCardHeight() {
-    if (_areMomentsExpanded && _areWhatBringsExpanded) return 170;
-    return 180;
+  double _momentCardHeight(BuildContext context) {
+    final h = MediaQuery.of(context).size.height;
+    if (_areMomentsExpanded && _areWhatBringsExpanded) return h * 0.16;
+    return h * 0.18;
   }
 
   Future<void> _openBioVibeSheet(String text, bool isDark) async {
@@ -1570,152 +1551,146 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
 
           /// CONTENT
-          CustomScrollView(
-            // Bu sayfada içerik toggle ile konumlansın; manuel kaydırma olmasın.
-            physics: const NeverScrollableScrollPhysics(),
-            slivers: [
-              SliverAppBar(
-                backgroundColor: Colors.transparent,
-                elevation: 0,
-                leading: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: ClipOval(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        color: isDark
-                            ? _darkSurface.withValues(alpha: 0.72)
-                            : Colors.black.withOpacity(0.3),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.arrow_back,
-                            color: Colors.white,
-                          ),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                actions: [
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: ClipOval(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          color: isDark
-                              ? _darkSurface.withValues(alpha: 0.72)
-                              : Colors.black.withOpacity(0.3),
-                          child: IconButton(
-                            onPressed: (_isReporting || _isBlocking)
-                                ? null
-                                : _openTopActionsSheet,
-                            icon: const Icon(
-                              Icons.more_horiz_rounded,
-                              color: Colors.white,
+          SafeArea(
+            child: Column(
+              children: [
+                /// TOP BAR
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      ClipOval(
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: Container(
+                            color: isDark
+                                ? _darkSurface.withValues(alpha: 0.72)
+                                : Colors.black.withOpacity(0.3),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back,
+                                color: Colors.white,
+                              ),
+                              onPressed: () => Navigator.pop(context),
                             ),
                           ),
                         ),
                       ),
-                    ),
+                      ClipOval(
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: Container(
+                            color: isDark
+                                ? _darkSurface.withValues(alpha: 0.72)
+                                : Colors.black.withOpacity(0.3),
+                            child: IconButton(
+                              onPressed: (_isReporting || _isBlocking)
+                                  ? null
+                                  : _openTopActionsSheet,
+                              icon: const Icon(
+                                Icons.more_horiz_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-                // Kapalı durumda içerik aşağıda kalsın (resim daha çok görünsün),
-                // moments açılınca üst boşluk azalır ve içerik yukarı kayar.
-                expandedHeight:
-                    MediaQuery.of(context).size.height *
-                    _contentExpandedHeightFactor(),
-                flexibleSpace: const FlexibleSpaceBar(
-                  background: SizedBox.shrink(),
                 ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20,
-                    _contentTopPadding(),
-                    20,
-                    _contentBottomPadding(),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (canOpenVenue || _isMatchedActionState) ...[
+
+                /// SPACER (Pushes content to bottom)
+                const Spacer(),
+
+                /// MAIN CONTENT
+                Flexible(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (canOpenVenue || _isMatchedActionState) ...[
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (canOpenVenue)
-                              OutlinedButton.icon(
-                                onPressed: _openHintVenueDetail,
-                                icon: const Icon(
-                                  Icons.place_outlined,
-                                  size: 15,
-                                ),
-                                label: const Text('Here now'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  side: BorderSide(
-                                    color: Colors.white.withValues(alpha: 0.4),
+                              Flexible(
+                                child: OutlinedButton.icon(
+                                  onPressed: _openHintVenueDetail,
+                                  icon: const Icon(
+                                    Icons.place_outlined,
+                                    size: 15,
                                   ),
-                                  backgroundColor: Colors.black.withValues(
-                                    alpha: 0.22,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 7,
-                                  ),
-                                  minimumSize: const Size(0, 34),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: const VisualDensity(
-                                    horizontal: -1,
-                                    vertical: -1,
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                  label: const Text('Here now'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: BorderSide(
+                                      color: Colors.white.withValues(alpha: 0.4),
+                                    ),
+                                    backgroundColor: Colors.black.withValues(
+                                      alpha: 0.22,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 7,
+                                    ),
+                                    minimumSize: const Size(0, 34),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    visualDensity: const VisualDensity(
+                                      horizontal: -1,
+                                      vertical: -1,
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                   ),
                                 ),
                               ),
                             if (canOpenVenue && _isMatchedActionState)
                               const SizedBox(width: 8),
                             if (_isMatchedActionState)
-                              OutlinedButton.icon(
-                                onPressed: _openChat,
-                                icon: const Icon(
-                                  Icons.chat_bubble_outline,
-                                  size: 15,
-                                ),
-                                label: const Text('Message'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  side: BorderSide(
-                                    color: Colors.white.withValues(alpha: 0.4),
+                              Flexible(
+                                child: OutlinedButton.icon(
+                                  onPressed: _openChat,
+                                  icon: const Icon(
+                                    Icons.chat_bubble_outline,
+                                    size: 15,
                                   ),
-                                  backgroundColor: Colors.black.withValues(
-                                    alpha: 0.22,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 7,
-                                  ),
-                                  minimumSize: const Size(0, 34),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: const VisualDensity(
-                                    horizontal: -1,
-                                    vertical: -1,
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                  label: const Text('Message'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: BorderSide(
+                                      color: Colors.white.withValues(alpha: 0.4),
+                                    ),
+                                    backgroundColor: Colors.black.withValues(
+                                      alpha: 0.22,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 7,
+                                    ),
+                                    minimumSize: const Size(0, 34),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    visualDensity: const VisualDensity(
+                                      horizontal: -1,
+                                      vertical: -1,
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1732,11 +1707,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                             child: Text(
                               displayName,
                               style: const TextStyle(
-                                fontSize: 36,
+                                fontSize: 32,
                                 fontWeight: FontWeight.w900,
                                 color: Colors.white,
                                 letterSpacing: -1,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           if (_profile?.user.isVerified == true)
@@ -1778,7 +1755,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
-                                vertical: 14,
+                                vertical: 12,
                               ),
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
@@ -1933,7 +1910,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                         ),
                       ],
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
 
                       /// RECENT MOMENTS (toggle)
                       if (_showPostsAndVibe && moments.isNotEmpty) ...[
@@ -1984,7 +1961,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                   children: [
                                     const SizedBox(height: 4),
                                     SizedBox(
-                                      height: _momentCardHeight(),
+                                      height: _momentCardHeight(context),
                                       child: ListView.separated(
                                         scrollDirection: Axis.horizontal,
                                         physics: const BouncingScrollPhysics(),
@@ -2008,7 +1985,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                             ),
                                             child: _buildMomentImage(
                                               moments[index],
-                                              height: _momentCardHeight(),
+                                              height: _momentCardHeight(context),
                                               initialIndex: index + 1,
                                             ),
                                           );
@@ -2024,12 +2001,14 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   ),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
-    );
-  }
+    ],
+  ),
+);
+}
 
   Widget _buildActionBar() {
     if (_isBlocked) {
@@ -2082,51 +2061,62 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 ),
               ),
             Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  height: 52,
-                  child: OutlinedButton(
-                    onPressed: _isSendingAction
-                        ? null
-                        : () => _handleAction('interested'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      minimumSize: const Size(0, 52),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: const VisualDensity(
-                        horizontal: VisualDensity.minimumDensity,
-                        vertical: VisualDensity.minimumDensity,
+                Expanded(
+                  child: SizedBox(
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: _isSendingAction
+                          ? null
+                          : () => _handleAction('interested'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0.5,
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                      child: const Text(
+                        'Interested',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      elevation: 0.5,
                     ),
-                    child: const Text('Interested'),
                   ),
                 ),
                 const SizedBox(width: 8),
-                SizedBox(
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed: _isSendingAction
-                        ? null
-                        : () => _handleAction('pass'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      minimumSize: const Size(0, 52),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: const VisualDensity(
-                        horizontal: VisualDensity.minimumDensity,
-                        vertical: VisualDensity.minimumDensity,
+                Expanded(
+                  child: SizedBox(
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _isSendingAction
+                          ? null
+                          : () => _handleAction('pass'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 52),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(
+                          horizontal: VisualDensity.minimumDensity,
+                          vertical: VisualDensity.minimumDensity,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                      child: const Text(
+                        'Pass',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      elevation: 0,
                     ),
-                    child: const Text('Pass'),
                   ),
                 ),
               ],

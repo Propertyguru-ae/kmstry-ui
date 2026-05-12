@@ -29,6 +29,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   late List<CheckinProfileMedia> _media;
   bool _hasChanged = false;
   VideoPlayerController? _videoController;
+  int _setupSeq = 0;
 
   int _safeInitialIndex(List<CheckinProfileMedia> media, int requestedIndex) {
     if (media.isEmpty) return 0;
@@ -58,19 +59,29 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     if (index < 0 || index >= _media.length) return;
     final item = _media[index];
 
+    final seq = ++_setupSeq;
+
     _videoController?.dispose();
     _videoController = null;
 
-    if (item.mediaType == MediaType.video) {
-      _videoController =
-          VideoPlayerController.networkUrl(Uri.parse(item.url));
+    if (item.mediaType != MediaType.video) return;
 
-      await _videoController!.initialize();
-      await _videoController!.setLooping(true);
-      await _videoController!.play();
+    final controller = VideoPlayerController.networkUrl(Uri.parse(item.url));
 
-      if (mounted) setState(() {});
+    await controller.initialize();
+
+    // Eğer bu arada yeni bir setup çağrısı geldiyse bu sonucu kullanma
+    if (seq != _setupSeq) {
+      controller.dispose();
+      return;
     }
+
+    await controller.setLooping(true);
+    await controller.play();
+
+    _videoController = controller;
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _setFeatured() async {

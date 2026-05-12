@@ -8,14 +8,16 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 enum MediaType { photo, video }
 
 class LocalMedia {
   final File file;
   final MediaType type;
+  final String? thumbnailPath;
 
-  LocalMedia({required this.file, required this.type});
+  LocalMedia({required this.file, required this.type, this.thumbnailPath});
 }
 
 class CheckInPage extends StatefulWidget {
@@ -263,10 +265,25 @@ class _CheckInPageState extends State<CheckInPage> {
     if (lower.endsWith('.mp4') ||
         lower.endsWith('.mov') ||
         lower.endsWith('.m4v') ||
-        lower.endsWith('.webm')) {
+        lower.endsWith('.webm') ||
+        lower.endsWith('.3gp') ||
+        lower.endsWith('.mkv')) {
       return MediaType.video;
     }
     return MediaType.photo;
+  }
+
+  Future<String?> _generateVideoThumbnail(String videoPath) async {
+    try {
+      return await VideoThumbnail.thumbnailFile(
+        video: videoPath,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 256,
+        quality: 75,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _openCameraAndAddMedia() async {
@@ -302,8 +319,18 @@ class _CheckInPageState extends State<CheckInPage> {
       return;
     }
 
+    String? thumbPath;
+    if (selectedType == MediaType.video) {
+      thumbPath = await _generateVideoThumbnail(captured.path);
+    }
+
+    if (!mounted) return;
     setState(() {
-      _media.add(LocalMedia(file: File(captured.path), type: selectedType));
+      _media.add(LocalMedia(
+        file: File(captured.path),
+        type: selectedType,
+        thumbnailPath: thumbPath,
+      ));
     });
   }
 
@@ -733,15 +760,26 @@ class _CheckInPageState extends State<CheckInPage> {
           )
         : ClipRRect(
             borderRadius: BorderRadius.circular(16),
-            child: Container(
-              color: isDark ? colors.surface : const Color(0xFFF8FBFD),
-              child: const Center(
-                child: Icon(
-                  Icons.play_circle_fill,
-                  color: Colors.white,
-                  size: 42,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (media.thumbnailPath != null)
+                  Image.file(
+                    File(media.thumbnailPath!),
+                    fit: BoxFit.cover,
+                  )
+                else
+                  Container(
+                    color: isDark ? colors.surface : const Color(0xFFF8FBFD),
+                  ),
+                const Center(
+                  child: Icon(
+                    Icons.play_circle_fill,
+                    color: Colors.white,
+                    size: 42,
+                  ),
                 ),
-              ),
+              ],
             ),
           );
 

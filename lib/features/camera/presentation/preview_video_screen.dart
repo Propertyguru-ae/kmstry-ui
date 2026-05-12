@@ -90,8 +90,9 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.pop(context, widget.file);
+                        final nav = Navigator.of(context);
+                        nav.pop();
+                        nav.pop(widget.file);
                       },
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(0, 52),
