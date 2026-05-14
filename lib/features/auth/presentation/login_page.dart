@@ -489,7 +489,7 @@ class _LoginPageState extends State<LoginPage> {
                                     onPressed: () {
                                       Navigator.pushNamed(
                                         context,
-                                        AuthRoutes.signup,
+                                        AuthRoutes.contextChoice,
                                       );
                                     },
                                     child: const Text('Sign up →'),

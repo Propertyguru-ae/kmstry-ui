@@ -17,16 +17,29 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
-  const AppShell({super.key, this.initialIndex = 0});
+  /// When true the shell opens directly in venue mode — no personal-tab flash.
+  final bool initialIsVenueContext;
+  /// Passed straight through to venue tabs so they don't re-fetch context.
+  final String? initialVenueId;
+
+  const AppShell({
+    super.key,
+    this.initialIndex = 0,
+    this.initialIsVenueContext = false,
+    this.initialVenueId,
+  });
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -59,11 +72,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _isVenueContext = false;
   bool _hasPersonalProfile = false;
   String _personalAccountLabel = 'Personal';
+  String? _activeVenueId;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+    // Apply auth-gate context immediately so the first frame is correct.
+    if (widget.initialIsVenueContext) {
+      _isVenueContext = true;
+      _activeVenueId = widget.initialVenueId;
+    }
     WidgetsBinding.instance.addObserver(this);
     _bindChatRealtime();
     _bindNotificationRealtime();
@@ -73,6 +92,29 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _loadUnreadNotificationCount();
     _loadUnreadDmCount();
     PushManager.instance.reconcileNotificationState();
+    _initCheckinPing();
+  }
+
+  void _initCheckinPing() {
+    CheckinPingManager.I.configure(
+      getLocation: () async {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.low,
+        );
+        return (lat: pos.latitude, lng: pos.longitude);
+      },
+      onCheckinExpired: () {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Check-in süren sona erdi. Tekrar check-in yapabilirsin.'),
+            duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+    );
+    CheckinPingManager.I.ensureRunning();
   }
 
   @override
@@ -96,6 +138,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       PushManager.instance.reconcileNotificationState();
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
+      CheckinPingManager.I.ensureRunning();
+    } else if (state == AppLifecycleState.paused) {
+      CheckinPingManager.I.stop();
     }
   }
 
@@ -324,7 +369,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ..clear()
           ..addAll(context.memberVenues);
         _activeAccount = activeLabel;
-        if (_isVenueContext && _currentIndex > 2) {
+        _activeVenueId = resolvedVenueId;
+        if (_isVenueContext && _currentIndex > 3) {
           _currentIndex = 0;
         }
       });
@@ -363,6 +409,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _isVenueContext = true;
       _activeAccount = venue.name;
+      _activeVenueId = venue.id;
       _currentIndex = 0;
     });
     _loadUnreadNotificationCount();
@@ -373,7 +420,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _dmListKey.currentState?.loadChats();
       _scheduleDmRefresh();
     }
-    if (index == 1) {
+    // Venue context: index 2 = notifications; Personal: index 1 = notifications
+    final notifIndex = _isVenueContext ? 2 : 1;
+    if (index == notifIndex) {
       _loadUnreadNotificationCount();
     }
     setState(() {
@@ -515,13 +564,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final isDark = theme.brightness == Brightness.dark;
     final pages = _isVenueContext
         ? <Widget>[
-            const VenueAccountHomePage(),
+            VenueAccountHomePage(venueId: _activeVenueId),
+            VenueOwnerGuestsPage(venueId: _activeVenueId),
             const NotificationPage(),
             VenueProfilePage(
-              activeVenueName: _activeAccount == 'Personal'
-                  ? null
-                  : _activeAccount,
+              activeVenueName:
+                  _activeAccount == 'Personal' ? null : _activeAccount,
               venueNames: _memberVenues.map((v) => v.name).toList(),
+              venueId: _activeVenueId,
             ),
           ]
         : <Widget>[
@@ -563,6 +613,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     icon: Icon(Icons.home_outlined, size: 30),
                     label: '',
                   ),
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.people_alt_outlined, size: 28),
+                    label: '',
+                  ),
                   BottomNavigationBarItem(
                     icon: _buildNotificationIcon(),
                     label: '',
@@ -573,7 +627,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                         _showAccountSwitcher(context);
                       },
                       child: _buildProfileAvatar(
-                        isActive: safeIndex == 4,
+                        isActive: safeIndex == 3,
                         isDark: isDark,
                         theme: theme,
                       ),

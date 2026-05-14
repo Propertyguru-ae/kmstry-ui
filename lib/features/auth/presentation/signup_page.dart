@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/register_email_otp_page.dart';
 
 class SignupPage extends StatefulWidget {
-  const SignupPage({super.key});
+  /// true ise kayit sonrasi venue claim akisina yonlendirilir.
+  final bool isVenueSignup;
+
+  const SignupPage({super.key, this.isVenueSignup = false});
 
   @override
   State<SignupPage> createState() => _SignupPageState();
@@ -37,15 +41,25 @@ class _SignupPageState extends State<SignupPage> {
           builder: (_) => RegisterEmailOtpPage(
             email: email,
             initialOtpResponse: response,
+            isVenueSignup: widget.isVenueSignup,
           ),
         ),
       );
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = _friendlyError(e);
-        });
+      if (!mounted) return;
+      // Hesap zaten olusturulmus, session varsa devam et
+      if (e is ApiException) {
+        final code = e.data['errorCode']?.toString().toUpperCase();
+        if (code == 'EMAIL_ALREADY_IN_USE' || code == 'USER_ALREADY_EXISTS') {
+          final isLoggedIn = await AuthRepository().restoreSession();
+          if (!mounted) return;
+          if (isLoggedIn) {
+            Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
+            return;
+          }
+        }
       }
+      setState(() => _error = _friendlyError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

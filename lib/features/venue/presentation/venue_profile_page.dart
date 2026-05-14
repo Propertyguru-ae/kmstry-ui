@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_edit_page.dart';
 
 class VenueProfilePage extends StatefulWidget {
   final String? activeVenueName;
   final List<String>? venueNames;
+  final String? venueId;
 
   const VenueProfilePage({
     super.key,
     this.activeVenueName,
     this.venueNames,
+    this.venueId,
   });
 
   @override
@@ -18,16 +23,8 @@ class VenueProfilePage extends StatefulWidget {
 }
 
 class _VenueProfilePageState extends State<VenueProfilePage> {
-  static const List<String> _venuePlaceholderPhotos = [
-    'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
-    'https://images.unsplash.com/photo-1514933651103-005eec06c04b',
-    'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085',
-    'https://images.unsplash.com/photo-1509042239860-f550ce710b93',
-  ];
-
   bool _loading = true;
-  String _activeVenueName = 'Venue account';
-  List<String> _venueNames = const [];
+  VenueOwnerStatsVenue? _venue;
 
   @override
   void initState() {
@@ -36,65 +33,93 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   }
 
   Future<void> _loadVenueProfile() async {
+    setState(() => _loading = true);
     try {
-      final me = await AuthRepository().getMe();
-      final context = MeContextModel.fromMe(me);
-      final names = widget.venueNames ?? context.memberVenues.map((v) => v.name).toList();
-      String? activeName = widget.activeVenueName;
-
-      if ((activeName == null || activeName.isEmpty) &&
-          context.activeVenueId != null) {
-        for (final venue in context.memberVenues) {
-          if (venue.id == context.activeVenueId) {
-            activeName = venue.name;
-            break;
-          }
+      String? venueId = widget.venueId;
+      if (venueId == null || venueId.isEmpty) {
+        final me = await AuthRepository().getMe();
+        final ctx = MeContextModel.fromMe(me);
+        venueId = ctx.activeVenueId;
+        if ((venueId == null || venueId.isEmpty) &&
+            ctx.memberVenues.isNotEmpty) {
+          venueId = ctx.memberVenues.first.id;
         }
       }
-      activeName ??= names.isNotEmpty ? names.first : 'Venue account';
 
-      if (!mounted) return;
-      setState(() {
-        _activeVenueName = activeName!;
-        _venueNames = names;
-        _loading = false;
-      });
+      if (venueId != null && venueId.isNotEmpty) {
+        final stats = await VenueOwnerRepository().getOwnerStats(venueId);
+        if (!mounted) return;
+        setState(() {
+          _venue = stats.venue;
+          _loading = false;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() => _loading = false);
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openEdit() async {
+    final venue = _venue;
+    if (venue == null) return;
+    final updated = await Navigator.push<VenueOwnerStatsVenue>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VenueEditPage(venue: venue),
+      ),
+    );
+    if (updated != null && mounted) {
+      setState(() => _venue = updated);
     }
   }
 
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ProfileSettingsPage()),
+      MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final backdrop = _venuePlaceholderPhotos[
-        _activeVenueName.hashCode.abs() % _venuePlaceholderPhotos.length];
 
     if (_loading) {
       return Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
         body: Center(
-          child: CircularProgressIndicator(color: theme.colorScheme.primary),
-        ),
+            child:
+                CircularProgressIndicator(color: theme.colorScheme.primary)),
       );
     }
+
+    final venue = _venue;
+    final photoUrl = venue?.photo;
+    final venueName =
+        venue?.name ?? widget.activeVenueName ?? 'Venue account';
+    final description = venue?.description;
+    final address = venue?.address;
+    final city = venue?.city;
 
     return Scaffold(
       body: Stack(
         children: [
+          // Background
           Positioned.fill(
-            child: Image.network(backdrop, fit: BoxFit.cover),
+            child: photoUrl != null && photoUrl.isNotEmpty
+                ? Image.network(
+                    photoUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => _buildFallbackBg(theme),
+                  )
+                : _buildFallbackBg(theme),
           ),
+
+          // Gradient overlay — full coverage so content is always legible
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -102,59 +127,137 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: [
-                    Colors.black.withValues(alpha: 0.8),
-                    Colors.black.withValues(alpha: 0.3),
-                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.88),
+                    Colors.black.withValues(alpha: 0.55),
+                    Colors.black.withValues(alpha: 0.30),
                   ],
                 ),
               ),
             ),
           ),
+
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: IconButton(
-                      onPressed: _openSettings,
-                      icon: const Icon(Icons.settings_outlined, color: Colors.white),
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    _activeVenueName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 34,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (_venueNames.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _venueNames.join('  •  '),
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top actions
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const SizedBox(width: 48),
+                      Row(
+                        children: [
+                          if (venue != null)
+                            IconButton(
+                              onPressed: _openEdit,
+                              icon: const Icon(Icons.edit_outlined,
+                                  color: Colors.white),
+                              tooltip: 'Edit venue',
+                            ),
+                          IconButton(
+                            onPressed: _openSettings,
+                            icon: const Icon(Icons.settings_outlined,
+                                color: Colors.white),
+                            tooltip: 'Settings',
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.add_a_photo_outlined),
-                    label: const Text('Add story'),
+                    ],
                   ),
-                  const SizedBox(height: 24),
-                ],
-              ),
+                ),
+
+                const Spacer(),
+
+                // Venue info
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 22, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        venueName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 34,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (description != null && description.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          description,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                            height: 1.5,
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      if (address != null && address.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.location_on_outlined,
+                                color: Colors.white54, size: 14),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                [address, city]
+                                    .where((s) => s != null && s.isNotEmpty)
+                                    .join(', '),
+                                style: const TextStyle(
+                                    color: Colors.white54, fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      OutlinedButton.icon(
+                        onPressed: venue != null ? _openEdit : null,
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: const Text('Edit venue profile'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color.fromARGB(255, 12, 0, 0),
+                          disabledForegroundColor:
+                              Colors.white.withValues(alpha: 0.40),
+                          side: const BorderSide(color: Colors.white60, width: 1.2),
+                          disabledMouseCursor: SystemMouseCursors.forbidden,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFallbackBg(ThemeData theme) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.colorScheme.primary.withValues(alpha: 0.6),
+            theme.colorScheme.primary.withValues(alpha: 0.2),
+          ],
+        ),
       ),
     );
   }

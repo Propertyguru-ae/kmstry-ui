@@ -9,13 +9,16 @@ import '../data/auth_repository.dart';
 
 class RegisterEmailOtpPage extends StatefulWidget {
   final String email;
-  /// Signup ekranında OTP zaten istendiyse yanıtı buraya geçilir.
+  /// Signup ekraninda OTP zaten istendiyse yaniti buraya gecilir.
   final Map<String, dynamic>? initialOtpResponse;
+  /// true ise kayit sonrasi venue claim akisina yonlendirilir.
+  final bool isVenueSignup;
 
   const RegisterEmailOtpPage({
     super.key,
     required this.email,
     this.initialOtpResponse,
+    this.isVenueSignup = false,
   });
 
   @override
@@ -234,6 +237,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
           builder: (_) => RegisterSetPasswordPage(
             email: widget.email,
             otpProof: proof,
+            isVenueSignup: widget.isVenueSignup,
           ),
         ),
       );

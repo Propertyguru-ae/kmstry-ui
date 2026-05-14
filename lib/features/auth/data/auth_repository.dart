@@ -21,6 +21,20 @@ class AuthRepository {
     if (kDebugMode && _enableAuthLogs) debugPrint(message);
   }
 
+  // ── getMe() short-lived cache ─────────────────────────────────────────────
+  // Multiple widgets call getMe() simultaneously on startup / account switch.
+  // Cache the result for a short window so burst calls hit the API only once.
+  static Map<String, dynamic>? _getMeCache;
+  static DateTime? _getMeCacheTime;
+  static const _getMeCacheTtl = Duration(seconds: 6);
+
+  /// Invalidate the cache — call after any operation that changes server-side
+  /// user state (switchContext, logout, register, etc.).
+  static void invalidateMeCache() {
+    _getMeCache = null;
+    _getMeCacheTime = null;
+  }
+
   Future<void> register(
     String email,
     String password,
@@ -344,6 +358,7 @@ class AuthRepository {
     await _googleSignIn.signOut();
 
     await SecureStorage.clearSession();
+    invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
   }
 
@@ -429,13 +444,20 @@ class AuthRepository {
     await _api.resendVerifyEmail(accessToken: token);
   }
 
-  Future<Map<String, dynamic>> getMe() async {
+  Future<Map<String, dynamic>> getMe({bool forceRefresh = false}) async {
     final token = await SecureStorage.getAccessToken();
-    if (token == null) {
-      throw Exception('Not authenticated');
+    if (token == null) throw Exception('Not authenticated');
+
+    if (!forceRefresh && _getMeCache != null && _getMeCacheTime != null) {
+      final age = DateTime.now().difference(_getMeCacheTime!);
+      if (age < _getMeCacheTtl) return Map<String, dynamic>.from(_getMeCache!);
     }
+
     final me = await _api.me(accessToken: token);
-    return _normalizeMeResponse(me);
+    final normalized = _normalizeMeResponse(me);
+    _getMeCache = normalized;
+    _getMeCacheTime = DateTime.now();
+    return Map<String, dynamic>.from(normalized);
   }
 
   Map<String, dynamic> _normalizeMeResponse(Map<String, dynamic> source) {
@@ -526,6 +548,7 @@ class AuthRepository {
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
+    invalidateMeCache();
     return _api.switchContext(
       accessToken: token,
       lastActiveContext: lastActiveContext,

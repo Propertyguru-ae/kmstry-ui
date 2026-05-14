@@ -11,8 +11,13 @@ import 'package:camera/camera.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'core/push/push_manager.dart';
+import 'core/push/push_deep_link_handler.dart';
 
 late List<CameraDescription> cameras;
+
+/// Global navigator key — PushDeepLinkHandler ve AppLinksBootstrap tarafından
+/// paylaşılır.
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +25,9 @@ Future<void> main() async {
   // Firebase initialize (push notif icin)
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await PushManager.instance.init();
+
+  // FCM bildirim tap routing — uygulamanın ömrü boyunca aktif kalır
+  PushDeepLinkHandler.instance.init(navigatorKey);
 
   //Kameraları yükle
   cameras = await availableCameras();
@@ -47,6 +55,7 @@ class MyApp extends StatelessWidget {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return MaterialApp(
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'KMSTRY',
       theme: AppTheme.lightTheme,

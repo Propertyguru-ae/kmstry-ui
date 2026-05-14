@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboar
 import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flow_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
@@ -69,6 +70,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         resolvedVenueId =
             meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null;
       }
+      _lastResolvedVenueId = resolvedVenueId;
 
       // On fresh installs, existing accounts can come with COMPLETED but still need
       // device permission onboarding on this device.
@@ -178,6 +180,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
           return;
         }
         await _routeToPersonalHome();
+        return;
+      }
+      if (homeRoute == 'VENUE_PENDING' || nextAction == 'AWAIT_VENUE_APPROVAL') {
+        _logDecision('server_route_venue_pending');
+        _go(const VenuePendingPage());
         return;
       }
       if (homeRoute == 'VENUE_ONBOARDING' ||
@@ -376,9 +383,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
     } catch (_) {}
   }
 
+  String? _lastResolvedVenueId;
+
   Future<void> _routeToVenueHome() async {
     await PushManager.instance.ensureRegisteredIfAllowed();
-    _go(const AppShell(initialIndex: 0));
+    _go(AppShell(
+      initialIndex: 0,
+      initialIsVenueContext: true,
+      initialVenueId: _lastResolvedVenueId,
+    ));
   }
 
   Future<void> _routeToPersonalHome() async {
@@ -387,7 +400,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
   }
 
   void _go(Widget page) {
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => page));
+    // Remove every route beneath so no ghost personal/venue shell lingers
+    // behind the transition and bleeds through.
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => page),
+      (route) => false,
+    );
   }
 
   @override

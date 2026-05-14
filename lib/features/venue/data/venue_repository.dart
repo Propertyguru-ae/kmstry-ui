@@ -110,8 +110,8 @@ Future<NearbyVenuesResponse> getNearbyVenues({
 
   Future<List<Venue>> searchVenues({
     required String query,
-    required double latitude,
-    required double longitude,
+    double? latitude,
+    double? longitude,
     int limit = 12,
   }) async {
     final q = query.trim();
@@ -123,23 +123,21 @@ Future<NearbyVenuesResponse> getNearbyVenues({
         : <String, String>{'Authorization': 'Bearer $token'};
 
     final encodedQuery = Uri.encodeQueryComponent(q);
-    final candidatePaths = <String>[
-      '/venues/search?q=$encodedQuery&latitude=$latitude&longitude=$longitude&limit=$limit',
-      '/venues/search?query=$encodedQuery&latitude=$latitude&longitude=$longitude&limit=$limit',
-      '/venues/search?term=$encodedQuery&latitude=$latitude&longitude=$longitude&limit=$limit',
-    ];
 
-    Object? lastError;
-    for (final path in candidatePaths) {
-      try {
-        final data = await _api.get(path, headers: headers);
-        return _parseVenueList(data);
-      } catch (e) {
-        lastError = e;
-      }
-    }
-    if (lastError != null) throw lastError;
-    return const [];
+    // Build path — only include lat/lng when meaningful (non-zero) coordinates
+    // are available. Without location the backend performs a text-only search.
+    final hasLocation = latitude != null &&
+        longitude != null &&
+        !(latitude == 0 && longitude == 0);
+
+    final locationPart = hasLocation
+        ? '&latitude=$latitude&longitude=$longitude'
+        : '';
+    final path =
+        '/venues/search?query=$encodedQuery$locationPart&limit=$limit';
+
+    final data = await _api.get(path, headers: headers);
+    return _parseVenueList(data);
   }
 
   Future<List<Venue>> getVenues() async {
@@ -165,5 +163,41 @@ Future<NearbyVenuesResponse> getNearbyVenues({
         .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
         .where((v) => v.name.isNotEmpty)
         .toList();
+  }
+
+  /// Google Place ID ile venue'yu DB'ye ekler veya varsa getirir.
+  /// Backend: POST /venues/ensure-from-place  { placeId }
+  /// Donus: { venue: { id, name, ... } }
+  Future<String> ensureVenueDbId(String placeId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final result = await _api.post(
+      '/venues/ensure-from-place',
+      body: {'googlePlaceId': placeId},
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final map = Map<String, dynamic>.from(result as Map);
+    final venueMap = map['venue'] as Map?;
+    final id = venueMap?['id']?.toString() ?? map['id']?.toString() ?? map['venueId']?.toString();
+    if (id == null || id.isEmpty) throw Exception('Could not resolve venue ID');
+    return id;
+  }
+
+  /// Kullanicinin mekan sahibi oldugunu iddia eder.
+  /// Backend: POST /venues/claim  { venueId, ownerNote }
+  Future<Map<String, dynamic>> claimVenue({
+    required String venueId,
+    required String ownerNote,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final result = await _api.post(
+      '/venues/claim',
+      body: {'venueId': venueId, 'ownerNote': ownerNote},
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return Map<String, dynamic>.from(result as Map);
   }
 }

@@ -17,13 +17,20 @@ class CheckinPingManager {
 
   final _repo = VenueCheckinRepository();
 
-  /// Dışarıdan konum ver (senin projende konumu nereden alıyorsan oraya bağlayacağız)
+  /// Dışarıdan konum ver
   Future<({double lat, double lng})> Function()? _getLocation;
+
+  /// Check-in süresi dolduğunda çağrılır — UI katmanı snackbar/dialog gösterir.
+  VoidCallback? onCheckinExpired;
 
   void configure({
     required Future<({double lat, double lng})> Function() getLocation,
+    VoidCallback? onCheckinExpired,
   }) {
     _getLocation = getLocation;
+    if (onCheckinExpired != null) {
+      this.onCheckinExpired = onCheckinExpired;
+    }
   }
 
   /// App açıkken çağrılır: aktif check-in varsa başlatır, yoksa durdurur.
@@ -40,7 +47,7 @@ class CheckinPingManager {
 
     _running = true;
 
-    // İlk ping’i hemen at (UI geçişlerinde beklemesin)
+    // İlk ping'i hemen at (UI geçişlerinde beklemesin)
     _tick(checkinId);
 
     // Sonra periyodik
@@ -72,13 +79,14 @@ class CheckinPingManager {
 
       debugPrint('✅ ping status=${res.status} distance=${res.distance}');
 
-      // Check-in bittiyse state temizle ve timer’ı durdur
+      // Check-in bittiyse state temizle, timer durdur ve UI'ı bilgilendir
       if (res.status != 'active') {
         ActiveCheckinService().clear();
         stop();
+        onCheckinExpired?.call();
       }
     } catch (e) {
-      // Network / GPS hatalarında sessiz devam (app’i bozma)
+      // Network / GPS hatalarında sessiz devam (app'i bozma)
       debugPrint('❌ ping error: $e');
     }
   }

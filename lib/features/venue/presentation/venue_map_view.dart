@@ -446,6 +446,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _photoIconRefreshDebounce?.cancel();
     _photoIconRefreshDebounce = Timer(const Duration(milliseconds: 120), () {
       if (!mounted) return;
+      // Icons changed but marker IDs/positions are the same → fingerprint would
+      // match and setState would be skipped. Reset the key so the icon swap
+      // always reaches setState.
+      _lastMarkerKey = '';
       _recomputeClusters(force: true);
     });
   }
