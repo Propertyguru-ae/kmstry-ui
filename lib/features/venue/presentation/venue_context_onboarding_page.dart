@@ -204,7 +204,7 @@ class _VenueContextOnboardingPageState
                   )
                 : ListView.separated(
                     itemCount: _results.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (context, index) => const Divider(height: 1),
                     itemBuilder: (ctx, i) {
                       final venue = _results[i];
                       return ListTile(
@@ -221,7 +221,7 @@ class _VenueContextOnboardingPageState
                                   child: Image.network(
                                     venue.photoUrl,
                                     fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Icon(
+                                    errorBuilder: (context, error, stackTrace) => Icon(
                                       Icons.store_mall_directory_outlined,
                                       color: colors.primary,
                                       size: 22,
@@ -317,7 +317,7 @@ class _VenueContextOnboardingPageState
                           child: Image.network(
                             venue.photoUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(
+                            errorBuilder: (context, error, stackTrace) => Icon(
                               Icons.store_mall_directory_outlined,
                               color: colors.primary,
                               size: 26,
