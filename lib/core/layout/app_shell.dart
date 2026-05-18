@@ -141,6 +141,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
       CheckinPingManager.I.ensureRunning();
+      // Venue onay/red durumu arka plandan dönerken güncellensin.
+      AuthRepository.invalidateMeCache();
+      _loadUserInitial();
     } else if (state == AppLifecycleState.paused) {
       CheckinPingManager.I.stop();
     }
@@ -434,7 +437,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
-  void _showAccountSwitcher(BuildContext context) {
+  Future<void> _showAccountSwitcher(BuildContext context) async {
+    // Her açılışta cache'i temizle ve taze veri çek — onay/red durumu anında yansısın.
+    AuthRepository.invalidateMeCache();
+    await _loadUserInitial();
+    if (!mounted) return;
+
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
 
