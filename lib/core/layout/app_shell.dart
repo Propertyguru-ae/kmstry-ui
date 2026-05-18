@@ -449,206 +449,213 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
       builder: (context) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Handle bar
-                Container(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 16, bottom: 8),
+                decoration: BoxDecoration(
+                  color: colors.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // ── Venue listesi — scroll edilebilir ──
+              if (activeVenues.isNotEmpty || pendingVenues.isNotEmpty)
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    children: [
+                      // ACTIVE venue'lar
+                      ...activeVenues.map(
+                        (venue) => ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                colors.primary.withValues(alpha: 0.12),
+                            child:
+                                Icon(Icons.storefront, color: colors.primary),
+                          ),
+                          title: Text(
+                            venue.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: colors.onSurface,
+                            ),
+                          ),
+                          trailing: _activeAccount == venue.name
+                              ? Icon(Icons.check_circle, color: colors.primary)
+                              : null,
+                          onTap: () async {
+                            Navigator.pop(context);
+                            final rootContext = this.context;
+                            try {
+                              await _switchToVenue(venue);
+                            } catch (_) {
+                              if (!rootContext.mounted) return;
+                              await showPremiumErrorDialog(
+                                rootContext,
+                                message: 'Could not switch to venue account.',
+                              );
+                            }
+                          },
+                        ),
+                      ),
+
+                      // PENDING venue'lar
+                      ...pendingVenues.map(
+                        (venue) => ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                colors.onSurface.withValues(alpha: 0.08),
+                            child: Icon(
+                              Icons.hourglass_top_rounded,
+                              color: colors.onSurface.withValues(alpha: 0.45),
+                              size: 20,
+                            ),
+                          ),
+                          title: Text(
+                            venue.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: colors.onSurface.withValues(alpha: 0.55),
+                            ),
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'Pending',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.orange,
+                              ),
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.of(this.context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const VenuePendingPage(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // ── Sabit footer ──
+              // Add Venue Account
+              ListTile(
+                leading: Container(
                   width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
+                  height: 40,
                   decoration: BoxDecoration(
-                    color: colors.onSurface.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(2),
+                    color: colors.primary.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.add, color: colors.primary, size: 22),
+                ),
+                title: Text(
+                  'Add Venue Account',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colors.primary,
                   ),
                 ),
-
-                // ── ACTIVE venue'lar ──
-                ...activeVenues.map(
-                  (venue) => ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: colors.primary.withValues(alpha: 0.12),
-                      child: Icon(Icons.storefront, color: colors.primary),
-                    ),
-                    title: Text(
-                      venue.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: colors.onSurface,
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(this.context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const VenueContextOnboardingPage(
+                        fromAppShell: true,
                       ),
                     ),
-                    trailing: _activeAccount == venue.name
-                        ? Icon(Icons.check_circle, color: colors.primary)
-                        : null,
-                    onTap: () async {
-                      Navigator.pop(context);
-                      final rootContext = this.context;
-                      try {
-                        await _switchToVenue(venue);
-                      } catch (_) {
-                        if (!rootContext.mounted) return;
-                        await showPremiumErrorDialog(
-                          rootContext,
-                          message: 'Could not switch to venue account.',
-                        );
-                      }
-                    },
-                  ),
+                  );
+                },
+              ),
+
+              const Divider(height: 1),
+
+              // Account Settings
+              ListTile(
+                leading: Icon(Icons.settings_outlined, color: colors.onSurface),
+                title: Text(
+                  'Account Settings',
+                  style: TextStyle(color: colors.onSurface),
                 ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(this.context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AccountSettingsPage(),
+                    ),
+                  );
+                },
+              ),
 
-                // ── PENDING venue'lar (tıklanamaz, badge gösterir) ──
-                ...pendingVenues.map(
-                  (venue) => ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: colors.onSurface.withValues(alpha: 0.08),
-                      child: Icon(
-                        Icons.hourglass_top_rounded,
-                        color: colors.onSurface.withValues(alpha: 0.45),
-                        size: 20,
-                      ),
-                    ),
-                    title: Text(
-                      venue.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: colors.onSurface.withValues(alpha: 0.55),
-                      ),
-                    ),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        'Pending',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.orange,
-                        ),
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.of(this.context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const VenuePendingPage(),
-                        ),
-                      );
-                    },
-                  ),
+              // Personal hesap
+              ListTile(
+                leading:
+                    Icon(Icons.person_outline, color: colors.onSurface),
+                title: Text(
+                  _isVenueContext
+                      ? (_hasPersonalProfile
+                            ? 'Switch to $_personalAccountLabel'
+                            : 'Create Personal Account')
+                      : _personalAccountLabel,
+                  style: TextStyle(color: colors.onSurface),
                 ),
-
-                // ── Add Venue Account ──
-                ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: colors.primary.withValues(alpha: 0.10),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.add,
-                      color: colors.primary,
-                      size: 22,
-                    ),
-                  ),
-                  title: Text(
-                    'Add Venue Account',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: colors.primary,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const VenueContextOnboardingPage(
-                          fromAppShell: true,
-                        ),
-                      ),
+                trailing: !_isVenueContext
+                    ? Icon(Icons.check_circle, color: colors.primary)
+                    : null,
+                onTap: () async {
+                  Navigator.pop(context);
+                  if (!_isVenueContext) return;
+                  final rootContext = this.context;
+                  try {
+                    await _switchToPersonal();
+                  } catch (_) {
+                    if (!rootContext.mounted) return;
+                    await showPremiumErrorDialog(
+                      rootContext,
+                      message: 'Could not switch to personal account.',
                     );
-                  },
-                ),
+                  }
+                },
+              ),
 
-                const Divider(),
-
-                // ── Account Settings ──
-                ListTile(
-                  leading: Icon(
-                    Icons.settings_outlined,
-                    color: colors.onSurface,
+              // Log out
+              ListTile(
+                leading: Icon(Icons.logout, color: colors.error),
+                title: Text(
+                  'Log out',
+                  style: TextStyle(
+                    color: colors.error,
+                    fontWeight: FontWeight.w600,
                   ),
-                  title: Text(
-                    'Account Settings',
-                    style: TextStyle(color: colors.onSurface),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AccountSettingsPage(),
-                      ),
-                    );
-                  },
                 ),
+                onTap: () async {
+                  final rootContext = this.context;
+                  Navigator.pop(context);
+                  await _logout(rootContext);
+                },
+              ),
 
-                // ── Personal hesap ──
-                ListTile(
-                  leading: Icon(Icons.person_outline, color: colors.onSurface),
-                  title: Text(
-                    _isVenueContext
-                        ? (_hasPersonalProfile
-                              ? 'Switch to $_personalAccountLabel'
-                              : 'Create Personal Account')
-                        : _personalAccountLabel,
-                    style: TextStyle(color: colors.onSurface),
-                  ),
-                  trailing: !_isVenueContext
-                      ? Icon(Icons.check_circle, color: colors.primary)
-                      : null,
-                  onTap: () async {
-                    Navigator.pop(context);
-                    if (!_isVenueContext) return;
-                    final rootContext = this.context;
-                    try {
-                      await _switchToPersonal();
-                    } catch (_) {
-                      if (!rootContext.mounted) return;
-                      await showPremiumErrorDialog(
-                        rootContext,
-                        message: 'Could not switch to personal account.',
-                      );
-                    }
-                  },
-                ),
-
-                // ── Log out ──
-                ListTile(
-                  leading: Icon(Icons.logout, color: colors.error),
-                  title: Text(
-                    'Log out',
-                    style: TextStyle(
-                      color: colors.error,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  onTap: () async {
-                    final rootContext = this.context;
-                    Navigator.pop(context);
-                    await _logout(rootContext);
-                  },
-                ),
-              ],
-            ),
+              const SizedBox(height: 8),
+            ],
           ),
         );
       },
