@@ -311,7 +311,7 @@ class _AccountAvatarRow extends StatelessWidget {
       children: [
         ...visible.map(
           (acc) => Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: _AccountAvatarItem(
               account: acc,
               switching: switching,
@@ -322,7 +322,7 @@ class _AccountAvatarRow extends StatelessWidget {
         ),
         if (overflow > 0)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: _MoreButton(
               count: overflow,
               switching: switching,
