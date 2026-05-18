@@ -1,6 +1,7 @@
 class MemberVenue {
   final String id;
   final String name;
+  final String? photoUrl;
   final String? role;
   final bool isVerifiedOwner;
   /// 'ACTIVE' | 'PENDING' | 'REJECTED'
@@ -9,6 +10,7 @@ class MemberVenue {
   const MemberVenue({
     required this.id,
     required this.name,
+    this.photoUrl,
     this.role,
     this.isVerifiedOwner = false,
     this.status = 'ACTIVE',
@@ -64,9 +66,11 @@ class MeContextModel {
         final role = (map['role'] ?? map['myRole'])?.toString();
         final isVerifiedOwner = map['isVerifiedOwner'] == true;
         final status = (map['status'])?.toString() ?? 'ACTIVE';
+        final photoUrl = (map['photo'] ?? map['photoUrl'] ?? nestedVenue?['photo'])?.toString();
         return MemberVenue(
           id: id,
           name: name,
+          photoUrl: (photoUrl != null && photoUrl.isNotEmpty) ? photoUrl : null,
           role: role,
           isVerifiedOwner: isVerifiedOwner,
           status: status,
