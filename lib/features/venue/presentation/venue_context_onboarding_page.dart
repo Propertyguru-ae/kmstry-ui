@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 
 /// Venue kayit akisi: mekan arama -> secim -> sahiplik notu -> talep gonder.
-/// Basarili talep sonrasi auth_gate VENUE_PENDING'i yakalar ve VenuePendingPage'e yonlendirir.
+/// [fromAppShell] true ise (uygulama icinden acilmis) claim sonrasi VenuePendingPage'e
+/// push yapar (back tusuyla geri donulebilir). false ise auth_gate'e yonlendirir.
 class VenueContextOnboardingPage extends StatefulWidget {
-  const VenueContextOnboardingPage({super.key});
+  final bool fromAppShell;
+  const VenueContextOnboardingPage({super.key, this.fromAppShell = false});
 
   @override
   State<VenueContextOnboardingPage> createState() =>
@@ -73,6 +76,18 @@ class _VenueContextOnboardingPageState
     }
   }
 
+  void _onClaimSuccess() {
+    if (widget.fromAppShell) {
+      // Uygulama içinden açıldı — VenuePendingPage'e push yap, geri dönülebilir.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const VenuePendingPage()),
+      );
+    } else {
+      // Kayıt akışından geldi — auth_gate yönlendirsin.
+      Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
+    }
+  }
+
   Future<void> _submitClaim() async {
     final venue = _selected;
     final note = _noteCtrl.text.trim();
@@ -91,12 +106,12 @@ class _VenueContextOnboardingPageState
       final dbVenueId = await _repo.ensureVenueDbId(venue.id);
       await _repo.claimVenue(venueId: dbVenueId, ownerNote: note);
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
+      _onClaimSuccess();
     } catch (e) {
       if (!mounted) return;
       final msg = e.toString().toLowerCase();
       if (msg.contains('already pending') || msg.contains('already an active')) {
-        Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
+        _onClaimSuccess();
         return;
       }
       setState(() {

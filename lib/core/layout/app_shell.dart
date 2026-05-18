@@ -26,6 +26,8 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_p
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
@@ -336,25 +338,27 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
+      // Sadece ACTIVE venue'lar context switching için kullanılır.
+      final activeVenues = context.memberVenues.where((v) => v.isActive).toList();
       final hasVenueContext =
-          context.hasVenueMembership || context.memberVenues.isNotEmpty;
+          context.hasVenueMembership || activeVenues.isNotEmpty;
       String? resolvedVenueId = context.activeVenueId;
       if (resolvedVenueId == null ||
           resolvedVenueId.isEmpty ||
-          !context.memberVenues.any((venue) => venue.id == resolvedVenueId)) {
-        resolvedVenueId = context.memberVenues.isNotEmpty
-            ? context.memberVenues.first.id
+          !activeVenues.any((venue) => venue.id == resolvedVenueId)) {
+        resolvedVenueId = activeVenues.isNotEmpty
+            ? activeVenues.first.id
             : null;
       }
       if (lastContext == 'VENUE' && resolvedVenueId != null) {
-        for (final venue in context.memberVenues) {
+        for (final venue in activeVenues) {
           if (venue.id == resolvedVenueId) {
             activeLabel = venue.name;
             break;
           }
         }
-      } else if (lastContext == 'VENUE' && context.memberVenues.isNotEmpty) {
-        activeLabel = context.memberVenues.first.name;
+      } else if (lastContext == 'VENUE' && activeVenues.isNotEmpty) {
+        activeLabel = activeVenues.first.name;
       }
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
@@ -433,6 +437,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void _showAccountSwitcher(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+
+    final activeVenues = _memberVenues.where((v) => v.isActive).toList();
+    final pendingVenues = _memberVenues.where((v) => v.isPending).toList();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
@@ -446,6 +454,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Handle bar
                 Container(
                   width: 40,
                   height: 4,
@@ -455,7 +464,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                ..._memberVenues.map(
+
+                // ── ACTIVE venue'lar ──
+                ...activeVenues.map(
                   (venue) => ListTile(
                     leading: CircleAvatar(
                       backgroundColor: colors.primary.withValues(alpha: 0.12),
@@ -486,7 +497,91 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     },
                   ),
                 ),
+
+                // ── PENDING venue'lar (tıklanamaz, badge gösterir) ──
+                ...pendingVenues.map(
+                  (venue) => ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: colors.onSurface.withValues(alpha: 0.08),
+                      child: Icon(
+                        Icons.hourglass_top_rounded,
+                        color: colors.onSurface.withValues(alpha: 0.45),
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      venue.name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: colors.onSurface.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'Pending',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.of(this.context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const VenuePendingPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+                // ── Add Venue Account ──
+                ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.10),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.add,
+                      color: colors.primary,
+                      size: 22,
+                    ),
+                  ),
+                  title: Text(
+                    'Add Venue Account',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: colors.primary,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.of(this.context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const VenueContextOnboardingPage(
+                          fromAppShell: true,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
                 const Divider(),
+
+                // ── Account Settings ──
                 ListTile(
                   leading: Icon(
                     Icons.settings_outlined,
@@ -505,6 +600,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     );
                   },
                 ),
+
+                // ── Personal hesap ──
                 ListTile(
                   leading: Icon(Icons.person_outline, color: colors.onSurface),
                   title: Text(
@@ -520,9 +617,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       : null,
                   onTap: () async {
                     Navigator.pop(context);
-                    if (!_isVenueContext) {
-                      return;
-                    }
+                    if (!_isVenueContext) return;
                     final rootContext = this.context;
                     try {
                       await _switchToPersonal();
@@ -535,6 +630,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     }
                   },
                 ),
+
+                // ── Log out ──
                 ListTile(
                   leading: Icon(Icons.logout, color: colors.error),
                   title: Text(

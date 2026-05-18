@@ -3,13 +3,19 @@ class MemberVenue {
   final String name;
   final String? role;
   final bool isVerifiedOwner;
+  /// 'ACTIVE' | 'PENDING' | 'REJECTED'
+  final String status;
 
   const MemberVenue({
     required this.id,
     required this.name,
     this.role,
     this.isVerifiedOwner = false,
+    this.status = 'ACTIVE',
   });
+
+  bool get isActive => status == 'ACTIVE';
+  bool get isPending => status == 'PENDING';
 }
 
 class MeContextModel {
@@ -57,11 +63,13 @@ class MeContextModel {
                 .toString();
         final role = (map['role'] ?? map['myRole'])?.toString();
         final isVerifiedOwner = map['isVerifiedOwner'] == true;
+        final status = (map['status'])?.toString() ?? 'ACTIVE';
         return MemberVenue(
           id: id,
           name: name,
           role: role,
           isVerifiedOwner: isVerifiedOwner,
+          status: status,
         );
       }).where((venue) => venue.id.isNotEmpty).toList();
     }
