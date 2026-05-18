@@ -83,6 +83,82 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
     }
   }
 
+  void _showAllAccountsSheet() {
+    final colors = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 16, bottom: 12),
+                decoration: BoxDecoration(
+                  color: colors.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Continue as',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: colors.onSurface.withValues(alpha: 0.45),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _accounts.length,
+                  itemBuilder: (context, i) {
+                    final acc = _accounts[i];
+                    return ListTile(
+                      leading: _AvatarCircle(
+                        account: acc,
+                        size: 44,
+                        colors: colors,
+                      ),
+                      title: Text(
+                        acc.displayName,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        acc.isPersonal ? 'Personal' : 'Venue',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.onSurface.withValues(alpha: 0.50),
+                        ),
+                      ),
+                      onTap: _switching
+                          ? null
+                          : () {
+                              Navigator.pop(ctx);
+                              _switchTo(acc);
+                            },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _refresh() {
     AuthRepository.invalidateMeCache();
     Navigator.of(context).pushNamedAndRemoveUntil(
@@ -174,19 +250,12 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: _accounts.map((acc) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: _AccountAvatar(
-                        account: acc,
-                        switching: _switching,
-                        onTap: () => _switchTo(acc),
-                        colors: colors,
-                      ),
-                    );
-                  }).toList(),
+                _AccountAvatarRow(
+                  accounts: _accounts,
+                  switching: _switching,
+                  onSwitch: _switchTo,
+                  onMoreTap: _showAllAccountsSheet,
+                  colors: colors,
                 ),
               ],
 
@@ -214,14 +283,66 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
   }
 }
 
-// ── Avatar widget ──────────────────────────────────────────────
-class _AccountAvatar extends StatelessWidget {
+// ── Avatar row: max 3 görünür, fazlası +N butonu ──────────────
+class _AccountAvatarRow extends StatelessWidget {
+  static const int _maxVisible = 3;
+
+  final List<_SwitchAccount> accounts;
+  final bool switching;
+  final void Function(_SwitchAccount) onSwitch;
+  final VoidCallback onMoreTap;
+  final ColorScheme colors;
+
+  const _AccountAvatarRow({
+    required this.accounts,
+    required this.switching,
+    required this.onSwitch,
+    required this.onMoreTap,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = accounts.take(_maxVisible).toList();
+    final overflow = accounts.length - _maxVisible;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        ...visible.map(
+          (acc) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _AccountAvatarItem(
+              account: acc,
+              switching: switching,
+              onTap: () => onSwitch(acc),
+              colors: colors,
+            ),
+          ),
+        ),
+        if (overflow > 0)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _MoreButton(
+              count: overflow,
+              switching: switching,
+              onTap: onMoreTap,
+              colors: colors,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Tek bir avatar ─────────────────────────────────────────────
+class _AccountAvatarItem extends StatelessWidget {
   final _SwitchAccount account;
   final bool switching;
   final VoidCallback onTap;
   final ColorScheme colors;
 
-  const _AccountAvatar({
+  const _AccountAvatarItem({
     required this.account,
     required this.switching,
     required this.onTap,
@@ -236,39 +357,10 @@ class _AccountAvatar extends StatelessWidget {
         opacity: switching ? 0.5 : 1.0,
         child: Column(
           children: [
-            // Daire
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: account.isPersonal
-                    ? colors.primary.withValues(alpha: 0.14)
-                    : colors.secondary.withValues(alpha: 0.14),
-              ),
-              child: ClipOval(
-                child: account.photoUrl != null
-                    ? Image.network(
-                        account.photoUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            _InitialFallback(
-                          initial: account.initial,
-                          isPersonal: account.isPersonal,
-                          colors: colors,
-                        ),
-                      )
-                    : _InitialFallback(
-                        initial: account.initial,
-                        isPersonal: account.isPersonal,
-                        colors: colors,
-                      ),
-              ),
-            ),
+            _AvatarCircle(account: account, size: 64, colors: colors),
             const SizedBox(height: 8),
-            // İsim
             SizedBox(
-              width: 72,
+              width: 68,
               child: Text(
                 account.displayName,
                 style: TextStyle(
@@ -288,15 +380,121 @@ class _AccountAvatar extends StatelessWidget {
   }
 }
 
+// ── +N dairesi ─────────────────────────────────────────────────
+class _MoreButton extends StatelessWidget {
+  final int count;
+  final bool switching;
+  final VoidCallback onTap;
+  final ColorScheme colors;
+
+  const _MoreButton({
+    required this.count,
+    required this.switching,
+    required this.onTap,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: switching ? null : onTap,
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.onSurface.withValues(alpha: 0.08),
+            ),
+            child: Center(
+              child: Text(
+                '+$count',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: colors.onSurface.withValues(alpha: 0.65),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 68,
+            child: Text(
+              'More',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colors.onSurface.withValues(alpha: 0.55),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Daire (foto veya harf) ─────────────────────────────────────
+class _AvatarCircle extends StatelessWidget {
+  final _SwitchAccount account;
+  final double size;
+  final ColorScheme colors;
+
+  const _AvatarCircle({
+    required this.account,
+    required this.size,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: account.isPersonal
+            ? colors.primary.withValues(alpha: 0.14)
+            : colors.secondary.withValues(alpha: 0.14),
+      ),
+      child: ClipOval(
+        child: account.photoUrl != null
+            ? Image.network(
+                account.photoUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) =>
+                    _InitialFallback(
+                  initial: account.initial,
+                  isPersonal: account.isPersonal,
+                  fontSize: size * 0.38,
+                  colors: colors,
+                ),
+              )
+            : _InitialFallback(
+                initial: account.initial,
+                isPersonal: account.isPersonal,
+                fontSize: size * 0.38,
+                colors: colors,
+              ),
+      ),
+    );
+  }
+}
+
 class _InitialFallback extends StatelessWidget {
   final String initial;
   final bool isPersonal;
+  final double fontSize;
   final ColorScheme colors;
 
   const _InitialFallback({
     required this.initial,
     required this.isPersonal,
     required this.colors,
+    this.fontSize = 24,
   });
 
   @override
@@ -305,7 +503,7 @@ class _InitialFallback extends StatelessWidget {
       child: Text(
         initial,
         style: TextStyle(
-          fontSize: 24,
+          fontSize: fontSize,
           fontWeight: FontWeight.w700,
           color: isPersonal ? colors.primary : colors.secondary,
         ),
