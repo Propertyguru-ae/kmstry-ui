@@ -73,14 +73,15 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
         lastActiveContext: account.isPersonal ? 'PERSONAL' : 'VENUE',
         activeVenueId: account.venueId,
       );
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        AuthRoutes.authGate,
-        (route) => false,
-      );
-    } catch (_) {
-      if (mounted) setState(() => _switching = false);
+    } catch (e) {
+      debugPrint('[VenuePendingPage] switchContext error: $e');
     }
+    // API başarısız olsa bile navigate et — authGate doğru sayfayı açar.
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      AuthRoutes.authGate,
+      (route) => false,
+    );
   }
 
   void _showAllAccountsSheet() {
