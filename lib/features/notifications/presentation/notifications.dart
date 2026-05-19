@@ -188,8 +188,12 @@ class _NotificationPageState extends State<NotificationPage> {
     final notificationMap = rawNotification is Map
         ? Map<String, dynamic>.from(rawNotification)
         : Map<String, dynamic>.from(payload);
-    if (notificationMap['id'] == null) return false;
+    // No id → meta-only event (e.g. bulk-read count update). Already handled
+    // via unreadCount field above; nothing to insert into the list.
+    if (notificationMap['id'] == null) return true;
     final model = NotificationModel.fromJson(notificationMap);
+    // 'system' type entries are internal signals, not displayable notifications.
+    if (model.type == 'system') return true;
     if (model.type == 'new_message') return true;
     if (!_isVisibleForCurrentContext(model)) return true;
     if (_isStaleInterestedAfterMatch(model)) return true;

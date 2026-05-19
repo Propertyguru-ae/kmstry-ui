@@ -425,7 +425,7 @@ class _CheckInPageState extends State<CheckInPage> {
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
       );
-      ActiveCheckinService().setActiveCheckin(checkinId);
+      ActiveCheckinService().setActiveCheckin(checkinId, venueId: widget.venueId);
 
       if (mounted) setState(() => _uploadCurrent = 1);
 

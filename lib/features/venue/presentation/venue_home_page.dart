@@ -217,6 +217,14 @@ class _VenueHomePageState extends State<VenueHomePage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Trigger "test venue nearby" push once per hour (backend rate-limits).
+    // Fire-and-forget — never blocks the UI.
+    _venueRepository.triggerTestVenueNotification();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,

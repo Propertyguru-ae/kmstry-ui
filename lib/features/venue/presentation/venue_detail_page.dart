@@ -7,7 +7,9 @@ import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.da
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
+import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 
 class VenueDetailPage extends StatefulWidget {
@@ -21,9 +23,12 @@ class VenueDetailPage extends StatefulWidget {
 
 class _VenueDetailPageState extends State<VenueDetailPage> {
   final _repo = VenueCheckinRepository();
+  final _checkinRepo = CheckinRepository();
   final _venueContextRepo = VenueContextRepository();
+  String? _activeCheckinId;
   String? _activeCheckinVenueId;
   String? _activeCheckinVenuePlaceId;
+  bool _checkingOut = false;
   String? _resolvedVenueIdForCurrentDetail;
   bool _loadingActiveCheckin = true;
   bool _resolvingVenueForCheckin = false;
@@ -90,6 +95,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
       if (activeVenueId == null || activeVenueId.isEmpty) {
         setState(() {
+          _activeCheckinId = null;
           _activeCheckinVenueId = null;
           _activeCheckinVenuePlaceId = null;
           _loadingActiveCheckin = false;
@@ -98,6 +104,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       }
 
       setState(() {
+        _activeCheckinId = activeCheckin?.id;
         _activeCheckinVenueId = activeVenueId;
         _activeCheckinVenuePlaceId = null;
         // Stay loading until we can decide "here" vs elsewhere (avoid wrong "Check in first").
@@ -157,6 +164,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       debugPrint('⚠️ Error loading active check-in: $e');
       if (!mounted) return;
       setState(() {
+        _activeCheckinId = null;
         _activeCheckinVenueId = null;
         _loadingActiveCheckin = false;
       });
@@ -217,6 +225,20 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
           ),
         ),
       );
+
+      // Check-in tamamlandıysa → who's here sayfasına direkt geç.
+      if (mounted && ActiveCheckinService().isCheckedInAt(resolvedVenueId)) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VenuePeoplePage(
+              venue: widget.venue,
+              listVenueId: resolvedVenueId,
+            ),
+          ),
+        );
+      }
+
       _loadActiveCheckin();
       await _refreshCheckinStats(forcedVenueId: resolvedVenueId);
       Future.delayed(const Duration(seconds: 1), () {
@@ -234,6 +256,32 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       if (mounted) {
         setState(() => _resolvingVenueForCheckin = false);
       }
+    }
+  }
+
+  Future<void> _checkout() async {
+    final checkinId = _activeCheckinId;
+    if (checkinId == null) return;
+
+    setState(() => _checkingOut = true);
+    try {
+      await _checkinRepo.checkout(checkinId);
+      ActiveCheckinService().clear();
+      if (!mounted) return;
+      setState(() {
+        _activeCheckinId = null;
+        _activeCheckinVenueId = null;
+        _activeCheckinVenuePlaceId = null;
+        _checkingOut = false;
+      });
+      await _refreshCheckinStats();
+    } catch (e) {
+      debugPrint('❌ Checkout error: $e');
+      if (!mounted) return;
+      setState(() => _checkingOut = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not check out. Please try again.')),
+      );
     }
   }
 
@@ -659,7 +707,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
               const SizedBox(height: 24),
 
-              /// WHO'S HERE
+              /// WHO'S HERE / CHECK IN
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
@@ -692,6 +740,52 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   ),
                 ),
               ),
+
+              /// CHECK OUT — sadece bu venue'da aktif check-in varken görünür
+              if (hasActiveCheckinHere) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: _checkingOut
+                        ? null
+                        : () async {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Check out?'),
+                                content: const Text(
+                                  'You will leave this venue and your check-in will end.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(ctx, true),
+                                    child: const Text('Check out'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed == true) await _checkout();
+                          },
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                    ),
+                    child: _checkingOut
+                        ? const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Check out'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import 'auth_api.dart';
+import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -9,6 +12,31 @@ import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
 
 class AuthRepository {
+  // ── One-time app bootstrap ────────────────────────────────────────────────
+  /// Call this once from main() after navigatorKey is ready.
+  /// Wires up the 401 silent-refresh interceptor in ApiClient.
+  static void init({required GlobalKey<NavigatorState> navigatorKey}) {
+    ApiClient.onRefreshToken = () async {
+      return AuthRepository()._refreshTokenInternal();
+    };
+
+    ApiClient.onSessionExpired = () async {
+      await SecureStorage.clearSession();
+      invalidateMeCache();
+      ProfilePreviewPage.clearActionStateCache();
+      navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        AuthRoutes.startupGate,
+        (route) => false,
+      );
+    };
+  }
+
+  Future<String?> _refreshTokenInternal() async {
+    return refreshAccessToken();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   final AuthApi _api = AuthApi();
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],

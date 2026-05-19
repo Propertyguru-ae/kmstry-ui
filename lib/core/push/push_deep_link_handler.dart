@@ -2,9 +2,14 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../features/auth/data/auth_repository.dart';
 import '../../features/chat/data/chat_repository.dart';
 import '../../features/messageDetail/presentation/message_detail.dart';
 import '../../features/auth/presentation/auth_routes.dart';
+import '../../features/checkin/services/active_checkin_service.dart';
+import '../../features/venue/data/venue_repository.dart';
+import '../../features/venue/presentation/venue_detail_page.dart';
+import '../../features/venue/presentation/venue_people_page.dart';
 
 /// FCM bildirimlerine dokunulduğunda (arka plan / kapalı uygulama)
 /// ilgili ekrana yönlendiren handler.
@@ -18,6 +23,7 @@ class PushDeepLinkHandler {
   static final PushDeepLinkHandler instance = PushDeepLinkHandler._();
 
   final ChatRepository _chatRepo = ChatRepository();
+  final VenueRepository _venueRepo = VenueRepository();
 
   /// [AppShell.initState] içinde çağırılır. NavigatorKey ile ekran
   /// kontrolünü AppShell'e bırakır.
@@ -37,6 +43,13 @@ class PushDeepLinkHandler {
       }
     });
   }
+
+  /// Public entry-point used by flutter_local_notifications tap callback.
+  Future<void> routeFromData(
+    GlobalKey<NavigatorState> navigatorKey,
+    Map<String, dynamic> data,
+  ) =>
+      _route(navigatorKey, data);
 
   Future<void> _route(
     GlobalKey<NavigatorState> navigatorKey,
@@ -60,10 +73,54 @@ class PushDeepLinkHandler {
       case 'liked_you':
         nav.pushNamed(AuthRoutes.notifications);
 
+      case 'venue_claim_approved':
+        // Venue context changed on the server — invalidate cache so authGate
+        // re-fetches /me and routes the user to their new VENUE_HOME.
+        AuthRepository.invalidateMeCache();
+        nav.pushNamedAndRemoveUntil(
+          AuthRoutes.authGate,
+          (route) => false,
+        );
+
+      case 'venue_claim_rejected':
+        nav.pushNamed(AuthRoutes.notifications);
+
+      case 'test_venue_nearby':
+        final venueId = (data['venueId'] ?? data['venue_id']) as String?;
+        if (venueId == null || venueId.isEmpty) return;
+        await _openTestVenue(nav, venueId);
+
       default:
         if (kDebugMode) {
           debugPrint('PushDeepLinkHandler: unknown type=$type');
         }
+    }
+  }
+
+  /// venueId ile venue'yu fetch eder.
+  /// Kullanıcının o venue'da aktif check-in'i varsa → VenuePeoplePage
+  /// (who's here listesi). Yoksa → VenueDetailPage.
+  Future<void> _openTestVenue(NavigatorState nav, String venueId) async {
+    try {
+      final venue = await _venueRepo.getVenueById(venueId);
+      final isCheckedInHere = ActiveCheckinService().isCheckedInAt(venueId);
+
+      if (isCheckedInHere) {
+        nav.push(
+          MaterialPageRoute(
+            builder: (_) => VenuePeoplePage(venue: venue, listVenueId: venueId),
+          ),
+        );
+      } else {
+        nav.push(
+          MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('PushDeepLinkHandler: could not open venue $venueId — $e');
+      }
+      nav.pushNamed(AuthRoutes.home);
     }
   }
 

@@ -200,4 +200,31 @@ Future<NearbyVenuesResponse> getNearbyVenues({
     );
     return Map<String, dynamic>.from(result as Map);
   }
+
+  /// Backend'den venue ID ile tek venue getirir.
+  /// Deep link gibi senaryolarda kullanılır.
+  Future<Venue> getVenueById(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final data = await _api.get('/venues/$venueId', headers: headers);
+    return Venue.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Test venue proximity push'unu tetikler (backend rate-limits to once/hour).
+  /// Fire-and-forget: hatalar görmezden gelinir.
+  Future<void> triggerTestVenueNotification() async {
+    try {
+      final token = await SecureStorage.getAccessToken();
+      if (token == null) return;
+      await _api.post(
+        '/venues/test-venue-notification',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // Non-fatal — test notification is best-effort.
+    }
+  }
 }
