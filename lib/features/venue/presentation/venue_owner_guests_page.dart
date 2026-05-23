@@ -75,19 +75,38 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       backgroundColor:
-          isDark ? Theme.of(context).scaffoldBackgroundColor : Colors.white,
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? _buildError(colors)
-                : _buildContent(colors, isDark),
+          isDark ? theme.scaffoldBackgroundColor : Colors.white,
+      appBar: AppBar(
+        backgroundColor: theme.appBarTheme.backgroundColor,
+        elevation: 0,
+        automaticallyImplyLeading: false,
+        title: Text(
+          'Guests',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
+            height: 1,
+          ),
+        ),
       ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _buildError(colors)
+              : _buildContent(colors, isDark),
     );
   }
 
@@ -121,16 +140,10 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
         slivers: [
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Guests',
-                    style: TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 14),
                   // Summary chips
                   Row(
                     children: [

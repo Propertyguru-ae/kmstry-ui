@@ -246,6 +246,10 @@ class _VenueHomePageState extends State<VenueHomePage> {
             onLocationResolved: (center) {
               _lastResolvedCenter = center;
               _loadNearbyVenues(center);
+              // Fire-and-forget: konumu backend'e ping'le (2km notify için)
+              _venueContextRepository
+                  .pingLocation(center.latitude, center.longitude)
+                  .ignore();
             },
             onSearchActivityChanged: (active) {
               if (!mounted) return;

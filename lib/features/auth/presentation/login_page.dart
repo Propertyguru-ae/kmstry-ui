@@ -328,21 +328,20 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                               const SizedBox(height: 20),
 
-                              // Email
+                              // Email veya kullanıcı adı
                               TextFormField(
                                 controller: _emailCtrl,
-                                keyboardType: TextInputType.emailAddress,
+                                keyboardType: TextInputType.text,
+                                autocorrect: false,
                                 decoration: const InputDecoration(
-                                  prefixIcon: Icon(Icons.mail_outline),
-                                  hintText: 'Email',
+                                  prefixIcon: Icon(Icons.person_outline),
+                                  hintText: 'Email or username',
                                   border: OutlineInputBorder(),
                                 ),
                                 validator: (v) {
                                   final x = (v ?? '').trim();
                                   if (x.isEmpty)
-                                    return 'Please enter your email address.';
-                                  if (!x.contains('@'))
-                                    return 'Please enter a valid email address.';
+                                    return 'Please enter your email or username.';
                                   return null;
                                 },
                               ),

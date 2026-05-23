@@ -593,12 +593,21 @@ class _NotificationPageState extends State<NotificationPage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: theme.scaffoldBackgroundColor,
+        backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
         title: Text(
           'Notifications',
-          style: theme.textTheme.titleLarge?.copyWith(
+          style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.bold,
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: theme.brightness == Brightness.dark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
+            height: 1,
           ),
         ),
       ),

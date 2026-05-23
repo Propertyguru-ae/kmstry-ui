@@ -707,78 +707,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       child: Scaffold(
         extendBody: true,
         body: pages[safeIndex],
-        bottomNavigationBar: BottomNavigationBar(
-          backgroundColor: isDark
-              ? theme.colorScheme.surface.withValues(alpha: 0.95)
-              : theme.colorScheme.surface.withValues(alpha: 0.95),
-          elevation: 0,
-          currentIndex: safeIndex,
-          type: BottomNavigationBarType.fixed,
-          selectedItemColor: theme.colorScheme.primary,
-          unselectedItemColor: isDark ? Colors.white24 : Colors.grey.shade400,
-          showSelectedLabels: false,
-          showUnselectedLabels: false,
-          onTap: _onItemTapped,
-          items: _isVenueContext
-              ? [
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.home_outlined, size: 30),
-                    label: '',
-                  ),
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.people_alt_outlined, size: 28),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildNotificationIcon(),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: GestureDetector(
-                      onLongPress: () {
-                        _showAccountSwitcher(context);
-                      },
-                      child: _buildProfileAvatar(
-                        isActive: safeIndex == 3,
-                        isDark: isDark,
-                        theme: theme,
-                      ),
-                    ),
-                    label: '',
-                  ),
-                ]
-              : [
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.home_outlined, size: 30),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildNotificationIcon(),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildMessageIcon(),
-                    label: '',
-                  ),
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.people_outline, size: 30),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: GestureDetector(
-                      onLongPress: () {
-                        _showAccountSwitcher(context);
-                      },
-                      child: _buildProfileAvatar(
-                        isActive: safeIndex == 2,
-                        isDark: isDark,
-                        theme: theme,
-                      ),
-                    ),
-                    label: '',
-                  ),
-                ],
-        ),
+        bottomNavigationBar: _buildNavBar(safeIndex, isDark, theme, context),
       ),
     );
   }
@@ -790,13 +719,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }) {
     final colors = theme.colorScheme;
     return Container(
-      width: 32,
-      height: 32,
+      width: 34,
+      height: 34,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
           color: isActive ? colors.onSurface : Colors.transparent,
-          width: 2,
+          width: 2.5,
         ),
         color: isDark
             ? colors.primary.withValues(alpha: 0.2)
@@ -814,8 +743,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildNotificationIcon() {
-    const icon = Icon(Icons.notifications_none, size: 30);
+  Widget _buildNotificationIcon(Color color) {
+    final icon = Icon(Icons.notifications_none, size: 27, color: color);
     if (_unreadNotificationCount <= 0) {
       return icon;
     }
@@ -850,8 +779,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageIcon() {
-    const icon = Icon(Icons.mark_chat_unread_outlined, size: 28);
+  Widget _buildMessageIcon(Color color) {
+    final icon = Icon(Icons.chat_bubble_outline, size: 27, color: color);
     if (_unreadDmCount <= 0) {
       return icon;
     }
@@ -881,6 +810,103 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildNavBar(
+    int safeIndex,
+    bool isDark,
+    ThemeData theme,
+    BuildContext ctx,
+  ) {
+    final colors = theme.colorScheme;
+    final activeColor = colors.onSurface;
+    final inactiveColor = colors.onSurface.withValues(alpha: 0.30);
+
+    Widget navIcon(IconData filled, IconData outlined, int index) {
+      return Icon(
+        safeIndex == index ? filled : outlined,
+        size: 28,
+        color: safeIndex == index ? activeColor : inactiveColor,
+      );
+    }
+
+    Widget navItem(int index, Widget child, {VoidCallback? onLongPress}) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _onItemTapped(index),
+        onLongPress: onLongPress,
+        child: SizedBox.expand(
+          child: Center(child: child),
+        ),
+      );
+    }
+
+    final List<Widget> items = _isVenueContext
+        ? [
+            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
+            navItem(1, navIcon(Icons.people, Icons.people_outline, 1)),
+            navItem(
+              2,
+              _buildNotificationIcon(
+                safeIndex == 2 ? activeColor : inactiveColor,
+              ),
+            ),
+            navItem(
+              3,
+              _buildProfileAvatar(
+                isActive: safeIndex == 3,
+                isDark: isDark,
+                theme: theme,
+              ),
+              onLongPress: () => _showAccountSwitcher(ctx),
+            ),
+          ]
+        : [
+            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
+            navItem(
+              1,
+              _buildNotificationIcon(
+                safeIndex == 1 ? activeColor : inactiveColor,
+              ),
+            ),
+            navItem(
+              2,
+              _buildMessageIcon(safeIndex == 2 ? activeColor : inactiveColor),
+            ),
+            navItem(3, navIcon(Icons.people_alt, Icons.people_alt_outlined, 3)),
+            navItem(
+              4,
+              _buildProfileAvatar(
+                isActive: safeIndex == 4,
+                isDark: isDark,
+                theme: theme,
+              ),
+              onLongPress: () => _showAccountSwitcher(ctx),
+            ),
+          ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? colors.surface : Colors.white,
+        border: Border(
+          top: BorderSide(
+            width: 0.5,
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.10),
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 52,
+          child: Row(
+            children: items.map((item) => Expanded(child: item)).toList(),
+          ),
+        ),
+      ),
     );
   }
 }

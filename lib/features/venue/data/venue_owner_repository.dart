@@ -38,4 +38,20 @@ class VenueOwnerRepository {
     final map = Map<String, dynamic>.from(data as Map);
     return VenueOwnerStatsVenue.fromJson(map);
   }
+
+  /// Venue'nun 2km yakınındaki kullanıcılara push bildirimi gönderir.
+  /// Returns: { sent: int, rateLimited: bool, rateLimitedUntil: String }
+  Future<Map<String, dynamic>> notifyNearby(
+    String venueId,
+    String title,
+    String message,
+  ) async {
+    final headers = await _authHeaders();
+    final data = await _api.post(
+      '/venues/$venueId/notify-nearby',
+      headers: headers,
+      body: {'title': title, 'message': message},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
 }

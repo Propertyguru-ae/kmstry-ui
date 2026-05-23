@@ -24,6 +24,7 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   bool _loading = true;
   bool _accountNotificationsEnabled = false;
   bool _systemNotificationsEnabled = false;
+  bool _receiveTestNotifications = true;
   int _blockedUsersCount = 0;
   bool _isVenueContext = false;
   bool _deletingAccount = false;
@@ -43,6 +44,7 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
       final meContext = MeContextModel.fromMe(me);
       final accountOptIn = me['notificationPermissionGranted'];
       final accountEnabled = accountOptIn is bool ? accountOptIn : false;
+      final receiveTest = me['receiveTestNotifications'];
       final permissionState = await _notificationPermissionService
           .readStateWithAccountPreference(accountEnabled);
       final blockedUsers = await _matchRepository.getBlockedUsers();
@@ -54,6 +56,7 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
       setState(() {
         _accountNotificationsEnabled = accountEnabled;
         _systemNotificationsEnabled = permissionState.systemGranted;
+        _receiveTestNotifications = receiveTest is bool ? receiveTest : true;
         _blockedUsersCount = blockedUsers.length;
         _isVenueContext = meContext.lastActiveContext?.toUpperCase() == 'VENUE';
         _hasVenueMembership = meContext.hasVenueMembership;
@@ -82,6 +85,16 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
         'notificationPermissionGranted': enabled,
       });
     } catch (_) {}
+  }
+
+  Future<void> _setTestNotifications(bool enabled) async {
+    setState(() => _receiveTestNotifications = enabled);
+    try {
+      await AuthRepository().updateMe({'receive_test_notifications': enabled});
+    } catch (_) {
+      // Revert on failure
+      if (mounted) setState(() => _receiveTestNotifications = !enabled);
+    }
   }
 
   Future<void> _setNotifications(bool enabled) async {
@@ -242,6 +255,34 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                     label: const Text('Open system notification settings'),
                   ),
                 ],
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: colors.primary.withValues(alpha: 0.12),
+                    ),
+                  ),
+                  child: SwitchListTile(
+                    value: _receiveTestNotifications,
+                    onChanged: (v) => _setTestNotifications(v),
+                    activeThumbColor: colors.secondary,
+                    activeTrackColor: colors.secondary.withValues(alpha: 0.4),
+                    title: Text(
+                      'Test venue notifications',
+                      style: TextStyle(color: colors.onSurface),
+                    ),
+                    subtitle: Text(
+                      _receiveTestNotifications
+                          ? 'Receiving nearby venue pings'
+                          : 'Paused',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
+                  ),
+                ),
                 if (!_isVenueContext) ...[
                   const SizedBox(height: 22),
                   Text(

@@ -253,6 +253,53 @@ class ApiClient {
     }
   }
 
+  Future<dynamic> put(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
+  }) async {
+    final url = Uri.parse('${AppConfig.baseUrl}$path');
+    final merged = {'Content-Type': 'application/json', ...?headers};
+
+    _log('🌐 [HTTP] PUT $url');
+    _log('🌐 [HTTP] body = ${_truncate(body)}');
+
+    try {
+      final response = await _client
+          .put(url, headers: merged, body: jsonEncode(body ?? {}))
+          .timeout(const Duration(seconds: 10));
+
+      _log('🌐 [HTTP] statusCode = ${response.statusCode}');
+      _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
+
+      if (response.statusCode == 401) {
+        return _handle401(
+          response,
+          path,
+          headers,
+          (h) => _client
+              .put(url, headers: h, body: jsonEncode(body ?? {}))
+              .timeout(const Duration(seconds: 10)),
+        );
+      }
+
+      final data = _tryDecode(response.body);
+      if (response.statusCode >= 400) {
+        throw ApiException(statusCode: response.statusCode, data: data);
+      }
+      return data;
+    } on SocketException catch (e) {
+      _log('❌ [HTTP] SocketException: $e');
+      rethrow;
+    } on TimeoutException catch (e) {
+      _log('⏱️ [HTTP] TimeoutException: $e');
+      rethrow;
+    } catch (e) {
+      _log('❌ [HTTP] PUT error: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> delete(
     String path, {
     Map<String, String>? headers,

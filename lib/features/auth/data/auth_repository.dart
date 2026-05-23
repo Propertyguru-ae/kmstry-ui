@@ -292,10 +292,10 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Failed to confirm email change');
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String identifier, String password) async {
     _log('🔥 Password login started');
 
-    final response = await _api.login(email: email, password: password);
+    final response = await _api.login(identifier: identifier, password: password);
     _log('📡 backend password response = $response');
 
     if (response['success'] == true) {
@@ -596,6 +596,7 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
 
     await _api.upsertPersonalProfile(accessToken: token, data: data);
+    invalidateMeCache();
 
     // Keep legacy /auth/me fields in sync for clients that still read user root fields.
     final mirror = <String, dynamic>{};
@@ -625,7 +626,10 @@ class AuthRepository {
       mirror['bio_onboarding_skipped'] = true;
     }
     if (mirror.isNotEmpty) {
-      await _api.updateMe(accessToken: token, data: mirror);
+      // Fire-and-forget: mirror is a legacy sync for old clients.
+      // Never block navigation on this call — personal-profile endpoint is the source of truth.
+      _api.updateMe(accessToken: token, data: mirror)
+          .catchError((_) => <String, dynamic>{});
     }
   }
 

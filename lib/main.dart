@@ -13,6 +13,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'core/push/push_background_handler.dart';
 import 'core/push/push_manager.dart';
 import 'core/push/push_deep_link_handler.dart';
+import 'core/linking/app_links_bootstrap.dart';
 
 late List<CameraDescription> cameras;
 
@@ -58,31 +59,34 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
-    return MaterialApp(
+    return AppLinksBootstrap(
       navigatorKey: navigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'KMSTRY',
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: themeProvider.themeMode,
-      initialRoute: AuthRoutes.startupGate,
-      routes: AuthRoutes.routes,
-      onGenerateRoute: (RouteSettings settings) {
-        if (settings.name == AuthRoutes.resetPassword) {
-          final args = settings.arguments;
-          String? token;
-          if (args is String) {
-            token = args;
-          } else if (args is Map && args['token'] is String) {
-            token = args['token'] as String;
+      child: MaterialApp(
+        navigatorKey: navigatorKey,
+        debugShowCheckedModeBanner: false,
+        title: 'KMSTRY',
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: themeProvider.themeMode,
+        initialRoute: AuthRoutes.startupGate,
+        routes: AuthRoutes.routes,
+        onGenerateRoute: (RouteSettings settings) {
+          if (settings.name == AuthRoutes.resetPassword) {
+            final args = settings.arguments;
+            String? token;
+            if (args is String) {
+              token = args;
+            } else if (args is Map && args['token'] is String) {
+              token = args['token'] as String;
+            }
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) => ResetPasswordPage(resetToken: token),
+            );
           }
-          return MaterialPageRoute<void>(
-            settings: settings,
-            builder: (_) => ResetPasswordPage(resetToken: token),
-          );
-        }
-        return null;
-      },
+          return null;
+        },
+      ),
     );
   }
 }

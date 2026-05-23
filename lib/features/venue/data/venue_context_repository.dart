@@ -61,4 +61,20 @@ class VenueContextRepository {
     );
     return VenueCheckinStats.fromJson(Map<String, dynamic>.from(data));
   }
+
+  /// Kullanıcının konumunu backend'e ping'ler (fire-and-forget).
+  /// Hata olursa sessizce yutulur.
+  Future<void> pingLocation(double lat, double lng) async {
+    try {
+      final token = await SecureStorage.getAccessToken();
+      if (token == null) return;
+      await _api.patch(
+        '/users/me/location',
+        headers: {'Authorization': 'Bearer $token'},
+        body: {'lat': lat, 'lng': lng},
+      );
+    } catch (_) {
+      // Fire-and-forget — errors are intentionally ignored
+    }
+  }
 }

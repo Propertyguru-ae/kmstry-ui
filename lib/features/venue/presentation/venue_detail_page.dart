@@ -12,6 +12,8 @@ import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_pag
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 
+// VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
+
 class VenueDetailPage extends StatefulWidget {
   final Venue venue;
 
@@ -33,6 +35,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   bool _loadingActiveCheckin = true;
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
+  Map<String, dynamic>? _enrichedVenueData;
   bool _loadingDetails = true;
   bool _loadingCheckinStats = false;
   int? _checkinCountActive;
@@ -47,6 +50,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _checkinCountFemale = widget.venue.checkinCountFemale;
     _loadActiveCheckin();
     _loadVenueDetails();
+    _loadEnrichedVenueData();
     _refreshCheckinStats();
   }
 
@@ -60,6 +64,17 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Real DB uuid as id — matching is done via id == activeVenueId.
     if (widget.venue.isInDb && widget.venue.canCheckin) return null;
     return widget.venue.id;
+  }
+
+  Future<void> _loadEnrichedVenueData() async {
+    if (!widget.venue.isInDb || widget.venue.id.isEmpty) return;
+    try {
+      final data = await _venueContextRepo.getVenueById(widget.venue.id);
+      if (!mounted) return;
+      setState(() => _enrichedVenueData = data);
+    } catch (e) {
+      debugPrint('⚠️ Could not load enriched venue data: $e');
+    }
   }
 
   Future<void> _loadVenueDetails() async {
@@ -327,6 +342,138 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     return null;
   }
 
+  Widget _buildDescriptionSection(String description) {
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'About',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          description,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: colors.onSurface.withValues(alpha: 0.75),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUpcomingEventsSection(List<VenueUpcomingEvent> events) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Upcoming Events',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...events.map(
+          (event) => Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? colors.surface
+                  : colors.primary.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: colors.outline.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Row(
+              children: [
+                if (event.photo != null && event.photo!.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      event.photo!,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      errorBuilder: (ctx, err, st) => _eventIconPlaceholder(colors),
+                    ),
+                  )
+                else
+                  _eventIconPlaceholder(colors),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        event.title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        event.formattedDate,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (event.priceAed != null)
+                  Text(
+                    '${event.priceAed} AED',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: colors.primary,
+                    ),
+                  )
+                else
+                  Text(
+                    'Free',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green.shade600,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _eventIconPlaceholder(ColorScheme colors) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: colors.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(Icons.event_outlined, color: colors.primary, size: 22),
+    );
+  }
+
   Widget _buildCheckinStatsSection() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -562,19 +709,17 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final isOpen = opening?['open_now'] == true;
     final weekdayText = opening?['weekday_text'];
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              /// BACK
-              IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.pop(context),
-              ),
-
-              const SizedBox(height: 8),
+      body: Stack(
+        children: [
+          // ── Scrollable content ──────────────────────────────────────────
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Space reserved for the floating back button
+                  const SizedBox(height: 52),
 
               /// HEADER
               Row(
@@ -705,6 +850,29 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 label: const Text('Get Directions'),
               ),
 
+              /// DESCRIPTION
+              if (_enrichedVenueData?['description'] != null &&
+                  (_enrichedVenueData!['description'] as String).isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _buildDescriptionSection(
+                  _enrichedVenueData!['description'] as String,
+                ),
+              ],
+
+              /// UPCOMING EVENTS
+              if (_enrichedVenueData?['upcomingEvents'] is List &&
+                  (_enrichedVenueData!['upcomingEvents'] as List).isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _buildUpcomingEventsSection(
+                  (_enrichedVenueData!['upcomingEvents'] as List)
+                      .whereType<Map>()
+                      .map((e) => VenueUpcomingEvent.fromJson(
+                            Map<String, dynamic>.from(e),
+                          ))
+                      .toList(),
+                ),
+              ],
+
               const SizedBox(height: 24),
 
               /// WHO'S HERE / CHECK IN
@@ -786,10 +954,33 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   ),
                 ),
               ],
-            ],
+                ],       // Column children
+              ),         // Column
+            ),           // SingleChildScrollView
+          ),             // SafeArea
+
+          // ── Floating back button — always visible regardless of scroll ──
+          Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8, top: 6),
+                child: Material(
+                  color: Colors.black.withValues(alpha: 0.32),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new,
+                        color: Colors.white, size: 18),
+                    onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        ],   // Stack children
+      ),     // Stack
     );
   }
 }

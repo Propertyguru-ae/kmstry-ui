@@ -90,6 +90,7 @@ class VenueActiveGuest {
   final String? username;
   final String? fullName;
   final String? photo;
+  final String? featuredPhoto;
   final String? gender;
   final String checkinId;
 
@@ -98,6 +99,7 @@ class VenueActiveGuest {
     this.username,
     this.fullName,
     this.photo,
+    this.featuredPhoto,
     this.gender,
     required this.checkinId,
   });
@@ -108,6 +110,7 @@ class VenueActiveGuest {
       username: json['username']?.toString(),
       fullName: (json['fullName'] ?? json['full_name'])?.toString(),
       photo: json['photo']?.toString(),
+      featuredPhoto: (json['featuredPhoto'] ?? json['featured_photo'])?.toString(),
       gender: json['gender']?.toString(),
       checkinId:
           (json['checkinId'] ?? json['checkin_id'])?.toString() ?? '',

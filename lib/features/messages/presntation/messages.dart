@@ -284,9 +284,16 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
             fontWeight: FontWeight.bold,
           ),
         ),
-        actions: [
-       
-        ],
+        actions: [],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
+            height: 1,
+          ),
+        ),
       ),
       body: Column(
         children: [

@@ -9,6 +9,7 @@ import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flo
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_member_invite_page.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
@@ -134,9 +135,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
-          _logDecision('personal_home_step_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('personal_home_step_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('personal_home_step_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
@@ -169,9 +176,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (!hasGenderInterest) {
-          _logDecision('context_choice_force_personal_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('context_choice_force_personal_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('context_choice_force_personal_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
@@ -180,6 +193,14 @@ class _AuthGatePageState extends State<AuthGatePage> {
           return;
         }
         await _routeToPersonalHome();
+        return;
+      }
+      if (homeRoute == 'VENUE_MEMBER_INVITE' || nextAction == 'SHOW_VENUE_MEMBER_INVITE') {
+        _logDecision('server_route_venue_member_invite');
+        final pendingInvites = meContext.memberVenues
+            .where((v) => v.isPendingMemberInvite)
+            .toList();
+        _go(VenueMemberInvitePage(pendingInvites: pendingInvites));
         return;
       }
       if (homeRoute == 'VENUE_PENDING' || nextAction == 'AWAIT_VENUE_APPROVAL') {
@@ -215,9 +236,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
-          _logDecision('server_route_personal_onboarding_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('server_route_personal_onboarding_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('server_route_personal_onboarding_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
