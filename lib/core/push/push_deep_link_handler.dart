@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../features/auth/data/auth_repository.dart';
-import '../../features/chat/data/chat_repository.dart';
 import '../../features/messageDetail/presentation/message_detail.dart';
 import '../../features/auth/presentation/auth_routes.dart';
 import '../../features/checkin/services/active_checkin_service.dart';
@@ -22,7 +21,6 @@ class PushDeepLinkHandler {
   PushDeepLinkHandler._();
   static final PushDeepLinkHandler instance = PushDeepLinkHandler._();
 
-  final ChatRepository _chatRepo = ChatRepository();
   final VenueRepository _venueRepo = VenueRepository();
 
   /// [AppShell.initState] içinde çağırılır. NavigatorKey ile ekran
@@ -65,7 +63,13 @@ class PushDeepLinkHandler {
       case 'new_message':
         final chatId = (data['chatId'] ?? data['chat_id']) as String?;
         if (chatId == null || chatId.isEmpty) return;
-        await _openChat(nav, chatId);
+        final otherUserId = _readString(data, const [
+          'senderId', 'sender_id', 'otherUserId', 'other_user_id',
+        ]);
+        final otherName = _readString(data, const [
+          'senderName', 'sender_name', 'otherName', 'other_name',
+        ]);
+        _openChat(nav, chatId, otherUserId: otherUserId, otherName: otherName);
 
       case 'match_created':
         nav.pushNamed(AuthRoutes.people);
@@ -97,6 +101,14 @@ class PushDeepLinkHandler {
     }
   }
 
+  String _readString(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final v = data[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
   /// venueId ile venue'yu fetch eder.
   /// Kullanıcının o venue'da aktif check-in'i varsa → VenuePeoplePage
   /// (who's here listesi). Yoksa → VenueDetailPage.
@@ -124,29 +136,23 @@ class PushDeepLinkHandler {
     }
   }
 
-  /// chatId'den chat detayını fetch edip MessageDetailPage'i açar.
-  /// Detay gelene kadar kullanıcı beklemez — hemen sayfayı açar, sayfa
-  /// kendi yükleme state'ini yönetir.
-  Future<void> _openChat(NavigatorState nav, String chatId) async {
-    try {
-      final chat = await _chatRepo.getChat(chatId, markRead: false, take: 1);
-      final other = chat.displayOtherUser;
-      nav.push(
-        MaterialPageRoute(
-          builder: (_) => MessageDetailPage(
-            chatId: chatId,
-            otherUserId: other?.id ?? '',
-            otherName: other?.fullName ?? 'Someone',
-            otherPhotoUrl: other?.photo ?? '',
-          ),
+  /// chatId ile MessageDetailPage'i hemen açar; ek bir API çağrısı yapmaz.
+  /// Sayfa kendi _loadChat() içinde detayı çeker.
+  void _openChat(
+    NavigatorState nav,
+    String chatId, {
+    String otherUserId = '',
+    String otherName = '',
+  }) {
+    nav.push(
+      MaterialPageRoute(
+        builder: (_) => MessageDetailPage(
+          chatId: chatId,
+          otherUserId: otherUserId,
+          otherName: otherName,
+          otherPhotoUrl: '',
         ),
-      );
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('PushDeepLinkHandler: could not open chat $chatId — $e');
-      }
-      // Fallback: messages listesine git
-      nav.pushNamed(AuthRoutes.messages);
-    }
+      ),
+    );
   }
 }

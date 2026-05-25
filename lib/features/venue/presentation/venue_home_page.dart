@@ -66,7 +66,7 @@ class _VenueHomePageState extends State<VenueHomePage> {
   final VenueRepository _venueRepository = VenueRepository();
   final VenueContextRepository _venueContextRepository = VenueContextRepository();
 
-  Future<void> _loadNearbyVenues(LatLng center) async {
+  Future<void> _loadNearbyVenues(LatLng center, {int attempt = 1}) async {
     setState(() => _loadingVenues = true);
     try {
       final response = await _venueRepository.getNearbyVenues(
@@ -91,8 +91,15 @@ class _VenueHomePageState extends State<VenueHomePage> {
         _listVenues = _enrichVenuesWithPoolCheckins(response.items, pool);
         _loadingVenues = false;
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[VenueHome] _loadNearbyVenues failed (attempt $attempt): $e');
       if (!mounted) return;
+      if (attempt < 3) {
+        await Future.delayed(Duration(seconds: attempt * 2));
+        if (!mounted) return;
+        await _loadNearbyVenues(center, attempt: attempt + 1);
+        return;
+      }
       setState(() {
         _mapVenues = const [];
         _listVenues = const [];

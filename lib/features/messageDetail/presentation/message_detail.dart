@@ -73,6 +73,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     _loadCurrentUser();
     if (_chatId != null) {
       _loadChat();
+      unawaited(_connectRealtimeIfPossible());
     } else {
       setState(() => _loading = false);
     }
@@ -105,6 +106,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     unawaited(_connectRealtimeIfPossible());
     unawaited(_catchUpMessages());
   }
+
+  /// widget.otherUserId bildirimden boş gelirse yüklenen chat'ten kullan.
+  String get _effectiveOtherUserId =>
+      widget.otherUserId.isNotEmpty
+          ? widget.otherUserId
+          : (_chat?.displayOtherUser?.id ?? '');
 
   void _bindRealtimeStreams() {
     _realtimeEventsSub = _realtime.events.listen(_handleRealtimeEvent);
@@ -149,7 +156,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       setState(() {
         _currentUserId = me['id'] as String?;
       });
-      unawaited(_connectRealtimeIfPossible());
     } catch (_) {}
   }
 
@@ -271,11 +277,23 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         unawaited(_catchUpMessages());
         return;
       case 'message.created':
-      case 'message.updated':
         final rawMessage = payload['message'];
         if (rawMessage is! Map) return;
         final message = ChatMessage.fromJson(Map<String, dynamic>.from(rawMessage));
         _mergeOrInsertMessage(message);
+        if (!message.isSentByMe(_currentUserId)) {
+          final cid = _chatId;
+          if (cid != null && cid.isNotEmpty) {
+            unawaited(_repo.markChatRead(cid));
+          }
+        }
+        return;
+      case 'message.updated':
+        final rawUpdated = payload['message'];
+        if (rawUpdated is! Map) return;
+        _mergeOrInsertMessage(
+          ChatMessage.fromJson(Map<String, dynamic>.from(rawUpdated)),
+        );
         return;
       case 'message.deleted':
         final messageId = _readStringField(payload, const ['messageId', 'message_id']);
@@ -289,7 +307,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         return;
       case 'chat.read':
         final userId = _readStringField(payload, const ['userId', 'user_id']);
-        if (userId == null || userId != widget.otherUserId) return;
+        if (userId == null || userId != _effectiveOtherUserId) return;
         final readAt = _parseIsoDateTime(payload['readAt'] ?? payload['read_at']);
         if (readAt == null) return;
         if (!mounted) return;
@@ -302,7 +320,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       case 'presence.online':
       case 'presence.offline':
         final userId = _readStringField(payload, const ['userId', 'user_id']);
-        if (userId == null || userId != widget.otherUserId) return;
+        if (userId == null || userId != _effectiveOtherUserId) return;
         if (!mounted) return;
         setState(() {
           _isOtherOnline = envelope.event == 'presence.online';
@@ -310,7 +328,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         return;
       case 'typing.start':
         final userId = _readStringField(payload, const ['userId', 'user_id']);
-        if (userId == null || userId != widget.otherUserId) return;
+        if (userId == null || userId != _effectiveOtherUserId) return;
         _remoteTypingTimeout?.cancel();
         setState(() => _isOtherTyping = true);
         _remoteTypingTimeout = Timer(const Duration(seconds: 4), () {
@@ -320,7 +338,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         return;
       case 'typing.stop':
         final userId = _readStringField(payload, const ['userId', 'user_id']);
-        if (userId == null || userId != widget.otherUserId) return;
+        if (userId == null || userId != _effectiveOtherUserId) return;
         _remoteTypingTimeout?.cancel();
         setState(() => _isOtherTyping = false);
         return;
@@ -333,12 +351,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (messageId.isEmpty || _chat == null) return;
     final next = _chat!.messages.where((m) => m.id != messageId).toList();
     setState(() {
-      _chat = ChatDetail(
-        id: _chat!.id,
-        messages: next,
-        otherUser: _chat!.otherUser,
-        participants: _chat!.participants,
-      );
+      _chat = _chat!.copyWith(messages: next);
     });
   }
 
@@ -353,7 +366,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           id: _chatId ?? '',
           messages: [incoming],
           otherUser: ChatListItemUser(
-            id: widget.otherUserId,
+            id: _effectiveOtherUserId,
             fullName: widget.otherName,
             photo: widget.otherPhotoUrl,
           ),
@@ -390,12 +403,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
 
     setState(() {
-      _chat = ChatDetail(
-        id: current.id,
-        messages: messages,
-        otherUser: current.otherUser,
-        participants: current.participants,
-      );
+      _chat = current.copyWith(messages: messages);
     });
     _touchCursor(incoming.createdAt);
     if (shouldScroll) _scrollToBottom(animated: true);
@@ -451,7 +459,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         _loading = false;
       });
       _refreshCursorFromMessages(detail.messages);
-      unawaited(_connectRealtimeIfPossible());
       _scrollToBottom();
     } catch (e) {
       debugPrint('❌ getChat error: $e');
@@ -506,12 +513,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       final merged = [...older, ..._chat!.messages];
       if (mounted) {
         setState(() {
-          _chat = ChatDetail(
-            id: _chat!.id,
-            messages: merged,
-            otherUser: _chat!.otherUser,
-            participants: _chat!.participants,
-          );
+          _chat = _chat!.copyWith(messages: merged);
           _loadingMore = false;
         });
       }
@@ -521,6 +523,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   Future<void> _sendMessage() async {
+    if (_chat?.isActive == false) return;
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
     final cid = _normalizeChatId(_chatId);
@@ -532,14 +535,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       );
       return;
     }
-    if (widget.otherUserId.trim().isEmpty) {
-      await showPremiumErrorDialog(
-        context,
-        message: 'Kullanıcı bilgisi eksik, mesaj gönderilemez.',
-      );
-      return;
-    }
-
     setState(() => _sending = true);
     _messageController.clear();
     _emitTypingStopIfNeeded();
@@ -582,7 +577,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
+            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -598,12 +593,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         .toList();
     setState(() {
       _deletingMessageIds.add(message.id);
-      _chat = ChatDetail(
-        id: previous.id,
-        messages: reducedMessages,
-        otherUser: previous.otherUser,
-        participants: previous.participants,
-      );
+      _chat = previous.copyWith(messages: reducedMessages);
     });
 
     try {
@@ -716,16 +706,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final colors = theme.colorScheme;
     final name = _chat?.displayOtherUser?.fullName ?? widget.otherName;
     final photoUrl = _chat?.displayOtherUser?.photo ?? widget.otherPhotoUrl;
-    final avatarSeed = name.isNotEmpty ? name : widget.otherUserId;
+    final avatarSeed = name.isNotEmpty ? name : _effectiveOtherUserId;
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
-    final statusText = _isOtherTyping
-        ? 'Typing...'
-        : _isSocketReconnecting
-        ? 'Reconnecting...'
-        : (_isSocketConnected
-              ? (_isOtherOnline ? 'Online' : 'Offline')
-              : 'Connecting...');
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -778,7 +761,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       body: Column(
         children: [
           Expanded(child: _buildMessageList()),
-          _buildMessageInput(),
+          _chat?.isActive == false
+              ? _buildInactiveBanner()
+              : _buildMessageInput(),
         ],
       ),
     );
@@ -974,9 +959,37 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   String _formatTime(DateTime date) {
-    final hour = date.hour;
-    final minute = date.minute.toString().padLeft(2, '0');
+    final local = date.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
     return '$hour:$minute';
+  }
+
+  Widget _buildInactiveBanner() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        boxShadow: [
+          BoxShadow(
+            color: colors.onSurface.withValues(alpha: 0.06),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Text(
+          'Bu sohbet artık aktif değil. Birbirinizi tekrar eşleşirseniz mesajlaşabilirsiniz.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: colors.onSurface.withValues(alpha: 0.5),
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildMessageInput() {

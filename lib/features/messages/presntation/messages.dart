@@ -30,6 +30,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   String _searchQuery = '';
   Timer? _searchDebounce;
   int _requestId = 0;
+  DateTime? _lastFetchTime;
   final Set<String> _deletingChatIds = <String>{};
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
@@ -72,10 +73,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         debugPrint('💬 [Messages] Socket connected, liste yenileniyor');
         _scheduleRealtimeRefresh();
       }
-      if (state == ChatRealtimeConnectionState.reconnecting) {
-        debugPrint('💬 [Messages] Socket reconnecting');
-        _scheduleRealtimeRefresh();
-      }
+      // reconnecting sırasında ağ düşük olabileceği için refresh tetiklenmez
     });
 
     _realtimeEventsSub = _realtime.events.listen((envelope) {
@@ -124,7 +122,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 220), () {
       if (!mounted) return;
       debugPrint('💬 [Messages] GET /chats refresh calisti');
-      loadChats();
+      loadChats(silent: true);
     });
   }
 
@@ -215,13 +213,23 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   }
 
   /// Called when returning from MessageDetailPage or when DM tab is selected (DM list refresh rule).
-  Future<void> loadChats() async {
+  /// [silent]: true iken yükleme göstergesi ve hata ekranı gösterilmez; mevcut data korunur.
+  Future<void> loadChats({bool silent = false}) async {
+    final now = DateTime.now();
+    if (silent &&
+        _lastFetchTime != null &&
+        now.difference(_lastFetchTime!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastFetchTime = now;
     final activeQuery = _searchQuery.trim();
     final requestId = ++_requestId;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final list = activeQuery.isEmpty
           ? await _repo.getChats()
@@ -231,10 +239,12 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       setState(() {
         _chats = list;
         _loading = false;
+        _error = null;
       });
     } catch (e) {
       debugPrint('❌ getChats error: $e');
-      if (!mounted) return;
+      if (!mounted || requestId != _requestId) return;
+      if (silent) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -624,7 +634,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
                 ),
               );
               if (!mounted) return;
-              loadChats();
+              loadChats(silent: true);
             },
           ),
         ),

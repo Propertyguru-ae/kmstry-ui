@@ -7,13 +7,31 @@ class ChatDetail {
   final List<ChatMessage> messages;
   final ChatListItemUser? otherUser;
   final List<ChatListItemUser>? participants;
+  final bool isActive;
 
   ChatDetail({
     required this.id,
     required this.messages,
     this.otherUser,
     this.participants,
+    this.isActive = true,
   });
+
+  ChatDetail copyWith({
+    String? id,
+    List<ChatMessage>? messages,
+    ChatListItemUser? otherUser,
+    List<ChatListItemUser>? participants,
+    bool? isActive,
+  }) {
+    return ChatDetail(
+      id: id ?? this.id,
+      messages: messages ?? this.messages,
+      otherUser: otherUser ?? this.otherUser,
+      participants: participants ?? this.participants,
+      isActive: isActive ?? this.isActive,
+    );
+  }
 
   factory ChatDetail.fromJson(Map<String, dynamic> json) {
     final messagesRaw = json['messages'] as List? ?? [];
@@ -40,6 +58,7 @@ class ChatDetail {
       messages: list,
       otherUser: parseUser(otherUserRaw),
       participants: participantsList,
+      isActive: json['is_active'] as bool? ?? true,
     );
   }
 

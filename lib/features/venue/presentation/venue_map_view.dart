@@ -272,7 +272,14 @@ class _VenueMapViewState extends State<VenueMapView> {
     try {
       bounds = await map.getVisibleRegion();
     } catch (_) {
-      return;
+      // Map SDK henüz hazır değil — kısa delay sonra tekrar dene.
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted || token != _clusterJobToken) return;
+      try {
+        bounds = await map.getVisibleRegion();
+      } catch (_) {
+        return;
+      }
     }
     if (!mounted || token != _clusterJobToken) return;
 
