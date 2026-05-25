@@ -1,3 +1,5 @@
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+
 class VenueOwnerStatsVenue {
   final String id;
   final String name;
@@ -7,6 +9,7 @@ class VenueOwnerStatsVenue {
   final String? address;
   final String? city;
   final String? verificationLevel;
+  final List<VenueUpcomingEvent> upcomingEvents;
 
   const VenueOwnerStatsVenue({
     required this.id,
@@ -17,9 +20,12 @@ class VenueOwnerStatsVenue {
     this.address,
     this.city,
     this.verificationLevel,
+    this.upcomingEvents = const [],
   });
 
   factory VenueOwnerStatsVenue.fromJson(Map<String, dynamic> json) {
+    final eventsRaw =
+        (json['upcomingEvents'] ?? json['upcoming_events']) as List? ?? [];
     return VenueOwnerStatsVenue(
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
@@ -30,6 +36,11 @@ class VenueOwnerStatsVenue {
       city: json['city']?.toString(),
       verificationLevel:
           (json['verificationLevel'] ?? json['verification_level'])?.toString(),
+      upcomingEvents: eventsRaw
+          .whereType<Map>()
+          .map((e) =>
+              VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }

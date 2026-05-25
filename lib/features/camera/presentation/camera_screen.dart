@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:camera/camera.dart';
 import 'dart:io';
@@ -41,10 +42,8 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isRecording = false;
 
   ResolutionPreset _captureResolutionPreset() {
-    if (!widget.optimizeForUpload) return ResolutionPreset.medium;
-    // Android'de video yükleme limitine takılmamak için daha düşük bitrate/çözünürlük.
-    if (Platform.isAndroid) return ResolutionPreset.low;
-    return ResolutionPreset.medium;
+    // Her zaman yüksek çözünürlük — 720p (high) tüm platformlarda iyi kalite/boyut dengesi.
+    return ResolutionPreset.high;
   }
 
   Future<void> _forceFlashOff() async {
@@ -96,6 +95,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
     try {
       await _controller.initialize();
+      // Portre modunu kilitle — hem fotoğraf hem video her zaman dikey çekilsin.
+      await _controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
       await _forceFlashOff();
     } catch (_) {
       if (!mounted) return;
@@ -132,6 +133,7 @@ class _CameraScreenState extends State<CameraScreen> {
     );
 
     await _controller.initialize();
+    await _controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
     await _forceFlashOff();
 
     _currentCamera = newCamera;
@@ -144,6 +146,11 @@ class _CameraScreenState extends State<CameraScreen> {
   Future<void> _takePicture() async {
     if (!_controller.value.isInitialized) return;
 
+    // Ekranın gerçek oranını async'ten önce oku (context await sonrası geçersiz olabilir).
+    // Bu oran = kullanıcının kamera önizlemesinde tam gördüğü alan.
+    final screenSize = MediaQuery.of(context).size;
+    final screenAr = screenSize.width / screenSize.height; // örn. 390/844 ≈ 0.462
+
     final image = await _controller.takePicture();
 
     final dir = await getTemporaryDirectory();
@@ -154,19 +161,42 @@ class _CameraScreenState extends State<CameraScreen> {
 
     File savedImage = await File(image.path).copy(filePath);
 
-    // -------- ORIENTATION FIX --------
+    // -------- ORIENTATION + CROP FIX --------
     final bytes = await savedImage.readAsBytes();
     final decoded = img.decodeImage(bytes);
 
     if (decoded != null) {
-      // EXIF orientation uygula
+      // 1) EXIF orientation uygula → piksel verisi doğru yöne döner.
       img.Image fixed = img.bakeOrientation(decoded);
 
+      // 2) Ön kamera aynalama.
       if (_currentCamera.lensDirection == CameraLensDirection.front) {
         fixed = img.flipHorizontal(fixed);
       }
 
-      final fixedBytes = img.encodeJpg(fixed, quality: 95);
+      // 3) Landscape geldiyse portre yap (lockCaptureOrientation güvencesi).
+      if (fixed.width > fixed.height) {
+        fixed = img.copyRotate(fixed, angle: 90);
+      }
+
+      // 4) Kamera önizlemesinde görülen alanla birebir eşleştir.
+      //    Preview BoxFit.cover ile ekranı dolduruyordu → aynı center-crop uygula.
+      final imageAr = fixed.width / fixed.height;
+      if ((imageAr - screenAr).abs() > 0.005) {
+        if (imageAr > screenAr) {
+          // Fotoğraf önizlemeden daha geniş → yanlarda fazlalık var, kırp.
+          final newW = (fixed.height * screenAr).round();
+          final x = ((fixed.width - newW) / 2).round();
+          fixed = img.copyCrop(fixed, x: x, y: 0, width: newW, height: fixed.height);
+        } else {
+          // Fotoğraf önizlemeden daha uzun → üst/altta fazlalık var, kırp.
+          final newH = (fixed.width / screenAr).round();
+          final y = ((fixed.height - newH) / 2).round();
+          fixed = img.copyCrop(fixed, x: 0, y: y, width: fixed.width, height: newH);
+        }
+      }
+
+      final fixedBytes = img.encodeJpg(fixed, quality: 92);
       await savedImage.writeAsBytes(fixedBytes, flush: true);
     }
 

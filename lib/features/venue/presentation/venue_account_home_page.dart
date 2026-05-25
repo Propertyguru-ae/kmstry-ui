@@ -426,7 +426,8 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
           ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 88,
+            // Toplam: count-label(16) + bar(max 48) + gap(4) + day-text(~14) = ~82 → 100px
+            height: 100,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: trend.asMap().entries.map((entry) {
@@ -435,7 +436,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
                 final isToday = i == todayIndex;
                 final barH = maxCount == 0
                     ? 4.0
-                    : (point.count / maxCount) * 56 + 4;
+                    : (point.count / maxCount) * 48 + 4; // max 52px
                 final label = _shortDayLabel(point.date);
 
                 return Expanded(
@@ -443,10 +444,11 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
                     padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         // Count label above today's bar
                         SizedBox(
-                          height: 18,
+                          height: 16,
                           child: isToday && point.count > 0
                               ? Text(
                                   '${point.count}',
@@ -474,7 +476,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 4),
                         // Day label
                         Text(
                           label,

@@ -15,7 +15,7 @@ class PreviewScreen extends StatelessWidget {
           Positioned.fill(
             child: Image.file(
               file,
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
             ),
           ),
 
