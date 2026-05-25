@@ -198,26 +198,63 @@ class _VenueMapViewState extends State<VenueMapView> {
       return;
     }
 
+    // 1. Cache'den son bilinen konumu anında göster — GPS warm-up beklemeden
+    //    ilk açılışta harita ve listenin hemen dolmasını sağlar.
+    try {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null && mounted) {
+        setState(() {
+          _currentLocation = LatLng(lastKnown.latitude, lastKnown.longitude);
+          _loading = false;
+        });
+        widget.onLocationAccessChanged?.call(true);
+        widget.onLocationResolved?.call(_currentLocation!);
+        _recomputeClusters(force: true);
+      }
+    } catch (_) {
+      // Yoksa devam — getCurrentPosition dener
+    }
+
+    // 2. Arka planda daha hassas konum al; anlamlı fark varsa yenile.
     try {
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 8),
       );
 
       if (!mounted) return;
+
+      final updated = LatLng(position.latitude, position.longitude);
+      final prev = _currentLocation;
+      final moved = prev == null ||
+          (updated.latitude - prev.latitude).abs() > 0.0005 ||
+          (updated.longitude - prev.longitude).abs() > 0.0005;
+
       setState(() {
-        _currentLocation = LatLng(position.latitude, position.longitude);
+        _currentLocation = updated;
         _loading = false;
       });
-      widget.onLocationAccessChanged?.call(true);
-      widget.onLocationResolved?.call(_currentLocation!);
-      _recomputeClusters(force: true);
+
+      if (prev == null) {
+        // İlk kez çözüldü — getLastKnownPosition da yoktu
+        widget.onLocationAccessChanged?.call(true);
+      }
+      if (moved) {
+        widget.onLocationResolved?.call(_currentLocation!);
+        _recomputeClusters(force: true);
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _locationPermissionDenied = true;
-      });
-      widget.onLocationAccessChanged?.call(false);
+      // Cache'den konum zaten varsa hata gösterme, çalışmaya devam et.
+      if (_currentLocation == null) {
+        setState(() {
+          _loading = false;
+          _locationPermissionDenied = true;
+        });
+        widget.onLocationAccessChanged?.call(false);
+      } else {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -446,6 +483,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _photoIconRefreshDebounce?.cancel();
     _photoIconRefreshDebounce = Timer(const Duration(milliseconds: 120), () {
       if (!mounted) return;
+      // Icons changed but marker IDs/positions are the same → fingerprint would
+      // match and setState would be skipped. Reset the key so the icon swap
+      // always reaches setState.
+      _lastMarkerKey = '';
       _recomputeClusters(force: true);
     });
   }

@@ -217,6 +217,14 @@ class _VenueHomePageState extends State<VenueHomePage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Trigger "test venue nearby" push once per hour (backend rate-limits).
+    // Fire-and-forget — never blocks the UI.
+    _venueRepository.triggerTestVenueNotification();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
@@ -238,6 +246,10 @@ class _VenueHomePageState extends State<VenueHomePage> {
             onLocationResolved: (center) {
               _lastResolvedCenter = center;
               _loadNearbyVenues(center);
+              // Fire-and-forget: konumu backend'e ping'le (2km notify için)
+              _venueContextRepository
+                  .pingLocation(center.latitude, center.longitude)
+                  .ignore();
             },
             onSearchActivityChanged: (active) {
               if (!mounted) return;

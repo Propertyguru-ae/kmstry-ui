@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/auth_repository.dart';
@@ -10,11 +11,14 @@ import '../data/auth_repository.dart';
 class RegisterSetPasswordPage extends StatefulWidget {
   final String email;
   final String otpProof;
+  /// true ise kayit sonrasi venue claim akisina yonlendirilir.
+  final bool isVenueSignup;
 
   const RegisterSetPasswordPage({
     super.key,
     required this.email,
     required this.otpProof,
+    this.isVenueSignup = false,
   });
 
   @override
@@ -197,12 +201,47 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
         consentSource: 'MOBILE',
       );
 
-      // Registration sırasında mod seçimi gizli: default PERSONAL context.
-      await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
-      if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed(AuthRoutes.onboardingUsername);
+      if (widget.isVenueSignup) {
+        // Venue akisi: switchContext cagrilmaz — context'i claimVenue set edecek.
+        // (activeVenueId olmadan VENUE context'e gecmek backend hatasina yol acar)
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const VenueContextOnboardingPage(),
+          ),
+        );
+      } else {
+        // Kisisel akis: context PERSONAL, kullanici adi adimina git
+        await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+        if (!mounted) return;
+        Navigator.of(context).pushReplacementNamed(AuthRoutes.onboardingUsername);
+      }
     } catch (e) {
       if (!mounted) return;
+
+      // Kayit onceki denemede basarili olmus ama sonraki adim hata vermis olabilir.
+      // Token storage'da hala gecerli session varsa devam et.
+      if (e is ApiException) {
+        final code = e.data['errorCode']?.toString();
+        if (code == 'EMAIL_ALREADY_IN_USE' || code == 'AUTH_EMAIL_IN_USE') {
+          final isLoggedIn = await AuthRepository().restoreSession();
+          if (!mounted) return;
+          if (isLoggedIn) {
+            if (widget.isVenueSignup) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => const VenueContextOnboardingPage(),
+                ),
+              );
+            } else {
+              Navigator.of(context)
+                  .pushReplacementNamed(AuthRoutes.onboardingUsername);
+            }
+            return;
+          }
+        }
+      }
+
       setState(() => _error = _friendlySignupError(e));
     } finally {
       if (mounted) setState(() => _loading = false);

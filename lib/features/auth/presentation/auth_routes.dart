@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/notifications/presentation/notification
 import 'package:kmstry_frontend/features/onboarding/presentation/app_intro_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/startup_gate_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_invite_page.dart';
 
 class AuthRoutes {
   static const startupGate = '/startup-gate';
@@ -37,6 +38,7 @@ class AuthRoutes {
   static const notifications = '/notifications';
   static const contextChoice = '/context-choice';
   static const venueOnboarding = '/venue-onboarding';
+  static const venueInvite = '/invite';
 
   static Map<String, WidgetBuilder> routes = {
     startupGate: (_) => const StartupGatePage(),
@@ -51,6 +53,10 @@ class AuthRoutes {
     notifications: (_) => const NotificationPage(),
     contextChoice: (_) => const ContextChoicePage(),
     venueOnboarding: (_) => const VenueContextOnboardingPage(),
+    venueInvite: (context) {
+      final token = ModalRoute.of(context)!.settings.arguments as String;
+      return VenueInvitePage(token: token);
+    },
     people: (_) => const PeoplePage(),
     onboardingPhoto: (context) => const PhotoOnboardingPage(),
     onboardingUsername: (context) => const UsernameOnboardingPage(),

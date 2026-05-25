@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import 'auth_api.dart';
+import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -9,6 +12,31 @@ import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
 
 class AuthRepository {
+  // ── One-time app bootstrap ────────────────────────────────────────────────
+  /// Call this once from main() after navigatorKey is ready.
+  /// Wires up the 401 silent-refresh interceptor in ApiClient.
+  static void init({required GlobalKey<NavigatorState> navigatorKey}) {
+    ApiClient.onRefreshToken = () async {
+      return AuthRepository()._refreshTokenInternal();
+    };
+
+    ApiClient.onSessionExpired = () async {
+      await SecureStorage.clearSession();
+      invalidateMeCache();
+      ProfilePreviewPage.clearActionStateCache();
+      navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        AuthRoutes.startupGate,
+        (route) => false,
+      );
+    };
+  }
+
+  Future<String?> _refreshTokenInternal() async {
+    return refreshAccessToken();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   final AuthApi _api = AuthApi();
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
@@ -19,6 +47,20 @@ class AuthRepository {
   static const bool _enableAuthLogs = false;
   void _log(String message) {
     if (kDebugMode && _enableAuthLogs) debugPrint(message);
+  }
+
+  // ── getMe() short-lived cache ─────────────────────────────────────────────
+  // Multiple widgets call getMe() simultaneously on startup / account switch.
+  // Cache the result for a short window so burst calls hit the API only once.
+  static Map<String, dynamic>? _getMeCache;
+  static DateTime? _getMeCacheTime;
+  static const _getMeCacheTtl = Duration(seconds: 6);
+
+  /// Invalidate the cache — call after any operation that changes server-side
+  /// user state (switchContext, logout, register, etc.).
+  static void invalidateMeCache() {
+    _getMeCache = null;
+    _getMeCacheTime = null;
   }
 
   Future<void> register(
@@ -250,10 +292,10 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Failed to confirm email change');
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String identifier, String password) async {
     _log('🔥 Password login started');
 
-    final response = await _api.login(email: email, password: password);
+    final response = await _api.login(identifier: identifier, password: password);
     _log('📡 backend password response = $response');
 
     if (response['success'] == true) {
@@ -344,6 +386,7 @@ class AuthRepository {
     await _googleSignIn.signOut();
 
     await SecureStorage.clearSession();
+    invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
   }
 
@@ -429,13 +472,20 @@ class AuthRepository {
     await _api.resendVerifyEmail(accessToken: token);
   }
 
-  Future<Map<String, dynamic>> getMe() async {
+  Future<Map<String, dynamic>> getMe({bool forceRefresh = false}) async {
     final token = await SecureStorage.getAccessToken();
-    if (token == null) {
-      throw Exception('Not authenticated');
+    if (token == null) throw Exception('Not authenticated');
+
+    if (!forceRefresh && _getMeCache != null && _getMeCacheTime != null) {
+      final age = DateTime.now().difference(_getMeCacheTime!);
+      if (age < _getMeCacheTtl) return Map<String, dynamic>.from(_getMeCache!);
     }
+
     final me = await _api.me(accessToken: token);
-    return _normalizeMeResponse(me);
+    final normalized = _normalizeMeResponse(me);
+    _getMeCache = normalized;
+    _getMeCacheTime = DateTime.now();
+    return Map<String, dynamic>.from(normalized);
   }
 
   Map<String, dynamic> _normalizeMeResponse(Map<String, dynamic> source) {
@@ -526,6 +576,7 @@ class AuthRepository {
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
+    invalidateMeCache();
     return _api.switchContext(
       accessToken: token,
       lastActiveContext: lastActiveContext,
@@ -545,6 +596,7 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
 
     await _api.upsertPersonalProfile(accessToken: token, data: data);
+    invalidateMeCache();
 
     // Keep legacy /auth/me fields in sync for clients that still read user root fields.
     final mirror = <String, dynamic>{};
@@ -574,7 +626,10 @@ class AuthRepository {
       mirror['bio_onboarding_skipped'] = true;
     }
     if (mirror.isNotEmpty) {
-      await _api.updateMe(accessToken: token, data: mirror);
+      // Fire-and-forget: mirror is a legacy sync for old clients.
+      // Never block navigation on this call — personal-profile endpoint is the source of truth.
+      _api.updateMe(accessToken: token, data: mirror)
+          .catchError((_) => <String, dynamic>{});
     }
   }
 

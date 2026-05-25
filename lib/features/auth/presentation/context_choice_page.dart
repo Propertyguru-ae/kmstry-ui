@@ -1,144 +1,172 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
-import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
-import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
-import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/signup_page.dart';
 
-class ContextChoicePage extends StatefulWidget {
+/// Kayit akisinin ilk adimi: kisisel mi yoksa mekan hesabi mi aciyor?
+/// Login sayfasindaki "Kayit Ol" dugmesine basilinca gosterilir.
+class ContextChoicePage extends StatelessWidget {
   const ContextChoicePage({super.key});
 
   @override
-  State<ContextChoicePage> createState() => _ContextChoicePageState();
-}
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-class _ContextChoicePageState extends State<ContextChoicePage> {
-  final _venueContextRepository = VenueContextRepository();
-  bool _loading = false;
+    return Scaffold(
+      backgroundColor:
+          isDark ? Theme.of(context).scaffoldBackgroundColor : Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 32),
+                    Text(
+                      'How would you\nlike to join?',
+                      style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                        color: colors.onSurface,
+                        height: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Choose the account type that fits you best.\nYou can add the other one later.',
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: colors.onSurface.withValues(alpha: 0.62),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
 
-  Future<void> _choosePersonal() async {
-    setState(() => _loading = true);
-    try {
-      await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const UsernameOnboardingPage()),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AuthRoutes.appShell);
-    }
-  }
+                    // Personal card
+                    _ChoiceCard(
+                      icon: Icons.person_outline_rounded,
+                      title: 'Personal',
+                      subtitle:
+                          'Discover venues, meet people\nand share moments.',
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SignupPage(isVenueSignup: false),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
 
-  Future<void> _chooseVenue() async {
-    setState(() => _loading = true);
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const VenueContextOnboardingPage()),
-    );
-  }
+                    // Venue card
+                    _ChoiceCard(
+                      icon: Icons.store_mall_directory_outlined,
+                      title: 'Venue',
+                      subtitle:
+                          'Manage your venue, engage guests\nand grow your presence.',
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SignupPage(isVenueSignup: true),
+                          ),
+                        );
+                      },
+                    ),
 
-  Future<void> _quickVenueTest() async {
-    final placeId = await _askTestPlaceId();
-    if (placeId == null || placeId.isEmpty) return;
-
-    setState(() => _loading = true);
-    try {
-      final claimed = await _venueContextRepository.claimVenueFromPlace(placeId);
-      final venueRaw = claimed['venue'];
-      String? venueId;
-      if (venueRaw is Map) {
-        venueId = venueRaw['id']?.toString();
-      } else {
-        venueId = claimed['venueId']?.toString();
-      }
-
-      await AuthRepository().switchContext(
-        lastActiveContext: 'VENUE',
-        activeVenueId: venueId,
-      );
-
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AuthRoutes.appShell);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      await showPremiumErrorDialog(
-        context,
-        message: 'Could not create a venue test account.',
-      );
-    }
-
-  }
-
-  Future<String?> _askTestPlaceId() async {
-    final ctrl = TextEditingController();
-    final value = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Venue test setup'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(
-            labelText: 'Google Place ID',
-            hintText: 'Enter test place id',
-          ),
+                    const Spacer(),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(ctrl.text.trim()),
-            child: const Text('Continue'),
-          ),
-        ],
       ),
     );
-    ctrl.dispose();
-    return value;
   }
+}
+
+class _ChoiceCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _ChoiceCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Choose your mode')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+        decoration: BoxDecoration(
+          color: isDark
+              ? colors.surface
+              : colors.surface.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: colors.outline.withValues(alpha: isDark ? 0.22 : 0.32),
+          ),
+        ),
+        child: Row(
           children: [
-            const SizedBox(height: 8),
-            const Text(
-              'How do you want to continue?',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'You can switch this later from your account context menu.',
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _loading ? null : _choosePersonal,
-              child: const Text('Personal'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: _loading ? null : _chooseVenue,
-              child: const Text('Venue'),
-            ),
-            if (kDebugMode) ...[
-              const SizedBox(height: 10),
-              TextButton(
-                onPressed: _loading ? null : _quickVenueTest,
-                child: const Text(
-                  'Quick test: Create venue context directly',
-                ),
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
               ),
-            ],
+              child: Icon(icon, color: colors.primary, size: 26),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colors.onSurface.withValues(alpha: 0.60),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 16,
+              color: colors.onSurface.withValues(alpha: 0.38),
+            ),
           ],
         ),
       ),

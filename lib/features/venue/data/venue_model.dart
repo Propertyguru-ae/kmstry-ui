@@ -26,6 +26,10 @@ class Venue {
   final bool? openNow;
   final double? rating;
   final List<String> types;
+  final String? description;
+  final Map<String, dynamic>? openingHours;
+  final List<VenueUpcomingEvent> upcomingEvents;
+
   Venue({
     required this.id,
     this.placeId,
@@ -50,6 +54,9 @@ class Venue {
     this.openNow,
     this.rating,
     this.types = const [],
+    this.description,
+    this.openingHours,
+    this.upcomingEvents = const [],
   });
 
   factory Venue.fromJson(Map<String, dynamic> json) {
@@ -129,6 +136,18 @@ class Venue {
           : null,
       rating: json['rating'] is num ? (json['rating'] as num).toDouble() : null,
       types: (json['types'] is List) ? List<String>.from(json['types']) : [],
+      description: json['description']?.toString(),
+      openingHours: json['openingHours'] is Map
+          ? Map<String, dynamic>.from(json['openingHours'] as Map)
+          : json['opening_hours'] is Map
+              ? Map<String, dynamic>.from(json['opening_hours'] as Map)
+              : null,
+      upcomingEvents: (json['upcomingEvents'] ?? json['upcoming_events']) is List
+          ? (json['upcomingEvents'] ?? json['upcoming_events'] as List)
+              .whereType<Map>()
+              .map((e) => VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+          : const [],
       // UI-derived helpers
       status: _computeStatus(json),
       tag: _computeTag(json),
@@ -217,6 +236,9 @@ class Venue {
       openNow: openNow,
       rating: rating,
       types: types,
+      description: description ?? other.description,
+      openingHours: openingHours ?? other.openingHours,
+      upcomingEvents: upcomingEvents.isNotEmpty ? upcomingEvents : other.upcomingEvents,
     );
   }
 }
@@ -267,7 +289,60 @@ class VenueEventSummary {
     return VenueEventSummary(
       hasEvent: json['hasEvent'] == true || json['has_event'] == true,
       nextStartAt: raw is String ? DateTime.tryParse(raw) : null,
-   title: json['title']?.toString(),
+      title: json['title']?.toString(),
     );
+  }
+}
+
+class VenueUpcomingEvent {
+  final String id;
+  final String title;
+  final String? description;
+  final DateTime startAt;
+  final DateTime endAt;
+  final String? photo;
+  final int? priceAed;
+
+  VenueUpcomingEvent({
+    required this.id,
+    required this.title,
+    this.description,
+    required this.startAt,
+    required this.endAt,
+    this.photo,
+    this.priceAed,
+  });
+
+  factory VenueUpcomingEvent.fromJson(Map<String, dynamic> json) {
+    final startRaw = json['startAt'] ?? json['start_at'] ?? '';
+    final endRaw = json['endAt'] ?? json['end_at'] ?? '';
+    return VenueUpcomingEvent(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      description: json['description']?.toString(),
+      startAt: DateTime.tryParse(startRaw.toString()) ?? DateTime.now(),
+      endAt: DateTime.tryParse(endRaw.toString()) ?? DateTime.now(),
+      photo: json['photo']?.toString(),
+      priceAed: json['priceAed'] is num
+          ? (json['priceAed'] as num).toInt()
+          : json['price_aed'] is num
+              ? (json['price_aed'] as num).toInt()
+              : null,
+    );
+  }
+
+  /// Returns e.g. "Fri, 30 May · 21:00"
+  String get formattedDate {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final d = startAt.toLocal();
+    final dayName = days[(d.weekday - 1) % 7];
+    final monthName = months[d.month - 1];
+    final hour = d.hour.toString().padLeft(2, '0');
+    final min = d.minute.toString().padLeft(2, '0');
+    return '$dayName, ${d.day} $monthName · $hour:$min';
   }
 }

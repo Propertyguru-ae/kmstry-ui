@@ -76,17 +76,27 @@ class _AppLinksBootstrapState extends State<AppLinksBootstrap> {
   }
 
   void _handleUri(Uri uri) {
-    if (!_isPasswordResetLink(uri)) return;
-    final token = uri.queryParameters['token'];
-    if (token == null || token.isEmpty) return;
     final nav = widget.navigatorKey.currentState;
     if (nav == null) return;
-    nav.pushNamed(AuthRoutes.resetPassword, arguments: token);
-  }
 
-  bool _isPasswordResetLink(Uri uri) {
-    final p = uri.path.toLowerCase();
-    return p.contains('reset-password');
+    final segments = uri.pathSegments;
+
+    // /invite/:token
+    if (segments.length >= 2 && segments[0].toLowerCase() == 'invite') {
+      final token = segments[1];
+      if (token.isNotEmpty) {
+        nav.pushNamed(AuthRoutes.venueInvite, arguments: token);
+        return;
+      }
+    }
+
+    // /auth/reset-password?token=...
+    if (segments.any((s) => s.toLowerCase() == 'reset-password')) {
+      final token = uri.queryParameters['token'];
+      if (token != null && token.isNotEmpty) {
+        nav.pushNamed(AuthRoutes.resetPassword, arguments: token);
+      }
+    }
   }
 
   @override

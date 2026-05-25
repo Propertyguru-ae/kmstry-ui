@@ -1,15 +1,28 @@
 class MemberVenue {
   final String id;
+  /// VenueMember kaydının ID'si — accept/decline çağrılarında kullanılır
+  final String? membershipId;
   final String name;
+  final String? photoUrl;
   final String? role;
   final bool isVerifiedOwner;
+  /// 'ACTIVE' | 'PENDING' | 'REJECTED'
+  final String status;
 
   const MemberVenue({
     required this.id,
+    this.membershipId,
     required this.name,
+    this.photoUrl,
     this.role,
     this.isVerifiedOwner = false,
+    this.status = 'ACTIVE',
   });
+
+  bool get isActive => status == 'ACTIVE';
+  bool get isPending => status == 'PENDING';
+  /// Owner'ın claim'i değil, başkası tarafından eklenmiş davet
+  bool get isPendingMemberInvite => isPending && role != null && role!.toUpperCase() != 'OWNER';
 }
 
 class MeContextModel {
@@ -55,13 +68,19 @@ class MeContextModel {
                     nestedVenue?['name'] ??
                     'Venue')
                 .toString();
+        final membershipId = (map['membershipId'] ?? map['membership_id'])?.toString();
         final role = (map['role'] ?? map['myRole'])?.toString();
         final isVerifiedOwner = map['isVerifiedOwner'] == true;
+        final status = (map['status'])?.toString() ?? 'ACTIVE';
+        final photoUrl = (map['photo'] ?? map['photoUrl'] ?? nestedVenue?['photo'])?.toString();
         return MemberVenue(
           id: id,
+          membershipId: membershipId,
           name: name,
+          photoUrl: (photoUrl != null && photoUrl.isNotEmpty) ? photoUrl : null,
           role: role,
           isVerifiedOwner: isVerifiedOwner,
+          status: status,
         );
       }).where((venue) => venue.id.isNotEmpty).toList();
     }

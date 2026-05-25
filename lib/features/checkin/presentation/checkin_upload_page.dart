@@ -54,6 +54,11 @@ class _CheckInPageState extends State<CheckInPage> {
   static const int _maxVideoUploadBytes = 8 * 1024 * 1024;
   static const int _vibeMaxLength = 150;
 
+  // Upload progress state
+  int _uploadCurrent = 0;
+  int _uploadTotal = 1;
+  String _uploadStepLabel = '';
+
   // Öne çıkarılan fotoğrafın indeksi (varsayılan olarak ilk fotoğraf)
   int _featuredIndex = 0;
   String _formatOptionLabel(String key) {
@@ -237,7 +242,7 @@ class _CheckInPageState extends State<CheckInPage> {
     _prefillVibeFromProfileBio();
   }
 
-  /// Kalıcı profil bio’su varsa vibe alanına varsayılan olarak yüklenir.
+  /// Kalıcı profil bio'su varsa vibe alanına varsayılan olarak yüklenir.
   Future<void> _prefillVibeFromProfileBio() async {
     try {
       final me = await AuthRepository().getMe();
@@ -397,10 +402,17 @@ class _CheckInPageState extends State<CheckInPage> {
     final hasLocationPermission = await _ensureLocationPermissionForCheckin();
     if (!hasLocationPermission) return;
 
-    setState(() => _isSubmitting = true);
+    // Total progress steps: 1 (create check-in) + N (media uploads)
+    final totalSteps = 1 + _media.length;
+    setState(() {
+      _isSubmitting = true;
+      _uploadCurrent = 0;
+      _uploadTotal = totalSteps;
+      _uploadStepLabel = 'Creating check-in...';
+    });
 
     try {
-      // Seçilen venue’nun konumu; evden testte de mekânın kayıtlı koordinatı gider.
+      // Seçilen venue'nun konumu; evden testte de mekânın kayıtlı koordinatı gider.
       final latitude = widget.venueLatitude;
       final longitude = widget.venueLongitude;
 
@@ -413,17 +425,22 @@ class _CheckInPageState extends State<CheckInPage> {
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
       );
-      ActiveCheckinService().setActiveCheckin(checkinId);
+      ActiveCheckinService().setActiveCheckin(checkinId, venueId: widget.venueId);
+
+      if (mounted) setState(() => _uploadCurrent = 1);
 
       try {
         await AuthRepository().updateMe({'bio': vibeText});
       } catch (_) {}
 
-      // 2️⃣ Fotoğrafları yükle
+      // 2️⃣ Medyayı yükle
       final featuredPhotoIndex = _featuredPhotoIndex;
       for (int i = 0; i < _media.length; i++) {
-        if (_media[i].type == MediaType.video) {
-          final sizeBytes = await _media[i].file.length();
+        final item = _media[i];
+        final isVideo = item.type == MediaType.video;
+
+        if (isVideo) {
+          final sizeBytes = await item.file.length();
           if (sizeBytes > _maxVideoUploadBytes) {
             if (!mounted) return;
             await showPremiumErrorDialog(
@@ -434,12 +451,29 @@ class _CheckInPageState extends State<CheckInPage> {
             return;
           }
         }
+
+        // Update progress label before each upload
+        if (mounted) {
+          setState(() {
+            if (isVideo) {
+              _uploadStepLabel = "Uploading video... this may take a moment";
+            } else {
+              final photoNum =
+                  _media.take(i + 1).where((m) => m.type == MediaType.photo).length;
+              final totalPhotos =
+                  _media.where((m) => m.type == MediaType.photo).length;
+              _uploadStepLabel = "Uploading photo $photoNum of $totalPhotos...";
+            }
+          });
+        }
+
         await _repo.uploadCheckinMedia(
           checkinId: checkinId,
-          file: _media[i].file,
-          isFeatured:
-              _media[i].type == MediaType.photo && i == featuredPhotoIndex,
+          file: item.file,
+          isFeatured: item.type == MediaType.photo && i == featuredPhotoIndex,
         );
+
+        if (mounted) setState(() => _uploadCurrent = i + 2);
       }
 
       // ✅ Başarılı
@@ -524,12 +558,14 @@ class _CheckInPageState extends State<CheckInPage> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            /// INFORMATION TEXT
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                /// INFORMATION TEXT
             Text(
               'Select your featured photo by tapping on it. This will represents you at this venue.',
               style: TextStyle(
@@ -760,6 +796,96 @@ class _CheckInPageState extends State<CheckInPage> {
             ),
             const SizedBox(height: 40),
           ],
+        ),
+      ),
+
+          // ── Upload progress overlay ─────────────────────────────────────
+          if (_isSubmitting) _buildUploadOverlay(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadOverlay(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final progress = _uploadTotal > 0
+        ? (_uploadCurrent / _uploadTotal).clamp(0.0, 1.0)
+        : null;
+
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.55),
+        alignment: Alignment.center,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Spinner
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 3.5,
+                  backgroundColor:
+                      AppTheme.brandPrimary.withValues(alpha: 0.18),
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(AppTheme.brandPrimary),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Step label
+              Text(
+                _uploadStepLabel,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Linear progress bar
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 6,
+                  backgroundColor:
+                      AppTheme.brandPrimary.withValues(alpha: 0.15),
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(AppTheme.brandPrimary),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // File counter
+              Text(
+                _uploadCurrent > 0 && _uploadTotal > 0
+                    ? '$_uploadCurrent / $_uploadTotal steps'
+                    : 'Please wait...',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

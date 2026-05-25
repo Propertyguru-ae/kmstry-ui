@@ -17,16 +17,31 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
-  const AppShell({super.key, this.initialIndex = 0});
+  /// When true the shell opens directly in venue mode — no personal-tab flash.
+  final bool initialIsVenueContext;
+  /// Passed straight through to venue tabs so they don't re-fetch context.
+  final String? initialVenueId;
+
+  const AppShell({
+    super.key,
+    this.initialIndex = 0,
+    this.initialIsVenueContext = false,
+    this.initialVenueId,
+  });
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -59,11 +74,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _isVenueContext = false;
   bool _hasPersonalProfile = false;
   String _personalAccountLabel = 'Personal';
+  String? _activeVenueId;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+    // Apply auth-gate context immediately so the first frame is correct.
+    if (widget.initialIsVenueContext) {
+      _isVenueContext = true;
+      _activeVenueId = widget.initialVenueId;
+    }
     WidgetsBinding.instance.addObserver(this);
     _bindChatRealtime();
     _bindNotificationRealtime();
@@ -73,6 +94,29 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _loadUnreadNotificationCount();
     _loadUnreadDmCount();
     PushManager.instance.reconcileNotificationState();
+    _initCheckinPing();
+  }
+
+  void _initCheckinPing() {
+    CheckinPingManager.I.configure(
+      getLocation: () async {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.low,
+        );
+        return (lat: pos.latitude, lng: pos.longitude);
+      },
+      onCheckinExpired: () {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Check-in süren sona erdi. Tekrar check-in yapabilirsin.'),
+            duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+    );
+    CheckinPingManager.I.ensureRunning();
   }
 
   @override
@@ -96,6 +140,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       PushManager.instance.reconcileNotificationState();
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
+      CheckinPingManager.I.ensureRunning();
+      // Venue onay/red durumu arka plandan dönerken güncellensin.
+      AuthRepository.invalidateMeCache();
+      _loadUserInitial();
+    } else if (state == AppLifecycleState.paused) {
+      CheckinPingManager.I.stop();
     }
   }
 
@@ -291,25 +341,27 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
+      // Sadece ACTIVE venue'lar context switching için kullanılır.
+      final activeVenues = context.memberVenues.where((v) => v.isActive).toList();
       final hasVenueContext =
-          context.hasVenueMembership || context.memberVenues.isNotEmpty;
+          context.hasVenueMembership || activeVenues.isNotEmpty;
       String? resolvedVenueId = context.activeVenueId;
       if (resolvedVenueId == null ||
           resolvedVenueId.isEmpty ||
-          !context.memberVenues.any((venue) => venue.id == resolvedVenueId)) {
-        resolvedVenueId = context.memberVenues.isNotEmpty
-            ? context.memberVenues.first.id
+          !activeVenues.any((venue) => venue.id == resolvedVenueId)) {
+        resolvedVenueId = activeVenues.isNotEmpty
+            ? activeVenues.first.id
             : null;
       }
       if (lastContext == 'VENUE' && resolvedVenueId != null) {
-        for (final venue in context.memberVenues) {
+        for (final venue in activeVenues) {
           if (venue.id == resolvedVenueId) {
             activeLabel = venue.name;
             break;
           }
         }
-      } else if (lastContext == 'VENUE' && context.memberVenues.isNotEmpty) {
-        activeLabel = context.memberVenues.first.name;
+      } else if (lastContext == 'VENUE' && activeVenues.isNotEmpty) {
+        activeLabel = activeVenues.first.name;
       }
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
@@ -324,7 +376,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ..clear()
           ..addAll(context.memberVenues);
         _activeAccount = activeLabel;
-        if (_isVenueContext && _currentIndex > 2) {
+        _activeVenueId = resolvedVenueId;
+        if (_isVenueContext && _currentIndex > 3) {
           _currentIndex = 0;
         }
       });
@@ -363,6 +416,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _isVenueContext = true;
       _activeAccount = venue.name;
+      _activeVenueId = venue.id;
       _currentIndex = 0;
     });
     _loadUnreadNotificationCount();
@@ -373,7 +427,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _dmListKey.currentState?.loadChats();
       _scheduleDmRefresh();
     }
-    if (index == 1) {
+    // Venue context: index 2 = notifications; Personal: index 1 = notifications
+    final notifIndex = _isVenueContext ? 2 : 1;
+    if (index == notifIndex) {
       _loadUnreadNotificationCount();
     }
     setState(() {
@@ -381,9 +437,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
-  void _showAccountSwitcher(BuildContext context) {
+  Future<void> _showAccountSwitcher(BuildContext context) async {
+    // Her açılışta cache'i temizle ve taze veri çek — onay/red durumu anında yansısın.
+    AuthRepository.invalidateMeCache();
+    await _loadUserInitial();
+    if (!mounted) return;
+
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+
+    final activeVenues = _memberVenues.where((v) => v.isActive).toList();
+    final pendingVenues = _memberVenues.where((v) => v.isPending).toList();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
@@ -392,117 +457,213 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
       builder: (context) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 16, bottom: 8),
+                decoration: BoxDecoration(
+                  color: colors.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // ── Venue listesi — scroll edilebilir ──
+              if (activeVenues.isNotEmpty || pendingVenues.isNotEmpty)
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    children: [
+                      // ACTIVE venue'lar
+                      ...activeVenues.map(
+                        (venue) => ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                colors.primary.withValues(alpha: 0.12),
+                            child:
+                                Icon(Icons.storefront, color: colors.primary),
+                          ),
+                          title: Text(
+                            venue.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: colors.onSurface,
+                            ),
+                          ),
+                          trailing: _activeAccount == venue.name
+                              ? Icon(Icons.check_circle, color: colors.primary)
+                              : null,
+                          onTap: () async {
+                            Navigator.pop(context);
+                            final rootContext = this.context;
+                            try {
+                              await _switchToVenue(venue);
+                            } catch (_) {
+                              if (!rootContext.mounted) return;
+                              await showPremiumErrorDialog(
+                                rootContext,
+                                message: 'Could not switch to venue account.',
+                              );
+                            }
+                          },
+                        ),
+                      ),
+
+                      // PENDING venue'lar
+                      ...pendingVenues.map(
+                        (venue) => ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor:
+                                colors.onSurface.withValues(alpha: 0.08),
+                            child: Icon(
+                              Icons.hourglass_top_rounded,
+                              color: colors.onSurface.withValues(alpha: 0.45),
+                              size: 20,
+                            ),
+                          ),
+                          title: Text(
+                            venue.name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: colors.onSurface.withValues(alpha: 0.55),
+                            ),
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'Pending',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.orange,
+                              ),
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.of(this.context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const VenuePendingPage(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // ── Sabit footer ──
+              // Add Venue Account
+              ListTile(
+                leading: Container(
                   width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
+                  height: 40,
                   decoration: BoxDecoration(
-                    color: colors.onSurface.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(2),
+                    color: colors.primary.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.add, color: colors.primary, size: 22),
+                ),
+                title: Text(
+                  'Add Venue Account',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colors.primary,
                   ),
                 ),
-                ..._memberVenues.map(
-                  (venue) => ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: colors.primary.withValues(alpha: 0.12),
-                      child: Icon(Icons.storefront, color: colors.primary),
-                    ),
-                    title: Text(
-                      venue.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: colors.onSurface,
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(this.context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const VenueContextOnboardingPage(
+                        fromAppShell: true,
                       ),
                     ),
-                    trailing: _activeAccount == venue.name
-                        ? Icon(Icons.check_circle, color: colors.primary)
-                        : null,
-                    onTap: () async {
-                      Navigator.pop(context);
-                      final rootContext = this.context;
-                      try {
-                        await _switchToVenue(venue);
-                      } catch (_) {
-                        if (!rootContext.mounted) return;
-                        await showPremiumErrorDialog(
-                          rootContext,
-                          message: 'Could not switch to venue account.',
-                        );
-                      }
-                    },
-                  ),
+                  );
+                },
+              ),
+
+              const Divider(height: 1),
+
+              // Account Settings
+              ListTile(
+                leading: Icon(Icons.settings_outlined, color: colors.onSurface),
+                title: Text(
+                  'Account Settings',
+                  style: TextStyle(color: colors.onSurface),
                 ),
-                const Divider(),
-                ListTile(
-                  leading: Icon(
-                    Icons.settings_outlined,
-                    color: colors.onSurface,
-                  ),
-                  title: Text(
-                    'Account Settings',
-                    style: TextStyle(color: colors.onSurface),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AccountSettingsPage(),
-                      ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(this.context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AccountSettingsPage(),
+                    ),
+                  );
+                },
+              ),
+
+              // Personal hesap
+              ListTile(
+                leading:
+                    Icon(Icons.person_outline, color: colors.onSurface),
+                title: Text(
+                  _isVenueContext
+                      ? (_hasPersonalProfile
+                            ? 'Switch to $_personalAccountLabel'
+                            : 'Create Personal Account')
+                      : _personalAccountLabel,
+                  style: TextStyle(color: colors.onSurface),
+                ),
+                trailing: !_isVenueContext
+                    ? Icon(Icons.check_circle, color: colors.primary)
+                    : null,
+                onTap: () async {
+                  Navigator.pop(context);
+                  if (!_isVenueContext) return;
+                  final rootContext = this.context;
+                  try {
+                    await _switchToPersonal();
+                  } catch (_) {
+                    if (!rootContext.mounted) return;
+                    await showPremiumErrorDialog(
+                      rootContext,
+                      message: 'Could not switch to personal account.',
                     );
-                  },
-                ),
-                ListTile(
-                  leading: Icon(Icons.person_outline, color: colors.onSurface),
-                  title: Text(
-                    _isVenueContext
-                        ? (_hasPersonalProfile
-                              ? 'Switch to $_personalAccountLabel'
-                              : 'Create Personal Account')
-                        : _personalAccountLabel,
-                    style: TextStyle(color: colors.onSurface),
+                  }
+                },
+              ),
+
+              // Log out
+              ListTile(
+                leading: Icon(Icons.logout, color: colors.error),
+                title: Text(
+                  'Log out',
+                  style: TextStyle(
+                    color: colors.error,
+                    fontWeight: FontWeight.w600,
                   ),
-                  trailing: !_isVenueContext
-                      ? Icon(Icons.check_circle, color: colors.primary)
-                      : null,
-                  onTap: () async {
-                    Navigator.pop(context);
-                    if (!_isVenueContext) {
-                      return;
-                    }
-                    final rootContext = this.context;
-                    try {
-                      await _switchToPersonal();
-                    } catch (_) {
-                      if (!rootContext.mounted) return;
-                      await showPremiumErrorDialog(
-                        rootContext,
-                        message: 'Could not switch to personal account.',
-                      );
-                    }
-                  },
                 ),
-                ListTile(
-                  leading: Icon(Icons.logout, color: colors.error),
-                  title: Text(
-                    'Log out',
-                    style: TextStyle(
-                      color: colors.error,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  onTap: () async {
-                    final rootContext = this.context;
-                    Navigator.pop(context);
-                    await _logout(rootContext);
-                  },
-                ),
-              ],
-            ),
+                onTap: () async {
+                  final rootContext = this.context;
+                  Navigator.pop(context);
+                  await _logout(rootContext);
+                },
+              ),
+
+              const SizedBox(height: 8),
+            ],
           ),
         );
       },
@@ -515,13 +676,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final isDark = theme.brightness == Brightness.dark;
     final pages = _isVenueContext
         ? <Widget>[
-            const VenueAccountHomePage(),
+            VenueAccountHomePage(venueId: _activeVenueId),
+            VenueOwnerGuestsPage(venueId: _activeVenueId),
             const NotificationPage(),
             VenueProfilePage(
-              activeVenueName: _activeAccount == 'Personal'
-                  ? null
-                  : _activeAccount,
+              activeVenueName:
+                  _activeAccount == 'Personal' ? null : _activeAccount,
               venueNames: _memberVenues.map((v) => v.name).toList(),
+              venueId: _activeVenueId,
             ),
           ]
         : <Widget>[
@@ -545,74 +707,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       child: Scaffold(
         extendBody: true,
         body: pages[safeIndex],
-        bottomNavigationBar: BottomNavigationBar(
-          backgroundColor: isDark
-              ? theme.colorScheme.surface.withValues(alpha: 0.95)
-              : theme.colorScheme.surface.withValues(alpha: 0.95),
-          elevation: 0,
-          currentIndex: safeIndex,
-          type: BottomNavigationBarType.fixed,
-          selectedItemColor: theme.colorScheme.primary,
-          unselectedItemColor: isDark ? Colors.white24 : Colors.grey.shade400,
-          showSelectedLabels: false,
-          showUnselectedLabels: false,
-          onTap: _onItemTapped,
-          items: _isVenueContext
-              ? [
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.home_outlined, size: 30),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildNotificationIcon(),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: GestureDetector(
-                      onLongPress: () {
-                        _showAccountSwitcher(context);
-                      },
-                      child: _buildProfileAvatar(
-                        isActive: safeIndex == 4,
-                        isDark: isDark,
-                        theme: theme,
-                      ),
-                    ),
-                    label: '',
-                  ),
-                ]
-              : [
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.home_outlined, size: 30),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildNotificationIcon(),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: _buildMessageIcon(),
-                    label: '',
-                  ),
-                  const BottomNavigationBarItem(
-                    icon: Icon(Icons.people_outline, size: 30),
-                    label: '',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: GestureDetector(
-                      onLongPress: () {
-                        _showAccountSwitcher(context);
-                      },
-                      child: _buildProfileAvatar(
-                        isActive: safeIndex == 2,
-                        isDark: isDark,
-                        theme: theme,
-                      ),
-                    ),
-                    label: '',
-                  ),
-                ],
-        ),
+        bottomNavigationBar: _buildNavBar(safeIndex, isDark, theme, context),
       ),
     );
   }
@@ -624,13 +719,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }) {
     final colors = theme.colorScheme;
     return Container(
-      width: 32,
-      height: 32,
+      width: 34,
+      height: 34,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
           color: isActive ? colors.onSurface : Colors.transparent,
-          width: 2,
+          width: 2.5,
         ),
         color: isDark
             ? colors.primary.withValues(alpha: 0.2)
@@ -648,8 +743,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildNotificationIcon() {
-    const icon = Icon(Icons.notifications_none, size: 30);
+  Widget _buildNotificationIcon(Color color) {
+    final icon = Icon(Icons.notifications_none, size: 27, color: color);
     if (_unreadNotificationCount <= 0) {
       return icon;
     }
@@ -684,8 +779,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageIcon() {
-    const icon = Icon(Icons.mark_chat_unread_outlined, size: 28);
+  Widget _buildMessageIcon(Color color) {
+    final icon = Icon(Icons.chat_bubble_outline, size: 27, color: color);
     if (_unreadDmCount <= 0) {
       return icon;
     }
@@ -715,6 +810,103 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildNavBar(
+    int safeIndex,
+    bool isDark,
+    ThemeData theme,
+    BuildContext ctx,
+  ) {
+    final colors = theme.colorScheme;
+    final activeColor = colors.onSurface;
+    final inactiveColor = colors.onSurface.withValues(alpha: 0.30);
+
+    Widget navIcon(IconData filled, IconData outlined, int index) {
+      return Icon(
+        safeIndex == index ? filled : outlined,
+        size: 28,
+        color: safeIndex == index ? activeColor : inactiveColor,
+      );
+    }
+
+    Widget navItem(int index, Widget child, {VoidCallback? onLongPress}) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _onItemTapped(index),
+        onLongPress: onLongPress,
+        child: SizedBox.expand(
+          child: Center(child: child),
+        ),
+      );
+    }
+
+    final List<Widget> items = _isVenueContext
+        ? [
+            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
+            navItem(1, navIcon(Icons.people, Icons.people_outline, 1)),
+            navItem(
+              2,
+              _buildNotificationIcon(
+                safeIndex == 2 ? activeColor : inactiveColor,
+              ),
+            ),
+            navItem(
+              3,
+              _buildProfileAvatar(
+                isActive: safeIndex == 3,
+                isDark: isDark,
+                theme: theme,
+              ),
+              onLongPress: () => _showAccountSwitcher(ctx),
+            ),
+          ]
+        : [
+            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
+            navItem(
+              1,
+              _buildNotificationIcon(
+                safeIndex == 1 ? activeColor : inactiveColor,
+              ),
+            ),
+            navItem(
+              2,
+              _buildMessageIcon(safeIndex == 2 ? activeColor : inactiveColor),
+            ),
+            navItem(3, navIcon(Icons.people_alt, Icons.people_alt_outlined, 3)),
+            navItem(
+              4,
+              _buildProfileAvatar(
+                isActive: safeIndex == 4,
+                isDark: isDark,
+                theme: theme,
+              ),
+              onLongPress: () => _showAccountSwitcher(ctx),
+            ),
+          ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? colors.surface : Colors.white,
+        border: Border(
+          top: BorderSide(
+            width: 0.5,
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.10),
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 52,
+          child: Row(
+            children: items.map((item) => Expanded(child: item)).toList(),
+          ),
+        ),
+      ),
     );
   }
 }

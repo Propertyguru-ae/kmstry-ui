@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboar
 import 'package:kmstry_frontend/features/onboarding/presentation/permissions_flow_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_member_invite_page.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
@@ -69,6 +71,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         resolvedVenueId =
             meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null;
       }
+      _lastResolvedVenueId = resolvedVenueId;
 
       // On fresh installs, existing accounts can come with COMPLETED but still need
       // device permission onboarding on this device.
@@ -132,9 +135,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
-          _logDecision('personal_home_step_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('personal_home_step_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('personal_home_step_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
@@ -167,9 +176,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (!hasGenderInterest) {
-          _logDecision('context_choice_force_personal_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('context_choice_force_personal_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('context_choice_force_personal_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
@@ -178,6 +193,19 @@ class _AuthGatePageState extends State<AuthGatePage> {
           return;
         }
         await _routeToPersonalHome();
+        return;
+      }
+      if (homeRoute == 'VENUE_MEMBER_INVITE' || nextAction == 'SHOW_VENUE_MEMBER_INVITE') {
+        _logDecision('server_route_venue_member_invite');
+        final pendingInvites = meContext.memberVenues
+            .where((v) => v.isPendingMemberInvite)
+            .toList();
+        _go(VenueMemberInvitePage(pendingInvites: pendingInvites));
+        return;
+      }
+      if (homeRoute == 'VENUE_PENDING' || nextAction == 'AWAIT_VENUE_APPROVAL') {
+        _logDecision('server_route_venue_pending');
+        _go(const VenuePendingPage());
         return;
       }
       if (homeRoute == 'VENUE_ONBOARDING' ||
@@ -208,9 +236,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
           return;
         }
-        if (onboardingStep == 'GENDER_INTEREST' && !hasGenderInterest) {
-          _logDecision('server_route_personal_onboarding_gender_interest');
-          _go(const GenderInterestOnboardingPage());
+        if (onboardingStep == 'GENDER_INTEREST') {
+          if (!hasGenderInterest) {
+            _logDecision('server_route_personal_onboarding_gender_interest');
+            _go(const GenderInterestOnboardingPage());
+            return;
+          }
+          // Gender+interest already set but step not yet advanced → go to permissions
+          _logDecision('server_route_personal_onboarding_gender_interest_completed_go_permissions');
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PERMISSIONS') {
@@ -376,9 +410,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
     } catch (_) {}
   }
 
+  String? _lastResolvedVenueId;
+
   Future<void> _routeToVenueHome() async {
     await PushManager.instance.ensureRegisteredIfAllowed();
-    _go(const AppShell(initialIndex: 0));
+    _go(AppShell(
+      initialIndex: 0,
+      initialIsVenueContext: true,
+      initialVenueId: _lastResolvedVenueId,
+    ));
   }
 
   Future<void> _routeToPersonalHome() async {
@@ -387,7 +427,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
   }
 
   void _go(Widget page) {
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => page));
+    // Remove every route beneath so no ghost personal/venue shell lingers
+    // behind the transition and bleeds through.
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => page),
+      (route) => false,
+    );
   }
 
   @override

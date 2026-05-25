@@ -158,12 +158,12 @@ class AuthApi {
   }
 
   Future<Map<String, dynamic>> login({
-    required String email,
+    required String identifier,
     required String password,
   }) async {
     final res = await _client.post(
       '/auth/login',
-      body: {'email': email, 'password': password},
+      body: {'identifier': identifier, 'password': password},
     );
 
     return res as Map<String, dynamic>;

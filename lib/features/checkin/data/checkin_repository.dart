@@ -346,4 +346,15 @@ class CheckinRepository {
     }
     return const [];
   }
+
+  /// Kullanıcının aktif check-in'ini manuel olarak kapatır.
+  /// Backend: DELETE /checkins/:id
+  Future<void> checkout(String checkinId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.delete(
+      '/checkins/$checkinId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
 }
