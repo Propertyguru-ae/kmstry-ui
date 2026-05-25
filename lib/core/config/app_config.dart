@@ -3,7 +3,7 @@ class AppConfig {
   //static const String baseUrl = 'http://192.168.0.21:3000';
   // static const String baseUrl = 'http://localhost:3000';
   // static const String baseUrl = 'http://192.168.70.243:3000';
-  //static const String baseUrl = 'https://api.kmstry.net';
+   static const String baseUrl = 'https://api.kmstry.net';
   //static const String baseUrl = 'http://192.168.68.111:3000';
-  static const String baseUrl = 'http://192.168.1.152:3000';
+  //static const String baseUrl = 'http://192.168.1.152:3000';
 }

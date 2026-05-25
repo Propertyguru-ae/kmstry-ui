@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_edit_page.dart';
@@ -236,11 +237,8 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                 const SizedBox(height: 2),
 
                 // ── Events ────────────────────────────────────────────────
-                _ContentSection(
-                  icon: Icons.event_outlined,
-                  title: 'Events',
-                  emptyLabel: 'No upcoming events',
-                  emptyHint: 'Publish your first event',
+                _EventsSection(
+                  events: venue?.upcomingEvents ?? const [],
                   onAdd: () => _comingSoon('Events'),
                   colors: colors,
                 ),
@@ -520,21 +518,15 @@ class _QuickTile extends StatelessWidget {
   }
 }
 
-// ─── Generic content section (Events / Stories) ───────────────────────────────
+// ─── Events section ───────────────────────────────────────────────────────────
 
-class _ContentSection extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String emptyLabel;
-  final String emptyHint;
+class _EventsSection extends StatelessWidget {
+  final List<VenueUpcomingEvent> events;
   final VoidCallback onAdd;
   final ColorScheme colors;
 
-  const _ContentSection({
-    required this.icon,
-    required this.title,
-    required this.emptyLabel,
-    required this.emptyHint,
+  const _EventsSection({
+    required this.events,
     required this.onAdd,
     required this.colors,
   });
@@ -543,60 +535,22 @@ class _ContentSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: colors.surface,
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _SectionHeader(label: title, colors: colors),
-              GestureDetector(
-                onTap: onAdd,
-                child: Text(
-                  '+ Add',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: colors.primary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Center(
-            child: Column(
+          // ── Header ──────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    icon,
-                    size: 20,
-                    color: colors.onSurface.withValues(alpha: 0.3),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  emptyLabel,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: colors.onSurface.withValues(alpha: 0.45),
-                  ),
-                ),
-                const SizedBox(height: 3),
+                _SectionHeader(label: 'Events', colors: colors),
                 GestureDetector(
                   onTap: onAdd,
                   child: Text(
-                    emptyHint,
+                    '+ Add',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: colors.primary,
                     ),
@@ -605,7 +559,243 @@ class _ContentSection extends StatelessWidget {
               ],
             ),
           ),
+
+          const SizedBox(height: 14),
+
+          // ── Empty state ──────────────────────────────────────────────────
+          if (events.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.event_outlined,
+                      size: 18,
+                      color: colors.onSurface.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'No upcoming events',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: colors.onSurface.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      GestureDetector(
+                        onTap: onAdd,
+                        child: Text(
+                          'Publish your first event',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            // ── Horizontal card scroll ──────────────────────────────────
+            SizedBox(
+              height: 196,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                itemCount: events.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, i) =>
+                    _EventCard(event: events[i], colors: colors),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _EventCard extends StatelessWidget {
+  final VenueUpcomingEvent event;
+  final ColorScheme colors;
+
+  const _EventCard({required this.event, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPhoto = event.photo != null && event.photo!.isNotEmpty;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      width: 172,
+      decoration: BoxDecoration(
+        color: isDark
+            ? colors.surfaceContainerHighest
+            : const Color(0xFFF5F7FA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: colors.outline.withValues(alpha: isDark ? 0.12 : 0.09),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Photo / gradient header ──────────────────────────────────
+          SizedBox(
+            height: 100,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Background
+                hasPhoto
+                    ? Image.network(
+                        event.photo!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            _EventCardBg(colors: colors, primary: colors.primary),
+                      )
+                    : _EventCardBg(colors: colors, primary: colors.primary),
+
+                // Gradient scrim at bottom (for readability)
+                Positioned(
+                  left: 0, right: 0, bottom: 0,
+                  height: 48,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.45),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Price badge — bottom right
+                if (event.priceAed != null)
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: event.priceAed == 0
+                            ? const Color(0xFF22C55E)
+                            : colors.primary,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        event.priceAed == 0
+                            ? 'Free'
+                            : 'AED ${event.priceAed}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // ── Info ────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                    height: 1.25,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today_outlined,
+                      size: 11,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        event.formattedDate,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: colors.onSurface.withValues(alpha: 0.6),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fotoğraf yokken renkli gradient arka plan
+class _EventCardBg extends StatelessWidget {
+  final ColorScheme colors;
+  final Color primary;
+  const _EventCardBg({required this.colors, required this.primary});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            primary.withValues(alpha: 0.75),
+            colors.secondary.withValues(alpha: 0.55),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.event_outlined,
+          size: 32,
+          color: Colors.white.withValues(alpha: 0.35),
+        ),
       ),
     );
   }

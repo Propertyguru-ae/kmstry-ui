@@ -309,7 +309,7 @@ class _CheckInPageState extends State<CheckInPage> {
       context,
       MaterialPageRoute(
         builder: (_) =>
-            const CameraScreen(useFrontCamera: false, optimizeForUpload: true),
+            const CameraScreen(useFrontCamera: true, optimizeForUpload: true),
       ),
     );
 
