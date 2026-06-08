@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/change_password_page.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/features/profile/presentation/manage_accounts_page.dart';
 
 class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
@@ -248,6 +249,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         child: Container(
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: premiumTileBg,
             borderRadius: BorderRadius.circular(14),
@@ -268,9 +270,48 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Account Settings')),
+      appBar: AppBar(title: const Text('Accounts Center')),
       body: ListView(
         children: <Widget>[
+          // ── Manage Accounts ──────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: ListTile(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ManageAccountsPage(),
+                ),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(
+                  color: colors.primary.withValues(alpha: 0.12),
+                ),
+              ),
+              tileColor: theme.brightness == Brightness.dark
+                  ? colors.surface
+                  : const Color(0xFFF8FBFD),
+              leading: Icon(Icons.manage_accounts_outlined,
+                  color: colors.primary),
+              title: Text(
+                'Manage Accounts',
+                style: TextStyle(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'Add, view or delete your accounts',
+                style: TextStyle(
+                  color: colors.onSurface.withValues(alpha: 0.6),
+                  fontSize: 13,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+          ),
+
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
@@ -317,6 +358,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Container(
+              clipBehavior: Clip.antiAlias,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: theme.brightness == Brightness.dark

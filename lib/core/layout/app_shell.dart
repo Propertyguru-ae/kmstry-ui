@@ -601,7 +601,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(Icons.settings_outlined, color: colors.onSurface),
                 title: Text(
-                  'Account Settings',
+                  'Accounts Center',
                   style: TextStyle(color: colors.onSurface),
                 ),
                 onTap: () {

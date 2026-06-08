@@ -115,7 +115,7 @@ class AppTheme {
       backgroundColor: Colors.transparent,
       elevation: 0,
       centerTitle: true,
-      iconTheme: IconThemeData(color: lightPrimary),
+      iconTheme: IconThemeData(color: Color(0xFF111827)),
       titleTextStyle: TextStyle(
         color: lightTextPrimary,
         fontSize: 20,
@@ -135,6 +135,9 @@ class AppTheme {
       bodyMedium: TextStyle(color: lightTextSecondary),
     ),
     iconTheme: const IconThemeData(color: lightPrimary),
+    listTileTheme: ListTileThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
   );
 
   static ThemeData darkTheme = ThemeData(
@@ -235,7 +238,7 @@ class AppTheme {
       backgroundColor: Colors.transparent,
       elevation: 0,
       centerTitle: true,
-      iconTheme: IconThemeData(color: brandPrimary),
+      iconTheme: IconThemeData(color: Color(0xFFF4F6F8)),
       titleTextStyle: TextStyle(
         color: darkTextPrimary,
         fontSize: 20,
@@ -255,5 +258,8 @@ class AppTheme {
       bodyMedium: TextStyle(color: darkTextSecondary),
     ),
     iconTheme: const IconThemeData(color: brandPrimary),
+    listTileTheme: ListTileThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
   );
 }

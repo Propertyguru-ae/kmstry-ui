@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -11,6 +12,9 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_tray.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -27,6 +31,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   final _repo = VenueCheckinRepository();
   final _checkinRepo = CheckinRepository();
   final _venueContextRepo = VenueContextRepository();
+  final _storyRepo = StoryRepository();
+  int _storyTrayRefreshCount = 0;
+  bool _storyUploading = false;
   String? _activeCheckinId;
   String? _activeCheckinVenueId;
   String? _activeCheckinVenuePlaceId;
@@ -271,6 +278,64 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       if (mounted) {
         setState(() => _resolvingVenueForCheckin = false);
       }
+    }
+  }
+
+  Future<void> _openAddStory() async {
+    final checkinId = _activeCheckinId;
+    if (checkinId == null) return;
+
+    final file = await Navigator.push<File>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const CameraScreen(useFrontCamera: true),
+      ),
+    );
+
+    if (file == null || !mounted) return;
+
+    // Determine media type from extension.
+    final filePath = file.path;
+    final isVideo = filePath.endsWith('.mp4') ||
+        filePath.endsWith('.mov') ||
+        filePath.endsWith('.avi');
+    final mediaType = isVideo ? 'video' : 'photo';
+
+    // Overlay'i async gap'ten ÖNCE yakala — kullanıcı başka sayfaya geçse bile
+    // kart root overlay üzerinde gösterilecek.
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+
+    setState(() => _storyUploading = true);
+
+    try {
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: file,
+        mediaType: mediaType,
+      );
+      // Sayfa hâlâ açıksa tray'i yenile.
+      if (mounted) {
+        setState(() {
+          _storyUploading = false;
+          _storyTrayRefreshCount++;
+        });
+      }
+      // Kutlama kartını göster — kullanıcı nerede olursa olsun.
+      if (overlay != null) {
+        showStorySharedCard(
+          overlay,
+          mediaFile: file,
+          venueName: widget.venue.name,
+          isVideo: isVideo,
+        );
+      }
+    } catch (e, st) {
+      debugPrint('❌ Story upload error: $e\n$st');
+      if (!mounted) return;
+      setState(() => _storyUploading = false);
+      await showPremiumErrorDialog(context,
+          message: 'Upload failed: $e');
     }
   }
 
@@ -769,7 +834,18 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 ],
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
+
+              /// STORY TRAY — başlık altında, cover image üstünde
+              if (_resolvedVenueIdForCurrentDetail != null)
+                StoryTray(
+                  key: ValueKey('${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount'),
+                  venueId: _resolvedVenueIdForCurrentDetail!,
+                  isUploading: _storyUploading,
+                  onAddStory: hasActiveCheckinHere ? _openAddStory : null,
+                ),
+
+              const SizedBox(height: 8),
 
               /// COVER IMAGE
               Container(
@@ -801,7 +877,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 ),
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               // Tag alanini simdilik gizliyoruz.
 

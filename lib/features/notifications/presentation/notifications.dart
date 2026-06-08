@@ -12,6 +12,7 @@ import 'package:kmstry_frontend/features/notifications/presentation/notification
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -601,6 +602,7 @@ class _NotificationPageState extends State<NotificationPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
+        leading: const AppLogo(),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(

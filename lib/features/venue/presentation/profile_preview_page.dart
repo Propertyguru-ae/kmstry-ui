@@ -1662,18 +1662,26 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   ),
                 ),
 
-                /// SPACER (Pushes content to bottom)
-                const Spacer(),
-
-                /// MAIN CONTENT
-                Flexible(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                /// MAIN CONTENT — fills remaining space, content pinned to bottom,
+                /// scrollable when expanded sections grow.
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                           if (canOpenVenue || _isMatchedActionState) ...[
                         Row(
                           mainAxisSize: MainAxisSize.min,
@@ -2062,8 +2070,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ],
                   ),
                 ),
-              ),
-            ),
+            ],
+          ),
+        ),
+                      );
+                    },
+                  ),
+                ),
           ],
         ),
       ),

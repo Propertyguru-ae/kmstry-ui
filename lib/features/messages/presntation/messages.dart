@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class DmListPage extends StatefulWidget {
   const DmListPage({super.key});
@@ -294,7 +295,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
             fontWeight: FontWeight.bold,
           ),
         ),
-        actions: [],
+        leading: const AppLogo(),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(

@@ -714,10 +714,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       appBar: AppBar(
         backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0.5,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios, color: colors.onSurface, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
         title: Row(
           children: [
             CircleAvatar(

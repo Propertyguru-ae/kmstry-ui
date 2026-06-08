@@ -10,6 +10,11 @@ import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
+import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/stories/data/story_viewed_cache.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 
 class PeoplePage extends StatefulWidget {
   const PeoplePage({super.key});
@@ -18,14 +23,19 @@ class PeoplePage extends StatefulWidget {
   State<PeoplePage> createState() => _PeoplePageState();
 }
 
-class _PeoplePageState extends State<PeoplePage> {
+class _PeoplePageState extends State<PeoplePage> with SingleTickerProviderStateMixin {
   static const int _pageSize = 20;
+  late final TabController _tabController;
   final MatchRepository _repo = MatchRepository();
+  final _storyRepo = StoryRepository();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   Timer? _searchDebounce;
   List<MatchItem> _matches = [];
   List<BlockedUser> _blockedUsers = [];
+  List<StoryGroup> _friendStoryGroups = [];
+  Set<String> _viewedStoryIds = {};
+  bool _storiesLoading = true;
   String _searchQuery = '';
   String? _nextCursor;
   bool _hasMore = false;
@@ -38,8 +48,57 @@ class _PeoplePageState extends State<PeoplePage> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadData();
+    _loadStories();
     _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadStories() async {
+    try {
+      final results = await Future.wait([
+        _storyRepo.getFriendsStories(),
+        StoryViewedCache.loadAll(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _friendStoryGroups = results[0] as List<StoryGroup>;
+        _viewedStoryIds = results[1] as Set<String>;
+        _storiesLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _storiesLoading = false);
+    }
+  }
+
+  Future<void> _refreshViewedCache() async {
+    final ids = await StoryViewedCache.loadAll();
+    if (!mounted) return;
+    setState(() => _viewedStoryIds = ids);
+  }
+
+  int _firstUnseenIndex(List<StoryItem> stories) {
+    for (int i = 0; i < stories.length; i++) {
+      if (!_viewedStoryIds.contains(stories[i].id)) return i;
+    }
+    return 0;
+  }
+
+  void _openFriendStory(int groupIndex) {
+    final group = _friendStoryGroups[groupIndex];
+    final startIndex = _firstUnseenIndex(group.stories);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: _friendStoryGroups,
+          initialGroupIndex: groupIndex,
+          initialStoryIndex: startIndex,
+        ),
+      ),
+    ).then((_) => _refreshViewedCache());
   }
 
   void _onScroll() {
@@ -266,6 +325,7 @@ class _PeoplePageState extends State<PeoplePage> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchDebounce?.cancel();
     _searchController.dispose();
     _scrollController.removeListener(_onScroll);
@@ -281,17 +341,9 @@ class _PeoplePageState extends State<PeoplePage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        leading: IconButton(
-          tooltip: 'Find new friends',
-          icon: const Icon(Icons.person_add_alt_1_rounded),
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const FindFriendsPage()),
-            );
-          },
-        ),
+        leading: const AppLogo(),
         title: Text(
-          'Friends',
+          'Connections',
           style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.w900,
             letterSpacing: -0.8,
@@ -300,48 +352,167 @@ class _PeoplePageState extends State<PeoplePage> {
         backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
         centerTitle: true,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(
-            color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200], 
-            height: 1,
+        actions: [
+          IconButton(
+            tooltip: 'Find new friends',
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const FindFriendsPage()),
+              );
+            },
           ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+          indicatorSize: TabBarIndicatorSize.label,
+          tabs: const [
+            Tab(text: 'Friends'),
+            Tab(text: 'Following'),
+          ],
         ),
       ),
-      body: _loading && _matches.isEmpty && _blockedUsers.isEmpty
-          ? Center(
-              child: CircularProgressIndicator(
-                color: theme.colorScheme.primary,
-                strokeWidth: 3,
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildFriendsTab(isDark, theme),
+          _buildFollowingTab(isDark, theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFriendsTab(bool isDark, ThemeData theme) {
+    if (_loading && _matches.isEmpty && _blockedUsers.isEmpty) {
+      return Center(
+        child: CircularProgressIndicator(
+          color: theme.colorScheme.primary,
+          strokeWidth: 3,
+        ),
+      );
+    }
+    if (_error != null && _matches.isEmpty && _blockedUsers.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Could not load matches',
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
               ),
-            )
-          : _error != null && _matches.isEmpty && _blockedUsers.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Could not load matches',
-                      style: theme.textTheme.bodyMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: _loadData,
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _loadData,
+                child: const Text('Retry'),
               ),
-            )
-          : Column(
-              children: [
-                _buildSearchBar(isDark, theme),
-                Expanded(child: _buildPeopleList(isDark, theme)),
-              ],
+            ],
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        if (_storiesLoading || _friendStoryGroups.isNotEmpty)
+          _buildFriendStoryTray(isDark, theme),
+        _buildSearchBar(isDark, theme),
+        Expanded(child: _buildPeopleList(isDark, theme)),
+      ],
+    );
+  }
+
+  Widget _buildFriendStoryTray(bool isDark, ThemeData theme) {
+    if (_storiesLoading) {
+      return SizedBox(
+        height: 96,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: theme.colorScheme.primary,
             ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Text(
+            'Stories',
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: isDark ? Colors.white54 : const Color(0xFF64748B),
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 90,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: _friendStoryGroups.length,
+            itemBuilder: (context, index) {
+              final group = _friendStoryGroups[index];
+              final ids = group.stories.map((s) => s.id).toList();
+              final allSeen = StoryViewedCache.allViewedSync(ids, _viewedStoryIds);
+              return _FriendStoryBubble(
+                group: group,
+                allSeen: allSeen,
+                onTap: () => _openFriendStory(index),
+              );
+            },
+          ),
+        ),
+        Divider(
+          height: 1,
+          thickness: 1,
+          color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFollowingTab(bool isDark, ThemeData theme) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.location_city_rounded,
+            size: 52,
+            color: isDark ? Colors.white24 : Colors.grey[300],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No followed venues yet',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white54 : const Color(0xFF64748B),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Follow venues to see their stories\nand stay updated.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? Colors.white38 : Colors.grey[400],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -553,6 +724,85 @@ class _PeoplePageState extends State<PeoplePage> {
           size: 20,
         ),
         onPressed: onTap,
+      ),
+    );
+  }
+}
+
+class _FriendStoryBubble extends StatelessWidget {
+  final StoryGroup group;
+  final bool allSeen;
+  final VoidCallback onTap;
+
+  const _FriendStoryBubble({
+    required this.group,
+    required this.onTap,
+    this.allSeen = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = group.bubbleImageUrl;
+    final name = group.user.displayName;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(2.5),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: allSeen
+                    ? null
+                    : const LinearGradient(
+                        colors: [Color(0xFFf09433), Color(0xFFbc2a8d)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                color: allSeen ? Colors.grey.shade400 : null,
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                ),
+                child: CircleAvatar(
+                  radius: 27,
+                  backgroundImage: imageUrl != null && imageUrl.isNotEmpty
+                      ? NetworkImage(imageUrl)
+                      : null,
+                  backgroundColor: Colors.grey.shade300,
+                  child: imageUrl == null || imageUrl.isEmpty
+                      ? Text(
+                          name.isNotEmpty ? name[0].toUpperCase() : '?',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 18,
+                            color: Colors.white,
+                          ),
+                        )
+                      : null,
+                ),
+              ),
+            ),
+            const SizedBox(height: 5),
+            SizedBox(
+              width: 64,
+              child: Text(
+                name,
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

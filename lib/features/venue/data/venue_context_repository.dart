@@ -17,7 +17,7 @@ class VenueContextRepository {
 
   Future<Map<String, dynamic>> getVenueDetails(String placeId) async {
     final response = await _api.get('/venues/details/$placeId');
-    return response.data;
+    return response as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> claimVenueFromPlace(String placeId) async {

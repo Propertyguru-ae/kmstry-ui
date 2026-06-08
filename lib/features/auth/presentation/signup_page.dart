@@ -104,7 +104,8 @@ class _SignupPageState extends State<SignupPage> {
             Align(
               alignment: Alignment.centerLeft,
               child: IconButton(
-                icon: const Icon(Icons.arrow_back),
+                icon: Icon(Icons.arrow_back_ios_new, size: 20,
+                    color: Theme.of(context).appBarTheme.iconTheme?.color),
                 onPressed: () => Navigator.pop(context),
               ),
             ),

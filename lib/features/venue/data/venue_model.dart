@@ -145,9 +145,9 @@ class Venue {
       upcomingEvents: (json['upcomingEvents'] ?? json['upcoming_events']) is List
           ? (json['upcomingEvents'] ?? json['upcoming_events'] as List)
               .whereType<Map>()
-              .map((e) => VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
+              .map<VenueUpcomingEvent>((e) => VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
               .toList()
-          : const [],
+          : const <VenueUpcomingEvent>[],
       // UI-derived helpers
       status: _computeStatus(json),
       tag: _computeTag(json),
