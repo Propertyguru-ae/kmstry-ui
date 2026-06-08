@@ -11,6 +11,7 @@ import 'package:image/image.dart' as img;
 import 'preview_video_screen.dart';
 import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
+import '../data/video_mirror.dart';
 
 enum CaptureMode { photo, video }
 
@@ -33,13 +34,14 @@ class _CameraScreenState extends State<CameraScreen> {
   late CameraDescription _currentCamera;
   int _recordSeconds = 0;
   Timer? _recordTimer;
-  final int _maxSeconds = 5; // şimdilik 5, premium'da 15 yapacağız
+  final int _maxSeconds = 10; // şimdilik 5, premium'da 15 yapacağız
   bool _isReady = false;
   bool _cameraPermissionDenied = false;
   bool _cameraPermissionPermanentlyDenied = false;
   bool _microphoneGranted = false;
   CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
+  bool _processingVideo = false;
 
   ResolutionPreset _captureResolutionPreset() {
     // Her zaman yüksek çözünürlük — 720p (high) tüm platformlarda iyi kalite/boyut dengesi.
@@ -196,6 +198,13 @@ class _CameraScreenState extends State<CameraScreen> {
         }
       }
 
+      // Video ile aynı genişlik (720px) — AR korunur
+      if (fixed.width != 720) {
+        final targetH = (720 * fixed.height / fixed.width).round();
+        fixed = img.copyResize(fixed, width: 720, height: targetH,
+            interpolation: img.Interpolation.linear);
+      }
+
       final fixedBytes = img.encodeJpg(fixed, quality: 92);
       await savedImage.writeAsBytes(fixedBytes, flush: true);
     }
@@ -292,7 +301,16 @@ class _CameraScreenState extends State<CameraScreen> {
       "${DateTime.now().millisecondsSinceEpoch}.mp4",
     );
 
-    final savedVideo = await File(video.path).copy(filePath);
+    File savedVideo = await File(video.path).copy(filePath);
+
+    // Android'de CameraX ön kamera videosunu piksel verisine gömülü aynalı kaydeder.
+    // iOS'ta bu sorun yok (preferredTransform metadata ile yönetilir).
+    if (Platform.isAndroid &&
+        _currentCamera.lensDirection == CameraLensDirection.front) {
+      if (mounted) setState(() => _processingVideo = true);
+      savedVideo = await VideoMirror.mirrorFront(savedVideo);
+      if (mounted) setState(() => _processingVideo = false);
+    }
 
     if (!mounted) return;
     Navigator.push(
@@ -520,6 +538,31 @@ class _CameraScreenState extends State<CameraScreen> {
               onPressed: () => Navigator.pop(context),
             ),
           ),
+
+          if (_processingVideo)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black54,
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 14),
+                      Text(
+                        'Processing…',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
         ],
       ),
     );

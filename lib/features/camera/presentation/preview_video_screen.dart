@@ -21,14 +21,10 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
     _videoController = VideoPlayerController.file(widget.file);
     _videoController.initialize().then((_) {
       if (!mounted) return;
-      // Avoid triggering setState during an active layout pass.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _videoController
-          ..setLooping(true)
-          ..play();
-        setState(() => _ready = true);
-      });
+      _videoController
+        ..setLooping(true)
+        ..play();
+      setState(() => _ready = true);
     });
   }
 
@@ -44,22 +40,28 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: _ready
-                ? Center(
-                    child: AspectRatio(
-                      aspectRatio: _videoController.value.aspectRatio,
-                      child: VideoPlayer(_videoController),
-                    ),
-                  )
-                : const Center(
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2.2),
-                    ),
-                  ),
-          ),
+          if (_ready)
+            Positioned.fill(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: _videoController.value.size.width,
+                  height: _videoController.value.size.height,
+                  child: VideoPlayer(_videoController),
+                ),
+              ),
+            )
+          else
+            const Positioned.fill(
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white),
+                ),
+              ),
+            ),
 
           Positioned(
             left: 24,

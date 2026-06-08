@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
@@ -155,25 +156,37 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isStaff ? 'Delete Staff' : 'Remove Member'),
-        content: Text(
-          isStaff
-              ? '${member.user.displayName} will be removed from the team and their account will be permanently deleted.'
-              : '${member.user.displayName} will be removed from the team. Their account will not be deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: Text(isStaff ? 'Delete Staff' : 'Remove Member'),
+          content: Text(
+            isStaff
+                ? '${member.user.displayName} will be removed from the team and their account will be permanently deleted.'
+                : '${member.user.displayName} will be removed from the team. Their account will not be deleted.',
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(isStaff ? 'Delete' : 'Remove'),
-          ),
-        ],
-      ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          actions: [
+            Row(
+              children: [
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.brandPrimary,
+                  ),
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                const Spacer(),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: colors.error),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(isStaff ? 'Delete' : 'Remove'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
 
@@ -560,9 +573,10 @@ class _AddMemberSheetState extends State<_AddMemberSheet>
                 ],
               ),
             ),
-            SizedBox(
-              height: 440,
-              child: _loadingRoles
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 440),
+                child: _loadingRoles
                   ? const Center(child: CircularProgressIndicator())
                   : TabBarView(
                       controller: _tabs,
@@ -578,6 +592,7 @@ class _AddMemberSheetState extends State<_AddMemberSheet>
                         ),
                       ],
                     ),
+              ),
             ),
           ],
         ),

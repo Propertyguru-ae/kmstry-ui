@@ -64,4 +64,10 @@ flutter {
 }
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // Native, donanım hızlandırmalı video düzenleme (ön kamera ayna).
+    // Google resmi Media3 Transformer — ffmpeg gerekmez, re-encode GPU üzerinde.
+    implementation("androidx.media3:media3-transformer:1.4.1")
+    implementation("androidx.media3:media3-effect:1.4.1")
+    implementation("androidx.media3:media3-common:1.4.1")
 }

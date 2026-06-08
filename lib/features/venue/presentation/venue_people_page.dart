@@ -58,14 +58,6 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
           backgroundColor: colors.surface,
           elevation: 0,
           scrolledUnderElevation: 0,
-          leading: IconButton(
-            icon: Icon(
-              Icons.arrow_back_ios_new,
-              color: colors.onSurface,
-              size: 20,
-            ),
-            onPressed: () => Navigator.pop(context),
-          ),
           centerTitle: false,
           titleSpacing: 0,
           title: Padding(

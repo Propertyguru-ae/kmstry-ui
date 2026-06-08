@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:http/http.dart' as http;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -79,6 +81,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   bool _searchLoading = false;
   String? _searchError;
   List<Venue> _searchResults = const [];
+  List<_PlaceSuggestion> _placeSuggestions = const [];
 
   /// Last venue chosen from type search — shown as a normal map pin if not already on the map.
   Venue? _selectedSearchVenue;
@@ -153,9 +156,79 @@ class _VenueMapViewState extends State<VenueMapView> {
     final venuesChanged = oldWidget.venues != widget.venues;
     final selectionChanged =
         oldWidget.selectedVenueId != widget.selectedVenueId;
+    if (venuesChanged) {
+      // Venue listesi güncellenince (ör. checkin sonrası) icon cache'i temizle
+      // ki checkinCountActive değişen venue'lar yeni heat rengiyle yeniden çizilsin.
+      _photoMarkerIconCache.clear();
+      _photoMarkerIconLoadingKeys.clear();
+    }
     if (venuesChanged || selectionChanged) {
       _recomputeClusters(force: true);
     }
+  }
+
+  void _showHeatmapLegend(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Read the room. Before you walk in.',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'The ring around a venue tells you how many people are checked in right now.',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 16),
+              _legendRow(const Color(0xFF2196F3), 'Just getting started', 'A few people checked in'),
+              const SizedBox(height: 12),
+              _legendRow(const Color(0xFFFF9800), 'It\'s picking up', 'Getting busier'),
+              const SizedBox(height: 12),
+              _legendRow(const Color(0xFF4C1D95), 'It\'s a vibe', 'Packed! People are here'),
+              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Got it'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _legendRow(Color color, String label, String sublabel) {
+    return Row(
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: color, width: 3.5),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            Text(sublabel, style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+          ],
+        ),
+      ],
+    );
   }
 
   @override
@@ -419,14 +492,28 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   BitmapDescriptor _selectedSingleIcon() {
     return _singleSelectedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueBlue,
+      BitmapDescriptor.hueViolet,
     );
   }
 
   BitmapDescriptor _pressedSingleIcon() {
     return _singlePressedIcon ??= BitmapDescriptor.defaultMarkerWithHue(
-      BitmapDescriptor.hueBlue,
+      BitmapDescriptor.hueViolet,
     );
+  }
+
+  Color _heatRingColor(int? count) {
+    if (count == null || count == 0) return Colors.transparent;
+    if (count < 6) return const Color(0xFF2196F3);   // mavi — az kişi
+    if (count < 15) return const Color(0xFFFF9800);  // turuncu — orta
+    return const Color(0xFF4C1D95);                  // brand mor (çok koyu) — kalabalık
+  }
+
+  double _heatStrokeWidth(int? count) {
+    if (count == null || count == 0) return 0;
+    if (count < 6) return 2.5;
+    if (count < 15) return 4.0;
+    return 5.5;
   }
 
   BitmapDescriptor _singleVenueIcon({
@@ -439,13 +526,16 @@ class _VenueMapViewState extends State<VenueMapView> {
       return _fallbackSingleIcon(isSelected: isSelected, isPressed: isPressed);
     }
 
-    final ringColor = isPressed
-        ? AppTheme.brandPrimary
-        : isSelected
-        ? AppTheme.brandPrimary
-        : Colors.transparent;
+    // 🧪 TEST — tüm heat durumlarını haritada görmek için. Prod'a geçince sil.
+    final testCount = venue.name.hashCode.abs() % 20;
+    final activeCount = (isPressed || isSelected) ? null : testCount;
+    // final activeCount = (isPressed || isSelected) ? null : venue.checkinCountActive;
+
+    final ringColor = (isPressed || isSelected)
+        ? const Color(0xFF8B5CF6)
+        : _heatRingColor(activeCount);
     final cacheKey =
-        '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed';
+        '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed|$activeCount';
     final cached = _photoMarkerIconCache[cacheKey];
     if (cached != null) {
       return cached;
@@ -455,6 +545,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       cacheKey: cacheKey,
       photoUrl: photoUrl,
       ringColor: ringColor,
+      activeCount: activeCount,
     );
     return _fallbackSingleIcon(isSelected: isSelected, isPressed: isPressed);
   }
@@ -472,10 +563,11 @@ class _VenueMapViewState extends State<VenueMapView> {
     required String cacheKey,
     required String photoUrl,
     required Color ringColor,
+    int? activeCount,
   }) {
     if (_photoMarkerIconLoadingKeys.contains(cacheKey)) return;
     _photoMarkerIconLoadingKeys.add(cacheKey);
-    _buildPhotoMarkerIcon(photoUrl: photoUrl, ringColor: ringColor)
+    _buildPhotoMarkerIcon(photoUrl: photoUrl, ringColor: ringColor, activeCount: activeCount)
         .then((icon) {
           if (icon == null || !mounted) return;
           _photoMarkerIconCache[cacheKey] = icon;
@@ -501,25 +593,31 @@ class _VenueMapViewState extends State<VenueMapView> {
   Future<BitmapDescriptor?> _buildPhotoMarkerIcon({
     required String photoUrl,
     required Color ringColor,
+    int? activeCount,
   }) async {
     try {
       final uri = Uri.tryParse(photoUrl);
       if (uri == null) return null;
       final data = await NetworkAssetBundle(uri).load(uri.toString());
       final bytes = data.buffer.asUint8List();
+      const scale = 3.0;
+      const logicalSize = 64.0;
+      const physicalSize = logicalSize * scale;
+
       final codec = await ui.instantiateImageCodec(
         bytes,
-        targetWidth: 56,
-        targetHeight: 56,
+        targetWidth: (56 * scale).toInt(),
+        targetHeight: (56 * scale).toInt(),
       );
       final frame = await codec.getNextFrame();
 
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      const size = 56.0;
-      const center = Offset(size / 2, size / 2);
+      canvas.scale(scale, scale);
+
+      const center = Offset(logicalSize / 2, logicalSize / 2);
       const outerR = 26.0;
-      const imageR = 20.5;
+      const imageR = 23.5;
 
       final shadowPaint = Paint()
         ..color = Colors.black.withValues(alpha: 0.30)
@@ -538,7 +636,7 @@ class _VenueMapViewState extends State<VenueMapView> {
           Paint()
             ..color = ringColor
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 3,
+            ..strokeWidth = _heatStrokeWidth(activeCount),
         );
       }
 
@@ -551,15 +649,17 @@ class _VenueMapViewState extends State<VenueMapView> {
         rect: Rect.fromCircle(center: center, radius: imageR),
         image: frame.image,
         fit: BoxFit.cover,
-        filterQuality: FilterQuality.medium,
+        filterQuality: FilterQuality.high,
       );
       canvas.restore();
 
-      final image = await recorder.endRecording().toImage(56, 56);
+      final image = await recorder
+          .endRecording()
+          .toImage(physicalSize.toInt(), physicalSize.toInt());
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData?.buffer.asUint8List();
       if (pngBytes == null || pngBytes.isEmpty) return null;
-      return BitmapDescriptor.bytes(pngBytes);
+      return BitmapDescriptor.bytes(pngBytes, imagePixelRatio: scale);
     } catch (_) {
       return null;
     }
@@ -570,6 +670,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     required bool highlighted,
   }) async {
     final text = count > 999 ? '999+' : '$count';
+    const sublabel = 'venues';
     final bucket = count >= 100 ? '100+' : (count >= 20 ? '20+' : '2+');
     final cacheKey = '$bucket:$text:$highlighted';
 
@@ -594,6 +695,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     final icon = await _drawClusterBitmap(
       size: size,
       text: text,
+      sublabel: sublabel,
       fill: fill,
       stroke: stroke,
     );
@@ -607,11 +709,18 @@ class _VenueMapViewState extends State<VenueMapView> {
     required String text,
     required Color fill,
     required Color stroke,
+    String? sublabel,
   }) async {
+    const scale = 3.0;
+    final physicalSize = (size * scale).toInt();
+    final logicalSize = size.toDouble();
+
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    final center = Offset(size / 2, size / 2);
-    final radius = size / 2.0;
+    canvas.scale(scale, scale);
+
+    final center = Offset(logicalSize / 2, logicalSize / 2);
+    final radius = logicalSize / 2.0;
 
     final fillPaint = Paint()..color = fill;
     final strokePaint = Paint()
@@ -624,26 +733,46 @@ class _VenueMapViewState extends State<VenueMapView> {
       canvas.drawCircle(center, radius - 3, strokePaint);
     }
 
-    final tp = TextPainter(
+    final mainTp = TextPainter(
       text: TextSpan(
         text: text,
         style: TextStyle(
           color: Colors.white,
-          fontSize: size * 0.30,
+          fontSize: logicalSize * 0.30,
           fontWeight: FontWeight.w700,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, Offset((size - tp.width) / 2, (size - tp.height) / 2));
 
-    final image = await recorder.endRecording().toImage(size, size);
+    if (sublabel != null && sublabel.isNotEmpty) {
+      final subTp = TextPainter(
+        text: TextSpan(
+          text: sublabel,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.75),
+            fontSize: logicalSize * 0.18,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      final totalHeight = mainTp.height + 1 + subTp.height;
+      final topY = (logicalSize - totalHeight) / 2;
+      mainTp.paint(canvas, Offset((logicalSize - mainTp.width) / 2, topY));
+      subTp.paint(canvas, Offset((logicalSize - subTp.width) / 2, topY + mainTp.height + 1));
+    } else {
+      mainTp.paint(canvas, Offset((logicalSize - mainTp.width) / 2, (logicalSize - mainTp.height) / 2));
+    }
+
+    final image = await recorder.endRecording().toImage(physicalSize, physicalSize);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     final bytes = byteData?.buffer.asUint8List();
     if (bytes == null || bytes.isEmpty) {
       return _defaultSingleIcon();
     }
-    return BitmapDescriptor.bytes(bytes);
+    return BitmapDescriptor.bytes(bytes, imagePixelRatio: scale);
   }
 
   String _viewportKey(LatLngBounds bounds, double zoom) {
@@ -797,6 +926,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         _searchLoading = false;
         _searchError = null;
         _searchResults = const [];
+        _placeSuggestions = const [];
         _showSearchResults = _searchFocusNode.hasFocus;
         _selectedSearchVenue = null;
       });
@@ -822,14 +952,25 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
 
     try {
-      final results = await _venueRepository.searchVenues(
-        query: query,
-        latitude: location.latitude,
-        longitude: location.longitude,
-      );
+      final futures = await Future.wait([
+        _venueRepository.searchVenues(
+          query: query,
+          latitude: location.latitude,
+          longitude: location.longitude,
+        ),
+        _fetchPlaceSuggestions(
+          query: query,
+          location: location,
+        ),
+      ]);
+
       if (!mounted || token != _searchRequestToken) return;
+      final venueResults = futures[0] as List<Venue>;
+      final placeResults = futures[1] as List<_PlaceSuggestion>;
+
       setState(() {
-        _searchResults = _enrichSearchResultsWithNearbyVenues(results);
+        _searchResults = _enrichSearchResultsWithNearbyVenues(venueResults);
+        _placeSuggestions = placeResults;
         _searchLoading = false;
       });
       _notifySearchActivity();
@@ -837,11 +978,75 @@ class _VenueMapViewState extends State<VenueMapView> {
       if (!mounted || token != _searchRequestToken) return;
       setState(() {
         _searchResults = const [];
+        _placeSuggestions = const [];
         _searchLoading = false;
         _searchError = 'Search failed. Please try again.';
       });
       _notifySearchActivity();
     }
+  }
+
+  static const _googleApiKey = 'AIzaSyAW_tmPFyMqvhpZn9Fieq2iUXxX3we-F70';
+
+  Future<List<_PlaceSuggestion>> _fetchPlaceSuggestions({
+    required String query,
+    required LatLng location,
+  }) async {
+    try {
+      final uri = Uri.https('maps.googleapis.com', '/maps/api/place/autocomplete/json', {
+        'input': query,
+        'language': 'tr',
+        'key': _googleApiKey,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return const [];
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final predictions = data['predictions'] as List? ?? [];
+      return predictions.take(4).map((p) {
+        final map = p as Map<String, dynamic>;
+        return _PlaceSuggestion(
+          placeId: map['place_id']?.toString() ?? '',
+          mainText: (map['structured_formatting']?['main_text'] ?? map['description'] ?? '').toString(),
+          secondaryText: (map['structured_formatting']?['secondary_text'] ?? '').toString(),
+        );
+      }).where((s) => s.placeId.isNotEmpty).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _onPlaceSuggestionTap(_PlaceSuggestion suggestion) async {
+    _searchDebounce?.cancel();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _showSearchResults = false;
+      _searchController.text = suggestion.mainText;
+    });
+    _notifySearchActivity();
+
+    try {
+      final uri = Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
+        'place_id': suggestion.placeId,
+        'fields': 'geometry',
+        'key': _googleApiKey,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return;
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final location = data['result']?['geometry']?['location'];
+      if (location == null) return;
+      final lat = (location['lat'] as num).toDouble();
+      final lng = (location['lng'] as num).toDouble();
+      final target = LatLng(lat, lng);
+
+      await _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: target, zoom: 15),
+        ),
+      );
+      if (!mounted) return;
+      widget.onLocationResolved?.call(target);
+    } catch (_) {}
   }
 
   Future<void> _onSearchResultTap(Venue venue) async {
@@ -1227,6 +1432,40 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
   }
 
+  Widget _buildLogoButton() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        color: isDark
+            ? theme.colorScheme.surface.withValues(alpha: 0.92)
+            : Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.28)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.5)
+                : Colors.black12,
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(7),
+      child: Image.asset(
+        'assets/images/kmstrylogo.png',
+        fit: BoxFit.contain,
+      ),
+    );
+  }
+
   Widget _buildSearchBar() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -1379,20 +1618,100 @@ class _VenueMapViewState extends State<VenueMapView> {
         ),
       );
     }
-    if (_searchResults.isEmpty) {
+    if (_searchResults.isEmpty && _placeSuggestions.isEmpty) {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
-          'No venues found for this query.',
+          'No results found.',
           style: TextStyle(color: colors.onSurface.withValues(alpha: 0.72)),
         ),
       );
     }
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       shrinkWrap: true,
-      itemCount: _searchResults.length,
-      itemBuilder: (context, index) {
+      children: [
+        // ── Areas / Places ──────────────────────────────────────
+        if (_placeSuggestions.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+            child: Text(
+              'AREAS',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: colors.onSurface.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+          ..._placeSuggestions.map((place) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => _onPlaceSuggestionTap(place),
+                child: Ink(
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? colors.surface.withValues(alpha: 0.92)
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : const Color(0xFFE6EEF4),
+                    ),
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    leading: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(Icons.location_on_outlined, size: 18, color: colors.primary),
+                    ),
+                    title: Text(
+                      place.mainText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.w600, color: colors.onSurface),
+                    ),
+                    subtitle: place.secondaryText.isNotEmpty
+                        ? Text(
+                            place.secondaryText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: colors.onSurface.withValues(alpha: 0.55), fontSize: 12),
+                          )
+                        : null,
+                    trailing: Icon(Icons.arrow_outward, size: 16, color: colors.onSurface.withValues(alpha: 0.35)),
+                  ),
+                ),
+              ),
+            ),
+          )),
+          if (_searchResults.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+              child: Text(
+                'VENUES',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                  color: colors.onSurface.withValues(alpha: 0.4),
+                ),
+              ),
+            ),
+        ],
+        // ── Venues ──────────────────────────────────────────────
+        ...List.generate(_searchResults.length, (index) {
         final item = _searchResults[index];
         final hasRating = item.rating != null && item.rating! > 0;
         return Padding(
@@ -1499,7 +1818,8 @@ class _VenueMapViewState extends State<VenueMapView> {
             ),
           ),
         );
-      },
+      }),
+      ],
     );
   }
 
@@ -1591,8 +1911,13 @@ class _VenueMapViewState extends State<VenueMapView> {
             left: 16,
             right: 16,
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildSearchBar(),
+                Row(
+                  children: [
+                    Expanded(child: _buildSearchBar()),
+                  ],
+                ),
                 const SizedBox(height: 8),
                 _buildSearchResultsPanel(),
               ],
@@ -1615,7 +1940,13 @@ class _VenueMapViewState extends State<VenueMapView> {
                     _mapController!.animateCamera(
                       CameraUpdate.newLatLng(_currentLocation!),
                     );
+                    widget.onLocationResolved?.call(_currentLocation!);
                   },
+                ),
+                const SizedBox(height: 8),
+                _CircleIcon(
+                  Icons.info_outline,
+                  onTap: () => _showHeatmapLegend(context),
                 ),
               ],
             ),
@@ -1663,4 +1994,16 @@ class _CircleIcon extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PlaceSuggestion {
+  final String placeId;
+  final String mainText;
+  final String secondaryText;
+
+  const _PlaceSuggestion({
+    required this.placeId,
+    required this.mainText,
+    required this.secondaryText,
+  });
 }

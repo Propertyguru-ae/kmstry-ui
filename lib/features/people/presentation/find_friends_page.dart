@@ -7,6 +7,7 @@ import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class FindFriendsPage extends StatefulWidget {
   const FindFriendsPage({super.key});
@@ -304,9 +305,25 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
     return Scaffold(
       backgroundColor: bgBottom,
       appBar: AppBar(
-        title: const Text('Find friends'),
-        backgroundColor: Colors.transparent,
+        title: Text(
+          'Find Friends',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.8,
+          ),
+        ),
+        backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
+        centerTitle: true,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
+            height: 1,
+          ),
+        ),
       ),
       body: Container(
         decoration: BoxDecoration(

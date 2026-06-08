@@ -217,29 +217,32 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
               // 🖼 PHOTO
               if (item.mediaType == MediaType.photo) {
-                return Center(
-                  child: InteractiveViewer(
-                    child: Image.network(
-                      item.url,
-                      fit: BoxFit.contain,
-                    ),
+                return SizedBox.expand(
+                  child: Image.network(
+                    item.url,
+                    fit: BoxFit.cover,
                   ),
                 );
               }
 
               // 🎬 VIDEO
-              return Center(
-                child: _videoController != null &&
-                        _videoController!.value.isInitialized &&
-                        _currentIndex == index
-                    ? AspectRatio(
-                        aspectRatio:
-                            _videoController!.value.aspectRatio,
-                        child: VideoPlayer(_videoController!),
-                      )
-                    : const CircularProgressIndicator(
-                        color: Colors.white,
-                      ),
+              if (_videoController != null &&
+                  _videoController!.value.isInitialized &&
+                  _currentIndex == index) {
+                return SizedBox.expand(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: _videoController!.value.size.width,
+                      height: _videoController!.value.size.height,
+                      child: VideoPlayer(_videoController!),
+                    ),
+                  ),
+                );
+              }
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.white),
               );
             },
           ),
