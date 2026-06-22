@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -38,14 +39,23 @@ class _NotificationPermissionPageState
   Future<void> _enableNotifications() async {
     debugPrint("Notification button pressed");
 
+    // İzin diyaloğunu göster (sistem diyaloğu) — await ile bekle ki kullanıcı
+    // "Allow" / "Don't Allow" seçsin, sonra onNext çağrılsın.
     try {
-      await PushManager.instance.handlePermissionFlow();
+      await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
     } catch (_) {}
 
     await SecureStorage.setNotificationOnboardingDone();
     if (!mounted) return;
 
     widget.onNext();
+
+    // Token kaydı ve backend sync arka planda — UI'ı bloklamaz.
+    unawaited(PushManager.instance.handlePermissionFlow());
     unawaited(PushManager.instance.reconcileNotificationState());
   }
 

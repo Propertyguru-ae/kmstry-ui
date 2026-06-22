@@ -1,13 +1,35 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'dart:convert';
+
+enum VenuePendingMode {
+  /// Belgeler yüklendi, admin incelemesinde.
+  underReview,
+  /// Belgeler atlandı, kullanıcı henüz yüklemedi.
+  pendingDocs,
+}
 
 /// Venue claim gönderilmiş, admin onayı bekleniyor.
-/// homeRoute == 'VENUE_PENDING' veya uygulama içi claim sonrası gösterilir.
+/// homeRoute == 'VENUE_PENDING' veya 'VENUE_PENDING_DOCS' durumunda gösterilir.
 /// getMe'yi kendi çeker; aktif hesaplar varsa daire avatarları gösterir.
 class VenuePendingPage extends StatefulWidget {
-  const VenuePendingPage({super.key});
+  final VenuePendingMode mode;
+
+  const VenuePendingPage({
+    super.key,
+    this.mode = VenuePendingMode.underReview,
+  });
 
   @override
   State<VenuePendingPage> createState() => _VenuePendingPageState();
@@ -17,6 +39,20 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
   List<_SwitchAccount> _accounts = [];
   bool _loading = true;
   bool _switching = false;
+
+  // belge yükleme (pendingDocs modu)
+  final _repo = VenueRepository();
+  String? _tradeLicenceUrl;
+  String? _ownerVideoUrl;
+  bool _uploadingLicence = false;
+  bool _uploadingVideo = false;
+  bool _submittingDocs = false;
+  String? _docsError;
+
+  // claim bilgisi
+  String? _pendingVenueName;
+  String? _pendingVenuePhoto;
+  String? _userEmail;
 
   @override
   void initState() {
@@ -54,9 +90,18 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
         ));
       }
 
+      final pendingClaim = ctx.memberVenues
+          .where((v) => v.isPending && (v.role?.toUpperCase() == 'OWNER'))
+          .firstOrNull;
+
+      final email = (me['email'] ?? me['emailAddress'] ?? me['email_address'])?.toString();
+
       if (mounted) {
         setState(() {
           _accounts = accounts;
+          _pendingVenueName = pendingClaim?.name;
+          _pendingVenuePhoto = pendingClaim?.photoUrl;
+          _userEmail = email;
           _loading = false;
         });
       }
@@ -168,22 +213,142 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
     );
   }
 
+  Future<void> _signOut() async {
+    try {
+      await AuthRepository().logout();
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil(AuthRoutes.login, (r) => false);
+  }
+
+  // ── Belge yükleme (pendingDocs modu) ─────────────────────────────────────
+
+  Future<void> _pickTradeLicence() async {
+    setState(() { _uploadingLicence = true; _docsError = null; });
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+      );
+      if (result == null || result.files.isEmpty) return;
+      final path = result.files.single.path;
+      if (path == null) return;
+      final url = await _uploadFile(File(path), 'licence');
+      if (!mounted) return;
+      setState(() => _tradeLicenceUrl = url);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _docsError = 'Upload failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _uploadingLicence = false);
+    }
+  }
+
+  Future<void> _pickOwnerVideo() async {
+    setState(() { _uploadingVideo = true; _docsError = null; });
+    try {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        builder: (_) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.videocam),
+                title: const Text('Record a video'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.video_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (source == null) return;
+      final picker = ImagePicker();
+      final picked = await picker.pickVideo(source: source);
+      if (picked == null) return;
+      final url = await _uploadFile(File(picked.path), 'video');
+      if (!mounted) return;
+      setState(() => _ownerVideoUrl = url);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _docsError = 'Failed to upload video. Please try again.');
+    } finally {
+      if (mounted) setState(() => _uploadingVideo = false);
+    }
+  }
+
+  Future<String> _uploadFile(File file, String type) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final uri = Uri.parse('${AppConfig.baseUrl}/venues/claim-draft/upload?type=$type');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $token'
+      ..files.add(await http.MultipartFile.fromPath('file', file.path));
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode >= 400) {
+      Map<String, dynamic> data = {};
+      try { data = Map<String, dynamic>.from(jsonDecode(body) as Map); } catch (_) {}
+      throw ApiException(statusCode: streamed.statusCode, data: data);
+    }
+    final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+    final url = decoded['url']?.toString();
+    if (url == null || url.isEmpty) throw Exception('No URL returned');
+    return url;
+  }
+
+  Future<void> _submitDocuments() async {
+    if (_tradeLicenceUrl == null) {
+      setState(() => _docsError = 'Please upload your trade licence first.');
+      return;
+    }
+    setState(() { _submittingDocs = true; _docsError = null; });
+    try {
+      await _repo.submitClaimDocuments(
+        tradeLicenceUrl: _tradeLicenceUrl!,
+        ownerVideoUrl: _ownerVideoUrl,
+      );
+      if (!mounted) return;
+      // Auth gate yeniden yönlendirir: VENUE_PENDING
+      AuthRepository.invalidateMeCache();
+      Navigator.of(context).pushNamedAndRemoveUntil(AuthRoutes.authGate, (r) => false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _docsError = 'Could not submit documents. Please try again.';
+        _submittingDocs = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final hasAccounts = _accounts.isNotEmpty;
+    final isPendingDocs = widget.mode == VenuePendingMode.pendingDocs;
 
     return Scaffold(
       backgroundColor:
           isDark ? Theme.of(context).scaffoldBackgroundColor : Colors.white,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(flex: 2),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height -
+                  MediaQuery.of(context).padding.top -
+                  MediaQuery.of(context).padding.bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+              const SizedBox(height: 48),
 
               // ── Icon ──
               Center(
@@ -191,13 +356,17 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                   width: 88,
                   height: 88,
                   decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: 0.12),
+                    color: isPendingDocs
+                        ? colors.error.withValues(alpha: 0.10)
+                        : colors.primary.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    Icons.hourglass_top_rounded,
+                    isPendingDocs
+                        ? Icons.upload_file_outlined
+                        : Icons.hourglass_top_rounded,
                     size: 44,
-                    color: colors.primary,
+                    color: isPendingDocs ? colors.error : colors.primary,
                   ),
                 ),
               ),
@@ -205,7 +374,7 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
 
               // ── Başlık ──
               Text(
-                'Claim Under Review',
+                isPendingDocs ? 'Documents Required' : 'Claim Under Review',
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
@@ -215,8 +384,11 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
               ),
               const SizedBox(height: 14),
               Text(
-                'We received your venue ownership request and our team is '
-                'reviewing it. You will be notified by email once it is approved.',
+                isPendingDocs
+                    ? 'To complete your claim, please upload your trade licence. '
+                      'Your request will be sent for review once documents are submitted.'
+                    : 'We received your venue ownership request and our team is '
+                      'reviewing it. You will be notified by email once it is approved.',
                 style: TextStyle(
                   fontSize: 15,
                   color: colors.onSurface.withValues(alpha: 0.65),
@@ -225,7 +397,111 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                 textAlign: TextAlign.center,
               ),
 
-              const SizedBox(height: 44),
+              const SizedBox(height: 36),
+
+              // ── Claim bilgi kartı ──
+              if (!_loading && (_pendingVenueName != null || _userEmail != null))
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: colors.onSurface.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: colors.onSurface.withValues(alpha: 0.10)),
+                  ),
+                  child: Column(
+                    children: [
+                      if (_pendingVenueName != null)
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: colors.secondary.withValues(alpha: 0.14),
+                              ),
+                              child: ClipOval(
+                                child: _pendingVenuePhoto != null
+                                    ? Image.network(_pendingVenuePhoto!, fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Icon(Icons.store_outlined, size: 18, color: colors.secondary))
+                                    : Icon(Icons.store_outlined, size: 18, color: colors.secondary),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Venue', style: TextStyle(fontSize: 11, color: colors.onSurface.withValues(alpha: 0.45))),
+                                  Text(_pendingVenueName!, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14), overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      if (_pendingVenueName != null && _userEmail != null)
+                        Divider(height: 20, color: colors.onSurface.withValues(alpha: 0.08)),
+                      if (_userEmail != null)
+                        Row(
+                          children: [
+                            Icon(Icons.mail_outline, size: 18, color: colors.onSurface.withValues(alpha: 0.40)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Registered email', style: TextStyle(fontSize: 11, color: colors.onSurface.withValues(alpha: 0.45))),
+                                  Text(_userEmail!, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14), overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 28),
+
+              // ── Belge yükleme (pendingDocs) ──
+              if (isPendingDocs) ...[
+                _DocUploadTile(
+                  label: 'Trade Licence',
+                  subtitle: 'PDF, JPG or PNG',
+                  icon: Icons.description_outlined,
+                  isRequired: true,
+                  uploaded: _tradeLicenceUrl != null,
+                  loading: _uploadingLicence,
+                  onTap: _uploadingLicence || _submittingDocs ? null : _pickTradeLicence,
+                  colors: colors,
+                ),
+                const SizedBox(height: 12),
+                _DocUploadTile(
+                  label: 'Ownership Video',
+                  subtitle: 'Short video confirming ownership (optional)',
+                  icon: Icons.videocam_outlined,
+                  isRequired: false,
+                  uploaded: _ownerVideoUrl != null,
+                  loading: _uploadingVideo,
+                  onTap: _uploadingVideo || _submittingDocs ? null : _pickOwnerVideo,
+                  colors: colors,
+                ),
+                if (_docsError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(_docsError!, style: TextStyle(color: colors.error, fontSize: 13), textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 20),
+                SizedBox(
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: _submittingDocs || _uploadingLicence || _uploadingVideo ? null : _submitDocuments,
+                    child: _submittingDocs
+                        ? CircularProgressIndicator(color: colors.onPrimary)
+                        : const Text('Submit Documents'),
+                  ),
+                ),
+                const SizedBox(height: 32),
+              ],
 
               // ── Hesap avatarları ──
               if (_loading)
@@ -260,14 +536,14 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                 ),
               ],
 
-              const Spacer(flex: 3),
+              const SizedBox(height: 40),
 
-              // ── Refresh status ──
+              // ── Refresh status / alt link ──
               Center(
                 child: TextButton(
                   onPressed: _switching ? null : _refresh,
                   child: Text(
-                    'Refresh status',
+                    isPendingDocs ? 'Check status' : 'Refresh status',
                     style: TextStyle(
                       fontSize: 13,
                       color: colors.onSurface.withValues(alpha: 0.40),
@@ -275,9 +551,99 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: _submittingDocs ? null : _signOut,
+                  child: Text(
+                    'Sign out',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colors.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
             ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Belge yükleme tile (pendingDocs modu) ─────────────────────
+class _DocUploadTile extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final bool isRequired;
+  final bool uploaded;
+  final bool loading;
+  final VoidCallback? onTap;
+  final ColorScheme colors;
+
+  const _DocUploadTile({
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.isRequired,
+    required this.uploaded,
+    required this.loading,
+    required this.onTap,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: uploaded
+                ? colors.primary.withValues(alpha: 0.6)
+                : colors.onSurface.withValues(alpha: 0.15),
+            width: uploaded ? 1.5 : 1.0,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          color: uploaded
+              ? colors.primary.withValues(alpha: 0.06)
+              : colors.surface,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              uploaded ? Icons.check_circle_outline : icon,
+              color: uploaded ? colors.primary : colors.onSurface.withValues(alpha: 0.45),
+              size: 28,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    if (isRequired)
+                      Text(' *', style: TextStyle(color: colors.error, fontSize: 14, fontWeight: FontWeight.w700)),
+                  ]),
+                  Text(subtitle, style: TextStyle(fontSize: 12, color: colors.onSurface.withValues(alpha: 0.50))),
+                ],
+              ),
+            ),
+            if (loading)
+              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary))
+            else
+              Icon(
+                uploaded ? Icons.edit_outlined : Icons.upload_outlined,
+                size: 20,
+                color: colors.onSurface.withValues(alpha: 0.35),
+              ),
+          ],
         ),
       ),
     );

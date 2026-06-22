@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_detail_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
 class ManageAccountsPage extends StatefulWidget {
@@ -88,6 +89,26 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                     if (mounted) _load();
                   },
                 ),
+
+                // ── Add Personal Account (yalnızca personal profil yoksa) ──
+                if (ctx != null && !ctx.hasPersonalProfile) ...[
+                  const SizedBox(height: 8),
+                  _ActionCard(
+                    icon: Icons.person_add_outlined,
+                    title: 'Add Personal Account',
+                    subtitle: 'Create a personal profile on KMSTRY',
+                    colors: colors,
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const NameDobOnboardingPage(),
+                        ),
+                      );
+                      if (mounted) _load();
+                    },
+                  ),
+                ],
 
                 const SizedBox(height: 24),
 

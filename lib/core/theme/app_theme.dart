@@ -1,29 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 
 class AppTheme {
   // Dark premium palette (modern, soft, high-end)
-  static const Color matteBlack = Color(0xFF0B0F17);
-  static const Color darkSurface = Color(0xFF161C28);
-  static const Color brandPrimary = Color(0xFF4DA3FF);
-  static const Color brandCta = brandPrimary;
-  static const Color darkTextPrimary = Color(0xFFF4F6F8);
-  static const Color darkTextSecondary = Color(0xFFA6B1BA);
+  static const Color matteBlack = AppColors.darkBg;
+  static const Color darkSurface = AppColors.darkSurface;
+  static const Color brandPrimary = AppColors.blueDark;
+  static const Color brandCta = AppColors.blue;
+  static const Color darkTextPrimary = AppColors.darkTextPrimary;
+  static const Color darkTextSecondary = AppColors.darkTextSecondary;
 
   // Light palette derived from same tones.
   static const Color lightBg = Colors.white;
   static const Color lightSurface = Colors.white;
-  static const Color lightPrimary = Color(0xFF4DA3FF);
-  static const Color lightCta = lightPrimary;
-  static const Color lightTextPrimary = Color(0xFF111827);
-  static const Color lightTextSecondary = Color(0xFF5D6B7B);
+  static const Color lightPrimary = AppColors.blue;
+  static const Color lightCta = AppColors.blue;
+  static const Color lightTextPrimary = AppColors.lightTextPrimary;
+  static const Color lightTextSecondary = AppColors.lightTextSecondary;
 
   static ThemeData lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
     primaryColor: lightPrimary,
     colorScheme: const ColorScheme.light(
-      primary: lightPrimary,
-      secondary: lightPrimary,
+      primary: AppColors.blue,
+      secondary: AppColors.blue,
       surface: lightSurface,
       error: Color(0xFFEF4444),
       onPrimary: Color(0xFF0D1322),
@@ -44,7 +45,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: lightPrimary, width: 1.3),
+        borderSide: const BorderSide(color: AppColors.blue, width: 1.3),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -99,7 +100,7 @@ class AppTheme {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: brandPrimary,
+        foregroundColor: AppColors.blue,
         textStyle: const TextStyle(fontWeight: FontWeight.w600),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -134,7 +135,7 @@ class AppTheme {
       bodyLarge: TextStyle(color: lightTextPrimary),
       bodyMedium: TextStyle(color: lightTextSecondary),
     ),
-    iconTheme: const IconThemeData(color: lightPrimary),
+    iconTheme: const IconThemeData(color: AppColors.blue),
     listTileTheme: ListTileThemeData(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
@@ -145,8 +146,8 @@ class AppTheme {
     brightness: Brightness.dark,
     primaryColor: brandPrimary,
     colorScheme: const ColorScheme.dark(
-      primary: brandPrimary,
-      secondary: brandPrimary,
+      primary: AppColors.blueDark,
+      secondary: AppColors.blueDark,
       surface: darkSurface,
       error: Color(0xFFEF4444),
       onPrimary: Color(0xFF0D1322),
@@ -167,7 +168,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: brandPrimary, width: 1.3),
+        borderSide: const BorderSide(color: AppColors.blueDark, width: 1.3),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -222,7 +223,7 @@ class AppTheme {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: brandPrimary,
+        foregroundColor: AppColors.blueDark,
         textStyle: const TextStyle(fontWeight: FontWeight.w600),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -257,7 +258,7 @@ class AppTheme {
       bodyLarge: TextStyle(color: darkTextPrimary),
       bodyMedium: TextStyle(color: darkTextSecondary),
     ),
-    iconTheme: const IconThemeData(color: brandPrimary),
+    iconTheme: const IconThemeData(color: AppColors.blueDark),
     listTileTheme: ListTileThemeData(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),

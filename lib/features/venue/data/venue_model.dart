@@ -301,6 +301,7 @@ class VenueUpcomingEvent {
   final DateTime startAt;
   final DateTime endAt;
   final String? photo;
+  final List<String> photos;
   final int? priceAed;
 
   VenueUpcomingEvent({
@@ -310,6 +311,7 @@ class VenueUpcomingEvent {
     required this.startAt,
     required this.endAt,
     this.photo,
+    this.photos = const [],
     this.priceAed,
   });
 
@@ -323,6 +325,7 @@ class VenueUpcomingEvent {
       startAt: DateTime.tryParse(startRaw.toString()) ?? DateTime.now(),
       endAt: DateTime.tryParse(endRaw.toString()) ?? DateTime.now(),
       photo: json['photo']?.toString(),
+      photos: (json['photos'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       priceAed: json['priceAed'] is num
           ? (json['priceAed'] as num).toInt()
           : json['price_aed'] is num
@@ -338,11 +341,21 @@ class VenueUpcomingEvent {
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
-    final d = startAt.toLocal();
-    final dayName = days[(d.weekday - 1) % 7];
-    final monthName = months[d.month - 1];
-    final hour = d.hour.toString().padLeft(2, '0');
-    final min = d.minute.toString().padLeft(2, '0');
-    return '$dayName, ${d.day} $monthName · $hour:$min';
+    final s = startAt.toLocal();
+    final e = endAt.toLocal();
+    final dayName   = days[(s.weekday - 1) % 7];
+    final monthName = months[s.month - 1];
+    final sH = s.hour.toString().padLeft(2, '0');
+    final sM = s.minute.toString().padLeft(2, '0');
+    final eH = e.hour.toString().padLeft(2, '0');
+    final eM = e.minute.toString().padLeft(2, '0');
+
+    final sameDay = s.year == e.year && s.month == e.month && s.day == e.day;
+    if (sameDay) {
+      return '$dayName, ${s.day} $monthName · $sH:$sM → $eH:$eM';
+    }
+    final eDayName   = days[(e.weekday - 1) % 7];
+    final eMonthName = months[e.month - 1];
+    return '$dayName, ${s.day} $monthName $sH:$sM → $eDayName, ${e.day} $eMonthName $eH:$eM';
   }
 }

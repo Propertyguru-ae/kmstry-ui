@@ -7,8 +7,10 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
 class UsernameOnboardingPage extends StatefulWidget {
   final String? initialUsername;
+  /// Opsiyonel — "Maybe later" basıldığında çağrılır. Null ise authGate'e yönlendirilir.
+  final VoidCallback? onCancel;
 
-  const UsernameOnboardingPage({super.key, this.initialUsername});
+  const UsernameOnboardingPage({super.key, this.initialUsername, this.onCancel});
 
   @override
   State<UsernameOnboardingPage> createState() => _UsernameOnboardingPageState();
@@ -142,6 +144,24 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
       appBar: AppBar(
         title: const Text('Choose username'),
         automaticallyImplyLeading: false,
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
+        actions: [
+          TextButton(
+            onPressed: () {
+              if (widget.onCancel != null) {
+                widget.onCancel!();
+              } else {
+                Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+              }
+            },
+            child: const Text('Maybe later'),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: EdgeInsets.only(

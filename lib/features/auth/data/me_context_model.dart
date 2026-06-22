@@ -8,6 +8,8 @@ class MemberVenue {
   final bool isVerifiedOwner;
   /// 'ACTIVE' | 'PENDING' | 'REJECTED'
   final String status;
+  final bool hasDocuments;
+  final String? address;
 
   const MemberVenue({
     required this.id,
@@ -17,10 +19,13 @@ class MemberVenue {
     this.role,
     this.isVerifiedOwner = false,
     this.status = 'ACTIVE',
+    this.hasDocuments = false,
+    this.address,
   });
 
   bool get isActive => status == 'ACTIVE';
   bool get isPending => status == 'PENDING';
+  bool get isPendingOwnerClaim => isPending && role?.toUpperCase() == 'OWNER';
   /// Owner'ın claim'i değil, başkası tarafından eklenmiş davet
   bool get isPendingMemberInvite => isPending && role != null && role!.toUpperCase() != 'OWNER';
 }
@@ -72,7 +77,9 @@ class MeContextModel {
         final role = (map['role'] ?? map['myRole'])?.toString();
         final isVerifiedOwner = map['isVerifiedOwner'] == true;
         final status = (map['status'])?.toString() ?? 'ACTIVE';
+        final hasDocuments = map['hasDocuments'] == true || map['has_documents'] == true;
         final photoUrl = (map['photo'] ?? map['photoUrl'] ?? nestedVenue?['photo'])?.toString();
+        final address = (map['address'] ?? nestedVenue?['address'])?.toString();
         return MemberVenue(
           id: id,
           membershipId: membershipId,
@@ -81,6 +88,8 @@ class MeContextModel {
           role: role,
           isVerifiedOwner: isVerifiedOwner,
           status: status,
+          hasDocuments: hasDocuments,
+          address: (address != null && address.isNotEmpty) ? address : null,
         );
       }).where((venue) => venue.id.isNotEmpty).toList();
     }

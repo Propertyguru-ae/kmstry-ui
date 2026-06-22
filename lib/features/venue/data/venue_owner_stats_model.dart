@@ -66,6 +66,8 @@ class VenueOwnerStats {
   final int todayTotal;
   final int totalAllTime;
   final List<VenueWeeklyTrendPoint> weeklyTrend;
+  final int followerCount;
+  final int storyViewsToday;
 
   const VenueOwnerStats({
     required this.activeNow,
@@ -74,6 +76,8 @@ class VenueOwnerStats {
     required this.todayTotal,
     required this.totalAllTime,
     required this.weeklyTrend,
+    this.followerCount = 0,
+    this.storyViewsToday = 0,
   });
 
   factory VenueOwnerStats.fromJson(Map<String, dynamic> json) {
@@ -81,17 +85,15 @@ class VenueOwnerStats {
     return VenueOwnerStats(
       activeNow: (json['activeNow'] ?? json['active_now'] as num? ?? 0).toInt(),
       maleNow: (json['maleNow'] ?? json['male_now'] as num? ?? 0).toInt(),
-      femaleNow:
-          (json['femaleNow'] ?? json['female_now'] as num? ?? 0).toInt(),
-      todayTotal:
-          (json['todayTotal'] ?? json['today_total'] as num? ?? 0).toInt(),
-      totalAllTime:
-          (json['totalAllTime'] ?? json['total_all_time'] as num? ?? 0).toInt(),
+      femaleNow: (json['femaleNow'] ?? json['female_now'] as num? ?? 0).toInt(),
+      todayTotal: (json['todayTotal'] ?? json['today_total'] as num? ?? 0).toInt(),
+      totalAllTime: (json['totalAllTime'] ?? json['total_all_time'] as num? ?? 0).toInt(),
       weeklyTrend: trend
           .whereType<Map>()
-          .map((e) =>
-              VenueWeeklyTrendPoint.fromJson(Map<String, dynamic>.from(e)))
+          .map((e) => VenueWeeklyTrendPoint.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
+      followerCount: (json['followerCount'] ?? json['follower_count'] as num? ?? 0).toInt(),
+      storyViewsToday: (json['storyViewsToday'] ?? json['story_views_today'] as num? ?? 0).toInt(),
     );
   }
 }

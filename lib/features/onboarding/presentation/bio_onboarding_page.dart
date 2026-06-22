@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
@@ -85,7 +86,7 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
     final surfaceBorder = isDark
         ? const Color(0xFF252D3D)
         : theme.colorScheme.outline.withValues(alpha: 0.28);
-    const accent = Color.fromARGB(255, 11, 162, 237);
+    const accent = AppColors.blue;
     final textPrimary = isDark
         ? const Color(0xFFF3F6FF)
         : theme.colorScheme.onSurface;

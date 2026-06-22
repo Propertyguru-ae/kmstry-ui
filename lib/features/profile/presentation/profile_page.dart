@@ -786,14 +786,6 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Widget _buildAppBarTitle(ThemeData theme, bool isDark) {
-    if (!_hasMultipleAccounts) {
-      return Text(
-        _usernameLabel,
-        style: theme.textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.bold,
-        ),
-      );
-    }
     return GestureDetector(
       onTap: () => _showAccountPicker(context),
       behavior: HitTestBehavior.opaque,

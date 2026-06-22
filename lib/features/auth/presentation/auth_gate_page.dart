@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
@@ -53,6 +54,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           (me['interestedIn'] ?? me['interested_in'])?.toString().trim() ?? '';
       final onboardingStep =
           (me['onboardingStep'] ?? me['onboarding_step'])?.toString().toUpperCase();
+      debugPrint('[AuthGate] homeRoute=$homeRoute nextAction=$nextAction lastActiveContext=$lastActiveContext hasVenueMembership=${meContext.hasVenueMembership} memberVenues=${meContext.memberVenues.length}');
       final devicePermissionsDone =
           await SecureStorage.isDevicePermissionsOnboardingDone();
       final hasNameDob = fullName.isNotEmpty && birthdate.isNotEmpty;
@@ -72,6 +74,10 @@ class _AuthGatePageState extends State<AuthGatePage> {
             meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null;
       }
       _lastResolvedVenueId = resolvedVenueId;
+      debugPrint('[AuthGate2] hasPersonalProfile=$hasPersonalProfile hasInferredPersonalProfile=$hasInferredPersonalProfile onboardingStep=$onboardingStep resolvedVenueId=$resolvedVenueId');
+
+      // Venue üyeliği varsa personal onboarding sayfalarında "Maybe later" çalışsın.
+      final onCancelPersonal = _makeCancelCallback(meContext.hasVenueMembership, resolvedVenueId);
 
       // On fresh installs, existing accounts can come with COMPLETED but still need
       // device permission onboarding on this device.
@@ -100,6 +106,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
       if (hasVenueContext &&
           hasInferredPersonalProfile &&
           lastActiveContext == 'PERSONAL' &&
+          nextAction != 'AWAIT_VENUE_APPROVAL' &&
           (homeRoute == 'VENUE_HOME' || nextAction == 'GO_TO_VENUE_HOME')) {
         _logDecision('safe_fallback_mixed_account_prefers_personal');
         await _routeToPersonalHome();
@@ -117,18 +124,18 @@ class _AuthGatePageState extends State<AuthGatePage> {
         // For personal context, onboarding step still has priority.
         if (!hasUsername) {
           _logDecision('personal_home_step_username');
-          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
           return;
         }
         if (onboardingStep == 'NAME_DOB' && !hasNameDob) {
           _logDecision('personal_home_step_name_dob');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
           return;
         }
         if (onboardingStep == 'BIO') {
           if (!hasNameDob) {
             _logDecision('personal_home_bio_requires_name_dob');
-            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
             return;
           }
           _logDecision('personal_home_step_bio');
@@ -156,6 +163,14 @@ class _AuthGatePageState extends State<AuthGatePage> {
         return;
       }
       if (homeRoute == 'CONTEXT_CHOICE' || nextAction == 'SHOW_CONTEXT_CHOICE') {
+        // Eğer tamamlanmamış venue claim draft'ı varsa → wizard'a yönlendir, PERSONAL'a basma.
+        final hasClaimDraft = me['hasClaimDraft'] == true;
+        if (hasClaimDraft) {
+          _logDecision('context_choice_has_claim_draft_venue_onboarding');
+          _go(const VenueContextOnboardingPage());
+          return;
+        }
+
         _logDecision('server_route_context_choice_force_personal');
         try {
           await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
@@ -163,12 +178,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
         if (!hasUsername) {
           _logDecision('context_choice_force_personal_username');
-          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
           return;
         }
         if (!hasNameDob) {
           _logDecision('context_choice_force_personal_name_dob');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
           return;
         }
         if (onboardingStep == 'BIO') {
@@ -203,6 +218,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
         _go(VenueMemberInvitePage(pendingInvites: pendingInvites));
         return;
       }
+      if (homeRoute == 'VENUE_PENDING_DOCS') {
+        _logDecision('server_route_venue_pending_docs');
+        _go(const VenuePendingPage(mode: VenuePendingMode.pendingDocs));
+        return;
+      }
       if (homeRoute == 'VENUE_PENDING' || nextAction == 'AWAIT_VENUE_APPROVAL') {
         _logDecision('server_route_venue_pending');
         _go(const VenuePendingPage());
@@ -218,18 +238,18 @@ class _AuthGatePageState extends State<AuthGatePage> {
           nextAction == 'START_PERSONAL_ONBOARDING') {
         if (!hasUsername) {
           _logDecision('server_route_personal_onboarding_username');
-          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
           return;
         }
         if (onboardingStep == 'NAME_DOB' && !hasNameDob) {
           _logDecision('server_route_personal_onboarding_name_dob');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
           return;
         }
         if (onboardingStep == 'BIO') {
           if (!hasNameDob) {
             _logDecision('server_route_personal_onboarding_bio_requires_name_dob');
-            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
             return;
           }
           _logDecision('server_route_personal_onboarding_bio');
@@ -264,7 +284,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         }
         if (!hasPersonalProfile) {
           _logDecision('server_route_personal_onboarding');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
           return;
         }
         _logDecision('server_route_personal_onboarding_but_profile_exists');
@@ -305,22 +325,22 @@ class _AuthGatePageState extends State<AuthGatePage> {
         case 'NAME_DOB':
           if (!hasUsername) {
             _logDecision('legacy_username_before_name_dob');
-            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
             return;
           }
           _logDecision('legacy_name_dob');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
           return;
 
         case 'BIO':
           if (!hasUsername) {
             _logDecision('legacy_username_before_bio');
-            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me)));
+            _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
             return;
           }
           if (!hasNameDob) {
             _logDecision('legacy_bio_requires_name_dob');
-            _go(NameDobOnboardingPage(initialName: _namePrefill(me)));
+            _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
             return;
           }
           _logDecision('legacy_bio');
@@ -398,6 +418,23 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
   void _logDecision(String branch) {
     debugPrint('[AuthGate] route_branch=$branch');
+  }
+
+  /// Venue üyeliği olan kullanıcı personal onboarding'i iptal ettiğinde:
+  /// context'i VENUE'ya çevir ve authGate'e yönlendir.
+  VoidCallback? _makeCancelCallback(bool hasVenueMembership, String? resolvedVenueId) {
+    if (!hasVenueMembership) return null;
+    return () async {
+      try {
+        await AuthRepository().switchContext(
+          lastActiveContext: 'VENUE',
+          activeVenueId: resolvedVenueId,
+        );
+      } catch (_) {}
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      }
+    };
   }
 
   Future<void> _applyVenueContextIfNeeded(String? venueId) async {

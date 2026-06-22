@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -20,7 +21,8 @@ class SettingsActivityPage extends StatefulWidget {
   State<SettingsActivityPage> createState() => _SettingsActivityPageState();
 }
 
-class _SettingsActivityPageState extends State<SettingsActivityPage> {
+class _SettingsActivityPageState extends State<SettingsActivityPage>
+    with WidgetsBindingObserver {
   static const _notificationsEnabledKey = 'notifications_enabled';
 
   final NotificationPermissionService _notificationPermissionService =
@@ -45,7 +47,34 @@ class _SettingsActivityPageState extends State<SettingsActivityPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadAndSyncNotifications();
+    }
+  }
+
+  Future<void> _loadAndSyncNotifications() async {
+    final fcmSettings = await FirebaseMessaging.instance.getNotificationSettings();
+    final systemGranted =
+        fcmSettings.authorizationStatus == AuthorizationStatus.authorized ||
+        fcmSettings.authorizationStatus == AuthorizationStatus.provisional;
+
+    if (systemGranted && !_accountNotificationsEnabled) {
+      await _setNotifications(true);
+    } else {
+      await _load();
+    }
   }
 
   Future<void> _load() async {
@@ -108,6 +137,17 @@ class _SettingsActivityPageState extends State<SettingsActivityPage> {
     setState(() => _accountNotificationsEnabled = enabled);
     await SecureStorage.write(_notificationsEnabledKey, enabled.toString());
     await AuthRepository().updateMe({'notification_permission_granted': enabled});
+    if (enabled) {
+      await PushManager.instance.ensureRegisteredIfAllowed();
+    }
+  }
+
+  Future<void> _handleNotificationTileTap() async {
+    if (_notificationGranted && !_accountNotificationsEnabled) {
+      await _setNotifications(true);
+    } else {
+      openAppSettings();
+    }
   }
 
   Future<void> _setTestNotifications(bool enabled) async {
@@ -257,8 +297,11 @@ class _SettingsActivityPageState extends State<SettingsActivityPage> {
                 _PermissionTile(
                   icon: Icons.notifications_outlined,
                   title: 'Notifications',
-                  subtitle: 'System-level notification permission',
-                  granted: _notificationGranted,
+                  subtitle: _notificationGranted && !_accountNotificationsEnabled
+                      ? 'Tap to enable in-app notifications'
+                      : 'System-level notification permission',
+                  granted: _notificationGranted && _accountNotificationsEnabled,
+                  onTap: _handleNotificationTileTap,
                   colors: colors,
                 ),
 
@@ -401,6 +444,7 @@ class _PermissionTile extends StatelessWidget {
   final String subtitle;
   final bool granted;
   final ColorScheme colors;
+  final VoidCallback? onTap;
 
   const _PermissionTile({
     required this.icon,
@@ -408,6 +452,7 @@ class _PermissionTile extends StatelessWidget {
     required this.subtitle,
     required this.granted,
     required this.colors,
+    this.onTap,
   });
 
   @override
@@ -437,7 +482,7 @@ class _PermissionTile extends StatelessWidget {
         ],
       ),
       child: ListTile(
-        onTap: openAppSettings,
+        onTap: onTap ?? openAppSettings,
         leading: Icon(icon, color: colors.primary),
         title: Text(title,
             style: TextStyle(
