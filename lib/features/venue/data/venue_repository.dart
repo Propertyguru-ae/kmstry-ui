@@ -185,20 +185,51 @@ Future<NearbyVenuesResponse> getNearbyVenues({
   }
 
   /// Kullanicinin mekan sahibi oldugunu iddia eder.
-  /// Backend: POST /venues/claim  { venueId, ownerNote }
+  /// Backend: POST /venues/claim
   Future<Map<String, dynamic>> claimVenue({
     required String venueId,
     required String ownerNote,
+    String? ownerFullName,
+    String? tradeLicenceUrl,
+    String? ownerVideoUrl,
+    bool hasDocuments = false,
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
     final result = await _api.post(
       '/venues/claim',
-      body: {'venueId': venueId, 'ownerNote': ownerNote},
+      body: {
+        'venueId': venueId,
+        'ownerNote': ownerNote,
+        'hasDocuments': hasDocuments,
+        if (ownerFullName != null && ownerFullName.isNotEmpty)
+          'ownerFullName': ownerFullName,
+        if (tradeLicenceUrl != null) 'tradeLicenceUrl': tradeLicenceUrl,
+        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+      },
       headers: {'Authorization': 'Bearer $token'},
     );
     return Map<String, dynamic>.from(result as Map);
+  }
+
+  /// Belgeler sonradan eklendiğinde çağrılır (skip sonrası).
+  /// Backend: POST /venues/claim/documents
+  Future<void> submitClaimDocuments({
+    required String tradeLicenceUrl,
+    String? ownerVideoUrl,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _api.post(
+      '/venues/claim/documents',
+      body: {
+        'tradeLicenceUrl': tradeLicenceUrl,
+        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+      },
+      headers: {'Authorization': 'Bearer $token'},
+    );
   }
 
   /// Backend'den venue ID ile tek venue getirir.
@@ -225,6 +256,67 @@ Future<NearbyVenuesResponse> getNearbyVenues({
       );
     } catch (_) {
       // Non-fatal — test notification is best-effort.
+    }
+  }
+
+  // ── VenueClaimDraft ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>?> getClaimDraft() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return null;
+    try {
+      final result = await _api.get(
+        '/venues/claim-draft',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      final map = Map<String, dynamic>.from(result as Map);
+      return map['data'] != null
+          ? Map<String, dynamic>.from(map['data'] as Map)
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> upsertClaimDraft({
+    String? venueId,
+    String? ownerFullName,
+    String? ownerPhone,
+    String? tradeLicenceUrl,
+    String? ownerVideoUrl,
+    int? currentStep,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final body = <String, dynamic>{
+      if (venueId != null) 'venue_id': venueId,
+      if (ownerFullName != null) 'owner_full_name': ownerFullName,
+      if (ownerPhone != null) 'owner_phone': ownerPhone,
+      if (tradeLicenceUrl != null) 'trade_licence_url': tradeLicenceUrl,
+      if (ownerVideoUrl != null) 'owner_video_url': ownerVideoUrl,
+      if (currentStep != null) 'current_step': currentStep,
+    };
+
+    final result = await _api.put(
+      '/venues/claim-draft',
+      body: body,
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final map = Map<String, dynamic>.from(result as Map);
+    return Map<String, dynamic>.from(map['data'] as Map);
+  }
+
+  Future<void> deleteClaimDraft() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return;
+    try {
+      await _api.delete(
+        '/venues/claim-draft',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // Best-effort — draft silinmese de submit geçerli.
     }
   }
 }

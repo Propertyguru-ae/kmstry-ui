@@ -73,6 +73,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   bool _isVenueContext = false;
   bool _hasPersonalProfile = false;
+  bool _isPendingClaim = false;
   String _personalAccountLabel = 'Personal';
   String? _activeVenueId;
 
@@ -343,31 +344,34 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final lastContext = context.lastActiveContext?.toUpperCase();
       // Sadece ACTIVE venue'lar context switching için kullanılır.
       final activeVenues = context.memberVenues.where((v) => v.isActive).toList();
+      final hasPendingClaim = context.memberVenues.any((v) => v.isPendingOwnerClaim);
       final hasVenueContext =
-          context.hasVenueMembership || activeVenues.isNotEmpty;
+          context.hasVenueMembership || activeVenues.isNotEmpty || hasPendingClaim;
+      final allKnownVenues = context.memberVenues;
       String? resolvedVenueId = context.activeVenueId;
       if (resolvedVenueId == null ||
           resolvedVenueId.isEmpty ||
-          !activeVenues.any((venue) => venue.id == resolvedVenueId)) {
+          !allKnownVenues.any((venue) => venue.id == resolvedVenueId)) {
         resolvedVenueId = activeVenues.isNotEmpty
             ? activeVenues.first.id
-            : null;
+            : (hasPendingClaim ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id : null);
       }
       if (lastContext == 'VENUE' && resolvedVenueId != null) {
-        for (final venue in activeVenues) {
+        for (final venue in allKnownVenues) {
           if (venue.id == resolvedVenueId) {
             activeLabel = venue.name;
             break;
           }
         }
-      } else if (lastContext == 'VENUE' && activeVenues.isNotEmpty) {
-        activeLabel = activeVenues.first.name;
+      } else if (lastContext == 'VENUE' && allKnownVenues.isNotEmpty) {
+        activeLabel = allKnownVenues.first.name;
       }
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
           _userInitial = fullName[0].toUpperCase();
         }
         _isVenueContext = lastContext == 'VENUE' && hasVenueContext;
+        _isPendingClaim = hasPendingClaim && activeVenues.isEmpty;
         _hasPersonalProfile = context.hasPersonalProfile;
         _personalAccountLabel = fullName != null && fullName.isNotEmpty
             ? fullName
@@ -677,7 +681,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final pages = _isVenueContext
         ? <Widget>[
             VenueAccountHomePage(venueId: _activeVenueId),
-            VenueOwnerGuestsPage(venueId: _activeVenueId),
+            VenueOwnerGuestsPage(venueId: _activeVenueId, isPendingClaim: _isPendingClaim),
             const NotificationPage(),
             VenueProfilePage(
               activeVenueName:

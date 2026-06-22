@@ -63,36 +63,35 @@ class PushManager {
 
   Future<void> ensureRegisteredIfAllowed() async {
     try {
+      debugPrint('[PUSH] ensureRegisteredIfAllowed: start');
       final permissionState = await _notificationPermissionService
           .readStateFromBackend();
+      debugPrint('[PUSH] permissionState: system=${permissionState.systemStatus}, account=${permissionState.accountPreference}, effective=${permissionState.effectiveStatus}');
       if (!permissionState.effectiveStatus) {
-        if (kDebugMode) {
-          debugPrint(
-            "⛔ Notifications not effective. "
-            "system=${permissionState.systemStatus}, "
-            "account=${permissionState.accountPreference}",
-          );
-        }
+        debugPrint('[PUSH] ⛔ effectiveStatus=false — token kaydedilmiyor');
         return;
       }
 
       final token = await _getFcmToken();
+      debugPrint('[PUSH] fcmToken=${token == null ? "NULL" : "${token.substring(0, 20)}..."}');
       if (token == null) return;
 
       await _tryRegisterToken(token);
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint("⚠️ ensureRegisteredIfAllowed error: $e");
-      }
+      debugPrint('[PUSH] ⚠️ ensureRegisteredIfAllowed error: $e');
     }
   }
 
   Future<void> reconcileNotificationState() async {
     try {
+      debugPrint('[PUSH] reconcileNotificationState: start');
       await _notificationPermissionService
           .reconcileBackendPreferenceWithSystem();
       await ensureRegisteredIfAllowed();
-    } catch (_) {}
+      debugPrint('[PUSH] reconcileNotificationState: done');
+    } catch (e) {
+      debugPrint('[PUSH] reconcileNotificationState error: $e');
+    }
   }
 
   Future<bool> handlePermissionFlow() async {
@@ -204,13 +203,14 @@ class PushManager {
   ];
 
   Future<void> _tryRegisterToken(String token) async {
-    // Already successfully registered this exact token — nothing to do.
+    debugPrint('[PUSH] _tryRegisterToken: start');
     if (_lastRegisteredToken == token) {
-      if (kDebugMode) debugPrint("⚠️ FCM token already registered, skipping.");
+      debugPrint('[PUSH] token zaten kayıtlı, skip');
       return;
     }
 
     final accessToken = await SecureStorage.getAccessToken();
+    debugPrint('[PUSH] accessToken=${accessToken == null ? "NULL" : "var"}');
     if (accessToken == null) return;
 
     for (int attempt = 1; attempt <= _maxRegisterAttempts; attempt++) {
@@ -226,17 +226,10 @@ class PushManager {
 
         // Success — record so we don't re-register the same token.
         _lastRegisteredToken = token;
-        if (kDebugMode) {
-          debugPrint("✅ FCM token registered (attempt $attempt).");
-        }
+        debugPrint('[PUSH] ✅ FCM token registered (attempt $attempt)');
         return;
       } catch (e) {
-        if (kDebugMode) {
-          debugPrint(
-            "❌ FCM token register failed "
-            "(attempt $attempt/$_maxRegisterAttempts): $e",
-          );
-        }
+        debugPrint('[PUSH] ❌ FCM token register failed (attempt $attempt/$_maxRegisterAttempts): $e');
 
         final isLastAttempt = attempt == _maxRegisterAttempts;
 

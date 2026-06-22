@@ -463,19 +463,23 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             ),
             child: Row(
               children: [
-                if (event.photo != null && event.photo!.isNotEmpty)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      event.photo!,
-                      width: 48,
-                      height: 48,
-                      fit: BoxFit.cover,
-                      errorBuilder: (ctx, err, st) => _eventIconPlaceholder(colors),
-                    ),
-                  )
-                else
-                  _eventIconPlaceholder(colors),
+                Builder(builder: (_) {
+                  final imgUrl = event.photos.isNotEmpty
+                      ? event.photos.first
+                      : event.photo;
+                  return imgUrl != null && imgUrl.isNotEmpty
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            imgUrl,
+                            width: 48,
+                            height: 48,
+                            fit: BoxFit.cover,
+                            errorBuilder: (ctx, err, st) => _eventIconPlaceholder(colors),
+                          ),
+                        )
+                      : _eventIconPlaceholder(colors);
+                }),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(

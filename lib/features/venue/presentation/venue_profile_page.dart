@@ -1,13 +1,25 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_edit_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
+import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
+import 'package:kmstry_frontend/features/venue_stories/presentation/venue_story_tray.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/add_venue_event_page.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/venue_events_list_page.dart';
 
 class VenueProfilePage extends StatefulWidget {
   final String? activeVenueName;
@@ -29,6 +41,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   bool _loading = true;
   VenueOwnerStatsVenue? _venue;
   VenueMemberRole _venueRole = VenueMemberRole.staff;
+  MeContextModel? _meContext;
+  bool _uploadingPhoto = false;
+  bool _updatingType = false;
+  bool _uploadingStory = false;
 
   @override
   void initState() {
@@ -62,18 +78,158 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
         final response = await VenueOwnerRepository().getOwnerStats(venueId);
         if (!mounted) return;
         setState(() {
+          _meContext = ctx;
           _venue = response.venue;
           _venueRole = resolvedRole;
           _loading = false;
         });
       } else {
         if (!mounted) return;
-        setState(() => _loading = false);
+        setState(() {
+          _meContext = ctx;
+          _loading = false;
+        });
       }
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _pickAndUploadPhoto() async {
+    final venueId = _venue?.id;
+    if (venueId == null || _uploadingPhoto) return;
+
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1920,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _uploadingPhoto = true);
+    try {
+      final updated = await VenueOwnerRepository().uploadVenuePhoto(
+        venueId,
+        File(picked.path),
+      );
+      if (mounted) setState(() => _venue = updated);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Photo upload failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  static const _venueTypes = ['bar', 'club', 'cafe', 'lounge', 'restaurant'];
+
+  static const _typeLabels = {
+    'bar': 'Bar',
+    'club': 'Club',
+    'cafe': 'Café',
+    'lounge': 'Lounge',
+    'restaurant': 'Restaurant',
+  };
+
+  static const _typeIcons = {
+    'bar': Icons.local_bar_outlined,
+    'club': Icons.nightlife_outlined,
+    'cafe': Icons.local_cafe_outlined,
+    'lounge': Icons.weekend_outlined,
+    'restaurant': Icons.restaurant_outlined,
+  };
+
+  Future<void> _showTypePicker() async {
+    final venueId = _venue?.id;
+    if (venueId == null || _updatingType) return;
+
+    final colors = Theme.of(context).colorScheme;
+    final current = _venue?.type?.toLowerCase();
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 16, bottom: 12),
+              decoration: BoxDecoration(
+                color: colors.onSurface.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Text(
+                'Venue Type',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: colors.onSurface,
+                ),
+              ),
+            ),
+            ..._venueTypes.map((t) {
+              final isSelected = t == current;
+              return ListTile(
+                leading: Icon(
+                  _typeIcons[t],
+                  color: isSelected ? colors.primary : colors.onSurface.withValues(alpha: 0.7),
+                ),
+                title: Text(
+                  _typeLabels[t]!,
+                  style: TextStyle(
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? colors.primary : colors.onSurface,
+                  ),
+                ),
+                trailing: isSelected
+                    ? Icon(Icons.check_circle, color: colors.primary)
+                    : null,
+                onTap: () async {
+                  Navigator.pop(sheetCtx);
+                  if (isSelected) return;
+                  setState(() => _updatingType = true);
+                  try {
+                    final updated = await VenueOwnerRepository().updateVenue(
+                      venueId,
+                      type: t,
+                    );
+                    if (mounted) setState(() => _venue = updated);
+                  } catch (_) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Could not update venue type.'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  } finally {
+                    if (mounted) setState(() => _updatingType = false);
+                  }
+                },
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _openEdit() async {
@@ -89,7 +245,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
+      MaterialPageRoute(builder: (_) => const SettingsActivityPage()),
     );
   }
 
@@ -104,6 +260,58 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     );
   }
 
+  void _showPhotoViewer(String url) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black87,
+        pageBuilder: (_, __, ___) => _PhotoViewer(url: url),
+      ),
+    );
+  }
+
+  Future<void> _openEventsList() async {
+    final venueId = _venue?.id;
+    if (venueId == null) return;
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VenueEventsListPage(
+          venueId: venueId,
+          events: _venue?.upcomingEvents ?? const [],
+          onRefresh: _loadVenueProfile,
+        ),
+      ),
+    );
+    if (result == true && mounted) _loadVenueProfile();
+  }
+
+  Future<void> _openAddEvent() async {
+    final venueId = _venue?.id;
+    if (venueId == null) return;
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => AddVenueEventPage(venueId: venueId)),
+    );
+    if (result == true && mounted) _loadVenueProfile();
+  }
+
+  Future<void> _openAddStory() async {
+    final venueId = _venue?.id;
+    if (venueId == null || _uploadingStory) return;
+    setState(() => _uploadingStory = true);
+    try {
+      await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AddVenueStoryPage(venueId: venueId),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingStory = false);
+    }
+  }
+
   void _comingSoon(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -114,148 +322,520 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     );
   }
 
+  String get _venueLabel {
+    final name = _venue?.name ?? widget.activeVenueName ?? '';
+    const maxLen = 22;
+    return name.length > maxLen ? '${name.substring(0, maxLen)}...' : name;
+  }
+
+  bool get _hasMultipleAccounts {
+    final ctx = _meContext;
+    if (ctx == null) return false;
+    final venueCount = ctx.memberVenues.where((v) => v.isActive).length;
+    return (ctx.hasPersonalProfile ? 1 : 0) + venueCount > 1;
+  }
+
+  Widget _buildAppBarTitle(ThemeData theme, bool isDark) {
+    return GestureDetector(
+      onTap: () => _showAccountPicker(context),
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              _venueLabel,
+              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 22,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAccountPicker(BuildContext context) {
+    final meCtx = _meContext;
+    if (meCtx == null) return;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final activeVenues = meCtx.memberVenues.where((v) => v.isActive).toList();
+    final isPersonalActive =
+        !(meCtx.lastActiveContext?.toUpperCase().contains('VENUE') ?? false);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 16, bottom: 8),
+              decoration: BoxDecoration(
+                color: colors.onSurface.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(sheetCtx).size.height * 0.35,
+              ),
+              child: ListView(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                children: [
+                  if (meCtx.hasPersonalProfile)
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: colors.primary.withValues(alpha: 0.12),
+                        child: Icon(Icons.person_outline, color: colors.primary),
+                      ),
+                      title: Text(
+                        'Personal',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: colors.onSurface,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Personal account',
+                        style: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: isPersonalActive
+                          ? Icon(Icons.check_circle, color: colors.primary)
+                          : null,
+                      onTap: isPersonalActive
+                          ? null
+                          : () async {
+                              Navigator.pop(sheetCtx);
+                              try {
+                                await AuthRepository().switchContext(
+                                  lastActiveContext: 'PERSONAL',
+                                );
+                                if (!context.mounted) return;
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  AuthRoutes.authGate,
+                                  (r) => false,
+                                );
+                              } catch (_) {}
+                            },
+                    ),
+                  ...activeVenues.map((venue) {
+                    final isActive =
+                        !isPersonalActive && (meCtx.activeVenueId == venue.id);
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: colors.primary.withValues(alpha: 0.12),
+                        child: Icon(Icons.storefront, color: colors.primary),
+                      ),
+                      title: Text(
+                        venue.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: colors.onSurface,
+                        ),
+                      ),
+                      subtitle: Text(
+                        venue.role ?? 'Venue',
+                        style: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: isActive
+                          ? Icon(Icons.check_circle, color: colors.primary)
+                          : null,
+                      onTap: isActive
+                          ? null
+                          : () async {
+                              Navigator.pop(sheetCtx);
+                              try {
+                                await AuthRepository().switchContext(
+                                  lastActiveContext: 'VENUE',
+                                  activeVenueId: venue.id,
+                                );
+                                if (!context.mounted) return;
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  AuthRoutes.authGate,
+                                  (r) => false,
+                                );
+                              } catch (_) {}
+                            },
+                    );
+                  }),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: colors.primary.withValues(alpha: 0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.add, color: colors.primary, size: 22),
+              ),
+              title: Text(
+                'Add Venue Account',
+                style: TextStyle(fontWeight: FontWeight.w600, color: colors.primary),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const VenueContextOnboardingPage(fromAppShell: true),
+                  ),
+                );
+              },
+            ),
+            if (!meCtx.hasPersonalProfile)
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colors.primary.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.person_add_outlined, color: colors.primary, size: 22),
+                ),
+                title: Text(
+                  'Add Personal Account',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: colors.primary),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const NameDobOnboardingPage()),
+                  );
+                },
+              ),
+            ListTile(
+              leading: Icon(Icons.manage_accounts_outlined, color: colors.onSurface),
+              title: Text('Go to Accounts Center', style: TextStyle(color: colors.onSurface)),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AccountSettingsPage()),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     if (_loading) {
       return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
         body: Center(
-          child: CircularProgressIndicator(
-            color: Theme.of(context).colorScheme.primary,
-          ),
+          child: CircularProgressIndicator(color: theme.colorScheme.primary),
         ),
       );
     }
 
     final venue = _venue;
-    final colors = Theme.of(context).colorScheme;
+    final colors = theme.colorScheme;
     final isOwner = _venueRole == VenueMemberRole.owner;
+    final hasPhoto = venue?.photo != null && venue!.photo!.isNotEmpty;
 
     return Scaffold(
-      backgroundColor: colors.surfaceContainerLow,
-      body: CustomScrollView(
-        slivers: [
-          // ── Cover + action bar ──────────────────────────────────────────
-          SliverAppBar(
-            expandedHeight: 220,
-            pinned: true,
-            automaticallyImplyLeading: false,
-            backgroundColor: colors.surfaceContainerHighest,
-            elevation: 0,
-            flexibleSpace: FlexibleSpaceBar(
-              background: venue?.photo != null && venue!.photo!.isNotEmpty
-                  ? Image.network(
-                      venue.photo!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (ctx, err, stack) =>
-                          _CoverPlaceholder(name: venue.name, colors: colors),
-                    )
-                  : _CoverPlaceholder(
-                      name: venue?.name ?? widget.activeVenueName ?? '',
-                      colors: colors,
-                    ),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: theme.appBarTheme.backgroundColor,
+        elevation: 0,
+        leading: const AppLogo(),
+        title: _buildAppBarTitle(theme, isDark),
+        actions: [
+          IconButton(
+            onPressed: _openSettings,
+            icon: Icon(
+              Icons.menu,
+              color: isDark ? Colors.white : Colors.black,
             ),
-            actions: [
-              if (venue != null)
-                IconButton(
-                  onPressed: _openEdit,
-                  icon: const Icon(Icons.edit_outlined, color: Colors.white),
-                  tooltip: 'Edit venue',
-                ),
-              IconButton(
-                onPressed: _openSettings,
-                icon: const Icon(Icons.settings_outlined, color: Colors.white),
-                tooltip: 'Settings',
-              ),
-              const SizedBox(width: 4),
-            ],
           ),
-
-          SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Identity card ─────────────────────────────────────────
-                _IdentityCard(
-                  venue: venue,
-                  fallbackName: widget.activeVenueName ?? 'Venue account',
-                  venueRole: _venueRole,
-                  colors: colors,
-                ),
-
-                // ── Description ───────────────────────────────────────────
-                if (venue?.description != null &&
-                    venue!.description!.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  _SectionCard(
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
+            height: 1,
+          ),
+        ),
+      ),
+      body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _SectionHeader(label: 'About', colors: colors),
-                        const SizedBox(height: 6),
-                        Text(
-                          venue.description!,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: colors.onSurface.withValues(alpha: 0.8),
-                            height: 1.5,
+                        // ── Venue fotoğrafı ───────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                          child: Stack(
+                            children: [
+                              GestureDetector(
+                                onTap: hasPhoto
+                                    ? () => _showPhotoViewer(venue!.photo!)
+                                    : null,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: hasPhoto
+                                      ? Image.network(
+                                          venue!.photo!,
+                                          height: 140,
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              _PhotoPlaceholder(colors: colors),
+                                        )
+                                      : _PhotoPlaceholder(colors: colors),
+                                ),
+                              ),
+                              // Kalem ikonu — sağ üst köşe
+                              Positioned(
+                                top: 10,
+                                right: 10,
+                                child: GestureDetector(
+                                  onTap: _uploadingPhoto ? null : _pickAndUploadPhoto,
+                                  child: Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.55),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: _uploadingPhoto
+                                        ? const Padding(
+                                            padding: EdgeInsets.all(8),
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.edit_outlined,
+                                            size: 17,
+                                            color: Colors.white,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
+                        ),
+
+                        // ── Venue adı + bilgiler ──────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (venue != null) ...[
+                                    VenueStoryBubble(
+                                      venueId: venue.id,
+                                      venueName: venue.name,
+                                      venuePhotoUrl: venue.photo,
+                                      isUploading: _uploadingStory,
+                                      onAddStory: _openAddStory,
+                                    ),
+                                    const SizedBox(width: 12),
+                                  ],
+                                  Expanded(
+                                    child: Text(
+                                      venue?.name ?? widget.activeVenueName ?? 'Venue',
+                                      style: TextStyle(
+                                        fontSize: 21,
+                                        fontWeight: FontWeight.w800,
+                                        color: colors.onSurface,
+                                        letterSpacing: -0.4,
+                                        height: 1.18,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (venue?.address != null &&
+                                  venue!.address!.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.location_on_outlined,
+                                      size: 13,
+                                      color: colors.onSurface.withValues(alpha: 0.45),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        venue.address!,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: colors.onSurface.withValues(alpha: 0.55),
+                                          height: 1.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+
+                        // ── Badges ────────────────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                          child: Row(
+                            children: [
+                              _RoleBadge(role: _venueRole, colors: colors),
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: _showTypePicker,
+                                child: _TypeBadge(
+                                  type: venue?.type,
+                                  updating: _updatingType,
+                                  colors: colors,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        // ── Quick content actions ─────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _QuickActionsBar(
+                            onEvent: _openAddEvent,
+                            onPush: () => _comingSoon('Push Notification'),
+                            onStory: _openAddStory,
+                            colors: colors,
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        // ── Team management ───────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _SectionCard(
+                            child: _ActionRow(
+                              icon: Icons.group_outlined,
+                              label: 'Team Management',
+                              subtitle: isOwner
+                                  ? 'Manage members & roles'
+                                  : 'View team',
+                              onTap: venue != null ? _openTeam : null,
+                              colors: colors,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // ── Events ────────────────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _EventsSection(
+                            events: venue?.upcomingEvents ?? const [],
+                            venueId: venue?.id ?? '',
+                            onAdd: _openAddEvent,
+                            onGoToList: _openEventsList,
+                            colors: colors,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // ── Push notifications ────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: _PostsSection(
+                            onAdd: () => _comingSoon('Posts'),
+                            colors: colors,
+                          ),
+                        ),
+
+                        SizedBox(
+                          height: MediaQuery.of(context).padding.bottom +
+                              kBottomNavigationBarHeight + 16,
                         ),
                       ],
                     ),
                   ),
-                ],
+                );
+              },
+            ),
+          ),
+    );
+  }
+}
 
-                const SizedBox(height: 2),
+// ─── Photo placeholder ────────────────────────────────────────────────────────
 
-                // ── Team management ───────────────────────────────────────
-                _SectionCard(
-                  child: Column(
-                    children: [
-                      _ActionRow(
-                        icon: Icons.group_outlined,
-                        label: 'Team Management',
-                        subtitle: isOwner
-                            ? 'Manage members & roles'
-                            : 'View team',
-                        onTap: venue != null ? _openTeam : null,
-                        colors: colors,
-                      ),
-                    ],
-                  ),
-                ),
+class _PhotoPlaceholder extends StatelessWidget {
+  final ColorScheme colors;
+  const _PhotoPlaceholder({required this.colors});
 
-                const SizedBox(height: 2),
-
-                // ── Quick content actions ─────────────────────────────────
-                _QuickActionsBar(
-                  onEvent: () => _comingSoon('Events'),
-                  onPost: () => _comingSoon('Posts'),
-                  onStory: () => _comingSoon('Stories'),
-                  colors: colors,
-                ),
-
-                const SizedBox(height: 2),
-
-                // ── Events ────────────────────────────────────────────────
-                _EventsSection(
-                  events: venue?.upcomingEvents ?? const [],
-                  onAdd: () => _comingSoon('Events'),
-                  colors: colors,
-                ),
-
-                const SizedBox(height: 2),
-
-                // ── Posts ─────────────────────────────────────────────────
-                _PostsSection(
-                  onAdd: () => _comingSoon('Posts'),
-                  colors: colors,
-                ),
-
-                SizedBox(
-                  height: MediaQuery.of(context).padding.bottom +
-                      kBottomNavigationBarHeight,
-                ),
-              ],
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 140,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.add_photo_alternate_outlined,
+              size: 36, color: colors.onSurface.withValues(alpha: 0.35)),
+          const SizedBox(height: 6),
+          Text(
+            'Add cover photo',
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.onSurface.withValues(alpha: 0.45),
             ),
           ),
         ],
@@ -264,58 +844,125 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   }
 }
 
-// ─── Cover placeholder ────────────────────────────────────────────────────────
+// ─── Photo viewer ────────────────────────────────────────────────────────────
 
-class _CoverPlaceholder extends StatelessWidget {
-  final String name;
-  final ColorScheme colors;
-  const _CoverPlaceholder({required this.name, required this.colors});
+class _PhotoViewer extends StatelessWidget {
+  final String url;
+  const _PhotoViewer({required this.url});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colors.primary.withValues(alpha: 0.85),
-            colors.secondary.withValues(alpha: 0.65),
-          ],
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Center(
+                child: InteractiveViewer(
+                  child: Image.network(url, fit: BoxFit.contain),
+                ),
+              ),
+              Positioned(
+                top: 12,
+                right: 16,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, color: Colors.white, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      alignment: Alignment.center,
-      child: name.isNotEmpty
-          ? Text(
-              name[0].toUpperCase(),
-              style: const TextStyle(
-                fontSize: 72,
-                fontWeight: FontWeight.w900,
-                color: Colors.white30,
-              ),
-            )
-          : const SizedBox.shrink(),
     );
   }
 }
 
-// ─── Identity card ────────────────────────────────────────────────────────────
+// ─── Type badge ───────────────────────────────────────────────────────────────
 
-class _IdentityCard extends StatelessWidget {
-  final VenueOwnerStatsVenue? venue;
-  final String fallbackName;
-  final VenueMemberRole venueRole;
+class _TypeBadge extends StatelessWidget {
+  final String? type;
+  final bool updating;
   final ColorScheme colors;
+  const _TypeBadge({required this.type, required this.updating, required this.colors});
 
-  const _IdentityCard({
-    required this.venue,
-    required this.fallbackName,
-    required this.venueRole,
-    required this.colors,
-  });
+  static const _labels = {
+    'bar': 'Bar',
+    'club': 'Club',
+    'cafe': 'Café',
+    'lounge': 'Lounge',
+    'restaurant': 'Restaurant',
+  };
 
-  String get _roleBadgeLabel {
-    switch (venueRole) {
+  static const _icons = {
+    'bar': Icons.local_bar_outlined,
+    'club': Icons.nightlife_outlined,
+    'cafe': Icons.local_cafe_outlined,
+    'lounge': Icons.weekend_outlined,
+    'restaurant': Icons.restaurant_outlined,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = type?.toLowerCase();
+    final label = _labels[t] ?? 'Set type';
+    final icon = _icons[t] ?? Icons.category_outlined;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.outline.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (updating)
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: colors.onSurface.withValues(alpha: 0.5),
+              ),
+            )
+          else
+            Icon(icon, size: 13, color: colors.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.onSurface.withValues(alpha: 0.8),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(Icons.edit_outlined, size: 11, color: colors.primary),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Role badge ───────────────────────────────────────────────────────────────
+
+class _RoleBadge extends StatelessWidget {
+  final VenueMemberRole role;
+  final ColorScheme colors;
+  const _RoleBadge({required this.role, required this.colors});
+
+  String get _label {
+    switch (role) {
       case VenueMemberRole.owner:
         return 'Owner';
       case VenueMemberRole.admin:
@@ -327,99 +974,25 @@ class _IdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = venue?.name ?? fallbackName;
-    final city = venue?.city;
-    final address = venue?.address;
-    final type = venue?.type;
-    final isVerified = venue?.verificationLevel == 'VERIFIED';
-
-    final locationParts = [
-      address,
-      city,
-    ].where((s) => s != null && s.isNotEmpty).cast<String>().toList();
-
     return Container(
-      color: colors.surface,
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.outline.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Name + verified row
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    height: 1.15,
-                  ),
-                ),
-              ),
-              if (isVerified) ...[
-                const SizedBox(width: 8),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Icon(
-                    Icons.verified_rounded,
-                    color: colors.primary,
-                    size: 22,
-                  ),
-                ),
-              ],
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          // Type + role badges
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              if (type != null && type.isNotEmpty)
-                _Chip(
-                  label: type,
-                  icon: Icons.storefront_outlined,
-                  colors: colors,
-                  outlined: true,
-                ),
-              _Chip(
-                label: _roleBadgeLabel,
-                icon: Icons.badge_outlined,
-                colors: colors,
-                outlined: false,
-              ),
-            ],
-          ),
-
-          // Location
-          if (locationParts.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: colors.onSurface.withValues(alpha: 0.45),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    locationParts.join(', '),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colors.onSurface.withValues(alpha: 0.6),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+          Icon(Icons.badge_outlined, size: 13, color: colors.primary),
+          const SizedBox(width: 6),
+          Text(
+            _label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.onSurface.withValues(alpha: 0.8),
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -430,23 +1003,20 @@ class _IdentityCard extends StatelessWidget {
 
 class _QuickActionsBar extends StatelessWidget {
   final VoidCallback onEvent;
-  final VoidCallback onPost;
+  final VoidCallback onPush;
   final VoidCallback onStory;
   final ColorScheme colors;
 
   const _QuickActionsBar({
     required this.onEvent,
-    required this.onPost,
+    required this.onPush,
     required this.onStory,
     required this.colors,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: colors.surface,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: Row(
+    return Row(
         children: [
           _QuickTile(
             icon: Icons.event_outlined,
@@ -454,23 +1024,22 @@ class _QuickActionsBar extends StatelessWidget {
             onTap: onEvent,
             colors: colors,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 9),
           _QuickTile(
-            icon: Icons.grid_on_outlined,
-            label: 'Post',
-            onTap: onPost,
+            icon: Icons.campaign_outlined,
+            label: 'Push',
+            onTap: onPush,
             colors: colors,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 9),
           _QuickTile(
-            icon: Icons.auto_stories_outlined,
+            icon: Icons.add_photo_alternate_outlined,
             label: 'Story',
             onTap: onStory,
             colors: colors,
           ),
         ],
-      ),
-    );
+      );
   }
 }
 
@@ -493,21 +1062,21 @@ class _QuickTile extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: colors.primaryContainer,
-            borderRadius: BorderRadius.circular(10),
+            color: colors.primary,
+            borderRadius: BorderRadius.circular(14),
           ),
           child: Column(
             children: [
-              Icon(icon, size: 20, color: colors.onPrimaryContainer),
-              const SizedBox(height: 4),
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(height: 6),
               Text(
-                '+ $label',
-                style: TextStyle(
-                  fontSize: 11,
+                label,
+                style: const TextStyle(
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w700,
-                  color: colors.onPrimaryContainer,
+                  color: Colors.white,
                 ),
               ),
             ],
@@ -522,38 +1091,48 @@ class _QuickTile extends StatelessWidget {
 
 class _EventsSection extends StatelessWidget {
   final List<VenueUpcomingEvent> events;
+  final String venueId;
   final VoidCallback onAdd;
+  final VoidCallback onGoToList;
   final ColorScheme colors;
 
   const _EventsSection({
     required this.events,
+    required this.venueId,
     required this.onAdd,
+    required this.onGoToList,
     required this.colors,
   });
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final todayEvents = events.where((e) {
+      final d = e.startAt.toLocal();
+      return d.year == now.year && d.month == now.month && d.day == now.day;
+    }).toList();
+
     return Container(
-      color: colors.surface,
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outline.withValues(alpha: 0.15)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Header ──────────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _SectionHeader(label: 'Events', colors: colors),
+                _SectionHeader(label: 'Today\'s Events', colors: colors),
+                const Spacer(),
                 GestureDetector(
-                  onTap: onAdd,
+                  onTap: onGoToList,
                   child: Text(
-                    '+ Add',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: colors.primary,
-                    ),
+                    'All events',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: colors.primary),
                   ),
                 ),
               ],
@@ -563,9 +1142,9 @@ class _EventsSection extends StatelessWidget {
           const SizedBox(height: 14),
 
           // ── Empty state ──────────────────────────────────────────────────
-          if (events.isEmpty)
+          if (todayEvents.isEmpty)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               child: Row(
                 children: [
                   Container(
@@ -575,35 +1154,22 @@ class _EventsSection extends StatelessWidget {
                       color: colors.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(
-                      Icons.event_outlined,
-                      size: 18,
-                      color: colors.onSurface.withValues(alpha: 0.28),
-                    ),
+                    child: Icon(Icons.event_outlined, size: 18,
+                        color: colors.onSurface.withValues(alpha: 0.28)),
                   ),
                   const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'No upcoming events',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: colors.onSurface.withValues(alpha: 0.45),
-                        ),
-                      ),
+                      Text('No events today',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500,
+                              color: colors.onSurface.withValues(alpha: 0.45))),
                       const SizedBox(height: 2),
                       GestureDetector(
                         onTap: onAdd,
-                        child: Text(
-                          'Publish your first event',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: colors.primary,
-                          ),
-                        ),
+                        child: Text('Publish your first event',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                                color: colors.primary)),
                       ),
                     ],
                   ),
@@ -611,19 +1177,28 @@ class _EventsSection extends StatelessWidget {
               ),
             )
           else ...[
-            // ── Horizontal card scroll ──────────────────────────────────
-            SizedBox(
-              height: 196,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-                itemCount: events.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (context, i) =>
-                    _EventCard(event: events[i], colors: colors),
-              ),
+            // ── Vertical card list (2 visible, rest scrollable) ───────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: todayEvents.length <= 2
+                  ? Column(
+                      children: todayEvents.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _EventCard(event: e, venueId: venueId, colors: colors, onAdd: onAdd),
+                      )).toList(),
+                    )
+                  : SizedBox(
+                      height: 300,
+                      child: ListView.builder(
+                        physics: const ClampingScrollPhysics(),
+                        itemCount: todayEvents.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _EventCard(event: todayEvents[i], venueId: venueId, colors: colors, onAdd: onAdd),
+                        ),
+                      ),
+                    ),
             ),
-            const SizedBox(height: 16),
           ],
         ],
       ),
@@ -633,170 +1208,90 @@ class _EventsSection extends StatelessWidget {
 
 class _EventCard extends StatelessWidget {
   final VenueUpcomingEvent event;
+  final String venueId;
   final ColorScheme colors;
+  final VoidCallback onAdd;
 
-  const _EventCard({required this.event, required this.colors});
+  const _EventCard({required this.event, required this.venueId, required this.colors, required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = event.photo != null && event.photo!.isNotEmpty;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final photos = event.photos.isNotEmpty
+        ? event.photos
+        : (event.photo != null ? [event.photo!] : <String>[]);
 
     return Container(
-      width: 172,
-      decoration: BoxDecoration(
-        color: isDark
-            ? colors.surfaceContainerHighest
-            : const Color(0xFFF5F7FA),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: colors.outline.withValues(alpha: isDark ? 0.12 : 0.09),
+        decoration: BoxDecoration(
+          color: isDark ? colors.surfaceContainerHighest : const Color(0xFFF5F7FA),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.outline.withValues(alpha: isDark ? 0.12 : 0.09)),
         ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Photo / gradient header ──────────────────────────────────
-          SizedBox(
-            height: 100,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // Background
-                hasPhoto
-                    ? Image.network(
-                        event.photo!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            _EventCardBg(colors: colors, primary: colors.primary),
-                      )
-                    : _EventCardBg(colors: colors, primary: colors.primary),
-
-                // Gradient scrim at bottom (for readability)
-                Positioned(
-                  left: 0, right: 0, bottom: 0,
-                  height: 48,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.45),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // Price badge — bottom right
-                if (event.priceAed != null)
-                  Positioned(
-                    bottom: 8,
-                    right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: event.priceAed == 0
-                            ? const Color(0xFF22C55E)
-                            : colors.primary,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        event.priceAed == 0
-                            ? 'Free'
-                            : 'AED ${event.priceAed}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Title + date ────────────────────────────────────────────
+            Text(
+              event.title,
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: colors.onSurface),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-          ),
-
-          // ── Info ────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: colors.onSurface,
-                    height: 1.25,
+            const SizedBox(height: 4),
+            Row(children: [
+              Icon(Icons.calendar_today_outlined, size: 11, color: colors.primary),
+              const SizedBox(width: 4),
+              Text(event.formattedDate,
+                  style: TextStyle(fontSize: 11.5, color: colors.onSurface.withValues(alpha: 0.55))),
+              if (event.priceAed != null) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: event.priceAed == 0
+                        ? const Color(0xFF22C55E).withValues(alpha: 0.15)
+                        : colors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(5),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: 11,
-                      color: colors.primary,
+                  child: Text(
+                    event.priceAed == 0 ? 'Free' : 'AED ${event.priceAed}',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: event.priceAed == 0 ? const Color(0xFF22C55E) : colors.primary,
                     ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        event.formattedDate,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: colors.onSurface.withValues(alpha: 0.6),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+            ]),
 
-/// Fotoğraf yokken renkli gradient arka plan
-class _EventCardBg extends StatelessWidget {
-  final ColorScheme colors;
-  final Color primary;
-  const _EventCardBg({required this.colors, required this.primary});
+            // ── Description ─────────────────────────────────────────────
+            if (event.description != null && event.description!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                event.description!,
+                style: TextStyle(fontSize: 12.5, color: colors.onSurface.withValues(alpha: 0.6), height: 1.4),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            primary.withValues(alpha: 0.75),
-            colors.secondary.withValues(alpha: 0.55),
+            // ── Photos ──────────────────────────────────────────────────
+            if (photos.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: photos.map((url) => Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(url, width: 64, height: 64, fit: BoxFit.cover),
+                  ),
+                )).toList(),
+              ),
+            ],
           ],
         ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.event_outlined,
-          size: 32,
-          color: Colors.white.withValues(alpha: 0.35),
-        ),
-      ),
     );
   }
 }
@@ -809,44 +1304,26 @@ class _PostsSection extends StatelessWidget {
 
   const _PostsSection({required this.onAdd, required this.colors});
 
-  static Widget _postRow(
-    List<int> indices,
-    double cell,
-    double gap,
-    ColorScheme colors,
-    VoidCallback onAdd,
-  ) {
-    return Row(
-      children: [
-        for (int k = 0; k < indices.length; k++) ...[
-          if (k > 0) SizedBox(width: gap),
-          _PostTile(
-            index: indices[k],
-            size: cell,
-            colors: colors,
-            onAdd: onAdd,
-          ),
-        ],
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: colors.surface,
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outline.withValues(alpha: 0.15)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _SectionHeader(label: 'Posts', colors: colors),
+              _SectionHeader(label: 'Push Notifications', colors: colors),
               GestureDetector(
                 onTap: onAdd,
                 child: Text(
-                  '+ Add',
+                  '+ Send',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -857,73 +1334,39 @@ class _PostsSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              const gap = 3.0;
-              final cell = (constraints.maxWidth - gap * 2) / 3;
-              final indices = List.generate(6, (i) => i);
-              return Column(
-                mainAxisSize: MainAxisSize.min,
+          GestureDetector(
+            onTap: onAdd,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: colors.outline.withValues(alpha: 0.2),
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
                 children: [
-                  _postRow(indices.sublist(0, 3), cell, gap, colors, onAdd),
-                  const SizedBox(height: gap),
-                  _postRow(indices.sublist(3, 6), cell, gap, colors, onAdd),
+                  Icon(
+                    Icons.campaign_outlined,
+                    size: 20,
+                    color: colors.onSurface.withValues(alpha: 0.3),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Send a notification to nearby guests…',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colors.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ),
                 ],
-              );
-            },
+              ),
+            ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ─── Post placeholder tile ────────────────────────────────────────────────────
-
-class _PostTile extends StatelessWidget {
-  final int index;
-  final double size;
-  final ColorScheme colors;
-  final VoidCallback onAdd;
-
-  const _PostTile({
-    required this.index,
-    required this.size,
-    required this.colors,
-    required this.onAdd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isAdd = index == 0;
-    return GestureDetector(
-      onTap: isAdd ? onAdd : null,
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: Container(
-          decoration: BoxDecoration(
-            color: isAdd
-                ? colors.surfaceContainerHighest.withValues(alpha: 0.5)
-                : colors.surfaceContainerHighest.withValues(
-                    alpha: 0.28 - (index * 0.02).clamp(0.0, 0.16),
-                  ),
-            borderRadius: BorderRadius.circular(5),
-            border: isAdd
-                ? Border.all(
-                    color: colors.outline.withValues(alpha: 0.2),
-                    width: 1.5,
-                  )
-                : null,
-          ),
-          child: isAdd
-              ? Icon(
-                  Icons.add,
-                  size: 24,
-                  color: colors.onSurface.withValues(alpha: 0.28),
-                )
-              : null,
-        ),
       ),
     );
   }
@@ -940,8 +1383,14 @@ class _SectionCard extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      color: colors.surface,
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: colors.outline.withValues(alpha: 0.15),
+        ),
+      ),
       child: child,
     );
   }
@@ -1036,55 +1485,3 @@ class _ActionRow extends StatelessWidget {
   }
 }
 
-// ─── Small chip badge ─────────────────────────────────────────────────────────
-
-class _Chip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final ColorScheme colors;
-  final bool outlined;
-
-  const _Chip({
-    required this.label,
-    required this.icon,
-    required this.colors,
-    required this.outlined,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: outlined ? Colors.transparent : colors.primaryContainer,
-        borderRadius: BorderRadius.circular(8),
-        border: outlined
-            ? Border.all(color: colors.outline.withValues(alpha: 0.4), width: 1)
-            : null,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 13,
-            color: outlined
-                ? colors.onSurface.withValues(alpha: 0.55)
-                : colors.onPrimaryContainer,
-          ),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: outlined
-                  ? colors.onSurface.withValues(alpha: 0.65)
-                  : colors.onPrimaryContainer,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

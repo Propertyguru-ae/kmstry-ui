@@ -171,6 +171,18 @@ class _GenderInterestOnboardingPageState
         backgroundColor: Colors.transparent,
         foregroundColor: textPrimary,
         elevation: 0,
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pushReplacementNamed(context, AuthRoutes.authGate),
+            child: Text('Maybe later', style: TextStyle(color: textSecondary)),
+          ),
+        ],
       ),
       extendBodyBehindAppBar: true,
       body: Column(

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 
 /// Venue owner: live guest list tab.
@@ -9,8 +11,9 @@ import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart
 /// a simple M/F count header.
 class VenueOwnerGuestsPage extends StatefulWidget {
   final String? venueId;
+  final bool isPendingClaim;
 
-  const VenueOwnerGuestsPage({super.key, this.venueId});
+  const VenueOwnerGuestsPage({super.key, this.venueId, this.isPendingClaim = false});
 
   @override
   State<VenueOwnerGuestsPage> createState() => _VenueOwnerGuestsPageState();
@@ -85,7 +88,7 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
       appBar: AppBar(
         backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
-        automaticallyImplyLeading: false,
+        leading: const AppLogo(),
         title: Text(
           'Guests',
           style: theme.textTheme.headlineSmall?.copyWith(
@@ -102,11 +105,66 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
           ),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _buildError(colors)
-              : _buildContent(colors, isDark),
+      body: widget.isPendingClaim
+          ? _buildPendingPlaceholder(colors)
+          : _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? _buildError(colors)
+                  : _buildContent(colors, isDark),
+    );
+  }
+
+  Widget _buildPendingPlaceholder(ColorScheme colors) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72, height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.blue.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.people_outline,
+                  size: 34, color: AppColors.blueDark),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Guest Management',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800,
+                  color: Color(0xFFC8D8F0)),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Once your claim is approved, you\'ll be able to see and manage guests checking in to your venue in real time.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13.5, color: Color(0xFF5B6F8D), height: 1.55),
+            ),
+            const SizedBox(height: 28),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.blue.withValues(alpha: 0.08),
+                border: Border.all(color: AppColors.blue.withValues(alpha: 0.20)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.hourglass_top_rounded, size: 15, color: AppColors.blueDark),
+                  SizedBox(width: 8),
+                  Text('Awaiting claim approval',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                          color: AppColors.blueDark)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

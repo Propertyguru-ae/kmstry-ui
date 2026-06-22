@@ -1,12 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
 class NameDobOnboardingPage extends StatefulWidget {
   final String? initialName;
+  /// true olduğunda isim alanı sadece okunur — venue claim'den gelen ad soyadı
+  /// değiştirilemesin, kullanıcı sadece doğum tarihini seçsin.
+  final bool nameReadOnly;
+  /// Opsiyonel — "Maybe later" basıldığında çağrılır. Null ise authGate'e yönlendirilir.
+  final VoidCallback? onCancel;
 
-  const NameDobOnboardingPage({super.key, this.initialName});
+  const NameDobOnboardingPage({
+    super.key,
+    this.initialName,
+    this.nameReadOnly = false,
+    this.onCancel,
+  });
 
   @override
   State<NameDobOnboardingPage> createState() => _NameDobOnboardingPageState();
@@ -94,14 +105,14 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
     final surfaceBorder = isDark
         ? const Color(0xFF252D3D)
         : theme.colorScheme.outline.withValues(alpha: 0.28);
-    const accent = Color.fromARGB(255, 11, 162, 237);
+    const accent = AppColors.blue;
     final textPrimary = isDark
         ? const Color(0xFFF3F6FF)
         : theme.colorScheme.onSurface;
     final textSecondary = isDark
         ? const Color(0xFF98A3BC)
         : theme.colorScheme.onSurface.withValues(alpha: 0.68);
-    final isFocused = _nameFocusNode.hasFocus;
+    final isFocused = _nameFocusNode.hasFocus && !widget.nameReadOnly;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -111,6 +122,24 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
         backgroundColor: Colors.transparent,
         foregroundColor: textPrimary,
         elevation: 0,
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
+        actions: [
+          TextButton(
+            onPressed: () {
+              if (widget.onCancel != null) {
+                widget.onCancel!();
+              } else {
+                Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+              }
+            },
+            child: Text('Maybe later', style: TextStyle(color: textSecondary)),
+          ),
+        ],
       ),
       extendBodyBehindAppBar: true,
       body: Column(
@@ -174,9 +203,12 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                       child: TextField(
                         focusNode: _nameFocusNode,
                         controller: _nameController,
-                        onChanged: (_) => setState(() {}),
+                        readOnly: widget.nameReadOnly,
+                        onChanged: widget.nameReadOnly ? null : (_) => setState(() {}),
                         style: TextStyle(
-                          color: textPrimary,
+                          color: widget.nameReadOnly
+                              ? textSecondary
+                              : textPrimary,
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                         ),

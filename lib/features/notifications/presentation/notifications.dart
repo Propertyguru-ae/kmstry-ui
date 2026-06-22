@@ -583,6 +583,10 @@ class _NotificationPageState extends State<NotificationPage> {
         return Icons.chat_bubble_outline;
       case 'liked_you':
         return Icons.visibility_rounded;
+      case 'venue_claim_approved':
+        return Icons.store_rounded;
+      case 'venue_claim_rejected':
+        return Icons.store_outlined;
       default:
         return Icons.notifications_none;
     }

@@ -44,7 +44,7 @@ class NotificationPermissionService {
   Future<NotificationPermissionState> readStateFromBackend() async {
     final me = await _auth.getMe();
     print("🔍 ME RESPONSE: $me");
-    final accountPreference = me['notificationPermissionGranted'] == true;
+    final accountPreference = me['notificationPermissionGranted'] != false;
     final settings = await _messaging.getNotificationSettings();
     return NotificationPermissionState(
       systemStatus: _mapAuthorization(settings.authorizationStatus),
