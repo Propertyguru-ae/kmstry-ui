@@ -37,4 +37,10 @@ class StoryViewedCache {
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getStringList(_key) ?? []).toSet();
   }
+
+  /// Logout sırasında cihaz geneli cache'i temizle — cross-user contamination önler.
+  static Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }

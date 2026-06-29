@@ -74,6 +74,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _isVenueContext = false;
   bool _hasPersonalProfile = false;
   bool _isPendingClaim = false;
+  bool _isRejectedClaim = false;
   String _personalAccountLabel = 'Personal';
   String? _activeVenueId;
 
@@ -340,13 +341,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final context = MeContextModel.fromMe(me);
       if (!mounted) return;
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
+      final username = (me['username'])?.toString().trim();
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
       // Sadece ACTIVE venue'lar context switching için kullanılır.
       final activeVenues = context.memberVenues.where((v) => v.isActive).toList();
       final hasPendingClaim = context.memberVenues.any((v) => v.isPendingOwnerClaim);
+      final hasRejectedClaim = context.hasRejectedClaimOnly ||
+          context.memberVenues.any((v) => v.isRejectedOwnerClaim);
       final hasVenueContext =
-          context.hasVenueMembership || activeVenues.isNotEmpty || hasPendingClaim;
+          context.hasVenueMembership || activeVenues.isNotEmpty || hasPendingClaim || hasRejectedClaim;
       final allKnownVenues = context.memberVenues;
       String? resolvedVenueId = context.activeVenueId;
       if (resolvedVenueId == null ||
@@ -354,28 +358,37 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           !allKnownVenues.any((venue) => venue.id == resolvedVenueId)) {
         resolvedVenueId = activeVenues.isNotEmpty
             ? activeVenues.first.id
-            : (hasPendingClaim ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id : null);
+            : hasPendingClaim
+                ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id
+                : hasRejectedClaim
+                    ? context.memberVenues.firstWhere((v) => v.isRejectedOwnerClaim).id
+                    : null;
       }
-      if (lastContext == 'VENUE' && resolvedVenueId != null) {
+      // Rejected claim: last_active_context null'a sıfırlandı ama venue context'te kalmalı.
+      final isVenueCtx = hasRejectedClaim
+          ? true
+          : lastContext == 'VENUE' && hasVenueContext;
+      if (isVenueCtx && resolvedVenueId != null) {
         for (final venue in allKnownVenues) {
           if (venue.id == resolvedVenueId) {
             activeLabel = venue.name;
             break;
           }
         }
-      } else if (lastContext == 'VENUE' && allKnownVenues.isNotEmpty) {
+      } else if (isVenueCtx && allKnownVenues.isNotEmpty) {
         activeLabel = allKnownVenues.first.name;
       }
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
           _userInitial = fullName[0].toUpperCase();
         }
-        _isVenueContext = lastContext == 'VENUE' && hasVenueContext;
+        _isVenueContext = isVenueCtx;
         _isPendingClaim = hasPendingClaim && activeVenues.isEmpty;
+        _isRejectedClaim = hasRejectedClaim && !hasPendingClaim && activeVenues.isEmpty;
         _hasPersonalProfile = context.hasPersonalProfile;
-        _personalAccountLabel = fullName != null && fullName.isNotEmpty
-            ? fullName
-            : 'Personal';
+        _personalAccountLabel = username != null && username.isNotEmpty
+            ? '@$username'
+            : (fullName != null && fullName.isNotEmpty ? fullName : 'Personal');
         _memberVenues
           ..clear()
           ..addAll(context.memberVenues);
@@ -681,7 +694,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final pages = _isVenueContext
         ? <Widget>[
             VenueAccountHomePage(venueId: _activeVenueId),
-            VenueOwnerGuestsPage(venueId: _activeVenueId, isPendingClaim: _isPendingClaim),
+            VenueOwnerGuestsPage(venueId: _activeVenueId, isPendingClaim: _isPendingClaim, isRejectedClaim: _isRejectedClaim),
             const NotificationPage(),
             VenueProfilePage(
               activeVenueName:
@@ -863,7 +876,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 isDark: isDark,
                 theme: theme,
               ),
-              onLongPress: () => _showAccountSwitcher(ctx),
             ),
           ]
         : [
@@ -886,7 +898,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 isDark: isDark,
                 theme: theme,
               ),
-              onLongPress: () => _showAccountSwitcher(ctx),
             ),
           ];
 

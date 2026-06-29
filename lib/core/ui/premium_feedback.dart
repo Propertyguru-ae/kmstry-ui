@@ -31,12 +31,41 @@ void showSuccessSnackBar(
   overlay.insert(entry);
 }
 
+void showErrorToast(
+  BuildContext context, {
+  required String message,
+  Duration duration = const Duration(seconds: 3),
+}) {
+  if (!context.mounted) return;
+
+  final colorScheme = Theme.of(context).colorScheme;
+  final overlay = Overlay.maybeOf(context);
+  if (overlay == null) return;
+
+  late OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (_) => _CenteredToast(
+      message: message,
+      icon: Icons.error_outline_rounded,
+      colorScheme: colorScheme,
+      duration: duration,
+      onDone: () {
+        if (entry.mounted) entry.remove();
+      },
+      isError: true,
+    ),
+  );
+
+  overlay.insert(entry);
+}
+
 class _CenteredToast extends StatefulWidget {
   final String message;
   final IconData icon;
   final ColorScheme colorScheme;
   final Duration duration;
   final VoidCallback onDone;
+  final bool isError;
 
   const _CenteredToast({
     required this.message,
@@ -44,6 +73,7 @@ class _CenteredToast extends StatefulWidget {
     required this.colorScheme,
     required this.duration,
     required this.onDone,
+    this.isError = false,
   });
 
   @override
@@ -105,7 +135,7 @@ class _CenteredToastState extends State<_CenteredToast>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(widget.icon, color: cs.primary, size: 22),
+                    Icon(widget.icon, color: widget.isError ? cs.error : cs.primary, size: 22),
                     const SizedBox(width: 12),
                     Flexible(
                       child: Text(

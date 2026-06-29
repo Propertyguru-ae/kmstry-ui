@@ -294,6 +294,30 @@ class VenueEventSummary {
   }
 }
 
+class RecurrenceInfo {
+  final String frequency;
+  final int interval;
+  final DateTime? endsOn;
+  final int? maxOccurrences;
+
+  const RecurrenceInfo({
+    required this.frequency,
+    required this.interval,
+    this.endsOn,
+    this.maxOccurrences,
+  });
+
+  factory RecurrenceInfo.fromJson(Map<String, dynamic> json) {
+    final endsOnRaw = json['endsOn'] ?? json['ends_on'];
+    return RecurrenceInfo(
+      frequency: json['frequency']?.toString() ?? 'weekly',
+      interval: (json['interval'] as num?)?.toInt() ?? 1,
+      endsOn: endsOnRaw is String ? DateTime.tryParse(endsOnRaw) : null,
+      maxOccurrences: ((json['maxOccurrences'] ?? json['max_occurrences']) as num?)?.toInt(),
+    );
+  }
+}
+
 class VenueUpcomingEvent {
   final String id;
   final String title;
@@ -303,6 +327,9 @@ class VenueUpcomingEvent {
   final String? photo;
   final List<String> photos;
   final int? priceAed;
+  final String currency;
+  final String? recurringRuleId;
+  final RecurrenceInfo? recurrence;
 
   VenueUpcomingEvent({
     required this.id,
@@ -313,11 +340,17 @@ class VenueUpcomingEvent {
     this.photo,
     this.photos = const [],
     this.priceAed,
+    this.currency = 'TRY',
+    this.recurringRuleId,
+    this.recurrence,
   });
+
+  bool get isRecurring => recurringRuleId != null;
 
   factory VenueUpcomingEvent.fromJson(Map<String, dynamic> json) {
     final startRaw = json['startAt'] ?? json['start_at'] ?? '';
     final endRaw = json['endAt'] ?? json['end_at'] ?? '';
+    final recurrenceRaw = json['recurrence'];
     return VenueUpcomingEvent(
       id: json['id']?.toString() ?? '',
       title: json['title']?.toString() ?? '',
@@ -330,6 +363,13 @@ class VenueUpcomingEvent {
           ? (json['priceAed'] as num).toInt()
           : json['price_aed'] is num
               ? (json['price_aed'] as num).toInt()
+              : null,
+      currency: json['currency']?.toString() ?? 'TRY',
+      recurringRuleId: json['recurringRuleId']?.toString() ?? json['recurring_rule_id']?.toString(),
+      recurrence: recurrenceRaw is Map<String, dynamic>
+          ? RecurrenceInfo.fromJson(recurrenceRaw)
+          : recurrenceRaw is Map
+              ? RecurrenceInfo.fromJson(Map<String, dynamic>.from(recurrenceRaw))
               : null,
     );
   }

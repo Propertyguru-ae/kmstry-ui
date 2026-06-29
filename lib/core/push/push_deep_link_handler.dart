@@ -8,7 +8,11 @@ import '../../features/auth/presentation/auth_routes.dart';
 import '../../features/checkin/services/active_checkin_service.dart';
 import '../../features/venue/data/venue_repository.dart';
 import '../../features/venue/presentation/venue_detail_page.dart';
+import '../../features/venue/presentation/venue_member_status_page.dart';
 import '../../features/venue/presentation/venue_people_page.dart';
+import '../../features/venue/presentation/venue_team_page.dart';
+import '../../features/venue/presentation/venue_claim_rejected_page.dart';
+import '../../core/venue/venue_session.dart';
 
 /// FCM bildirimlerine dokunulduğunda (arka plan / kapalı uygulama)
 /// ilgili ekrana yönlendiren handler.
@@ -87,7 +91,58 @@ class PushDeepLinkHandler {
         );
 
       case 'venue_claim_rejected':
-        nav.pushNamed(AuthRoutes.notifications);
+        final rejectedVenueId = _readString(data, ['venueId', 'venue_id']);
+        final rejectedVenueName = _readString(data, ['venueName', 'venue_name']);
+        nav.push(MaterialPageRoute(
+          builder: (_) => VenueClaimRejectedPage(
+            venueId: rejectedVenueId,
+            venueName: rejectedVenueName.isNotEmpty ? rejectedVenueName : 'Venue',
+          ),
+        ));
+
+      case 'venue_member_invite':
+        final inviteMemberId = _readString(data, const ['memberId', 'member_id']);
+        final inviteVenueId = _readString(data, const ['venueId', 'venue_id']);
+        final inviteRole = _readString(data, const ['role']);
+        final inviteVenueName = _readString(data, const ['venueName', 'venue_name']);
+        final inviteInviterName = _readString(data, const ['inviterName', 'inviter_name']);
+        if (inviteMemberId.isNotEmpty && inviteVenueId.isNotEmpty) {
+          nav.push(MaterialPageRoute(
+            builder: (_) => VenueMemberStatusPage(
+              venueId: inviteVenueId,
+              memberId: inviteMemberId,
+              venueName: inviteVenueName.isNotEmpty ? inviteVenueName : 'Venue',
+              role: inviteRole.isNotEmpty ? inviteRole : null,
+              inviterName: inviteInviterName.isNotEmpty ? inviteInviterName : null,
+            ),
+          ));
+        }
+
+      case 'venue_member_response':
+        final responsVenueId = _readString(data, ['venueId', 'venue_id']);
+        if (responsVenueId.isNotEmpty) {
+          nav.push(MaterialPageRoute(
+            builder: (_) => VenueTeamPage(
+              venueId: responsVenueId,
+              callerRole: VenueSession.instance.role,
+            ),
+          ));
+        } else {
+          nav.pushNamed(AuthRoutes.notifications);
+        }
+
+      case 'venue_member_role_changed':
+        final roleChangeVenueId = _readString(data, ['venueId', 'venue_id']);
+        if (roleChangeVenueId.isNotEmpty) {
+          nav.push(MaterialPageRoute(
+            builder: (_) => VenueTeamPage(
+              venueId: roleChangeVenueId,
+              callerRole: VenueSession.instance.role,
+            ),
+          ));
+        } else {
+          nav.pushNamed(AuthRoutes.notifications);
+        }
 
       case 'test_venue_nearby':
         final venueId = (data['venueId'] ?? data['venue_id']) as String?;

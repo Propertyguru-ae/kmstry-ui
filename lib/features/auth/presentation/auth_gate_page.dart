@@ -87,14 +87,41 @@ class _AuthGatePageState extends State<AuthGatePage> {
         return;
       }
 
+    // Venue claim reddedilmiş → venue home'a yönlendir; banner orada gösterilir.
+    if (nextAction == 'VENUE_CLAIM_REJECTED' || meContext.hasRejectedClaimOnly) {
+      _logDecision('venue_claim_rejected_go_venue_home');
+      final rejectedVenue = meContext.memberVenues
+          .where((v) => v.isRejectedOwnerClaim)
+          .firstOrNull;
+      if (rejectedVenue != null) {
+        _lastResolvedVenueId = rejectedVenue.id;
+        await _applyVenueContextIfNeeded(rejectedVenue.id);
+      }
+      await _routeToVenueHome();
+      return;
+    }
+
     // Safe fallback for known backend inconsistency:
     // venue-only users occasionally receive PERSONAL_ONBOARDING.
     final isConflictingVenueOnlyPayload = hasVenueContext &&
         !hasPersonalProfile &&
+        !meContext.hasRejectedClaimOnly && // rejected claim kullanıcısı buraya düşmemeli
         (homeRoute == 'PERSONAL_ONBOARDING' ||
             nextAction == 'START_PERSONAL_ONBOARDING');
       if (isConflictingVenueOnlyPayload) {
         _logDecision('safe_fallback_venue_only_payload');
+        await _applyVenueContextIfNeeded(resolvedVenueId);
+        await _routeToVenueHome();
+        return;
+      }
+
+    // Safe fallback: backend sends VENUE_ONBOARDING but user already has
+    // an active venue membership — skip onboarding and go to venue home.
+    final isConflictingVenueOnboardingPayload = hasVenueContext &&
+        (homeRoute == 'VENUE_ONBOARDING' ||
+            nextAction == 'START_VENUE_ONBOARDING');
+      if (isConflictingVenueOnboardingPayload) {
+        _logDecision('safe_fallback_venue_onboarding_but_has_membership');
         await _applyVenueContextIfNeeded(resolvedVenueId);
         await _routeToVenueHome();
         return;
@@ -164,8 +191,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
       }
       if (homeRoute == 'CONTEXT_CHOICE' || nextAction == 'SHOW_CONTEXT_CHOICE') {
         // Eğer tamamlanmamış venue claim draft'ı varsa → wizard'a yönlendir, PERSONAL'a basma.
+        // Ama kullanıcının bekleyen bir üyelik daveti varsa claim wizard'ı gösterme;
+        // davet bildirimler sayfasından erişilebilir.
         final hasClaimDraft = me['hasClaimDraft'] == true;
-        if (hasClaimDraft) {
+        final hasPendingMemberInvite =
+            meContext.memberVenues.any((v) => v.isPendingMemberInvite);
+        if (hasClaimDraft && !hasPendingMemberInvite) {
           _logDecision('context_choice_has_claim_draft_venue_onboarding');
           _go(const VenueContextOnboardingPage());
           return;

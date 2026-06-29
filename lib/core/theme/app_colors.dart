@@ -20,8 +20,8 @@ class AppColors {
   static const Color brandLight  = Color(0xFF5B21B6); // brand mor, light için
 
   // ── Arka plan & surface ──────────────────────────────────────────────────
-  static const Color darkBg      = Color(0xFF0B0F17);
-  static const Color darkSurface = Color(0xFF161C28);
+  static const Color darkBg      = Color(0xFF06091A);
+  static const Color darkSurface = Color(0xFF0B1322);
 
   // ── Metin ───────────────────────────────────────────────────────────────
   static const Color darkTextPrimary   = Color(0xFFF4F6F8);

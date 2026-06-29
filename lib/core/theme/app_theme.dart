@@ -158,7 +158,7 @@ class AppTheme {
     scaffoldBackgroundColor: matteBlack,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: const Color(0xFF161C28),
+      fillColor: AppColors.darkSurface,
       hintStyle: const TextStyle(color: darkTextSecondary),
       labelStyle: const TextStyle(color: darkTextSecondary),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),

@@ -29,7 +29,11 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
       if (!mounted) return;
       setState(() {
         _context = MeContextModel.fromMe(me);
-        _fullName = (me['fullName'] ?? me['full_name'])?.toString();
+        final username = me['username']?.toString();
+        final fullName = (me['fullName'] ?? me['full_name'])?.toString();
+        _fullName = (username != null && username.isNotEmpty)
+            ? '@$username'
+            : fullName;
         _loading = false;
       });
     } catch (_) {

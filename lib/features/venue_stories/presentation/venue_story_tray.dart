@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
-import 'package:kmstry_frontend/features/stories/data/story_viewed_cache.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import '../data/venue_story_model.dart';
 import '../data/venue_story_repository.dart';
+import '../data/venue_story_viewed_cache.dart';
 
 /// Venue adının yanında gösterilen tek story balonu.
 /// Story yükleme, izleme ve "+" ekleme işlemlerini kendi içinde yönetir.
@@ -31,7 +32,6 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
   final _repo = VenueStoryRepository();
 
   List<VenueStoryItem> _stories = [];
-  Set<String> _viewedIds = {};
 
   @override
   void initState() {
@@ -47,26 +47,21 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
 
   Future<void> _load() async {
     try {
-      final results = await Future.wait([
-        _repo.getVenueStories(widget.venueId),
-        StoryViewedCache.loadAll(),
-      ]);
+      final stories = await _repo.getVenueStories(widget.venueId);
       if (!mounted) return;
       setState(() {
-        _stories = results[0] as List<VenueStoryItem>;
-        _viewedIds = results[1] as Set<String>;
+        _stories = stories;
       });
     } catch (_) {}
   }
 
-  Future<void> _refreshViewed() async {
-    final ids = await StoryViewedCache.loadAll();
-    if (!mounted) return;
-    setState(() => _viewedIds = ids);
-  }
-
   void _openViewer() {
     if (_stories.isEmpty && !widget.isUploading) return;
+    final venueId = widget.venueId;
+
+    // Kaldığı yerden devam: ilk izlenmemiş story'den başla
+    final startIndex = _stories.indexWhere((s) => !s.viewedByMe);
+    final initialIndex = startIndex == -1 ? 0 : startIndex;
 
     final storyItems = _stories.map((s) => StoryItem(
           id: s.id,
@@ -76,26 +71,46 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
           durationSecs: s.durationSecs,
           expiresAt: s.expiresAt,
           createdAt: s.createdAt,
+          viewCount: s.viewCount,
         )).toList();
 
     if (widget.isUploading) storyItems.add(StoryItem.uploadingPlaceholder());
 
     final group = StoryGroup(
       user: StoryUser(
-        id: 'venue_${widget.venueId}',
+        id: 'venue_$venueId',
         fullName: widget.venueName,
         photo: widget.venuePhotoUrl,
       ),
       stories: storyItems,
     );
 
-    Navigator.push(
+    Navigator.push<StoryViewerResult>(
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => StoryViewerPage(groups: [group]),
+        builder: (_) => StoryViewerPage(
+          groups: [group],
+          venueId: venueId,
+          initialStoryIndex: initialIndex,
+          onClose: (lastIndex, allFinished) {
+            final justViewed = allFinished
+                ? _stories.map((s) => s.id).toSet()
+                : { for (int i = 0; i <= lastIndex && i < _stories.length; i++) _stories[i].id };
+            final cache = VenueStoryViewedCache.instance;
+            justViewed.forEach(cache.mark);
+            if (mounted) {
+              setState(() {
+                _stories = [
+                  for (final s in _stories)
+                    (s.viewedByMe || justViewed.contains(s.id)) ? s.copyWith(viewedByMe: true) : s,
+                ];
+              });
+            }
+          },
+        ),
       ),
-    ).then((_) => _refreshViewed());
+    );
   }
 
   @override
@@ -107,8 +122,7 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
       return const SizedBox.shrink();
     }
 
-    final ids = _stories.map((s) => s.id).toList();
-    final allSeen = StoryViewedCache.allViewedSync(ids, _viewedIds);
+    final allSeen = _stories.isNotEmpty && _stories.every((s) => s.viewedByMe);
 
     return _VenueBubble(
       venuePhotoUrl: widget.venuePhotoUrl,
@@ -204,10 +218,17 @@ class _VenueBubbleState extends State<_VenueBubble>
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: showGradient
-            ? const LinearGradient(
-                colors: [Color(0xFFf09433), Color(0xFFbc2a8d)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+            ? const SweepGradient(
+                colors: [
+                  AppColors.magenta,
+                  AppColors.teal,
+                  AppColors.blue,
+                  AppColors.orange,
+                  AppColors.brand,
+                  AppColors.magenta,
+                ],
+                startAngle: -1.5708,
+                endAngle: 4.7124,
               )
             : null,
         color: showGray
@@ -298,17 +319,20 @@ class _LoadingArcPainter extends CustomPainter {
     final basePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = stroke
-      ..color = const Color(0x22000000)
+      ..color = AppColors.magenta.withValues(alpha: 0.15)
       ..strokeCap = StrokeCap.round;
     canvas.drawArc(inset, 0, 6.28318, false, basePaint);
 
     final shader = const SweepGradient(
       colors: [
-        Color(0x00f09433),
-        Color(0xFFf09433),
-        Color(0xFFbc2a8d),
+        Color(0x00E020D8), // magenta transparent tail
+        AppColors.magenta,
+        AppColors.teal,
+        AppColors.blue,
+        AppColors.orange,
+        AppColors.brand,
       ],
-      stops: [0.0, 0.5, 1.0],
+      stops: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
     ).createShader(rect);
 
     final arcPaint = Paint()

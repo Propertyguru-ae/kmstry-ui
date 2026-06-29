@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
-import '../data/story_viewed_cache.dart';
 import 'story_viewer_page.dart';
 
 class StoryTray extends StatefulWidget {
@@ -30,6 +30,9 @@ class _StoryTrayState extends State<StoryTray> {
   List<StoryItem> _myStories = [];
   List<StoryGroup> _groups = [];
   bool _loading = true;
+  bool _initialLoaded = false;
+  // Local session-only viewed IDs — populated from backend on load, updated after viewer closes.
+  // NOT persisted to SharedPreferences to avoid cross-user contamination.
   Set<String> _viewedIds = {};
 
   @override
@@ -43,26 +46,43 @@ class _StoryTrayState extends State<StoryTray> {
       final results = await Future.wait([
         _repo.getMyStories(),
         _repo.getVenueStories(widget.venueId),
-        StoryViewedCache.loadAll(),
       ]);
       if (!mounted) return;
+      final freshGroups = results[1] as List<StoryGroup>;
+
+      // İlk yüklemede backend'in shuffle'lı sırasını kullan.
+      // Sonraki yüklemelerde (viewer kapandıktan sonra) mevcut sırayı koru —
+      // sadece viewed_by_me bilgisini güncelle, kullanıcı şaşırmasın.
+      final List<StoryGroup> orderedGroups;
+      if (!_initialLoaded) {
+        orderedGroups = freshGroups;
+      } else {
+        final freshMap = {for (final g in freshGroups) g.user.id: g};
+        orderedGroups = [
+          for (final g in _groups)
+            if (freshMap.containsKey(g.user.id)) freshMap[g.user.id]!,
+          for (final g in freshGroups)
+            if (!_groups.any((e) => e.user.id == g.user.id)) g,
+        ];
+      }
+
+      final backendViewed = <String>{};
+      for (final g in orderedGroups) {
+        for (final s in g.stories) {
+          if (s.viewedByMe) backendViewed.add(s.id);
+        }
+      }
       setState(() {
         _myStories = results[0] as List<StoryItem>;
-        _groups = results[1] as List<StoryGroup>;
-        _viewedIds = results[2] as Set<String>;
+        _groups = orderedGroups;
+        _viewedIds = backendViewed;
         _loading = false;
+        _initialLoaded = true;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
     }
-  }
-
-  /// Viewer kapandıktan sonra viewed cache'i yenile → halkalar güncellenir.
-  Future<void> _refreshViewed() async {
-    final ids = await StoryViewedCache.loadAll();
-    if (!mounted) return;
-    setState(() => _viewedIds = ids);
   }
 
   /// Verilen story listesinde ilk görülmemiş story'nin indexini döner.
@@ -93,7 +113,7 @@ class _StoryTrayState extends State<StoryTray> {
           initialStoryIndex: startIndex,
         ),
       ),
-    ).then((_) => _refreshViewed());
+    ).then((_) { if (mounted) _load(); });
   }
 
   void _openViewer(int groupIndex) {
@@ -119,7 +139,7 @@ class _StoryTrayState extends State<StoryTray> {
           initialStoryIndex: startIndex,
         ),
       ),
-    ).then((_) => _refreshViewed());
+    ).then((_) { if (mounted) _load(); });
   }
 
   @override
@@ -155,7 +175,7 @@ class _StoryTrayState extends State<StoryTray> {
                 .where((s) => !s.isUploadingPlaceholder)
                 .map((s) => s.id)
                 .toList();
-            final meSeen = StoryViewedCache.allViewedSync(myIds, _viewedIds);
+            final meSeen = myIds.isNotEmpty && myIds.every((id) => _viewedIds.contains(id));
             return _MeBubble(
               myStories: _myStories,
               isUploading: widget.isUploading,
@@ -168,7 +188,7 @@ class _StoryTrayState extends State<StoryTray> {
           final groupIndex = index - 1;
           final group = _groups[groupIndex];
           final ids = group.stories.map((s) => s.id).toList();
-          final seen = StoryViewedCache.allViewedSync(ids, _viewedIds);
+          final seen = ids.isNotEmpty && ids.every((id) => _viewedIds.contains(id));
           return _StoryBubble(
             group: group,
             allSeen: seen,
@@ -178,6 +198,135 @@ class _StoryTrayState extends State<StoryTray> {
       ),
     );
   }
+}
+
+// ── Logo brand ring colors ─────────────────────────────────────────────────────
+
+const _kBrandRingColors = [
+  AppColors.magenta,
+  AppColors.teal,
+  AppColors.blue,
+  AppColors.orange,
+  AppColors.brand,
+];
+
+// ── Shared square ring painter (static gradient — full ring) ──────────────────
+
+class _SquareRingPainter extends CustomPainter {
+  final List<Color> colors;
+  final double pad;
+  final double strokeWidth;
+  final double radius;
+
+  const _SquareRingPainter({
+    required this.colors,
+    required this.pad,
+    required this.strokeWidth,
+    required this.radius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+        Size(size.width - strokeWidth, size.height - strokeWidth);
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+    final shader = SweepGradient(
+      colors: [...colors, colors.first],
+    ).createShader(rect);
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..shader = shader
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SquareRingPainter old) => old.colors != colors;
+}
+
+// ── Square spinner painter (fade-tail, rotated by RotationTransition) ──────────
+
+class _SquareSpinnerPainter extends CustomPainter {
+  final double strokeWidth;
+  final double radius;
+
+  const _SquareSpinnerPainter({required this.strokeWidth, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+        Size(size.width - strokeWidth, size.height - strokeWidth);
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+
+    // Soluk arka plan halkası
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..color = AppColors.magenta.withValues(alpha: 0.15)
+        ..strokeCap = StrokeCap.round,
+    );
+
+    // Soluktan başlayıp parlayan tail — gradient sweep
+    final shader = const SweepGradient(
+      colors: [
+        Color(0x00E020D8), // magenta transparent tail
+        AppColors.magenta,
+        AppColors.teal,
+        AppColors.blue,
+        AppColors.orange,
+        AppColors.brand,
+      ],
+      stops: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+      startAngle: -1.5708,
+      endAngle: 4.7124,
+    ).createShader(rect);
+
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..shader = shader
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SquareSpinnerPainter old) =>
+      old.strokeWidth != strokeWidth || old.radius != radius;
+}
+
+// ── Shared square avatar ───────────────────────────────────────────────────────
+
+const _kAvatarSize  = 54.0;
+const _kRingPad     = 3.0;
+const _kRingStroke  = 2.2;
+const _kAvatarRadius = 11.0;
+
+Widget _squareAvatar({
+  required BuildContext context,
+  required String? imageUrl,
+  required Widget placeholder,
+}) {
+  return Container(
+    width: _kAvatarSize,
+    height: _kAvatarSize,
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(_kAvatarRadius),
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(_kAvatarRadius),
+      child: imageUrl != null && imageUrl.isNotEmpty
+          ? Image.network(imageUrl, fit: BoxFit.cover)
+          : placeholder,
+    ),
+  );
 }
 
 // ── Me bubble ─────────────────────────────────────────────────────────────────
@@ -233,8 +382,6 @@ class _MeBubbleState extends State<_MeBubble>
   }
 
   static String? _bubbleImage(List<StoryItem> stories) {
-    if (stories.isEmpty) return null;
-    // Featured checkin fotosu öncelikli
     for (final s in stories) {
       final f = s.checkinFeaturedPhotoUrl;
       if (f != null && f.isNotEmpty) return f;
@@ -243,11 +390,7 @@ class _MeBubbleState extends State<_MeBubble>
   }
 
   void _openUploadingViewer() {
-    // Mevcut storyler + en sona yüklenmekte olan placeholder.
-    final stories = [
-      ...widget.myStories,
-      StoryItem.uploadingPlaceholder(),
-    ];
+    final stories = [...widget.myStories, StoryItem.uploadingPlaceholder()];
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'Me'),
       stories: stories,
@@ -264,68 +407,73 @@ class _MeBubbleState extends State<_MeBubble>
   @override
   Widget build(BuildContext context) {
     final hasStories = widget.myStories.isNotEmpty;
-    final canAdd = widget.onAddStory != null;
-    final uploading = widget.isUploading;
-    final allSeen = widget.allSeen;
-    final color = Theme.of(context).colorScheme.primary;
-    final bubbleImage = _bubbleImage(widget.myStories);
+    final canAdd     = widget.onAddStory != null;
+    final uploading  = widget.isUploading;
+    final color      = Theme.of(context).colorScheme.primary;
+    final bubbleImg  = _bubbleImage(widget.myStories);
 
-    // Hiç story yok ve add butonu da yoksa balonu gizle
     if (!hasStories && !canAdd) return const SizedBox.shrink();
 
-    // Çember:
-    //  - Yüklenirken: avatar SABİT kalır, sadece çevresinde dönen bir yay döner.
-    //  - Story varsa: sabit Instagram gradyan çemberi.
-    //  - Yoksa: soluk düz çember.
-    Widget ring(Widget child) {
-      if (uploading) {
-        // İçteki avatar + beyaz boşluk sabit; üstüne dönen gradyan yay.
-        final inner = Container(
-          padding: const EdgeInsets.all(2.5),
-          child: child,
-        );
-        return Stack(
+    final avatar = _squareAvatar(
+      context: context,
+      imageUrl: bubbleImg,
+      placeholder: Center(
+        child: Icon(
+          hasStories ? Icons.videocam : Icons.person,
+          color: color, size: 24,
+        ),
+      ),
+    );
+
+    final ringColors = hasStories && !widget.allSeen
+        ? _kBrandRingColors
+        : [Colors.grey.shade400, Colors.grey.shade400];
+
+    Widget content;
+    if (uploading) {
+      final totalSize = _kAvatarSize + (_kRingPad + _kRingStroke) * 2;
+      content = SizedBox(
+        width: totalSize,
+        height: totalSize,
+        child: Stack(
           alignment: Alignment.center,
           children: [
-            inner,
+            Padding(
+              padding: const EdgeInsets.all(_kRingPad + _kRingStroke),
+              child: avatar,
+            ),
             Positioned.fill(
               child: RotationTransition(
                 turns: _spin,
                 child: CustomPaint(
-                  painter: _LoadingArcPainter(),
+                  painter: _SquareSpinnerPainter(
+                    strokeWidth: _kRingStroke,
+                    radius: _kAvatarRadius + _kRingPad + _kRingStroke,
+                  ),
                 ),
               ),
             ),
           ],
-        );
-      }
-      // Renk mantığı:
-      //   - Story yok: soluk düz çember
-      //   - Story var + hepsi görüldü (allSeen): gri çember
-      //   - Story var + görülmemiş var: Instagram gradyan çember
-      final showGradient = hasStories && !allSeen;
-      final showGray = hasStories && allSeen;
-      return Container(
-        padding: const EdgeInsets.all(2.5),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: showGradient
-              ? const LinearGradient(
-                  colors: [Color(0xFFf09433), Color(0xFFbc2a8d)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: showGray
-              ? Colors.grey.shade400
-              : (!hasStories ? color.withValues(alpha: 0.3) : null),
         ),
-        child: child,
       );
+    } else if (hasStories) {
+      content = CustomPaint(
+        painter: _SquareRingPainter(
+          colors: ringColors,
+          pad: _kRingPad,
+          strokeWidth: _kRingStroke,
+          radius: _kAvatarRadius + _kRingPad + _kRingStroke,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(_kRingPad + _kRingStroke),
+          child: avatar,
+        ),
+      );
+    } else {
+      content = avatar;
     }
 
     return GestureDetector(
-      // Yüklenirken basılırsa loading ekranı; aksi halde story viewer.
       onTap: uploading
           ? _openUploadingViewer
           : (hasStories ? widget.onViewStories : null),
@@ -337,35 +485,11 @@ class _MeBubbleState extends State<_MeBubble>
             Stack(
               clipBehavior: Clip.none,
               children: [
-                ring(
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                    ),
-                    child: CircleAvatar(
-                      radius: 27,
-                      backgroundColor: color.withValues(alpha: 0.12),
-                      backgroundImage: bubbleImage != null
-                          ? NetworkImage(bubbleImage)
-                          : null,
-                      child: bubbleImage == null
-                          ? Icon(
-                              hasStories ? Icons.videocam : Icons.person,
-                              color: color,
-                              size: 26,
-                            )
-                          : null,
-                    ),
-                  ),
-                ),
-
-                // "+" rozeti — yüklenirken gizli, ayrı tap target, kamera açar
+                content,
                 if (canAdd && !uploading)
                   Positioned(
-                    right: 0,
-                    bottom: 0,
+                    right: hasStories ? 0 : -2,
+                    bottom: hasStories ? 0 : -2,
                     child: GestureDetector(
                       onTap: widget.onAddStory,
                       behavior: HitTestBehavior.opaque,
@@ -380,20 +504,22 @@ class _MeBubbleState extends State<_MeBubble>
                             width: 1.5,
                           ),
                         ),
-                        child: const Icon(Icons.add,
-                            color: Colors.white, size: 13),
+                        child: const Icon(Icons.add, color: Colors.white, size: 13),
                       ),
                     ),
                   ),
               ],
             ),
             const SizedBox(height: 5),
-            Text(
-              uploading ? 'Uploading…' : 'Me',
-              style: const TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w600),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            SizedBox(
+              width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
+              child: Text(
+                uploading ? 'Uploading…' : 'Me',
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ),
@@ -401,47 +527,6 @@ class _MeBubbleState extends State<_MeBubble>
     );
   }
 }
-
-// ── Yükleniyor yayı: avatar çevresinde dönen gradyan arc ───────────────────────
-
-class _LoadingArcPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    const stroke = 2.8;
-    final rect = Offset.zero & size;
-    final inset = rect.deflate(stroke / 2);
-
-    // Soluk taban halkası
-    final basePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..color = const Color(0x22000000)
-      ..strokeCap = StrokeCap.round;
-    canvas.drawArc(inset, 0, 6.28318, false, basePaint);
-
-    // Dönen gradyan yay (~280°)
-    final sweep = 4.9; // radyan
-    final shader = const SweepGradient(
-      colors: [
-        Color(0x00f09433),
-        Color(0xFFf09433),
-        Color(0xFFbc2a8d),
-      ],
-      stops: [0.0, 0.5, 1.0],
-    ).createShader(rect);
-
-    final arcPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..shader = shader;
-    canvas.drawArc(inset, -1.5708, sweep, false, arcPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _LoadingArcPainter oldDelegate) => false;
-}
-
 
 // ── Story bubble ──────────────────────────────────────────────────────────────
 
@@ -458,6 +543,18 @@ class _StoryBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ringColors = allSeen
+        ? [Colors.grey.shade400, Colors.grey.shade400]
+        : _kBrandRingColors;
+
+    final avatar = _squareAvatar(
+      context: context,
+      imageUrl: group.bubbleImageUrl,
+      placeholder: const Center(
+        child: Icon(Icons.person, color: Colors.white70, size: 24),
+      ),
+    );
+
     return GestureDetector(
       onTap: onTap,
       child: Padding(
@@ -465,47 +562,24 @@ class _StoryBubble extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(2.5),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: allSeen
-                    ? null
-                    : const LinearGradient(
-                        colors: [Color(0xFFf09433), Color(0xFFbc2a8d)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                color: allSeen ? Colors.grey.shade400 : null,
+            CustomPaint(
+              painter: _SquareRingPainter(
+                colors: ringColors,
+                pad: _kRingPad,
+                strokeWidth: _kRingStroke,
+                radius: _kAvatarRadius + _kRingPad + _kRingStroke,
               ),
-              child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                ),
-                child: CircleAvatar(
-                  radius: 27,
-                  backgroundImage: group.bubbleImageUrl != null &&
-                          group.bubbleImageUrl!.isNotEmpty
-                      ? NetworkImage(group.bubbleImageUrl!)
-                      : null,
-                  backgroundColor: Colors.grey.shade700,
-                  child: group.bubbleImageUrl == null ||
-                          group.bubbleImageUrl!.isEmpty
-                      ? const Icon(Icons.person,
-                          color: Colors.white70, size: 24)
-                      : null,
-                ),
+              child: Padding(
+                padding: const EdgeInsets.all(_kRingPad + _kRingStroke),
+                child: avatar,
               ),
             ),
             const SizedBox(height: 5),
             SizedBox(
-              width: 64,
+              width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
               child: Text(
                 group.user.displayName,
-                style: const TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w500),
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,

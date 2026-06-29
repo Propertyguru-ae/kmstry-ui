@@ -67,4 +67,22 @@ class VenueStoryRepository {
       body: {},
     );
   }
+
+  Future<void> deleteStory(String venueId, String storyId) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/venues/$venueId/venue-stories/$storyId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getViewers(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/$venueId/venue-stories/viewers',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final list = data is List ? data : (data['data'] as List? ?? []);
+    return list.cast<Map<String, dynamic>>();
+  }
 }

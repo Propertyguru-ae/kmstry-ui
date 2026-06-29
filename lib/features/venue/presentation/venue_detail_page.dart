@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
@@ -13,8 +14,13 @@ import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_pag
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_tray.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
+import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
+import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
+import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -32,8 +38,10 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   final _checkinRepo = CheckinRepository();
   final _venueContextRepo = VenueContextRepository();
   final _storyRepo = StoryRepository();
+  final _venueStoryRepo = VenueStoryRepository();
   int _storyTrayRefreshCount = 0;
   bool _storyUploading = false;
+  List<VenueStoryItem> _headerStories = [];
   String? _activeCheckinId;
   String? _activeCheckinVenueId;
   String? _activeCheckinVenuePlaceId;
@@ -59,6 +67,66 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _loadVenueDetails();
     _loadEnrichedVenueData();
     _refreshCheckinStats();
+    _loadHeaderStories();
+  }
+
+  Future<void> _loadHeaderStories() async {
+    try {
+      final stories = await _venueStoryRepo.getVenueStories(widget.venue.id);
+      if (!mounted) return;
+      setState(() {
+        _headerStories = stories;
+      });
+    } catch (_) {}
+  }
+
+  void _openStoryViewer() {
+    if (_headerStories.isEmpty) return;
+    final venueId = widget.venue.id;
+    final startIndex = _headerStories.indexWhere((s) => !s.viewedByMe);
+    final initialIndex = startIndex == -1 ? 0 : startIndex;
+    final group = StoryGroup(
+      user: StoryUser(
+        id: 'venue_$venueId',
+        fullName: widget.venue.name,
+        photo: widget.venue.photoUrl.isNotEmpty ? widget.venue.photoUrl : null,
+      ),
+      stories: _headerStories.map((s) => StoryItem(
+        id: s.id,
+        mediaUrl: s.mediaUrl,
+        mediaType: s.mediaType,
+        thumbnailUrl: s.thumbnailUrl,
+        durationSecs: s.durationSecs,
+        expiresAt: s.expiresAt,
+        createdAt: s.createdAt,
+        viewCount: s.viewCount,
+      )).toList(),
+    );
+    Navigator.push<StoryViewerResult>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: [group],
+          venueId: venueId,
+          initialStoryIndex: initialIndex,
+          onClose: (lastIndex, allFinished) {
+            final justViewed = allFinished
+                ? _headerStories.map((s) => s.id).toSet()
+                : { for (int i = 0; i <= lastIndex && i < _headerStories.length; i++) _headerStories[i].id };
+            final cache = VenueStoryViewedCache.instance;
+            justViewed.forEach(cache.mark);
+            if (!mounted) return;
+            setState(() {
+              _headerStories = [
+                for (final s in _headerStories)
+                  (s.viewedByMe || justViewed.contains(s.id)) ? s.copyWith(viewedByMe: true) : s,
+              ];
+            });
+          },
+        ),
+      ),
+    );
   }
 
   /// For Google-backed detail, [Venue.id] may be a Places id while active check-in uses DB UUID.
@@ -794,16 +862,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      widget.venue.photoUrl.isNotEmpty
-                          ? widget.venue.photoUrl
-                          : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                    ),
+                  _VenueDetailAvatarRing(
+                    photoUrl: widget.venue.photoUrl,
+                    hasStories: _headerStories.isNotEmpty,
+                    allSeen: _headerStories.isNotEmpty && _headerStories.every((s) => s.viewedByMe),
+                    onTap: _headerStories.isNotEmpty ? _openStoryViewer : null,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1063,4 +1126,97 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       ),     // Stack
     );
   }
+}
+
+// ─── Venue detail header avatar with story ring (stateless — state lives in parent) ───
+
+class _VenueDetailAvatarRing extends StatelessWidget {
+  final String photoUrl;
+  final bool hasStories;
+  final bool allSeen;
+  final VoidCallback? onTap;
+
+  static const _logoColors = [
+    AppColors.magenta,
+    AppColors.teal,
+    AppColors.blue,
+    AppColors.orange,
+    AppColors.brand,
+  ];
+
+  const _VenueDetailAvatarRing({
+    required this.photoUrl,
+    required this.hasStories,
+    required this.allSeen,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const avatarSize = 40.0;
+    const ringWidth = 2.5;
+    const gap = 2.0;
+    const totalSize = avatarSize + (ringWidth + gap) * 2;
+
+    final photo = photoUrl.isNotEmpty
+        ? photoUrl
+        : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
+
+    final avatar = ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(photo, width: avatarSize, height: avatarSize, fit: BoxFit.cover),
+    );
+
+    if (!hasStories) return avatar;
+
+    final ringColors = allSeen
+        ? [Colors.grey.shade400, Colors.grey.shade500]
+        : _logoColors;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: totalSize,
+        height: totalSize,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              left: ringWidth + gap,
+              top: ringWidth + gap,
+              child: avatar,
+            ),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _DetailRingPainter(colors: ringColors, strokeWidth: ringWidth, radius: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailRingPainter extends CustomPainter {
+  final List<Color> colors;
+  final double strokeWidth;
+  final double radius;
+
+  const _DetailRingPainter({required this.colors, required this.strokeWidth, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect.deflate(strokeWidth / 2), Radius.circular(radius));
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..shader = SweepGradient(colors: [...colors, colors.first]).createShader(rect);
+    canvas.drawRRect(rrect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _DetailRingPainter old) =>
+      old.colors != colors || old.strokeWidth != strokeWidth;
 }

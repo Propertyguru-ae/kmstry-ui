@@ -5,6 +5,7 @@ import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 
 /// Venue owner: live guest list tab.
 /// Shows all currently active check-ins with name, photo, gender, and
@@ -12,8 +13,14 @@ import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart
 class VenueOwnerGuestsPage extends StatefulWidget {
   final String? venueId;
   final bool isPendingClaim;
+  final bool isRejectedClaim;
 
-  const VenueOwnerGuestsPage({super.key, this.venueId, this.isPendingClaim = false});
+  const VenueOwnerGuestsPage({
+    super.key,
+    this.venueId,
+    this.isPendingClaim = false,
+    this.isRejectedClaim = false,
+  });
 
   @override
   State<VenueOwnerGuestsPage> createState() => _VenueOwnerGuestsPageState();
@@ -105,7 +112,9 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
           ),
         ),
       ),
-      body: widget.isPendingClaim
+      body: widget.isRejectedClaim
+          ? _buildRejectedPlaceholder(colors)
+          : widget.isPendingClaim
           ? _buildPendingPlaceholder(colors)
           : _loading
               ? const Center(child: CircularProgressIndicator())
@@ -160,6 +169,66 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                           color: AppColors.blueDark)),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRejectedPlaceholder(ColorScheme colors) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72, height: 72,
+              decoration: BoxDecoration(
+                color: colors.error.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(Icons.people_outline, size: 34, color: colors.error),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Guest Management',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: colors.onSurface),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Your venue ownership claim was not approved. Guest management is unavailable.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13.5, color: colors.onSurface.withValues(alpha: 0.55), height: 1.55),
+            ),
+            const SizedBox(height: 28),
+            GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => VenueClaimRejectedPage(
+                    venueId: widget.venueId ?? '',
+                    venueName: '',
+                  ),
+                ));
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: colors.error.withValues(alpha: 0.08),
+                  border: Border.all(color: colors.error.withValues(alpha: 0.22)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.store_outlined, size: 15, color: colors.error),
+                    const SizedBox(width: 8),
+                    Text('Claim Not Approved — View Details',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colors.error)),
+                  ],
+                ),
               ),
             ),
           ],

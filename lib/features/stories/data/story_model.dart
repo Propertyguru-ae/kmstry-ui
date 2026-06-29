@@ -43,12 +43,16 @@ class StoryItem {
     this.checkinFeaturedPhotoUrl,
     this.venueId,
     this.venueName,
+    this.viewCount = 0,
+    this.viewedByMe = false,
     this.isUploadingPlaceholder = false,
   });
 
   final String? checkinFeaturedPhotoUrl;
   final String? venueId;
   final String? venueName;
+  final int viewCount;
+  final bool viewedByMe;
 
   /// Henüz yüklenmekte olan story için viewer'da "Loading…" gösteren placeholder.
   final bool isUploadingPlaceholder;
@@ -92,6 +96,7 @@ class StoryItem {
       checkinFeaturedPhotoUrl: featuredPhotoUrl,
       venueId: venueMap?['id'] as String?,
       venueName: venueMap?['name'] as String?,
+      viewedByMe: (j['viewed_by_me'] as bool?) ?? false,
     );
   }
 }
