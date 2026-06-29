@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
@@ -30,11 +31,16 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   bool _loading = true;
   String? _error;
   List<VenueMember> _members = [];
+  int _roleCount = 0;
+
+  bool _pendingExpanded = true;
+  bool _pastExpanded = false;
 
   bool get _isOwner => widget.callerRole == VenueMemberRole.owner;
-  // Only OWNER can add / edit / remove members and manage roles.
-  bool get _canManage => _isOwner;
-  bool get _canAccessPermissions => _isOwner;
+  bool get _canManage => _isOwner || VenueSession.instance.can(VenuePermission.memberManage);
+  bool get _canManageRoles => _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
+  bool get _canSeePending => _canManage;
+  bool get _canAccessPermissions => _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
 
   @override
   void initState() {
@@ -48,10 +54,14 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       _error = null;
     });
     try {
-      final members = await _repo.getMembers(widget.venueId);
+      final results = await Future.wait([
+        _repo.getMembers(widget.venueId),
+        _repo.getRoles(widget.venueId),
+      ]);
       if (!mounted) return;
       setState(() {
-        _members = members;
+        _members = results[0] as List<VenueMember>;
+        _roleCount = (results[1] as List<VenueRole>).length;
         _loading = false;
       });
     } catch (e) {
@@ -63,12 +73,39 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     }
   }
 
-  Future<void> _openAddMember() async {
-    final added = await showModalBottomSheet<bool>(
+  Future<void> _cleanPastInvites() async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _AddMemberSheet(venueId: widget.venueId, repo: _repo),
+      builder: (_) => AlertDialog(
+        title: const Text('Past invites temizlensin mi?'),
+        content: const Text('Reddedilen, iptal edilen ve süresi dolan davetler listeden kaldırılacak.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('İptal')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Temizle', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _repo.cleanPastInvites(widget.venueId);
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Temizlenemedi: $e')),
+      );
+    }
+  }
+
+  Future<void> _openAddMember() async {
+    final added = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VenueAddMemberPage(venueId: widget.venueId, repo: _repo),
+      ),
     );
     if (added == true) _load();
   }
@@ -150,6 +187,182 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     if (edited == true) _load();
   }
 
+  Future<void> _cancelInvite(VenueMember member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel Invite'),
+        content: Text(
+            'Cancel the pending invite for ${member.user.displayName}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style:
+                TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('Cancel Invite'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _repo.cancelMemberInvite(widget.venueId, member.id);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to cancel invite: $e')),
+      );
+    }
+  }
+
+  Future<void> _resendInvite(VenueMember member) async {
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: colors.onSurface.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                width: 56, height: 56,
+                decoration: BoxDecoration(
+                  color: _TeamColors.mavi.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.send_outlined, color: _TeamColors.mavi, size: 26),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Daveti Yeniden Gönder',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${member.user.displayName} adlı kullanıcıya davet yeniden gönderilecek.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: colors.onSurface.withValues(alpha: 0.6)),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _TeamColors.mavi,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Text('Gönder', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text('İptal', style: TextStyle(color: colors.onSurface.withValues(alpha: 0.5))),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _repo.addMember(widget.venueId, member.user.id, member.role);
+      if (!mounted) return;
+      await showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) {
+          final colors = Theme.of(ctx).colorScheme;
+          final isDark = Theme.of(ctx).brightness == Brightness.dark;
+          return Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.onSurface.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  width: 56, height: 56,
+                  decoration: BoxDecoration(
+                    color: _TeamColors.turkuaz.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_circle_outline_rounded, color: _TeamColors.turkuaz, size: 28),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Davet Gönderildi',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${member.user.displayName} adlı kullanıcıya davet başarıyla yeniden gönderildi.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: colors.onSurface.withValues(alpha: 0.6)),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _TeamColors.turkuaz,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: const Text('Tamam', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Davet gönderilemedi: $e')),
+      );
+    }
+  }
+
   Future<void> _removeMember(VenueMember member) async {
     final isStaff =
         member.user.isStaff && member.user.staffVenueId == widget.venueId;
@@ -206,32 +419,41 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
+    final bg = isDark ? const Color(0xFF06091A) : Colors.white;
 
     return Scaffold(
+      backgroundColor: bg,
       appBar: AppBar(
-        title: const Text('Team Management'),
-        actions: [
-          if (_canAccessPermissions)
-            IconButton(
-              icon: const Icon(Icons.tune_outlined),
-              tooltip: 'Permission Matrix',
-              onPressed: _openPermissions,
-            ),
-        ],
+        backgroundColor: bg,
+        elevation: 0,
+        automaticallyImplyLeading: false,
+        leading: _NavBtn(
+          icon: Icons.arrow_back_ios_new_rounded,
+          onTap: () => Navigator.pop(context),
+          isDark: isDark,
+        ),
+        title: Text(
+          _canManage || _canManageRoles ? 'Team Management' : 'Team',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+        ),
+        centerTitle: true,
+        actions: const [],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200],
+            height: 1,
+          ),
+        ),
       ),
-      floatingActionButton: _canManage
-          ? FloatingActionButton.extended(
-              onPressed: _openAddMember,
-              icon: const Icon(Icons.person_add_outlined),
-              label: const Text('Add Member'),
-            )
-          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? _buildError(colors)
-              : _buildList(colors),
+              : _buildList(colors, isDark),
     );
   }
 
@@ -253,233 +475,721 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     );
   }
 
-  Widget _buildList(ColorScheme colors) {
+  Widget _buildList(ColorScheme colors, bool isDark) {
+    final activeMembers  = _members.where((m) => m.status == VenueMemberStatus.active).toList();
+    final pendingMembers = _members.where((m) => m.status == VenueMemberStatus.pending).toList();
+    final terminalMembers = _members.where((m) => m.status.isTerminal).toList();
+    final roleCount = _roleCount;
+
     if (_members.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.group_outlined,
-                  size: 52, color: colors.onSurface.withValues(alpha: 0.3)),
-              const SizedBox(height: 16),
-              Text(
-                'No team members yet.',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: colors.onSurface.withValues(alpha: 0.5),
+      return Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.group_outlined, size: 52, color: colors.onSurface.withValues(alpha: 0.3)),
+                    const SizedBox(height: 16),
+                    Text('No team members yet.',
+                        style: TextStyle(fontSize: 16, color: colors.onSurface.withValues(alpha: 0.5))),
+                    if (_canManage) ...[
+                      const SizedBox(height: 12),
+                      Text('Use "Add Member" to invite staff.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 13, color: colors.onSurface.withValues(alpha: 0.4))),
+                    ],
+                  ],
                 ),
               ),
-              if (_canManage) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Use "Add Member" to invite staff.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colors.onSurface.withValues(alpha: 0.4),
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
-        ),
+          if (_canManage) _buildAddMemberBar(colors, isDark),
+        ],
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        itemCount: _members.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (_, i) => _buildMemberCard(_members[i], colors),
+    return Column(
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _load,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              children: [
+                // ── Stats strip ──────────────────────────────────────────
+                _StatsStrip(
+                  active: activeMembers.length,
+                  pending: pendingMembers.length,
+                  roles: roleCount,
+                  isDark: isDark,
+                  onRolesTap: _canAccessPermissions ? _openPermissions : null,
+                ),
+                const SizedBox(height: 20),
+
+                // ── Active members ───────────────────────────────────────
+                if (activeMembers.isNotEmpty) ...[
+                  _SectionLabel(
+                    label: 'Team Members',
+                    badge: activeMembers.length,
+                    badgeColor: _TeamColors.turkuaz,
+                    badgeLabel: '${activeMembers.length} active',
+                    colors: colors,
+                  ),
+                  const SizedBox(height: 10),
+                  ...activeMembers.map((m) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _buildMemberCard(m, colors, isDark),
+                      )),
+                ],
+
+                // ── Pending invites (collapsible) ────────────────────────
+                if (_canSeePending) ...[
+                  const SizedBox(height: 16),
+                  _CollapsibleSection(
+                    label: 'Pending Invites',
+                    count: pendingMembers.length,
+                    badgeColor: _TeamColors.turuncu,
+                    expanded: _pendingExpanded,
+                    colors: colors,
+                    isDark: isDark,
+                    onToggle: () => setState(() => _pendingExpanded = !_pendingExpanded),
+                    emptyText: 'No pending invites',
+                    children: pendingMembers.map((m) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildPendingCard(m, colors, isDark),
+                    )).toList(),
+                  ),
+                ],
+
+                // ── Past invites (collapsible) ───────────────────────────
+                if (_isOwner || _canManage) ...[
+                  const SizedBox(height: 8),
+                  _CollapsibleSection(
+                    label: 'Past Invites',
+                    count: terminalMembers.length,
+                    badgeColor: colors.onSurface.withValues(alpha: 0.4),
+                    expanded: _pastExpanded,
+                    colors: colors,
+                    isDark: isDark,
+                    onToggle: () => setState(() => _pastExpanded = !_pastExpanded),
+                    emptyText: 'No past invites',
+                    trailing: terminalMembers.isNotEmpty
+                        ? TextButton.icon(
+                            onPressed: _cleanPastInvites,
+                            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                            label: const Text('Clean'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: colors.error,
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                          )
+                        : null,
+                    children: terminalMembers.map((m) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildTerminalCard(m, colors, isDark),
+                    )).toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_canManage) _buildAddMemberBar(colors, isDark),
+      ],
+    );
+  }
+
+  Widget _buildAddMemberBar(ColorScheme colors, bool isDark) {
+    final bg = isDark ? const Color(0xFF06091A) : const Color(0xFFF7F8FA);
+    return Container(
+      color: bg,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: GestureDetector(
+              onTap: _openAddMember,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.person_add_outlined, size: 18,
+                        color: colors.onSurface.withValues(alpha: 0.8)),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Add Member',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: colors.onSurface.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: _openAddMember,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.link_rounded, size: 14,
+                    color: colors.onSurface.withValues(alpha: 0.4)),
+                const SizedBox(width: 5),
+                Text(
+                  'Share invite link',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colors.onSurface.withValues(alpha: 0.45),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildMemberCard(VenueMember member, ColorScheme colors) {
+  Widget _buildMemberCard(VenueMember member, ColorScheme colors, bool isDark) {
     final isCurrentOwner = member.role == VenueMemberRole.owner;
     final canManage = _canManage && !isCurrentOwner;
-    final isStaffAccount =
-        member.user.isStaff && member.user.staffVenueId == widget.venueId;
+    final isStaffAccount = member.user.isStaff && member.user.staffVenueId == widget.venueId;
+    final roleLabel = (member.venueRoleName ?? member.role.label).toUpperCase();
+    final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
 
     return Container(
       decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.outline.withValues(alpha: 0.15)),
+        color: isDark ? const Color(0xFF0B1322) : colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outline.withValues(alpha: isDark ? 0.10 : 0.12)),
       ),
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        leading: _Avatar(
-          photo: member.user.photo,
-          displayName: member.user.displayName,
-          colors: colors,
-        ),
-        title: Text(
-          member.user.displayName,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-        subtitle: member.user.username != null
-            ? Text(
-                '@${member.user.username}',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: colors.onSurface.withValues(alpha: 0.5)),
-              )
-            : null,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _RoleBadge(
-              role: member.role,
-              customName: member.venueRoleName,
-              colors: colors,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(roleLabel,
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
+                        color: roleColor, letterSpacing: 0.8)),
+                const SizedBox(height: 2),
+                Text(member.user.displayName,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+                        color: colors.onSurface)),
+                if (member.user.username != null)
+                  Text('@${member.user.username}',
+                      style: TextStyle(fontSize: 12,
+                          color: colors.onSurface.withValues(alpha: 0.45))),
+              ],
             ),
-            if (canManage) ...[
-              const SizedBox(width: 6),
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert,
-                    size: 20,
-                    color: colors.onSurface.withValues(alpha: 0.5)),
-                itemBuilder: (_) => [
-                  // Only owner can edit staff account credentials
-                  if (isStaffAccount && _isOwner)
-                    const PopupMenuItem(
-                      value: 'edit',
-                      child: Row(
-                        children: [
-                          Icon(Icons.edit_outlined, size: 18),
-                          SizedBox(width: 10),
-                          Text('Edit'),
-                        ],
-                      ),
-                    ),
-                  const PopupMenuItem(
-                    value: 'role',
-                    child: Row(
-                      children: [
-                        Icon(Icons.swap_horiz_outlined, size: 18),
-                        SizedBox(width: 10),
-                        Text('Change Role'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'remove',
-                    child: Row(
-                      children: [
-                        Icon(
-                          isStaffAccount
-                              ? Icons.delete_outline
-                              : Icons.person_remove_outlined,
-                          size: 18,
-                          color: Colors.red,
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          isStaffAccount ? 'Delete' : 'Remove',
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                onSelected: (action) {
-                  if (action == 'edit') _editStaff(member);
-                  if (action == 'role') _changeRole(member);
-                  if (action == 'remove') _removeMember(member);
-                },
+          ),
+          if (canManage)
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, size: 20,
+                  color: colors.onSurface.withValues(alpha: 0.45)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              itemBuilder: (_) => [
+                if (isStaffAccount && _isOwner)
+                  const PopupMenuItem(value: 'edit',
+                      child: Row(children: [
+                        Icon(Icons.edit_outlined, size: 18), SizedBox(width: 10), Text('Edit'),
+                      ])),
+                const PopupMenuItem(value: 'role',
+                    child: Row(children: [
+                      Icon(Icons.manage_accounts_outlined, size: 18), SizedBox(width: 10), Text('Change Role'),
+                    ])),
+                PopupMenuItem(value: 'remove',
+                    child: Row(children: [
+                      Icon(isStaffAccount ? Icons.delete_outline : Icons.person_remove_outlined,
+                          size: 18, color: Colors.red),
+                      const SizedBox(width: 10),
+                      Text(isStaffAccount ? 'Delete' : 'Remove',
+                          style: const TextStyle(color: Colors.red)),
+                    ])),
+              ],
+              onSelected: (action) {
+                if (action == 'edit') _editStaff(member);
+                if (action == 'role') _changeRole(member);
+                if (action == 'remove') _removeMember(member);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingCard(VenueMember member, ColorScheme colors, bool isDark) {
+    final roleLabel = (member.venueRoleName ?? member.role.label).toUpperCase();
+    final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0B1322) : colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _TeamColors.turuncu.withValues(alpha: 0.25)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(roleLabel,
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
+                        color: roleColor, letterSpacing: 0.8)),
+                const SizedBox(height: 2),
+                Text(member.user.displayName,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+                        color: colors.onSurface)),
+                if (member.user.username != null)
+                  Text('@${member.user.username}',
+                      style: TextStyle(fontSize: 12,
+                          color: colors.onSurface.withValues(alpha: 0.45))),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _TeamColors.turuncu.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 6, height: 6,
+                        decoration: const BoxDecoration(
+                            color: _TeamColors.turuncu, shape: BoxShape.circle)),
+                    const SizedBox(width: 5),
+                    const Text('Awaiting',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                            color: _TeamColors.turuncu)),
+                  ],
+                ),
               ),
+              if (_canManage)
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert, size: 20,
+                      color: colors.onSurface.withValues(alpha: 0.45)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'cancel',
+                        child: Row(children: [
+                          Icon(Icons.cancel_outlined, size: 18, color: _TeamColors.turuncu),
+                          SizedBox(width: 10),
+                          Text('Cancel Invite',
+                              style: TextStyle(color: _TeamColors.turuncu)),
+                        ])),
+                  ],
+                  onSelected: (action) {
+                    if (action == 'cancel') _cancelInvite(member);
+                  },
+                ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTerminalCard(VenueMember member, ColorScheme colors, bool isDark) {
+    Color statusColor;
+    switch (member.status) {
+      case VenueMemberStatus.rejected: statusColor = Colors.red;
+      case VenueMemberStatus.expired: statusColor = colors.onSurface.withValues(alpha: 0.4);
+      case VenueMemberStatus.cancelled: statusColor = _TeamColors.turuncu;
+      default: statusColor = colors.onSurface.withValues(alpha: 0.4);
+    }
+    final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
+
+    return Opacity(
+      opacity: 0.55,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0B1322) : colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.outline.withValues(alpha: 0.08)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(member.user.displayName,
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.onSurface)),
+                  if (member.user.username != null)
+                    Text('@${member.user.username}',
+                        style: TextStyle(fontSize: 12, color: colors.onSurface.withValues(alpha: 0.45))),
+                ],
+              ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: statusColor.withValues(alpha: 0.25)),
+                  ),
+                  child: Text(member.status.label,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusColor)),
+                ),
+                if (_canManage)
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, size: 20,
+                        color: colors.onSurface.withValues(alpha: 0.4)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'resend',
+                          child: Row(children: [
+                            Icon(Icons.send_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('Re-invite'),
+                          ])),
+                    ],
+                    onSelected: (action) {
+                      if (action == 'resend') _resendInvite(member);
+                    },
+                  ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
+} // end _VenueTeamPageState
+
+// ─── Brand colors ─────────────────────────────────────────────────────────────
+
+class _TeamColors {
+  static const magenta = Color(0xFFE020D8);
+  static const turkuaz = Color(0xFF1FD9A8);
+  static const mavi    = Color(0xFF1A9FE8);
+  static const turuncu = Color(0xFFF08838);
+  static const koruMor = Color(0xFF3D1F8C);
+
+  static Color forRole(VenueMemberRole role, String? customName) {
+    if (customName != null) return turuncu;
+    return switch (role) {
+      VenueMemberRole.owner => magenta,
+      VenueMemberRole.admin => turkuaz,
+      VenueMemberRole.staff => mavi,
+    };
+  }
 }
 
-// ─── Alt bileşenler ───────────────────────────────────────────────────────────
+// ─── Stats strip ──────────────────────────────────────────────────────────────
 
-class _Avatar extends StatelessWidget {
-  final String? photo;
-  final String displayName;
-  final ColorScheme colors;
+class _StatsStrip extends StatelessWidget {
+  final int active;
+  final int pending;
+  final int roles;
+  final bool isDark;
+  final VoidCallback? onRolesTap;
 
-  const _Avatar({
-    required this.photo,
-    required this.displayName,
-    required this.colors,
+  const _StatsStrip({
+    required this.active,
+    required this.pending,
+    required this.roles,
+    required this.isDark,
+    this.onRolesTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (photo != null && photo!.isNotEmpty) {
-      return CircleAvatar(
-        radius: 22,
-        backgroundImage: NetworkImage(photo!),
-        onBackgroundImageError: (_, _) {},
-      );
-    }
-    return CircleAvatar(
-      radius: 22,
-      backgroundColor: colors.primary.withValues(alpha: 0.12),
-      child: Text(
-        displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-        style: TextStyle(
-          color: colors.primary,
-          fontWeight: FontWeight.w700,
-          fontSize: 16,
+    final bg = isDark ? const Color(0xFF0B1322) : const Color(0xFFF5F7FA);
+    return Row(
+      children: [
+        _StatCard(value: '$active',  label: 'Active',  color: _TeamColors.turkuaz, bg: bg),
+        const SizedBox(width: 10),
+        _StatCard(value: '$pending', label: 'Pending', color: _TeamColors.turuncu, bg: bg),
+        const SizedBox(width: 10),
+        _StatCard(value: '$roles',   label: 'Roles',   color: _TeamColors.magenta, bg: bg, onTap: onRolesTap),
+      ],
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  final Color bg;
+  final VoidCallback? onTap;
+
+  const _StatCard({required this.value, required this.label, required this.color, required this.bg, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(14),
+            border: onTap != null
+                ? Border.all(color: color.withValues(alpha: 0.25))
+                : null,
+          ),
+          child: Column(
+            children: [
+              Text(value,
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: color)),
+              const SizedBox(height: 3),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(label,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500,
+                          color: colors.onSurface.withValues(alpha: 0.45))),
+                  if (onTap != null) ...[
+                    const SizedBox(width: 3),
+                    Icon(Icons.chevron_right_rounded, size: 13,
+                        color: colors.onSurface.withValues(alpha: 0.35)),
+                  ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _RoleBadge extends StatelessWidget {
-  final VenueMemberRole role;
-  final String? customName;
-  final ColorScheme colors;
+// ─── Section label ────────────────────────────────────────────────────────────
 
-  const _RoleBadge({
-    required this.role,
-    this.customName,
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final ColorScheme colors;
+  final int? badge;
+  final Color? badgeColor;
+  final String? badgeLabel;
+
+  const _SectionLabel({
+    required this.label,
     required this.colors,
+    this.badge,
+    this.badgeColor,
+    this.badgeLabel,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isCustom = customName != null;
-    final (bg, fg) = isCustom
-        ? (colors.tertiary.withValues(alpha: 0.15), colors.tertiary)
-        : switch (role) {
-            VenueMemberRole.owner => (colors.primary, colors.onPrimary),
-            VenueMemberRole.admin => (
-                colors.secondary.withValues(alpha: 0.15),
-                colors.secondary
-              ),
-            VenueMemberRole.staff => (
-                colors.onSurface.withValues(alpha: 0.08),
-                colors.onSurface.withValues(alpha: 0.6)
-              ),
-          };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        customName ?? role.label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: fg,
+    return Row(
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+              letterSpacing: 1.1, color: colors.onSurface.withValues(alpha: 0.45)),
         ),
+        const Spacer(),
+        if (badge != null && badgeLabel != null)
+          Text(
+            badgeLabel!,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                color: badgeColor ?? colors.onSurface.withValues(alpha: 0.5)),
+          ),
+      ],
+    );
+  }
+}
+
+// ─── Collapsible section ──────────────────────────────────────────────────────
+
+class _CollapsibleSection extends StatelessWidget {
+  final String label;
+  final int count;
+  final Color badgeColor;
+  final bool expanded;
+  final ColorScheme colors;
+  final bool isDark;
+  final VoidCallback onToggle;
+  final String emptyText;
+  final List<Widget> children;
+  final Widget? trailing;
+
+  const _CollapsibleSection({
+    required this.label,
+    required this.count,
+    required this.badgeColor,
+    required this.expanded,
+    required this.colors,
+    required this.isDark,
+    required this.onToggle,
+    required this.emptyText,
+    required this.children,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: onToggle,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                      letterSpacing: 1.1, color: colors.onSurface.withValues(alpha: 0.45)),
+                ),
+                const SizedBox(width: 8),
+                if (count > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '$count',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: badgeColor),
+                    ),
+                  ),
+                const Spacer(),
+                if (trailing != null) trailing!,
+                AnimatedRotation(
+                  turns: expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(Icons.keyboard_arrow_down_rounded,
+                      size: 20, color: colors.onSurface.withValues(alpha: 0.4)),
+                ),
+              ],
+            ),
+          ),
+        ),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 220),
+          crossFadeState: expanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+          firstChild: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: count == 0
+                ? [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(emptyText,
+                          style: TextStyle(fontSize: 13,
+                              color: colors.onSurface.withValues(alpha: 0.35))),
+                    ),
+                  ]
+                : [const SizedBox(height: 10), ...children],
+          ),
+          secondChild: const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Team avatar (rounded square) ────────────────────────────────────────────
+
+class _TeamAvatar extends StatelessWidget {
+  final String displayName;
+  final String? photo;
+  final Color color;
+
+  const _TeamAvatar({required this.displayName, required this.photo, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+
+    if (photo != null && photo!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(photo!, width: 46, height: 46, fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _InitialAvatar(initial: initial, color: color, isDark: isDark)),
+      );
+    }
+    return _InitialAvatar(initial: initial, color: color, isDark: isDark);
+  }
+}
+
+class _InitialAvatar extends StatelessWidget {
+  final String initial;
+  final Color color;
+  final bool isDark;
+
+  const _InitialAvatar({required this.initial, required this.color, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.25 : 0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Text(initial,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
+      ),
+    );
+  }
+}
+
+// ─── AppBar nav button ────────────────────────────────────────────────────────
+
+class _NavBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isDark;
+
+  const _NavBtn({required this.icon, required this.onTap, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8);
+    final fg = isDark ? Colors.white.withValues(alpha: 0.85) : const Color(0xFF0B1322);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.all(8),
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+        child: Icon(icon, size: 18, color: fg),
       ),
     );
   }
@@ -487,165 +1197,63 @@ class _RoleBadge extends StatelessWidget {
 
 // ─── Üye Ekleme Bottom Sheet (iki sekme) ─────────────────────────────────────
 
-class _AddMemberSheet extends StatefulWidget {
+// ─── Add Member Page ──────────────────────────────────────────────────────────
+
+class VenueAddMemberPage extends StatefulWidget {
   final String venueId;
   final VenueMemberRepository repo;
 
-  const _AddMemberSheet({required this.venueId, required this.repo});
+  const VenueAddMemberPage({super.key, required this.venueId, required this.repo});
 
   @override
-  State<_AddMemberSheet> createState() => _AddMemberSheetState();
+  State<VenueAddMemberPage> createState() => _VenueAddMemberPageState();
 }
 
-class _AddMemberSheetState extends State<_AddMemberSheet>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
-  List<VenueRole>? _roles;
+class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
+  Timer? _debounce;
+
+  List<VenueRole> _roles = [];
   bool _loadingRoles = true;
+
+  bool _searching = false;
+  List<UserSearchResult> _results = [];
+  UserSearchResult? _selected;
+  VenueRole? _selectedRole;
+  bool _adding = false;
+  bool _roleDropdownOpen = false;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
-    _tabs.addListener(() => setState(() {}));
     _loadRoles();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    _debounce?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadRoles() async {
     try {
       final roles = await widget.repo.getRoles(widget.venueId);
       if (!mounted) return;
+      final filtered = roles.where((r) => !r.isOwnerRole).toList();
       setState(() {
-        _roles = roles.where((r) => !r.isOwnerRole).toList();
+        _roles = filtered;
+        _selectedRole = filtered.isNotEmpty
+            ? filtered.firstWhere((r) => r.id == 'ADMIN', orElse: () => filtered.first)
+            : null;
         _loadingRoles = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingRoles = false);
     }
-  }
-
-  @override
-  void dispose() {
-    _tabs.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: TabBar(
-                controller: _tabs,
-                dividerColor: Colors.transparent,
-                labelColor: colors.primary,
-                unselectedLabelColor: colors.onSurface.withValues(alpha: 0.5),
-                indicatorSize: TabBarIndicatorSize.tab,
-                tabs: const [
-                  Tab(text: 'Search User'),
-                  Tab(text: 'Invite Link'),
-                ],
-              ),
-            ),
-            Flexible(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 440),
-                child: _loadingRoles
-                  ? const Center(child: CircularProgressIndicator())
-                  : TabBarView(
-                      controller: _tabs,
-                      children: [
-                        _ExistingUserTab(
-                          venueId: widget.venueId,
-                          repo: widget.repo,
-                          venueRoles: _roles ?? [],
-                        ),
-                        _InviteLinkTab(
-                          venueId: widget.venueId,
-                          venueRoles: _roles ?? [],
-                        ),
-                      ],
-                    ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─── Sekme 1: Mevcut kullanıcı ara ───────────────────────────────────────────
-
-class _ExistingUserTab extends StatefulWidget {
-  final String venueId;
-  final VenueMemberRepository repo;
-  final List<VenueRole> venueRoles;
-
-  const _ExistingUserTab({
-    required this.venueId,
-    required this.repo,
-    required this.venueRoles,
-  });
-
-  @override
-  State<_ExistingUserTab> createState() => _ExistingUserTabState();
-}
-
-class _ExistingUserTabState extends State<_ExistingUserTab> {
-  final _searchCtrl = TextEditingController();
-  Timer? _debounce;
-
-  bool _searching = false;
-  List<UserSearchResult> _results = [];
-  UserSearchResult? _selected;
-  // Selected role: either a system VenueRole (id = 'ADMIN'/'STAFF') or custom
-  VenueRole? _selectedVenueRole;
-  bool _adding = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Default to Admin role
-    if (widget.venueRoles.isNotEmpty) {
-      _selectedVenueRole = widget.venueRoles.firstWhere(
-        (r) => r.id == 'ADMIN',
-        orElse: () => widget.venueRoles.first,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _searchCtrl.dispose();
-    _debounce?.cancel();
-    super.dispose();
   }
 
   void _onSearchChanged(String v) {
@@ -662,10 +1270,7 @@ class _ExistingUserTabState extends State<_ExistingUserTab> {
     try {
       final r = await widget.repo.searchUsers(widget.venueId, q);
       if (!mounted) return;
-      setState(() {
-        _results = r;
-        _searching = false;
-      });
+      setState(() { _results = r; _searching = false; });
     } catch (_) {
       if (!mounted) return;
       setState(() => _searching = false);
@@ -674,169 +1279,364 @@ class _ExistingUserTabState extends State<_ExistingUserTab> {
 
   Future<void> _add() async {
     final user = _selected;
-    final venueRole = _selectedVenueRole;
-    if (user == null || venueRole == null || _adding) return;
+    final role = _selectedRole;
+    if (user == null || role == null || _adding) return;
     setState(() => _adding = true);
     try {
-      // System roles → pass enum; custom roles → pass STAFF enum + venueRoleId
-      final enumRole = venueRole.id == 'ADMIN'
-          ? VenueMemberRole.admin
-          : VenueMemberRole.staff;
-      final customId =
-          (venueRole.id != 'ADMIN' && venueRole.id != 'STAFF')
-              ? venueRole.id
-              : null;
-
-      await widget.repo.addMember(
-        widget.venueId,
-        user.id,
-        enumRole,
-        venueRoleId: customId,
-      );
+      final enumRole = role.id == 'ADMIN' ? VenueMemberRole.admin : VenueMemberRole.staff;
+      final customId = (role.id != 'ADMIN' && role.id != 'STAFF') ? role.id : null;
+      await widget.repo.addMember(widget.venueId, user.id, enumRole, venueRoleId: customId);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _adding = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add: $e'),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text('Failed to add: $e'), behavior: SnackBarBehavior.floating),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF0B1322) : theme.scaffoldBackgroundColor;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: _searchCtrl,
-            onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              labelText: 'Search by username',
-              hintText: 'e.g. john',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searching
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : null,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-          if (_results.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              constraints: const BoxConstraints(maxHeight: 160),
-              decoration: BoxDecoration(
-                border: Border.all(
-                    color: colors.outline.withValues(alpha: 0.2)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: _results.length,
-                separatorBuilder: (_, _) => Divider(
-                  height: 1,
-                  color: colors.outline.withValues(alpha: 0.15),
-                ),
-                itemBuilder: (_, i) {
-                  final u = _results[i];
-                  final isSelected = _selected?.id == u.id;
-                  return ListTile(
-                    dense: true,
-                    leading: CircleAvatar(
-                      radius: 16,
-                      backgroundColor:
-                          colors.primary.withValues(alpha: 0.1),
-                      backgroundImage:
-                          u.photo != null && u.photo!.isNotEmpty
-                              ? NetworkImage(u.photo!)
-                              : null,
-                      child: u.photo == null || u.photo!.isEmpty
-                          ? Text(
-                              u.displayName.isNotEmpty
-                                  ? u.displayName[0].toUpperCase()
-                                  : '?',
-                              style: TextStyle(
-                                  color: colors.primary, fontSize: 12),
-                            )
-                          : null,
-                    ),
-                    title: Text(u.displayName,
-                        style: const TextStyle(fontSize: 13)),
-                    subtitle: u.username != null
-                        ? Text('@${u.username}',
-                            style: const TextStyle(fontSize: 11))
-                        : null,
-                    selected: isSelected,
-                    selectedTileColor:
-                        colors.primary.withValues(alpha: 0.08),
-                    onTap: () => setState(() => _selected = u),
-                    trailing: isSelected
-                        ? Icon(Icons.check_circle,
-                            color: colors.primary, size: 18)
-                        : null,
-                  );
-                },
-              ),
-            ),
-          ],
-          if (_selected != null && widget.venueRoles.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _VenueRolePicker(
-              roles: widget.venueRoles,
-              selected: _selectedVenueRole,
-              onChanged: (r) => setState(() => _selectedVenueRole = r),
-            ),
-          ],
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _selected == null || _adding ? null : _add,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              child: _adding
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text(
-                      _selected == null
-                          ? 'Select a user first'
-                          : 'Add ${_selected!.displayName} as ${_selectedVenueRole?.name ?? ''}',
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w700),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-            ),
-          ),
-        ],
+    return Scaffold(
+      backgroundColor: bg,
+      appBar: AppBar(
+        backgroundColor: bg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: _NavBtn(
+          icon: Icons.arrow_back_ios_new_rounded,
+          onTap: () => Navigator.pop(context),
+          isDark: isDark,
+        ),
+        title: const Text('Add Member',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        centerTitle: true,
       ),
+      body: _loadingRoles
+          ? const Center(child: CircularProgressIndicator(color: _TeamColors.turkuaz))
+          : Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ── Search ─────────────────────────────────────
+                        TextField(
+                          controller: _searchCtrl,
+                          focusNode: _searchFocus,
+                          onChanged: _onSearchChanged,
+                          autofocus: true,
+                          decoration: InputDecoration(
+                            hintText: 'Search by username…',
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            suffixIcon: _searching
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(width: 16, height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2, color: _TeamColors.turkuaz)),
+                                  )
+                                : (_searchCtrl.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.close, size: 18),
+                                        onPressed: () => setState(() {
+                                          _searchCtrl.clear();
+                                          _results = [];
+                                          _selected = null;
+                                        }),
+                                      )
+                                    : null),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: colors.outline.withValues(alpha: 0.3)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(color: _TeamColors.turkuaz, width: 1.5),
+                            ),
+                          ),
+                        ),
+
+                        // ── Search results ──────────────────────────────
+                        if (_results.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                              border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              padding: EdgeInsets.zero,
+                              itemCount: _results.length,
+                              separatorBuilder: (_, __) =>
+                                  Divider(height: 1, color: colors.outline.withValues(alpha: 0.12)),
+                              itemBuilder: (_, i) {
+                                final u = _results[i];
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                  leading: CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.14),
+                                    backgroundImage: u.photo != null && u.photo!.isNotEmpty
+                                        ? NetworkImage(u.photo!) : null,
+                                    child: u.photo == null || u.photo!.isEmpty
+                                        ? Text(
+                                            u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
+                                            style: const TextStyle(color: _TeamColors.turkuaz,
+                                                fontSize: 13, fontWeight: FontWeight.w700),
+                                          )
+                                        : null,
+                                  ),
+                                  title: Text(u.displayName,
+                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                                  subtitle: u.username != null
+                                      ? Text('@${u.username}',
+                                          style: TextStyle(fontSize: 12,
+                                              color: colors.onSurface.withValues(alpha: 0.5)))
+                                      : null,
+                                  onTap: () {
+                                    _searchFocus.unfocus();
+                                    setState(() {
+                                      _selected = u;
+                                      _results = [];
+                                      _searchCtrl.clear();
+                                    });
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+
+                        // ── Selected user card ──────────────────────────
+                        if (_selected != null && _results.isEmpty) ...[
+                          const SizedBox(height: 20),
+                          Text('Selected User',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                                  color: colors.onSurface.withValues(alpha: 0.5))),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: _TeamColors.turkuaz.withValues(alpha: 0.08),
+                              border: Border.all(color: _TeamColors.turkuaz.withValues(alpha: 0.28)),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 20,
+                                  backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.2),
+                                  backgroundImage: _selected!.photo != null && _selected!.photo!.isNotEmpty
+                                      ? NetworkImage(_selected!.photo!) : null,
+                                  child: _selected!.photo == null || _selected!.photo!.isEmpty
+                                      ? Text(
+                                          _selected!.displayName.isNotEmpty
+                                              ? _selected!.displayName[0].toUpperCase() : '?',
+                                          style: const TextStyle(color: _TeamColors.turkuaz,
+                                              fontSize: 15, fontWeight: FontWeight.w800),
+                                        )
+                                      : null,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(_selected!.displayName,
+                                          style: const TextStyle(fontSize: 14,
+                                              fontWeight: FontWeight.w700, color: _TeamColors.turkuaz)),
+                                      if (_selected!.username != null)
+                                        Text('@${_selected!.username}',
+                                            style: TextStyle(fontSize: 12,
+                                                color: _TeamColors.turkuaz.withValues(alpha: 0.65))),
+                                    ],
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () => setState(() => _selected = null),
+                                  child: Icon(Icons.close_rounded, size: 18,
+                                      color: _TeamColors.turkuaz.withValues(alpha: 0.6)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+
+                        // ── Role selector ───────────────────────────────
+                        if (_roles.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          Text('Role',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                                  color: colors.onSurface.withValues(alpha: 0.5))),
+                          const SizedBox(height: 8),
+                          // ── Role field ──────────────────────────────
+                          GestureDetector(
+                            onTap: () => setState(() => _roleDropdownOpen = !_roleDropdownOpen),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                              decoration: BoxDecoration(
+                                color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                                border: Border.all(
+                                  color: _roleDropdownOpen
+                                      ? _TeamColors.mavi
+                                      : _TeamColors.mavi.withValues(alpha: 0.4),
+                                  width: _roleDropdownOpen ? 1.5 : 1,
+                                ),
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(12),
+                                  topRight: const Radius.circular(12),
+                                  bottomLeft: Radius.circular(_roleDropdownOpen ? 0 : 12),
+                                  bottomRight: Radius.circular(_roleDropdownOpen ? 0 : 12),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      _selectedRole?.name ?? 'Select a role',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                        color: _selectedRole != null
+                                            ? colors.onSurface
+                                            : colors.onSurface.withValues(alpha: 0.4),
+                                      ),
+                                    ),
+                                  ),
+                                  AnimatedRotation(
+                                    turns: _roleDropdownOpen ? 0.5 : 0,
+                                    duration: const Duration(milliseconds: 200),
+                                    child: Icon(Icons.keyboard_arrow_down_rounded,
+                                        color: _TeamColors.mavi.withValues(alpha: 0.8), size: 22),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // ── Role dropdown list ───────────────────────
+                          if (_roleDropdownOpen)
+                            Container(
+                              decoration: BoxDecoration(
+                                color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                                border: Border(
+                                  left: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                                  right: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                                  bottom: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                                ),
+                                borderRadius: const BorderRadius.only(
+                                  bottomLeft: Radius.circular(12),
+                                  bottomRight: Radius.circular(12),
+                                ),
+                              ),
+                              child: Column(
+                                children: _roles.map((role) {
+                                  final isSelected = _selectedRole?.id == role.id;
+                                  return InkWell(
+                                    onTap: () => setState(() {
+                                      _selectedRole = role;
+                                      _roleDropdownOpen = false;
+                                    }),
+                                    borderRadius: role == _roles.last
+                                        ? const BorderRadius.only(
+                                            bottomLeft: Radius.circular(12),
+                                            bottomRight: Radius.circular(12),
+                                          )
+                                        : null,
+                                    child: Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? _TeamColors.mavi.withValues(alpha: 0.12)
+                                            : Colors.transparent,
+                                        border: role != _roles.last
+                                            ? Border(bottom: BorderSide(
+                                                color: _TeamColors.mavi.withValues(alpha: 0.15)))
+                                            : null,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              role.name,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                                color: isSelected
+                                                    ? _TeamColors.mavi
+                                                    : colors.onSurface.withValues(alpha: 0.85),
+                                              ),
+                                            ),
+                                          ),
+                                          if (isSelected)
+                                            const Icon(Icons.check_rounded,
+                                                color: _TeamColors.mavi, size: 18),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+
+                // ── Bottom Add button ───────────────────────────────────
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _selected == null || _adding ? null : _add,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _TeamColors.turkuaz,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.3),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: _adding
+                            ? const SizedBox(width: 22, height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : Text(
+                                _selected == null
+                                    ? 'Select a user first'
+                                    : 'Add as ${_selectedRole?.name ?? 'Member'}',
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
 
-// ─── Sekme 2: Davet linki oluştur ────────────────────────────────────────────
+// ─── Davet linki sekmesi ──────────────────────────────────────────────────────
 
 class _InviteLinkTab extends StatefulWidget {
   final String venueId;
@@ -1280,6 +2080,72 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
   }
 }
 
+// ─── Role Select Bottom Sheet ─────────────────────────────────────────────────
+
+class _RoleSelectSheet extends StatelessWidget {
+  final List<VenueRole> roles;
+  final VenueRole? selected;
+
+  const _RoleSelectSheet({required this.roles, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0B1322) : colors.surface,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 12),
+          Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: colors.outline.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text('Select Role',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700,
+                    color: colors.onSurface)),
+          ),
+          const SizedBox(height: 12),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: roles.length,
+            separatorBuilder: (_, __) =>
+                Divider(height: 1, color: colors.outline.withValues(alpha: 0.1)),
+            itemBuilder: (_, i) {
+              final role = roles[i];
+              final isSelected = selected?.id == role.id;
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                title: Text(role.name,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: isSelected ? _TeamColors.mavi : colors.onSurface,
+                    )),
+                trailing: isSelected
+                    ? const Icon(Icons.check_rounded, color: _TeamColors.mavi, size: 20)
+                    : null,
+                onTap: () => Navigator.pop(context, role),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+}
+
 // ─── Venue Role Picker (supports all venue roles) ─────────────────────────────
 
 class _VenueRolePicker extends StatelessWidget {
@@ -1293,54 +2159,56 @@ class _VenueRolePicker extends StatelessWidget {
     required this.onChanged,
   });
 
+  IconData _iconFor(VenueRole role) {
+    switch (role.id) {
+      case 'ADMIN':
+        return Icons.shield_outlined;
+      case 'STAFF':
+        return Icons.badge_outlined;
+      default:
+        return Icons.star_outline_rounded;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Role',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: colors.onSurface.withValues(alpha: 0.7),
+    return DropdownButtonFormField<VenueRole>(
+      value: selected,
+      decoration: InputDecoration(
+        labelText: 'Role',
+        labelStyle: const TextStyle(color: _TeamColors.mavi),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: _TeamColors.mavi),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _TeamColors.mavi.withValues(alpha: 0.4)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: _TeamColors.mavi, width: 1.5),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      ),
+      dropdownColor: null,
+      iconEnabledColor: _TeamColors.mavi,
+      items: roles.map((role) {
+        return DropdownMenuItem<VenueRole>(
+          value: role,
+          child: Row(
+            children: [
+              Icon(_iconFor(role), size: 18, color: _TeamColors.mavi),
+              const SizedBox(width: 10),
+              Text(role.name,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            ],
           ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: roles.map((role) {
-            final isSelected = selected?.id == role.id;
-            return GestureDetector(
-              onTap: () => onChanged(role),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: isSelected ? colors.primary : colors.surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSelected
-                        ? colors.primary
-                        : colors.outline.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Text(
-                  role.name,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: isSelected ? colors.onPrimary : colors.onSurface,
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ],
+        );
+      }).toList(),
+      onChanged: (r) {
+        if (r != null) onChanged(r);
+      },
     );
   }
 }
@@ -1415,15 +2283,15 @@ class _RolePickerSheet extends StatelessWidget {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: colors.primaryContainer,
+                    color: _TeamColors.mavi.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     role.name.isNotEmpty ? role.name[0].toUpperCase() : '?',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: colors.onPrimaryContainer,
+                      color: _TeamColors.mavi,
                     ),
                   ),
                 ),
@@ -1443,8 +2311,7 @@ class _RolePickerSheet extends StatelessWidget {
                   ),
                 ),
                 trailing: isCurrent
-                    ? Icon(Icons.check_circle,
-                        color: colors.primary, size: 20)
+                    ? const Icon(Icons.check_circle, color: _TeamColors.mavi, size: 20)
                     : null,
                 onTap: () => Navigator.pop(context, role),
               );

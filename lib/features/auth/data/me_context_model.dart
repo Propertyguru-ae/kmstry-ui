@@ -10,6 +10,7 @@ class MemberVenue {
   final String status;
   final bool hasDocuments;
   final String? address;
+  final String? inviterName;
 
   const MemberVenue({
     required this.id,
@@ -21,13 +22,16 @@ class MemberVenue {
     this.status = 'ACTIVE',
     this.hasDocuments = false,
     this.address,
+    this.inviterName,
   });
 
   bool get isActive => status == 'ACTIVE';
   bool get isPending => status == 'PENDING';
+  bool get isRejected => status == 'REJECTED';
   bool get isPendingOwnerClaim => isPending && role?.toUpperCase() == 'OWNER';
   /// Owner'ın claim'i değil, başkası tarafından eklenmiş davet
   bool get isPendingMemberInvite => isPending && role != null && role!.toUpperCase() != 'OWNER';
+  bool get isRejectedOwnerClaim => isRejected && role?.toUpperCase() == 'OWNER';
 }
 
 class MeContextModel {
@@ -37,6 +41,7 @@ class MeContextModel {
   final String? activeVenueId;
   final bool hasPersonalProfile;
   final bool hasVenueMembership;
+  final bool hasRejectedClaimOnly;
   final bool canDeleteCurrentContextProfile;
   final List<MemberVenue> memberVenues;
 
@@ -47,6 +52,7 @@ class MeContextModel {
     required this.activeVenueId,
     required this.hasPersonalProfile,
     required this.hasVenueMembership,
+    this.hasRejectedClaimOnly = false,
     required this.canDeleteCurrentContextProfile,
     required this.memberVenues,
   });
@@ -80,6 +86,7 @@ class MeContextModel {
         final hasDocuments = map['hasDocuments'] == true || map['has_documents'] == true;
         final photoUrl = (map['photo'] ?? map['photoUrl'] ?? nestedVenue?['photo'])?.toString();
         final address = (map['address'] ?? nestedVenue?['address'])?.toString();
+        final inviterName = (map['inviterName'] ?? map['inviter_name'])?.toString();
         return MemberVenue(
           id: id,
           membershipId: membershipId,
@@ -90,6 +97,7 @@ class MeContextModel {
           status: status,
           hasDocuments: hasDocuments,
           address: (address != null && address.isNotEmpty) ? address : null,
+          inviterName: (inviterName != null && inviterName.isNotEmpty) ? inviterName : null,
         );
       }).where((venue) => venue.id.isNotEmpty).toList();
     }
@@ -105,6 +113,8 @@ class MeContextModel {
           me['hasPersonalProfile'] == true || me['has_personal_profile'] == true,
       hasVenueMembership:
           me['hasVenueMembership'] == true || me['has_venue_membership'] == true,
+      hasRejectedClaimOnly:
+          me['hasRejectedClaimOnly'] == true || me['has_rejected_claim_only'] == true,
       canDeleteCurrentContextProfile:
           me['canDeleteCurrentContextProfile'] == true ||
           me['can_delete_current_context_profile'] == true,

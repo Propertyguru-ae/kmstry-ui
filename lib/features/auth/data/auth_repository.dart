@@ -10,6 +10,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
+import '../../venue_stories/data/venue_story_viewed_cache.dart';
+import '../../stories/data/story_viewed_cache.dart';
 
 class AuthRepository {
   // ── One-time app bootstrap ────────────────────────────────────────────────
@@ -24,6 +26,8 @@ class AuthRepository {
       await SecureStorage.clearSession();
       invalidateMeCache();
       ProfilePreviewPage.clearActionStateCache();
+      VenueStoryViewedCache.instance.clear();
+      await StoryViewedCache.clearAll();
       navigatorKey.currentState?.pushNamedAndRemoveUntil(
         AuthRoutes.startupGate,
         (route) => false,
@@ -388,6 +392,8 @@ class AuthRepository {
     await SecureStorage.clearSession();
     invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+    await StoryViewedCache.clearAll();
   }
 
   /// Root/global hesap silme: kimlik + bağlı contextler tamamen silinir.
@@ -398,6 +404,8 @@ class AuthRepository {
     await _googleSignIn.signOut();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+    await StoryViewedCache.clearAll();
   }
 
   /// Geriye dönük uyumluluk.

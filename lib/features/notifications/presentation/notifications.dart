@@ -12,6 +12,10 @@ import 'package:kmstry_frontend/features/notifications/presentation/notification
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_member_status_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class NotificationPage extends StatefulWidget {
@@ -214,6 +218,72 @@ class _NotificationPageState extends State<NotificationPage> {
 
   Future<void> _onNotificationTap(NotificationModel n) async {
     final data = _profileContextData(n);
+
+    if (n.type == 'venue_member_invite') {
+      final memberId = _firstNonEmptyString(data, const ['memberId', 'member_id']);
+      final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
+      final role = _firstNonEmptyString(data, const ['role']);
+      final venueName = _firstNonEmptyString(data, const ['venueName', 'venue_name']);
+      final inviterName = _firstNonEmptyString(data, const ['inviterName', 'inviter_name']);
+      if (memberId != null && venueId != null) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VenueMemberStatusPage(
+              venueId: venueId,
+              memberId: memberId,
+              venueName: (venueName != null && venueName.isNotEmpty) ? venueName : 'Venue',
+              role: (role != null && role.isNotEmpty) ? role : null,
+              inviterName: (inviterName != null && inviterName.isNotEmpty) ? inviterName : null,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (n.type == 'venue_claim_rejected') {
+      final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
+      final venueName = _firstNonEmptyString(data, const ['venueName', 'venue_name']) ?? 'Venue';
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VenueClaimRejectedPage(
+            venueId: venueId ?? '',
+            venueName: venueName,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (n.type == 'venue_member_response') {
+      final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
+      if (venueId != null && venueId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VenueTeamPage(
+              venueId: venueId,
+              callerRole: VenueSession.instance.role,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (n.type == 'venue_member_role_changed') {
+      final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
+      if (venueId != null && venueId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VenueTeamPage(
+              venueId: venueId,
+              callerRole: VenueSession.instance.role,
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     if (n.type == 'new_message' && n.data != null) {
       final chatId = _firstNonEmptyString(data, const ['chatId', 'chat_id']);

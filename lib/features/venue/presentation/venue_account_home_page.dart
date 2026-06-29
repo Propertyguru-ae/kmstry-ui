@@ -1,14 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_upload_docs_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 
 class VenueAccountHomePage extends StatefulWidget {
   final String? venueId;
@@ -29,8 +33,10 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
   bool _bannerLoading       = false;
   bool _showPersonalBanner  = false;
   bool _isPendingClaim      = false;
+  bool _isRejectedClaim     = false;
   bool _pendingHasDocuments = false;
   MemberVenue? _pendingVenue;
+  MemberVenue? _rejectedVenue;
 
   @override
   void initState() {
@@ -53,17 +59,21 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
       }
       if (!mounted) return;
 
-      final pendingVenue = ctx.memberVenues.where((v) => v.isPendingOwnerClaim).firstOrNull;
-      final isPending    = ctx.nextAction == 'AWAIT_VENUE_APPROVAL' || pendingVenue != null;
+      final pendingVenue   = ctx.memberVenues.where((v) => v.isPendingOwnerClaim).firstOrNull;
+      final rejectedVenue  = ctx.memberVenues.where((v) => v.isRejectedOwnerClaim).firstOrNull;
+      final isPending      = ctx.nextAction == 'AWAIT_VENUE_APPROVAL' || pendingVenue != null;
+      final isRejected     = ctx.nextAction == 'VENUE_CLAIM_REJECTED' || ctx.hasRejectedClaimOnly || rejectedVenue != null;
 
       setState(() {
-        _showPersonalBanner  = !ctx.hasPersonalProfile;
+        _showPersonalBanner  = !ctx.hasPersonalProfile && !isRejected;
         _isPendingClaim      = isPending;
+        _isRejectedClaim     = isRejected && !isPending;
         _pendingHasDocuments = pendingVenue?.hasDocuments ?? false;
         _pendingVenue        = pendingVenue;
+        _rejectedVenue       = rejectedVenue;
       });
 
-      if (isPending) { setState(() => _loading = false); return; }
+      if (isPending || isRejected) { setState(() => _loading = false); return; }
 
       if (venueId == null || venueId.isEmpty) {
         setState(() { _loading = false; _error = 'No active venue found.'; });
@@ -133,7 +143,9 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
               ? _buildError(context)
               : _isPendingClaim
                   ? _buildPendingView(context)
-                  : _buildDashboard(context),
+                  : _isRejectedClaim
+                      ? _buildRejectedView(context)
+                      : _buildDashboard(context),
     );
   }
 
@@ -235,6 +247,104 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
             SizedBox(
               height: 32 + MediaQuery.of(context).padding.bottom + kBottomNavigationBarHeight,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Rejected view ─────────────────────────────────────────────────────────────
+
+  Widget _buildRejectedView(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: colors.primary,
+      backgroundColor: kSheet,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+              child: _buildRejectedBanner(context),
+            ),
+            IgnorePointer(
+              child: Opacity(
+                opacity: 0.25,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 2),
+                    _buildStatStripPlaceholder(context),
+                    const SizedBox(height: 2),
+                    _buildWeeklyTrendPlaceholder(context),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 32 + MediaQuery.of(context).padding.bottom + kBottomNavigationBarHeight,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRejectedBanner(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kDim   = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => VenueClaimRejectedPage(
+            venueId: _rejectedVenue?.id ?? '',
+            venueName: _rejectedVenue?.name ?? 'Venue',
+          ),
+        ));
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: colors.error.withValues(alpha: 0.07),
+          border: Border.all(color: colors.error.withValues(alpha: 0.25)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: colors.error.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.store_outlined, size: 18, color: colors.error),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Claim Not Approved',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                          color: colors.error)),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your venue ownership claim was not approved. Tap for details and support options.',
+                    style: TextStyle(fontSize: 11, color: kDim, height: 1.5),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right_rounded,
+                color: colors.error.withValues(alpha: 0.60), size: 20),
           ],
         ),
       ),
@@ -444,14 +554,14 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 80,
+            height: 96,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: trend.asMap().entries.map((entry) {
                 final i       = entry.key;
                 final point   = entry.value;
                 final isToday = i == todayIdx;
-                final barH    = maxCount == 0 ? 4.0 : (point.count / maxCount) * 48 + 4;
+                final barH    = maxCount == 0 ? 4.0 : (point.count / maxCount) * 56 + 4;
                 final label   = _shortDayLabel(point.date);
                 return Expanded(
                   child: Padding(
@@ -461,7 +571,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
-                          height: 14,
+                          height: 16,
                           child: isToday && point.count > 0
                               ? Text('${point.count}',
                                   textAlign: TextAlign.center,
@@ -588,12 +698,12 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 80,
+            height: 88,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
               itemCount: guests.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (context, index) => const SizedBox(width: 10),
               itemBuilder: (_, i) => _GuestChip(guest: guests[i]),
             ),
           ),
@@ -741,48 +851,147 @@ class _StatDivider extends StatelessWidget {
 
 // ─── Guest chip ───────────────────────────────────────────────────────────────
 
-class _GuestChip extends StatelessWidget {
+class _GuestChip extends StatefulWidget {
   final VenueActiveGuest guest;
   const _GuestChip({required this.guest});
 
   @override
-  Widget build(BuildContext context) {
-    final theme      = Theme.of(context);
-    final isDark     = theme.brightness == Brightness.dark;
-    final colors     = theme.colorScheme;
-    final kAvatarBg  = isDark ? const Color(0xFF1A2A50) : const Color(0xFFF0F4FA);
-    final kBorder    = isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA);
-    final kDim       = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
-    final kBadgeBg   = isDark ? const Color(0xFF06091A) : Colors.white;
+  State<_GuestChip> createState() => _GuestChipState();
+}
 
-    final firstName = guest.displayName.split(' ').first;
-    final imageUrl  = (guest.featuredPhoto?.isNotEmpty == true)
-        ? guest.featuredPhoto!
-        : (guest.photo?.isNotEmpty == true ? guest.photo! : null);
+class _GuestChipState extends State<_GuestChip> {
+  static const _ringColors = [
+    AppColors.magenta,
+    AppColors.teal,
+    AppColors.blue,
+    AppColors.orange,
+    AppColors.brand,
+  ];
+
+  late Set<String> _viewedIds;
+
+  @override
+  void initState() {
+    super.initState();
+    // Backend'den gelen user-specific viewed state — başka kullanıcıyla karışmaz
+    _viewedIds = Set<String>.from(widget.guest.viewedStoryIds);
+  }
+
+  bool _isViewed(String id) => _viewedIds.contains(id);
+
+  void _openStories() {
+    final stories = widget.guest.stories;
+    if (stories.isEmpty) return;
+
+    final startIndex = stories.indexWhere((s) => !_isViewed(s.id));
+    final initialIndex = startIndex == -1 ? 0 : startIndex;
+
+    final group = StoryGroup(
+      user: StoryUser(
+        id: widget.guest.id,
+        fullName: widget.guest.displayName,
+        photo: widget.guest.photo,
+      ),
+      stories: stories,
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: [group],
+          initialStoryIndex: initialIndex,
+          onClose: (lastIndex, allFinished) {
+            if (!mounted) return;
+            setState(() {
+              if (allFinished) {
+                _viewedIds.addAll(stories.map((s) => s.id));
+              } else {
+                for (int i = 0; i <= lastIndex && i < stories.length; i++) {
+                  _viewedIds.add(stories[i].id);
+                }
+              }
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme     = Theme.of(context);
+    final isDark    = theme.brightness == Brightness.dark;
+    final colors    = theme.colorScheme;
+    final kAvatarBg = isDark ? const Color(0xFF1A2A50) : const Color(0xFFF0F4FA);
+    final kBorder   = isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA);
+    final kDim      = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    final kBadgeBg  = isDark ? const Color(0xFF06091A) : Colors.white;
+
+    final stories   = widget.guest.stories;
+    final hasStory  = stories.isNotEmpty;
+    final allSeen   = hasStory && stories.every((s) => _isViewed(s.id));
+    final firstName = widget.guest.displayName.split(' ').first;
+    final imageUrl  = (widget.guest.featuredPhoto?.isNotEmpty == true)
+        ? widget.guest.featuredPhoto!
+        : (widget.guest.photo?.isNotEmpty == true ? widget.guest.photo! : null);
+
+    const avatarSize = 54.0;
+    const ringPad    = 3.0;
+    const ringWidth  = 2.2;
+    const cornerRadius = 11.0;
+
+    Widget avatar = ClipRRect(
+      borderRadius: BorderRadius.circular(cornerRadius),
+      child: SizedBox(
+        width: avatarSize,
+        height: avatarSize,
+        child: imageUrl != null
+            ? Image.network(imageUrl, fit: BoxFit.cover)
+            : ColoredBox(
+                color: kAvatarBg,
+                child: Center(
+                  child: Text(
+                    firstName.isNotEmpty ? firstName[0].toUpperCase() : '?',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.primary),
+                  ),
+                ),
+              ),
+      ),
+    );
+
+    if (hasStory) {
+      avatar = GestureDetector(
+        onTap: _openStories,
+        child: CustomPaint(
+          painter: _SquareStoryRingPainter(
+            colors: allSeen ? [Colors.grey.shade400, Colors.grey.shade400] : _ringColors,
+            pad: ringPad,
+            strokeWidth: ringWidth,
+            radius: cornerRadius + ringPad + ringWidth,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(ringPad + ringWidth),
+            child: avatar,
+          ),
+        ),
+      );
+    }
 
     return SizedBox(
-      width: 50,
+      width: 56,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Stack(
+            clipBehavior: Clip.none,
             children: [
-              Container(
-                width: 46, height: 46,
-                decoration: BoxDecoration(
-                  color: kAvatarBg,
-                  border: Border.all(color: kBorder, width: 2),
-                  shape: BoxShape.circle,
-                ),
-                child: imageUrl != null
-                    ? ClipOval(child: Image.network(imageUrl, fit: BoxFit.cover))
-                    : Center(
-                        child: Text(firstName.isNotEmpty ? firstName[0].toUpperCase() : '?',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
-                                color: colors.primary))),
-              ),
-              if (guest.gender != null)
+              avatar,
+              if (widget.guest.gender != null)
                 Positioned(
-                  right: 0, bottom: 0,
+                  right: hasStory ? -2 : 0,
+                  bottom: hasStory ? -2 : 0,
                   child: Container(
                     width: 16, height: 16,
                     decoration: BoxDecoration(
@@ -791,7 +1000,7 @@ class _GuestChip extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      guest.gender == 'male' ? Icons.male : Icons.female,
+                      widget.guest.gender == 'male' ? Icons.male : Icons.female,
                       size: 9, color: kDim,
                     ),
                   ),
@@ -799,12 +1008,48 @@ class _GuestChip extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 5),
-          Text(firstName,
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: kDim),
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center),
+          Text(
+            firstName,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: kDim),
+            maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+          ),
         ],
       ),
     );
   }
+}
+
+class _SquareStoryRingPainter extends CustomPainter {
+  final List<Color> colors;
+  final double pad;
+  final double strokeWidth;
+  final double radius;
+
+  const _SquareStoryRingPainter({
+    required this.colors,
+    required this.pad,
+    required this.strokeWidth,
+    required this.radius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+        Size(size.width - strokeWidth, size.height - strokeWidth);
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+    final shader = SweepGradient(
+      colors: [...colors, colors.first],
+    ).createShader(rect);
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..shader = shader
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SquareStoryRingPainter old) => old.colors != colors;
 }

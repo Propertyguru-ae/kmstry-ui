@@ -16,6 +16,8 @@ class VenueEventRepository {
     required DateTime startAt,
     required DateTime endAt,
     int? priceAed,
+    String currency = 'TRY',
+    Map<String, dynamic>? recurrence,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final data = await _api.post(
@@ -27,6 +29,8 @@ class VenueEventRepository {
         'startAt': startAt.toUtc().toIso8601String(),
         'endAt': endAt.toUtc().toIso8601String(),
         if (priceAed != null) 'priceAed': priceAed,
+        'currency': currency,
+        if (recurrence != null) 'recurrence': recurrence,
       },
     );
     return Map<String, dynamic>.from(data as Map);
@@ -68,6 +72,9 @@ class VenueEventRepository {
     DateTime? endAt,
     int? priceAed,
     bool clearPrice = false,
+    String? currency,
+    String? editScope, // 'this' | 'thisAndFollowing' | 'all'
+    Map<String, dynamic>? recurrence,
   }) async {
     final token = await SecureStorage.getAccessToken();
     await _api.patch(
@@ -79,7 +86,21 @@ class VenueEventRepository {
         if (startAt != null) 'startAt': startAt.toUtc().toIso8601String(),
         if (endAt != null) 'endAt': endAt.toUtc().toIso8601String(),
         if (clearPrice) 'priceAed': null else if (priceAed != null) 'priceAed': priceAed,
+        if (currency != null) 'currency': currency,
+        if (editScope != null) 'editScope': editScope,
+        if (recurrence != null) 'recurrence': recurrence,
       },
+    );
+  }
+
+  Future<void> deleteRecurringSeries({
+    required String venueId,
+    required String ruleId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/venues/$venueId/recurring-rules/$ruleId',
+      headers: {'Authorization': 'Bearer $token'},
     );
   }
 

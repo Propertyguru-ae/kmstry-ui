@@ -1,4 +1,5 @@
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 
 class VenueOwnerStatsVenue {
   final String id;
@@ -106,6 +107,8 @@ class VenueActiveGuest {
   final String? featuredPhoto;
   final String? gender;
   final String checkinId;
+  final List<StoryItem> stories;
+  final Set<String> viewedStoryIds;
 
   const VenueActiveGuest({
     required this.id,
@@ -115,9 +118,12 @@ class VenueActiveGuest {
     this.featuredPhoto,
     this.gender,
     required this.checkinId,
+    this.stories = const [],
+    this.viewedStoryIds = const {},
   });
 
   factory VenueActiveGuest.fromJson(Map<String, dynamic> json) {
+    final storiesRaw = json['stories'] as List? ?? [];
     return VenueActiveGuest(
       id: json['id']?.toString() ?? '',
       username: json['username']?.toString(),
@@ -125,8 +131,19 @@ class VenueActiveGuest {
       photo: json['photo']?.toString(),
       featuredPhoto: (json['featuredPhoto'] ?? json['featured_photo'])?.toString(),
       gender: json['gender']?.toString(),
-      checkinId:
-          (json['checkinId'] ?? json['checkin_id'])?.toString() ?? '',
+      checkinId: (json['checkinId'] ?? json['checkin_id'])?.toString() ?? '',
+      stories: storiesRaw.map((e) => StoryItem(
+        id: e['id']?.toString() ?? '',
+        mediaUrl: e['mediaUrl']?.toString() ?? '',
+        mediaType: e['mediaType']?.toString() ?? 'photo',
+        thumbnailUrl: e['thumbnailUrl']?.toString(),
+        durationSecs: (e['durationSecs'] as num?)?.toInt(),
+        expiresAt: DateTime.tryParse(e['expiresAt']?.toString() ?? '') ?? DateTime.now().add(const Duration(hours: 24)),
+        createdAt: DateTime.tryParse(e['createdAt']?.toString() ?? '') ?? DateTime.now(),
+      )).toList(),
+      viewedStoryIds: Set<String>.from(
+        storiesRaw.where((e) => e['viewedByMe'] == true).map((e) => e['id']?.toString() ?? ''),
+      ),
     );
   }
 

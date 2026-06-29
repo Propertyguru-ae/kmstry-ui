@@ -80,6 +80,15 @@ class VenueMemberRepository {
   }
 
   /// Üyeyi venue'dan çıkarır.
+  Future<int> cleanPastInvites(String venueId) async {
+    final headers = await _authHeaders();
+    final result = await _api.delete(
+      '/venues/$venueId/members/past',
+      headers: headers,
+    );
+    return (result?['deleted'] as num?)?.toInt() ?? 0;
+  }
+
   Future<void> removeMember(String venueId, String memberId) async {
     final headers = await _authHeaders();
     await _api.delete(
@@ -183,6 +192,23 @@ class VenueMemberRepository {
     await _api.delete('/venues/$venueId/roles/$roleId', headers: headers);
   }
 
+  // ── Member status ────────────────────────────────────────────────────────────
+
+  /// Bildirim tap'ında gerçek durumu sorgular: PENDING / ACTIVE / REJECTED / CANCELLED / EXPIRED
+  Future<Map<String, String>> getMemberStatus(String venueId, String memberId) async {
+    final headers = await _authHeaders();
+    final data = await _api.get(
+      '/venues/$venueId/members/$memberId/status',
+      headers: headers,
+    );
+    final map = Map<String, dynamic>.from(data as Map);
+    return {
+      'status': map['status']?.toString() ?? 'PENDING',
+      'role': map['role']?.toString() ?? '',
+      'venueName': map['venueName']?.toString() ?? '',
+    };
+  }
+
   // ── Pending member invite ────────────────────────────────────────────────────
 
   /// Kullanıcı, kendisine gelen PENDING venue üyelik davetini kabul eder.
@@ -203,6 +229,30 @@ class VenueMemberRepository {
       headers: headers,
       body: {},
     );
+  }
+
+  /// Venue owner, gönderdiği PENDING daveti iptal eder.
+  Future<void> cancelMemberInvite(String venueId, String memberId) async {
+    final headers = await _authHeaders();
+    await _api.post(
+      '/venues/$venueId/members/$memberId/cancel',
+      headers: headers,
+      body: {},
+    );
+  }
+
+  // ── My permissions ──────────────────────────────────────────────────────────
+
+  /// Oturum açmış kullanıcının bu venue'daki aktif permission listesini döner.
+  Future<List<VenuePermission>> getMyPermissions(String venueId) async {
+    final headers = await _authHeaders();
+    final data = await _api.get('/venues/$venueId/my-permissions', headers: headers);
+    final map = Map<String, dynamic>.from(data as Map);
+    final raw = (map['permissions'] as List? ?? []);
+    return raw
+        .map((e) => VenuePermissionExt.fromApi(e.toString()))
+        .whereType<VenuePermission>()
+        .toList();
   }
 
   // ── User search ─────────────────────────────────────────────────────────────

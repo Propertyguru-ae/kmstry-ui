@@ -6,17 +6,37 @@ import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
 import '../../venue/data/venue_repository.dart';
 import '../../venue/presentation/venue_detail_page.dart';
+import '../../venue_stories/data/venue_story_repository.dart';
+
+class StoryViewerResult {
+  final int lastStoryIndex;
+  final bool allFinished;
+  const StoryViewerResult({required this.lastStoryIndex, required this.allFinished});
+}
 
 class StoryViewerPage extends StatefulWidget {
   final List<StoryGroup> groups;
   final int initialGroupIndex;
   final int initialStoryIndex;
+  /// Set when viewing venue stories — enables Instagram-style viewer count overlay (owner only)
+  final String? venueId;
+  final bool showViewers;
+  /// Called just before pop — index of last shown story, allFinished=true if all stories played through
+  final void Function(int lastIndex, bool allFinished)? onClose;
+  /// Called when a story is deleted — passes the deleted storyId
+  final void Function(String storyId)? onStoryDeleted;
+  final bool canDelete;
 
   const StoryViewerPage({
     super.key,
     required this.groups,
     this.initialGroupIndex = 0,
     this.initialStoryIndex = 0,
+    this.venueId,
+    this.showViewers = false,
+    this.canDelete = false,
+    this.onClose,
+    this.onStoryDeleted,
   });
 
   @override
@@ -38,6 +58,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   bool _advancing = false;
   bool _loadingStory = false;
   int _progressKey = 0; // her story yüklenince artar → progress bar sıfırdan oluşturulur
+  final Map<int, int> _liveViewCounts = {}; // storyIndex → fresh count from sheet
 
   static const Duration _photoDuration = Duration(seconds: 5);
 
@@ -51,6 +72,27 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _groupIndex = widget.initialGroupIndex;
     _storyIndex = widget.initialStoryIndex;
     _loadStory();
+    if (widget.showViewers && widget.venueId != null) {
+      _prefetchViewCounts();
+    }
+  }
+
+  Future<void> _prefetchViewCounts() async {
+    try {
+      final all = await VenueStoryRepository().getViewers(widget.venueId!);
+      if (!mounted) return;
+      final stories = _currentGroup.stories;
+      final countById = <String, int>{
+        for (final s in all)
+          s['story_id'] as String: (s['view_count'] as num?)?.toInt() ?? 0,
+      };
+      setState(() {
+        for (var i = 0; i < stories.length; i++) {
+          final c = countById[stories[i].id];
+          if (c != null) _liveViewCounts[i] = c;
+        }
+      });
+    } catch (_) {}
   }
 
   @override
@@ -84,6 +126,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
     _repo.recordView(story.id).ignore();
     StoryViewedCache.markViewed(story.id).ignore();
+    // Venue operator kendi story'sini izlerken kayıt yapılmaz (showViewers=true).
+    // Böylece operator viewers listesinde kendi adı görünmez.
+    if (widget.venueId != null && !widget.showViewers) {
+      VenueStoryRepository().recordView(widget.venueId!, story.id).ignore();
+    }
 
     if (story.isVideo) {
       final vc = VideoPlayerController.networkUrl(Uri.parse(story.mediaUrl));
@@ -183,7 +230,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       });
       _loadStory();
     } else {
-      Navigator.pop(context);
+      widget.onClose?.call(_storyIndex, true);
+      Navigator.pop(context, StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: true));
     }
   }
 
@@ -201,7 +249,54 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     }
   }
 
-void _pauseProgress() {
+  Future<void> _deleteCurrentStory() async {
+    if (widget.venueId == null) return;
+    final story = _currentStory;
+    _pauseProgress();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Story\'yi sil?'),
+        content: const Text('Bu story kalıcı olarak silinecek.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('İptal')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sil', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      _resumeProgress();
+      return;
+    }
+    try {
+      await VenueStoryRepository().deleteStory(widget.venueId!, story.id);
+      widget.onStoryDeleted?.call(story.id);
+      if (!mounted) return;
+      final group = _currentGroup;
+      final newStories = List<StoryItem>.from(group.stories)..removeAt(_storyIndex);
+      if (newStories.isEmpty) {
+        widget.onClose?.call(_storyIndex, true);
+        Navigator.pop(context, StoryViewerResult(lastStoryIndex: 0, allFinished: true));
+        return;
+      }
+      setState(() {
+        _groups[_groupIndex] = StoryGroup(user: group.user, stories: newStories);
+        if (_storyIndex >= newStories.length) _storyIndex = newStories.length - 1;
+      });
+      _loadStory();
+    } catch (e) {
+      if (!mounted) return;
+      _resumeProgress();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Silinemedi: $e')),
+      );
+    }
+  }
+
+  void _pauseProgress() {
     if (_loadingStory) return;
     _progressController?.stop();
     _videoController?.pause();
@@ -350,6 +445,54 @@ void _pauseProgress() {
               ),
             ),
 
+            // ── VENUE STORY: viewers count bar (Instagram-style) ──────────
+            if (widget.venueId != null && widget.showViewers && !story.isUploadingPlaceholder)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: GestureDetector(
+                  onTap: () => _openViewersList(story),
+                  onVerticalDragEnd: (d) {
+                    if (d.primaryVelocity != null && d.primaryVelocity! < -100) {
+                      _openViewersList(story);
+                    }
+                  },
+                  child: Container(
+                    padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).padding.bottom + 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.65),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 18),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_liveViewCounts[_storyIndex] ?? story.viewCount}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white60, size: 20),
+                        const SizedBox(width: 2),
+                        const Text('viewers',
+                            style: TextStyle(color: Colors.white60, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
             // ── VENUE LABEL (bottom-right) — tap zone'lardan sonra gelir ───
             if (story.venueId != null && story.venueName != null)
               Positioned(
@@ -426,9 +569,17 @@ void _pauseProgress() {
                         ],
                       ),
                     ),
+                    if (widget.canDelete && widget.venueId != null && !story.isUploadingPlaceholder)
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.white),
+                        onPressed: _deleteCurrentStory,
+                      ),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () {
+                        widget.onClose?.call(_storyIndex, false);
+                        Navigator.pop(context, StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: false));
+                      },
                     ),
                   ],
                 ),
@@ -441,6 +592,24 @@ void _pauseProgress() {
   }
 
   bool _venueLoading = false;
+
+  Future<void> _openViewersList(StoryItem story) async {
+    if (widget.venueId == null) return;
+    _pauseProgress();
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ViewersSheet(
+        venueId: widget.venueId!,
+        storyId: story.id,
+        onFreshCount: (count) {
+          if (mounted) setState(() => _liveViewCounts[_storyIndex] = count);
+        },
+      ),
+    );
+    if (mounted) _resumeProgress();
+  }
 
   Future<void> _openVenueDetail(String venueId, String venueName) async {
     if (_venueLoading) return;
@@ -525,6 +694,245 @@ class _ProgressBar extends StatelessWidget {
                   ),
       ),
     );
+  }
+}
+
+// ─── Instagram-style viewers bottom sheet ─────────────────────────────────────
+
+class _ViewersSheet extends StatefulWidget {
+  final String venueId;
+  final String storyId;
+  final void Function(int count)? onFreshCount;
+
+  const _ViewersSheet({required this.venueId, required this.storyId, this.onFreshCount});
+
+  @override
+  State<_ViewersSheet> createState() => _ViewersSheetState();
+}
+
+class _ViewersSheetState extends State<_ViewersSheet> {
+  final _repo = VenueStoryRepository();
+  List<Map<String, dynamic>> _viewers = [];
+  int _viewCount = 0;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      debugPrint('🔍 ViewersSheet: loading venueId=${widget.venueId} storyId=${widget.storyId}');
+      final all = await _repo.getViewers(widget.venueId);
+      debugPrint('🔍 ViewersSheet: got ${all.length} stories, ids=${all.map((s) => s['story_id']).toList()}');
+      final story = all.firstWhere(
+        (s) => s['story_id'] == widget.storyId,
+        orElse: () => <String, dynamic>{},
+      );
+      debugPrint('🔍 ViewersSheet: matched story=$story');
+      if (mounted) {
+        final freshCount = (story['view_count'] as num?)?.toInt() ?? 0;
+        widget.onFreshCount?.call(freshCount);
+        setState(() {
+          _viewers = List<Map<String, dynamic>>.from(story['viewers'] as List? ?? []);
+          _viewCount = freshCount;
+          _loading = false;
+        });
+      }
+    } catch (e, st) {
+      debugPrint('❌ ViewersSheet load error: $e\n$st');
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).padding.bottom;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.45,
+      minChildSize: 0.25,
+      maxChildSize: 0.85,
+      expand: false,
+      builder: (_, controller) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF121212),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              // Handle
+              const SizedBox(height: 10),
+              Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      _loading ? 'Viewers' : '$_viewCount ${_viewCount == 1 ? 'viewer' : 'viewers'}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+              Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+
+              // List
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator(color: Colors.white30, strokeWidth: 2))
+                    : _error != null
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(_error!,
+                                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                                  textAlign: TextAlign.center),
+                            ),
+                          )
+                    : _viewers.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.remove_red_eye_outlined,
+                                    color: Colors.white.withValues(alpha: 0.2), size: 40),
+                                const SizedBox(height: 12),
+                                Text('No views yet',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.4),
+                                      fontSize: 14,
+                                    )),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: controller,
+                            padding: EdgeInsets.fromLTRB(0, 4, 0, bottom + 16),
+                            itemCount: _viewers.length,
+                            itemBuilder: (_, i) {
+                              final v = _viewers[i];
+                              final user = v['user'] as Map<String, dynamic>;
+                              final photo = user['photo'] as String?;
+                              final name = (user['full_name'] ?? user['username'] ?? 'User') as String;
+                              final username = user['username'] as String?;
+                              final venueRole = v['venue_role'] as String?;
+                              final viewedAt = v['viewed_at'] as String?;
+                              final dt = viewedAt != null ? DateTime.tryParse(viewedAt)?.toLocal() : null;
+                              final timeLabel = _timeLabel(dt);
+
+                              return ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+                                leading: CircleAvatar(
+                                  radius: 22,
+                                  backgroundColor: Colors.white12,
+                                  backgroundImage: photo != null && photo.isNotEmpty
+                                      ? NetworkImage(photo)
+                                      : null,
+                                  child: photo == null || photo.isEmpty
+                                      ? Text(
+                                          name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                                title: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (venueRole != null && (venueRole == 'OWNER' || venueRole == 'ADMIN')) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: venueRole == 'OWNER'
+                                              ? const Color(0xFF1A9FE8).withValues(alpha: 0.2)
+                                              : const Color(0xFF1FD9A8).withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color: venueRole == 'OWNER'
+                                                ? const Color(0xFF1A9FE8).withValues(alpha: 0.5)
+                                                : const Color(0xFF1FD9A8).withValues(alpha: 0.5),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          venueRole == 'OWNER' ? 'Owner' : 'Admin',
+                                          style: TextStyle(
+                                            color: venueRole == 'OWNER'
+                                                ? const Color(0xFF1A9FE8)
+                                                : const Color(0xFF1FD9A8),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                subtitle: username != null
+                                    ? Text('@$username',
+                                        style: TextStyle(
+                                          color: Colors.white.withValues(alpha: 0.4),
+                                          fontSize: 12,
+                                        ))
+                                    : null,
+                                trailing: Text(
+                                  timeLabel,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _timeLabel(DateTime? dt) {
+    if (dt == null) return '';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
   }
 }
 
