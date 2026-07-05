@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 
 class VenueInvitePage extends StatefulWidget {
@@ -18,6 +19,7 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
 
   bool _loading = true;
   bool _accepting = false;
+  bool _declined = false;
   String? _error;
   VenueInviteInfo? _invite;
 
@@ -54,13 +56,8 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
     if (!mounted) return;
 
     if (!isLoggedIn) {
-      // Token'ı argüman olarak login sayfasına geçir — sonrasında geri döner
-      final accepted = await Navigator.pushNamed(
-        context,
-        AuthRoutes.login,
-        arguments: {'pendingInviteToken': widget.token},
-      );
-      if (accepted == true && mounted) _accept();
+      // Login sayfasına git — login sonrası /invites/pending check ile geri dönülür
+      Navigator.pushReplacementNamed(context, AuthRoutes.login);
       return;
     }
 
@@ -119,9 +116,11 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? _buildError(colors)
-                : _buildContent(colors),
+            : _declined
+                ? _buildDeclined(colors)
+                : _error != null
+                    ? _buildError(colors)
+                    : _buildContent(colors),
       ),
     );
   }
@@ -146,7 +145,7 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
             ),
             const SizedBox(height: 24),
             OutlinedButton(
-              onPressed: () => Navigator.maybePop(context),
+              onPressed: () => Navigator.of(context).pushReplacementNamed(AuthRoutes.login),
               child: const Text('Go back'),
             ),
           ],
@@ -275,7 +274,14 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
           child: SizedBox(
             width: double.infinity,
             child: TextButton(
-              onPressed: () => Navigator.maybePop(context),
+              onPressed: () async {
+                setState(() => _declined = true);
+                try {
+                  await _repo.declineInvite(widget.token);
+                } catch (_) {
+                  // Non-critical: even if the backend call fails, UI shows declined state.
+                }
+              },
               child: Text(
                 'Decline',
                 style: TextStyle(color: colors.onSurface.withValues(alpha: 0.5)),
@@ -284,6 +290,80 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildDeclined(ColorScheme colors) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: colors.errorContainer.withValues(alpha: 0.4),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.do_not_disturb_on_outlined,
+                  size: 36, color: colors.error),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Invite Declined',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You have declined the venue invite. You can always ask for a new link later.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: colors.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 36),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context)
+                    .pushReplacementNamed(AuthRoutes.login),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text(
+                  'Go to Login',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: () => Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => UsernameOnboardingPage(
+                    cancelRoute: AuthRoutes.login,
+                  ),
+                ),
+              ),
+              child: Text(
+                'Want to create a personal account instead? →',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colors.onSurface.withValues(alpha: 0.45),
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -318,7 +398,7 @@ class _VenueInvitePageState extends State<VenueInvitePage> {
             ),
             const SizedBox(height: 28),
             OutlinedButton(
-              onPressed: () => Navigator.maybePop(context),
+              onPressed: () => Navigator.of(context).pushReplacementNamed(AuthRoutes.login),
               child: const Text('Go back'),
             ),
           ],

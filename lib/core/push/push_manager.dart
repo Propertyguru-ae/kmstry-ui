@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import '../network/api_client.dart';
@@ -72,6 +73,8 @@ class PushManager {
         return;
       }
 
+      await _forceRefreshTokenIfStale();
+
       final token = await _getFcmToken();
       debugPrint('[PUSH] fcmToken=${token == null ? "NULL" : "${token.substring(0, 20)}..."}');
       if (token == null) return;
@@ -79,6 +82,55 @@ class PushManager {
       await _tryRegisterToken(token);
     } catch (e) {
       debugPrint('[PUSH] ⚠️ ensureRegisteredIfAllowed error: $e');
+    }
+  }
+
+  static const _pushVersionKey = 'push_token_app_version';
+  static const _pushLastForceRefreshKey = 'push_token_last_force_refresh';
+  static const _staleAfter = Duration(days: 7);
+
+  /// Bir FCM/APNs token sunucu tarafında (Apple/Google) sessizce geçersiz
+  /// olabilir — client'a hiçbir şekilde haber verilmez, [onTokenRefresh]
+  /// tetiklenmez. Bu yüzden token'ın kendisi "değişmediği" sürece backend'e
+  /// tekrar gönderilmez ve push sessizce kesilir.
+  ///
+  /// Çözüm: (a) her yeni app versiyonunda, (b) en az 7 günde bir,
+  /// Firebase'den token'ı sil ve sıfırdan yenisini al — kullanıcının
+  /// uygulamayı silip yeniden kurmasına gerek kalmadan.
+  Future<void> _forceRefreshTokenIfStale() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final currentVersion = '${info.version}+${info.buildNumber}';
+
+      final storedVersion = await SecureStorage.read(_pushVersionKey);
+      final lastRefreshRaw = await SecureStorage.read(_pushLastForceRefreshKey);
+      final lastRefresh =
+          lastRefreshRaw != null ? DateTime.tryParse(lastRefreshRaw) : null;
+      final isStale =
+          lastRefresh == null || DateTime.now().difference(lastRefresh) > _staleAfter;
+
+      if (storedVersion == currentVersion && !isStale) return;
+
+      debugPrint(
+        '[PUSH] 🔁 force token refresh — versionChanged=${storedVersion != currentVersion} stale=$isStale',
+      );
+
+      try {
+        await _messaging.deleteToken();
+      } catch (e) {
+        debugPrint('[PUSH] deleteToken failed (non-fatal): $e');
+      }
+      // Reset in-memory guard so the freshly-issued token is always re-sent
+      // even if Firebase happens to hand back the same string.
+      _lastRegisteredToken = null;
+
+      await SecureStorage.write(_pushVersionKey, currentVersion);
+      await SecureStorage.write(
+        _pushLastForceRefreshKey,
+        DateTime.now().toIso8601String(),
+      );
+    } catch (e) {
+      debugPrint('[PUSH] ⚠️ _forceRefreshTokenIfStale error: $e');
     }
   }
 

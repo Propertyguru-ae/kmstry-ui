@@ -318,6 +318,53 @@ class RecurrenceInfo {
   }
 }
 
+class EventPartnerBenefit {
+  final String id;
+  final String platform;
+  final String? platformLabel;
+  final String offerType;
+  final String offerLabel;
+
+  const EventPartnerBenefit({
+    required this.id,
+    required this.platform,
+    this.platformLabel,
+    required this.offerType,
+    required this.offerLabel,
+  });
+
+  factory EventPartnerBenefit.fromJson(Map<String, dynamic> json) {
+    return EventPartnerBenefit(
+      id: json['id']?.toString() ?? '',
+      platform: json['platform'] as String? ?? '',
+      platformLabel: json['platformLabel'] as String? ?? json['platform_label'] as String?,
+      offerType: json['offerType'] as String? ?? json['offer_type'] as String? ?? '',
+      offerLabel: json['offerLabel'] as String? ?? json['offer_label'] as String? ?? '',
+    );
+  }
+
+  String get platformDisplayName {
+    switch (platform) {
+      case 'THE_ENTERTAINER': return 'The Entertainer';
+      case 'COBONE':          return 'Cobone';
+      case 'GROUPON':         return 'Groupon';
+      case 'FAZAA':           return 'Fazaa';
+      case 'ESAAD':           return 'Esaad';
+      default:                return platformLabel ?? 'Other';
+    }
+  }
+
+  String get offerTypeDisplayName {
+    switch (offerType) {
+      case 'BOGO':       return 'BOGO';
+      case 'PERCENT_OFF': return 'Percent Off';
+      case 'VOUCHER':    return 'Voucher';
+      case 'MEMBERSHIP': return 'Membership';
+      default:           return 'Benefit';
+    }
+  }
+}
+
 class VenueUpcomingEvent {
   final String id;
   final String title;
@@ -330,6 +377,14 @@ class VenueUpcomingEvent {
   final String currency;
   final String? recurringRuleId;
   final RecurrenceInfo? recurrence;
+  final int partnershipCount;
+  final List<EventPartnerBenefit> partnershipBenefits;
+  final String? offerId;
+  final String? offerTitle;
+  final String? offerType;
+  final double? offerDiscountValue;
+  final int? capacity;
+  final int rsvpCount;
 
   VenueUpcomingEvent({
     required this.id,
@@ -343,6 +398,14 @@ class VenueUpcomingEvent {
     this.currency = 'TRY',
     this.recurringRuleId,
     this.recurrence,
+    this.partnershipCount = 0,
+    this.partnershipBenefits = const [],
+    this.offerId,
+    this.offerTitle,
+    this.offerType,
+    this.offerDiscountValue,
+    this.capacity,
+    this.rsvpCount = 0,
   });
 
   bool get isRecurring => recurringRuleId != null;
@@ -351,6 +414,7 @@ class VenueUpcomingEvent {
     final startRaw = json['startAt'] ?? json['start_at'] ?? '';
     final endRaw = json['endAt'] ?? json['end_at'] ?? '';
     final recurrenceRaw = json['recurrence'];
+    final benefitsRaw = json['partnershipBenefits'] ?? json['partnership_benefits'];
     return VenueUpcomingEvent(
       id: json['id']?.toString() ?? '',
       title: json['title']?.toString() ?? '',
@@ -371,6 +435,28 @@ class VenueUpcomingEvent {
           : recurrenceRaw is Map
               ? RecurrenceInfo.fromJson(Map<String, dynamic>.from(recurrenceRaw))
               : null,
+      partnershipCount: json['partnershipCount'] is num
+          ? (json['partnershipCount'] as num).toInt()
+          : json['partnership_count'] is num
+              ? (json['partnership_count'] as num).toInt()
+              : 0,
+      partnershipBenefits: benefitsRaw is List
+          ? benefitsRaw
+              .map((e) => EventPartnerBenefit.fromJson(
+                    e is Map<String, dynamic> ? e : Map<String, dynamic>.from(e as Map),
+                  ))
+              .toList()
+          : const [],
+      offerId: json['offerId']?.toString() ?? json['offer_id']?.toString(),
+      offerTitle: json['offerTitle'] as String? ?? json['offer_title'] as String?,
+      offerType: json['offerType'] as String? ?? json['offer_type'] as String?,
+      offerDiscountValue: json['offerDiscountValue'] is num
+          ? (json['offerDiscountValue'] as num).toDouble()
+          : json['offer_discount_value'] is num
+              ? (json['offer_discount_value'] as num).toDouble()
+              : null,
+      capacity: json['capacity'] is num ? (json['capacity'] as num).toInt() : null,
+      rsvpCount: json['rsvpCount'] is num ? (json['rsvpCount'] as num).toInt() : 0,
     );
   }
 

@@ -4,6 +4,7 @@ import 'venue_member_model.dart';
 
 class VenueInviteInfo {
   final String id;
+  final String token;
   final String role;
   final String roleName;
   final String expiresAt;
@@ -14,6 +15,7 @@ class VenueInviteInfo {
 
   const VenueInviteInfo({
     required this.id,
+    required this.token,
     required this.role,
     required this.roleName,
     required this.expiresAt,
@@ -26,6 +28,7 @@ class VenueInviteInfo {
   factory VenueInviteInfo.fromJson(Map<String, dynamic> json) {
     return VenueInviteInfo(
       id: json['id']?.toString() ?? '',
+      token: json['token']?.toString() ?? '',
       role: json['role']?.toString() ?? '',
       roleName: json['roleName']?.toString() ?? json['role']?.toString() ?? '',
       expiresAt: json['expiresAt']?.toString() ?? '',
@@ -150,5 +153,37 @@ class VenueInviteRepository {
   Future<void> revokeInvite(String venueId, String inviteId) async {
     final headers = await _authHeaders();
     await _api.delete('/venues/$venueId/invites/$inviteId', headers: headers);
+  }
+
+  // Returns true if there's a pending invite claimed for this email on the web landing page.
+  // Used before OTP to catch wrong-email mistakes early in the invite signup flow.
+  Future<bool> checkInviteEmail(String email) async {
+    try {
+      final data = await _api.post(
+        '/invites/check-email',
+        body: {'email': email},
+      );
+      final map = Map<String, dynamic>.from(data as Map);
+      return map['found'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> declineInvite(String token) async {
+    final headers = await _authHeaders();
+    await _api.post('/invites/$token/decline', headers: headers, body: {});
+  }
+
+  // Returns the pending invite for the logged-in user (matched by claimed email), or null.
+  Future<VenueInviteInfo?> getPendingInvite() async {
+    try {
+      final headers = await _authHeaders();
+      final data = await _api.get('/invites/pending', headers: headers);
+      if (data == null) return null;
+      return VenueInviteInfo.fromJson(Map<String, dynamic>.from(data as Map));
+    } catch (_) {
+      return null;
+    }
   }
 }

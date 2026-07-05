@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_offer_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_offer_repository.dart';
 import '../data/venue_event_repository.dart';
 
 // ─── Brand colors ─────────────────────────────────────────────────────────────
@@ -28,10 +32,13 @@ class AddVenueEventPage extends StatefulWidget {
 
 class _AddVenueEventPageState extends State<AddVenueEventPage> {
   final _repo    = VenueEventRepository();
+  final _partnershipRepo = ExternalPartnershipRepository();
+  final _offerRepo = VenueOfferRepository();
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _priceCtrl;
+  late final TextEditingController _capacityCtrl;
 
   DateTime? _startAt;
   DateTime? _endAt;
@@ -39,7 +46,18 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
   final List<File> _newPhotos  = [];
   bool _saving = false;
   String _currency = 'TRY';
-  String _discount = 'none';
+
+  // Partner Benefits
+  List<ExternalPartnershipModel> _activePartnerships = [];
+  final Set<String> _selectedPartnershipIds = {};
+  bool _loadingPartnerships = true;
+
+  // Event Offer
+  bool _createOffer = false;
+  VenueOfferType _offerType = VenueOfferType.BOGO;
+  late final TextEditingController _offerTitleCtrl;
+  late final TextEditingController _offerDiscountCtrl;
+  String? _existingOfferId; // for update in edit mode
 
   // Recurrence
   bool _repeatEnabled = false;
@@ -58,14 +76,37 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    _titleCtrl = TextEditingController(text: e?.title ?? '');
-    _descCtrl  = TextEditingController(text: e?.description ?? '');
-    _priceCtrl = TextEditingController(text: e?.priceAed != null ? '${e!.priceAed}' : '');
-    _startAt        = e?.startAt;
-    _endAt          = e?.endAt;
-    _existingPhotos = List.from(e?.photos ?? []);
-    _currency       = e?.currency ?? 'TRY';
-    // Pre-fill recurrence for edit mode
+    _titleCtrl         = TextEditingController(text: e?.title ?? '');
+    _descCtrl          = TextEditingController(text: e?.description ?? '');
+    _priceCtrl         = TextEditingController(text: e?.priceAed != null ? '${e!.priceAed}' : '');
+    _capacityCtrl      = TextEditingController(text: e?.capacity != null ? '${e!.capacity}' : '');
+    _startAt           = e?.startAt;
+    _endAt             = e?.endAt;
+    _existingPhotos    = List.from(e?.photos ?? []);
+    _currency          = e?.currency ?? 'TRY';
+
+    // Pre-fill partner benefits (IDs from existing event)
+    if (e != null) {
+      for (final b in e.partnershipBenefits) {
+        if (b.id.isNotEmpty) _selectedPartnershipIds.add(b.id);
+      }
+    }
+
+    // Pre-fill offer
+    if (e != null && e.offerTitle != null) {
+      _createOffer      = true;
+      _existingOfferId  = e.offerId;
+      _offerTitleCtrl   = TextEditingController(text: e.offerTitle);
+      _offerType        = _parseOfferType(e.offerType);
+      _offerDiscountCtrl = TextEditingController(
+        text: e.offerDiscountValue != null ? '${e.offerDiscountValue!.toStringAsFixed(0)}' : '',
+      );
+    } else {
+      _offerTitleCtrl    = TextEditingController();
+      _offerDiscountCtrl = TextEditingController();
+    }
+
+    // Pre-fill recurrence
     if (e?.recurrence != null) {
       _repeatEnabled  = true;
       _repeatFreq     = e!.recurrence!.frequency;
@@ -78,6 +119,18 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
         _repeatCount   = e.recurrence!.maxOccurrences!;
       }
     }
+
+    _loadPartnerships();
+  }
+
+  VenueOfferType _parseOfferType(String? raw) {
+    switch (raw) {
+      case 'PERCENT_OFF':    return VenueOfferType.PERCENT_OFF;
+      case 'FIXED_DISCOUNT': return VenueOfferType.FIXED_DISCOUNT;
+      case 'FREE_ITEM':      return VenueOfferType.FREE_ITEM;
+      case 'BUNDLE':         return VenueOfferType.BUNDLE;
+      default:               return VenueOfferType.BOGO;
+    }
   }
 
   @override
@@ -85,6 +138,9 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
+    _capacityCtrl.dispose();
+    _offerTitleCtrl.dispose();
+    _offerDiscountCtrl.dispose();
     super.dispose();
   }
 
@@ -150,6 +206,182 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
     }
   }
 
+  Future<void> _showPartnershipSheet(
+    Color kCard, Color kBorder, Color kText, Color kLabel, bool isDark,
+  ) async {
+    final selected = Set<String>.from(_selectedPartnershipIds);
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheet) => Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF0D1525) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white12 : Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.handshake_outlined, size: 18, color: _kMavi),
+                    const SizedBox(width: 8),
+                    Text('Partner Benefits',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText)),
+                    const Spacer(),
+                    if (selected.isNotEmpty)
+                      GestureDetector(
+                        onTap: () => setSheet(() => selected.clear()),
+                        child: Text('Clear',
+                            style: TextStyle(fontSize: 13, color: kLabel)),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.55,
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  itemCount: _activePartnerships.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, i) {
+                    final p = _activePartnerships[i];
+                    final isSelected = selected.contains(p.id);
+                    return GestureDetector(
+                      onTap: () => setSheet(() {
+                        if (isSelected) selected.remove(p.id);
+                        else selected.add(p.id);
+                      }),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 130),
+                        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: isSelected ? _kMavi.withValues(alpha: 0.08) : kCard,
+                          border: Border.all(
+                            color: isSelected ? _kMavi : kBorder,
+                            width: isSelected ? 1.5 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 30, height: 30,
+                              decoration: BoxDecoration(
+                                color: _kMavi.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.handshake_outlined, size: 14, color: _kMavi),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(p.platformDisplayName,
+                                      style: TextStyle(
+                                        fontSize: 12, fontWeight: FontWeight.w700,
+                                        color: isSelected ? _kMavi : kText,
+                                      )),
+                                  const SizedBox(height: 2),
+                                  Text('${p.offerTypeDisplayName} · ${p.offerLabel}',
+                                      style: TextStyle(fontSize: 11, color: kLabel),
+                                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 130),
+                              width: 20, height: 20,
+                              decoration: BoxDecoration(
+                                color: isSelected ? _kMavi : Colors.transparent,
+                                border: Border.all(
+                                  color: isSelected ? _kMavi : kBorder,
+                                  width: 1.5,
+                                ),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: isSelected
+                                  ? const Icon(Icons.check_rounded, size: 12, color: Colors.white)
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _selectedPartnershipIds
+                          ..clear()
+                          ..addAll(selected);
+                      });
+                      Navigator.pop(ctx);
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _kMavi,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: Text(
+                      selected.isEmpty
+                          ? 'None selected'
+                          : 'Apply (${selected.length})',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadPartnerships() async {
+    try {
+      final all = await _partnershipRepo.getPartnerships(widget.venueId);
+      if (!mounted) return;
+      setState(() {
+        _activePartnerships = all
+            .where((p) => p.status == ExternalPartnershipStatus.ACTIVE)
+            .toList();
+        _loadingPartnerships = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingPartnerships = false);
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_startAt == null || _endAt == null) {
@@ -162,8 +394,10 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
     }
     setState(() => _saving = true);
     try {
-      final priceText = _priceCtrl.text.trim();
-      final price     = priceText.isEmpty ? null : int.tryParse(priceText);
+      final priceText    = _priceCtrl.text.trim();
+      final price        = priceText.isEmpty ? null : int.tryParse(priceText);
+      final capacityText = _capacityCtrl.text.trim();
+      final capacity     = capacityText.isEmpty ? null : int.tryParse(capacityText);
       String eventId;
 
       if (_isEdit) {
@@ -179,17 +413,19 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           };
         }
         await _repo.updateEvent(
-          venueId:    widget.venueId,
-          eventId:    widget.existing!.id,
-          title:      _titleCtrl.text.trim(),
-          description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-          startAt:    _startAt,
-          endAt:      _endAt,
-          priceAed:   price,
-          clearPrice: priceText.isEmpty,
-          currency:   _currency,
-          editScope:  widget.editScope,
-          recurrence: recurrencePayload,
+          venueId:      widget.venueId,
+          eventId:      widget.existing!.id,
+          title:        _titleCtrl.text.trim(),
+          description:  _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+          startAt:      _startAt,
+          endAt:        _endAt,
+          priceAed:     price,
+          clearPrice:   priceText.isEmpty,
+          currency:     _currency,
+          capacity:     capacity,
+          clearCapacity: capacityText.isEmpty,
+          editScope:    widget.editScope,
+          recurrence:   recurrencePayload,
         );
         eventId = widget.existing!.id;
         for (final photo in _newPhotos) {
@@ -212,6 +448,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           endAt:      _endAt!,
           priceAed:   price,
           currency:   _currency,
+          capacity:   capacity,
           recurrence: recurrence,
         );
         eventId = ''; // recurring: no single event ID for photos
@@ -224,11 +461,39 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           endAt:       _endAt!,
           priceAed:    price,
           currency:    _currency,
+          capacity:    capacity,
         );
         eventId = created['id']?.toString() ?? '';
         for (final photo in _newPhotos) {
           await _repo.uploadPhoto(venueId: widget.venueId, eventId: eventId, file: photo);
         }
+      }
+      if (eventId.isNotEmpty && (_selectedPartnershipIds.isNotEmpty || _isEdit)) {
+        try {
+          await _partnershipRepo.setEventPartnerships(
+            widget.venueId,
+            eventId,
+            _selectedPartnershipIds.toList(),
+          );
+        } catch (_) {}
+      }
+      if (eventId.isNotEmpty && _createOffer && _offerTitleCtrl.text.trim().isNotEmpty) {
+        try {
+          final needsValue = _offerType == VenueOfferType.PERCENT_OFF ||
+              _offerType == VenueOfferType.FIXED_DISCOUNT;
+          final body = {
+            'title': _offerTitleCtrl.text.trim(),
+            'type': _offerType.name,
+            'event_id': eventId,
+            if (needsValue && _offerDiscountCtrl.text.isNotEmpty)
+              'discount_value': double.tryParse(_offerDiscountCtrl.text),
+          };
+          if (_existingOfferId != null) {
+            await _offerRepo.update(widget.venueId, _existingOfferId!, body);
+          } else {
+            await _offerRepo.create(widget.venueId, body);
+          }
+        } catch (_) {}
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -470,6 +735,21 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
 
             _divider(isDark),
 
+            // ── Capacity ───────────────────────────────────────────────
+            _SectionLabel(
+              icon: Icons.people_outline_rounded, color: _kTurkuaz,
+              label: 'Capacity', optional: true, kLabel: kLabel,
+            ),
+            const SizedBox(height: 8),
+            _EventField(
+              controller: _capacityCtrl,
+              hint: 'Leave empty for unlimited',
+              keyboardType: TextInputType.number,
+              kCard: kCard, kBorder: kBorder, kDim: kDim, kText: kText,
+            ),
+
+            _divider(isDark),
+
             // ── Photos ─────────────────────────────────────────────────
             _SectionLabel(icon: Icons.add_photo_alternate_outlined, color: _kMagenta, label: 'Photos', kLabel: kLabel),
             const SizedBox(height: 8),
@@ -543,32 +823,270 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
 
             _divider(isDark),
 
-            // ── Discount ───────────────────────────────────────────────
-            _SectionLabel(icon: Icons.local_offer_outlined, color: _kTurkuaz, label: 'Discount', optional: true, kLabel: kLabel),
+            // ── Partner Benefits ────────────────────────────────────────
+            _SectionLabel(
+              icon: Icons.handshake_outlined,
+              color: _kMavi,
+              label: 'Partner Benefits',
+              optional: true,
+              kLabel: kLabel,
+            ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                _DiscountBtn(
-                  value: 'none', selected: _discount,
-                  icon: Icons.block_rounded, label: 'None',
-                  kCard: kCard, kBorder: kBorder,
-                  onTap: () => setState(() => _discount = 'none'),
+            if (_loadingPartnerships)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: _kMavi),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('Loading partnerships…', style: TextStyle(fontSize: 12, color: kLabel)),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                _DiscountBtn(
-                  value: 'early_bird', selected: _discount,
-                  icon: Icons.access_time_rounded, label: 'Early Bird',
-                  kCard: kCard, kBorder: kBorder,
-                  onTap: () => setState(() => _discount = 'early_bird'),
+              )
+            else if (_activePartnerships.isEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+                decoration: BoxDecoration(
+                  color: kCard,
+                  border: Border.all(color: kBorder),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                const SizedBox(width: 8),
-                _DiscountBtn(
-                  value: 'group', selected: _discount,
-                  icon: Icons.group_rounded, label: 'Group',
-                  kCard: kCard, kBorder: kBorder,
-                  onTap: () => setState(() => _discount = 'group'),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 14, color: kLabel),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'No active partnerships. Add them from Offers & Benefits.',
+                        style: TextStyle(fontSize: 11.5, color: kLabel),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              // Tappable summary row → opens bottom sheet
+              GestureDetector(
+                onTap: () => _showPartnershipSheet(kCard, kBorder, kText, kLabel, isDark),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: _selectedPartnershipIds.isNotEmpty
+                        ? _kMavi.withValues(alpha: 0.07)
+                        : kCard,
+                    border: Border.all(
+                      color: _selectedPartnershipIds.isNotEmpty ? _kMavi : kBorder,
+                      width: _selectedPartnershipIds.isNotEmpty ? 1.5 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 30, height: 30,
+                        decoration: BoxDecoration(
+                          color: _kMavi.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.handshake_outlined, size: 14, color: _kMavi),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _selectedPartnershipIds.isEmpty
+                              ? 'Select partner benefits…'
+                              : '${_selectedPartnershipIds.length} benefit${_selectedPartnershipIds.length > 1 ? 's' : ''} selected',
+                          style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600,
+                            color: _selectedPartnershipIds.isNotEmpty ? _kMavi : kLabel,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, size: 18, color: kLabel),
+                    ],
+                  ),
+                ),
+              ),
+              // Selected badges
+              if (_selectedPartnershipIds.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _activePartnerships
+                      .where((p) => _selectedPartnershipIds.contains(p.id))
+                      .map((p) => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: _kMavi.withValues(alpha: 0.10),
+                              border: Border.all(color: _kMavi.withValues(alpha: 0.3)),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(p.platformDisplayName,
+                                    style: const TextStyle(
+                                        fontSize: 11, fontWeight: FontWeight.w700, color: _kMavi)),
+                                const SizedBox(width: 6),
+                                GestureDetector(
+                                  onTap: () => setState(() => _selectedPartnershipIds.remove(p.id)),
+                                  child: const Icon(Icons.close_rounded, size: 12, color: _kMavi),
+                                ),
+                              ],
+                            ),
+                          ))
+                      .toList(),
                 ),
               ],
+            ],
+
+            _divider(isDark),
+
+            // ── Event Offer ─────────────────────────────────────────────
+            Row(
+              children: [
+                Container(
+                  width: 30, height: 30,
+                  decoration: BoxDecoration(
+                    color: _kTuruncu.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Icon(Icons.local_offer_outlined, size: 15, color: _kTuruncu),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('EVENT OFFER',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
+                            letterSpacing: 1.2, color: _kTuruncu)),
+                    Text('optional',
+                        style: TextStyle(fontSize: 10, color: kLabel.withValues(alpha: 0.5))),
+                  ],
+                ),
+                const Spacer(),
+                Switch.adaptive(
+                  value: _createOffer,
+                  onChanged: (v) => setState(() => _createOffer = v),
+                  activeColor: _kTuruncu,
+                ),
+              ],
+            ),
+
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 220),
+              crossFadeState: _createOffer ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              firstChild: const SizedBox(height: 0),
+              secondChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 14),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0D1525) : const Color(0xFFF0F4FA),
+                      border: Border.all(color: _kTuruncu.withValues(alpha: 0.25), width: 1.5),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Offer type',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText)),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            (VenueOfferType.BOGO, 'BOGO'),
+                            (VenueOfferType.PERCENT_OFF, '% Off'),
+                            (VenueOfferType.FIXED_DISCOUNT, 'Fixed Discount'),
+                            (VenueOfferType.FREE_ITEM, 'Free Item'),
+                            (VenueOfferType.BUNDLE, 'Bundle'),
+                          ].map((o) => GestureDetector(
+                            onTap: () => setState(() => _offerType = o.$1),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: _offerType == o.$1 ? _kTuruncu.withValues(alpha: 0.12) : kCard,
+                                border: Border.all(
+                                  color: _offerType == o.$1 ? _kTuruncu : kBorder,
+                                  width: _offerType == o.$1 ? 1.5 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(o.$2,
+                                  style: TextStyle(
+                                    fontSize: 12, fontWeight: FontWeight.w600,
+                                    color: _offerType == o.$1 ? _kTuruncu : kLabel,
+                                  )),
+                            ),
+                          )).toList(),
+                        ),
+                        const SizedBox(height: 14),
+                        Text('Offer title',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText)),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _offerTitleCtrl,
+                          style: TextStyle(fontSize: 13, color: kText),
+                          decoration: InputDecoration(
+                            hintText: 'e.g. BOGO Cocktails Tonight',
+                            hintStyle: TextStyle(fontSize: 13, color: kLabel.withValues(alpha: 0.6)),
+                            filled: true,
+                            fillColor: kCard,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: kBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: kBorder),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                          ),
+                        ),
+                        if (_offerType == VenueOfferType.PERCENT_OFF ||
+                            _offerType == VenueOfferType.FIXED_DISCOUNT) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _offerType == VenueOfferType.PERCENT_OFF ? 'Discount %' : 'Discount amount',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText),
+                          ),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _offerDiscountCtrl,
+                            keyboardType: TextInputType.number,
+                            style: TextStyle(fontSize: 13, color: kText),
+                            decoration: InputDecoration(
+                              hintText: _offerType == VenueOfferType.PERCENT_OFF ? '20' : '50',
+                              hintStyle: TextStyle(fontSize: 13, color: kLabel.withValues(alpha: 0.6)),
+                              filled: true,
+                              fillColor: kCard,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: kBorder),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: kBorder),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
             ),
 
             // ── Recurring info (edit mode) ─────────────────────────────

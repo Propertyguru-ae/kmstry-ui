@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/signup_page.dart';
+import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
-/// Kayit akisinin ilk adimi: kisisel mi yoksa mekan hesabi mi aciyor?
-/// Login sayfasindaki "Kayit Ol" dugmesine basilinca gosterilir.
+/// Signup akışında: kişisel mi yoksa mekan hesabı mı açıyor?
+/// Login sayfasındaki "Kayıt Ol" butonuna basılınca gösterilir.
+///
+/// [isAuthenticated]=true olunca zaten giriş yapmış ama profil kurmamış
+/// kullanıcılar için kullanılır (örn. invite'ı reddedip geri dönenler).
+/// Bu modda Signup'a değil doğrudan onboarding sayfalarına yönlendirilir.
 class ContextChoicePage extends StatelessWidget {
-  const ContextChoicePage({super.key});
+  final bool isAuthenticated;
+
+  const ContextChoicePage({super.key, this.isAuthenticated = false});
 
   // Dark mode
   static const _darkBg = Color(0xFF06091A);
@@ -73,17 +83,26 @@ class ContextChoicePage extends StatelessWidget {
             ),
           ],
           SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Top bar
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _CircleBackButton(isDark: isDark),
-                  ),
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: MediaQuery.of(context).size.height -
+                      MediaQuery.of(context).padding.top -
+                      MediaQuery.of(context).padding.bottom,
                 ),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                // Top bar — back button only for unauthenticated (signup) flow
+                if (!isAuthenticated)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _CircleBackButton(isDark: isDark),
+                    ),
+                  ),
 
                 const Spacer(flex: 3),
 
@@ -134,7 +153,9 @@ class ContextChoicePage extends StatelessWidget {
                         arrowColor: Colors.white,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => const SignupPage(isVenueSignup: false),
+                            builder: (ctx) => isAuthenticated
+                                ? UsernameOnboardingPage(onCancel: () => Navigator.of(ctx).pop())
+                                : const SignupPage(isVenueSignup: false),
                           ),
                         ),
                       ),
@@ -156,7 +177,9 @@ class ContextChoicePage extends StatelessWidget {
                         arrowColor: Colors.white,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => const SignupPage(isVenueSignup: true),
+                            builder: (ctx) => isAuthenticated
+                                ? VenueContextOnboardingPage(onCancel: () => Navigator.of(ctx).pop())
+                                : const SignupPage(isVenueSignup: true),
                           ),
                         ),
                       ),
@@ -166,7 +189,7 @@ class ContextChoicePage extends StatelessWidget {
 
                 const Spacer(flex: 4),
 
-                // Bottom social proof
+                // Bottom area
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
                   child: Column(
@@ -184,6 +207,30 @@ class ContextChoicePage extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      if (isAuthenticated)
+                        GestureDetector(
+                          onTap: () async {
+                            await AuthRepository().logout();
+                            if (context.mounted) {
+                              Navigator.of(context).pushNamedAndRemoveUntil(
+                                AuthRoutes.login,
+                                (_) => false,
+                              );
+                            }
+                          },
+                          child: Text(
+                            'Log out',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.35)
+                                  : Colors.black38,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        )
+                      else
                       Text.rich(
                         TextSpan(
                           children: [
@@ -223,7 +270,11 @@ class ContextChoicePage extends StatelessWidget {
                     ],
                   ),
                 ),
-              ],
+
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ],

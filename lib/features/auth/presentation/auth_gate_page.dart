@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/bio_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
@@ -202,43 +203,8 @@ class _AuthGatePageState extends State<AuthGatePage> {
           return;
         }
 
-        _logDecision('server_route_context_choice_force_personal');
-        try {
-          await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
-        } catch (_) {}
-
-        if (!hasUsername) {
-          _logDecision('context_choice_force_personal_username');
-          _go(UsernameOnboardingPage(initialUsername: _usernamePrefill(me), onCancel: onCancelPersonal));
-          return;
-        }
-        if (!hasNameDob) {
-          _logDecision('context_choice_force_personal_name_dob');
-          _go(NameDobOnboardingPage(initialName: _namePrefill(me), nameReadOnly: _namePrefill(me) != null, onCancel: onCancelPersonal));
-          return;
-        }
-        if (onboardingStep == 'BIO') {
-          _logDecision('context_choice_force_personal_bio');
-          _go(BioOnboardingPage(initialBio: _bioPrefill(me)));
-          return;
-        }
-        if (onboardingStep == 'GENDER_INTEREST') {
-          if (!hasGenderInterest) {
-            _logDecision('context_choice_force_personal_gender_interest');
-            _go(const GenderInterestOnboardingPage());
-            return;
-          }
-          // Gender+interest already set but step not yet advanced → go to permissions
-          _logDecision('context_choice_force_personal_gender_interest_completed_go_permissions');
-          _go(const PermissionsFlowPage());
-          return;
-        }
-        if (onboardingStep == 'PERMISSIONS') {
-          _logDecision('context_choice_force_personal_permissions');
-          _go(const PermissionsFlowPage());
-          return;
-        }
-        await _routeToPersonalHome();
+        _logDecision('server_route_context_choice_show_choice');
+        _go(const ContextChoicePage(isAuthenticated: true));
         return;
       }
       if (homeRoute == 'VENUE_MEMBER_INVITE' || nextAction == 'SHOW_VENUE_MEMBER_INVITE') {

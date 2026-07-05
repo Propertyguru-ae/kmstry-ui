@@ -12,12 +12,14 @@ class RegisterEmailOtpPage extends StatefulWidget {
   final String email;
   final Map<String, dynamic>? initialOtpResponse;
   final bool isVenueSignup;
+  final bool isInviteSignup;
 
   const RegisterEmailOtpPage({
     super.key,
     required this.email,
     this.initialOtpResponse,
     this.isVenueSignup = false,
+    this.isInviteSignup = false,
   });
 
   @override
@@ -200,6 +202,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
           builder: (_) => RegisterSetPasswordPage(
+            isInviteSignup: widget.isInviteSignup,
             email: widget.email,
             otpProof: proof,
             isVenueSignup: widget.isVenueSignup,

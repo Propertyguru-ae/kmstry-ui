@@ -136,7 +136,7 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     }
     setState(() => _accountNotificationsEnabled = enabled);
     await SecureStorage.write(_notificationsEnabledKey, enabled.toString());
-    await AuthRepository().updateMe({'notification_permission_granted': enabled});
+    await AuthRepository().updatePermissions({'notificationPermissionGranted': enabled});
     if (enabled) {
       await PushManager.instance.ensureRegisteredIfAllowed();
     }

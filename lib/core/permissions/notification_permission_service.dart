@@ -65,7 +65,12 @@ class NotificationPermissionService {
   Future<void> reconcileBackendPreferenceWithSystem() async {
     final state = await readStateFromBackend();
     if (!state.systemGranted && state.accountPreference) {
+      // System permission revoked → sync backend to false
       await _auth.updatePermissions({'notificationPermissionGranted': false});
+    } else if (state.systemGranted && !state.accountPreference) {
+      // System permission granted but backend still false (e.g. invite-signup users
+      // who never went through the notification onboarding screen) → sync to true
+      await _auth.updatePermissions({'notificationPermissionGranted': true});
     }
   }
 }

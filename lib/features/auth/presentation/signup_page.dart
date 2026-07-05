@@ -5,10 +5,12 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/register_email_otp_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 
 class SignupPage extends StatefulWidget {
   final bool isVenueSignup;
-  const SignupPage({super.key, this.isVenueSignup = false});
+  final bool isInviteSignup;
+  const SignupPage({super.key, this.isVenueSignup = false, this.isInviteSignup = false});
 
   @override
   State<SignupPage> createState() => _SignupPageState();
@@ -35,6 +37,17 @@ class _SignupPageState extends State<SignupPage> {
     final email = _emailCtrl.text.trim();
     setState(() { _loading = true; _error = null; });
     try {
+      // Invite signup: verify the entered email matches a claimed invite before sending OTP
+      if (widget.isInviteSignup) {
+        final found = await VenueInviteRepository().checkInviteEmail(email);
+        if (!found) {
+          setState(() {
+            _loading = false;
+            _error = 'No invite was found for this email. Please use the same email you entered on the invite link page.';
+          });
+          return;
+        }
+      }
       final response = await AuthRepository().requestRegisterOtp(email);
       if (!mounted) return;
       await Navigator.of(context).push(
@@ -43,6 +56,7 @@ class _SignupPageState extends State<SignupPage> {
             email: email,
             initialOtpResponse: response,
             isVenueSignup: widget.isVenueSignup,
+            isInviteSignup: widget.isInviteSignup,
           ),
         ),
       );
@@ -187,6 +201,7 @@ class _SignupPageState extends State<SignupPage> {
                       // Account badge
                       _AccountBadge(
                         isVenue: widget.isVenueSignup,
+                        isInvite: widget.isInviteSignup,
                         isDark: isDark,
                         onChangeTap: () => Navigator.pop(context),
                       ),
@@ -590,23 +605,29 @@ class _Headline extends StatelessWidget {
 
 class _AccountBadge extends StatelessWidget {
   final bool isVenue;
+  final bool isInvite;
   final bool isDark;
   final VoidCallback onChangeTap;
   const _AccountBadge({
     required this.isVenue,
     required this.isDark,
     required this.onChangeTap,
+    this.isInvite = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final iconBg    = isVenue ? const Color(0xFF3B1580) : const Color(0xFF1540A0);
-    final iconColor = isVenue ? const Color(0xFFC4A0FF) : const Color(0xFF90B8FF);
-    final titleColor = isVenue ? const Color(0xFFC4A0FF) : const Color(0xFFAAC4FF);
-    final borderColor = isVenue
+    final iconBg    = isInvite ? const Color(0xFF0A3020) : isVenue ? const Color(0xFF3B1580) : const Color(0xFF1540A0);
+    final iconColor = isInvite ? const Color(0xFF34D399) : isVenue ? const Color(0xFFC4A0FF) : const Color(0xFF90B8FF);
+    final titleColor = isInvite ? const Color(0xFF34D399) : isVenue ? const Color(0xFFC4A0FF) : const Color(0xFFAAC4FF);
+    final borderColor = isInvite
+        ? (isDark ? const Color(0xFF0D4028) : const Color(0xFFB0E8D4))
+        : isVenue
         ? (isDark ? const Color(0xFF3D2080) : const Color(0xFFD4B8FF))
         : (isDark ? const Color(0x401A9FE8) : const Color(0xFFBFD4FF));
-    final bgColor = isVenue
+    final bgColor = isInvite
+        ? (isDark ? const Color(0x1A0A3020) : const Color(0xFFEEFBF6))
+        : isVenue
         ? (isDark ? const Color(0x1A3B1580) : const Color(0xFFF5F0FF))
         : (isDark ? const Color(0x2E1540A0) : const Color(0xFFF0F5FF));
 
@@ -629,9 +650,11 @@ class _AccountBadge extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  isVenue
-                      ? Icons.store_mall_directory_outlined
-                      : Icons.person_outline_rounded,
+                  isInvite
+                      ? Icons.link_rounded
+                      : isVenue
+                          ? Icons.store_mall_directory_outlined
+                          : Icons.person_outline_rounded,
                   color: iconColor,
                   size: 20,
                 ),
@@ -656,7 +679,7 @@ class _AccountBadge extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isVenue ? 'Venue Account' : 'Personal Account',
+                  isInvite ? 'Invite Sign-up' : isVenue ? 'Venue Account' : 'Personal Account',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -665,9 +688,11 @@ class _AccountBadge extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  isVenue
-                      ? 'Manage your venue & grow your presence'
-                      : 'Discover venues & share moments',
+                  isInvite
+                      ? 'You\'ll be taken to your invite after sign-up'
+                      : isVenue
+                          ? 'Manage your venue & grow your presence'
+                          : 'Discover venues & share moments',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.4,

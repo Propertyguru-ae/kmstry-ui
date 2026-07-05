@@ -16,6 +16,7 @@ import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboar
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_edit_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_offers_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
@@ -24,6 +25,7 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_c
 import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/add_venue_event_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_events_list_page.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 
 class VenueProfilePage extends StatefulWidget {
@@ -849,6 +851,30 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
 
                         const SizedBox(height: 8),
 
+                        // ── Offers & Benefits ─────────────────────────────
+                        if (isOwner)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: _SectionCard(
+                              child: _ActionRow(
+                                icon: Icons.local_offer_outlined,
+                                label: 'Offers & Benefits',
+                                subtitle: 'Manage offers and external partnerships',
+                                onTap: venue != null
+                                    ? () => Navigator.of(context).push(MaterialPageRoute(
+                                          builder: (_) => VenueOffersPage(
+                                            venueId: venue!.id,
+                                            venueName: venue!.name,
+                                          ),
+                                        ))
+                                    : null,
+                                colors: colors,
+                              ),
+                            ),
+                          ),
+
+                        const SizedBox(height: 8),
+
                         // ── Events ────────────────────────────────────────
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -857,6 +883,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                             venueId: venue?.id ?? '',
                             onAdd: session.can(VenuePermission.eventManage) ? _openAddEvent : null,
                             onGoToList: _openEventsList,
+                            onEventChanged: _loadVenueProfile,
                             colors: colors,
                           ),
                         ),
@@ -1499,6 +1526,7 @@ class _EventsSection extends StatelessWidget {
   final String venueId;
   final VoidCallback? onAdd;
   final VoidCallback onGoToList;
+  final VoidCallback? onEventChanged;
   final ColorScheme colors;
 
   const _EventsSection({
@@ -1507,6 +1535,7 @@ class _EventsSection extends StatelessWidget {
     required this.onAdd,
     required this.onGoToList,
     required this.colors,
+    this.onEventChanged,
   });
 
   @override
@@ -1591,7 +1620,7 @@ class _EventsSection extends StatelessWidget {
                   ? Column(
                       children: todayEvents.map((e) => Padding(
                         padding: const EdgeInsets.only(bottom: 10),
-                        child: _EventCard(event: e, venueId: venueId, colors: colors, onAdd: onAdd),
+                        child: _EventCard(event: e, venueId: venueId, colors: colors, onAdd: onAdd, onChanged: onEventChanged),
                       )).toList(),
                     )
                   : SizedBox(
@@ -1601,7 +1630,7 @@ class _EventsSection extends StatelessWidget {
                         itemCount: todayEvents.length,
                         itemBuilder: (_, i) => Padding(
                           padding: const EdgeInsets.only(bottom: 10),
-                          child: _EventCard(event: todayEvents[i], venueId: venueId, colors: colors, onAdd: onAdd),
+                          child: _EventCard(event: todayEvents[i], venueId: venueId, colors: colors, onAdd: onAdd, onChanged: onEventChanged),
                         ),
                       ),
                     ),
@@ -1618,8 +1647,9 @@ class _EventCard extends StatelessWidget {
   final String venueId;
   final ColorScheme colors;
   final VoidCallback? onAdd;
+  final VoidCallback? onChanged;
 
-  const _EventCard({required this.event, required this.venueId, required this.colors, required this.onAdd});
+  const _EventCard({required this.event, required this.venueId, required this.colors, required this.onAdd, this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -1628,7 +1658,21 @@ class _EventCard extends StatelessWidget {
         ? event.photos
         : (event.photo != null ? [event.photo!] : <String>[]);
 
-    return Container(
+    return GestureDetector(
+      onTap: () async {
+        final result = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VenueEventDetailPage(
+              event: event,
+              venueId: venueId,
+              onChanged: onChanged,
+            ),
+          ),
+        );
+        if (result == true) onChanged?.call();
+      },
+      child: Container(
         decoration: BoxDecoration(
           color: isDark ? colors.surfaceContainerHighest : const Color(0xFFF5F7FA),
           borderRadius: BorderRadius.circular(14),
@@ -1671,6 +1715,26 @@ class _EventCard extends StatelessWidget {
                   ),
                 ),
               ],
+              if (event.capacity != null || event.rsvpCount > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A9FE8).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Text(
+                    event.capacity != null
+                        ? '${event.rsvpCount}/${event.capacity}'
+                        : '${event.rsvpCount} attending',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF1A9FE8),
+                    ),
+                  ),
+                ),
+              ],
             ]),
 
             // ── Description ─────────────────────────────────────────────
@@ -1681,6 +1745,29 @@ class _EventCard extends StatelessWidget {
                 style: TextStyle(fontSize: 12.5, color: colors.onSurface.withValues(alpha: 0.6), height: 1.4),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+              ),
+            ],
+
+            // ── Offers & Partner Benefits badges ────────────────────────
+            if (event.offerTitle != null || event.partnershipCount > 0) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  if (event.offerTitle != null)
+                    _BenefitBadge(
+                      icon: Icons.local_offer_outlined,
+                      label: event.offerTitle!,
+                      color: const Color(0xFFF08838),
+                    ),
+                  if (event.partnershipCount > 0)
+                    _BenefitBadge(
+                      icon: Icons.handshake_outlined,
+                      label: '${event.partnershipCount} partner benefit${event.partnershipCount > 1 ? 's' : ''}',
+                      color: const Color(0xFF1A9FE8),
+                    ),
+                ],
               ),
             ],
 
@@ -1699,6 +1786,40 @@ class _EventCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _BenefitBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _BenefitBadge({required this.icon, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -4,7 +4,9 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_invite_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/auth_repository.dart';
@@ -13,12 +15,14 @@ class RegisterSetPasswordPage extends StatefulWidget {
   final String email;
   final String otpProof;
   final bool isVenueSignup;
+  final bool isInviteSignup;
 
   const RegisterSetPasswordPage({
     super.key,
     required this.email,
     required this.otpProof,
     this.isVenueSignup = false,
+    this.isInviteSignup = false,
   });
 
   @override
@@ -155,6 +159,26 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
         privacyVersionId: _privacyVersionId!,
         consentSource: 'MOBILE',
       );
+
+      // Check for a pending venue invite claimed with this email before any onboarding
+      final pendingInvite = await VenueInviteRepository().getPendingInvite();
+      if (!mounted) return;
+      if (pendingInvite != null) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => VenueInvitePage(token: pendingInvite.token),
+          ),
+          (route) => false,
+        );
+        return;
+      }
+
+      // Invite-only signup: if no pending invite found, show error — do NOT fall through to onboarding
+      if (widget.isInviteSignup) {
+        setState(() => _error = 'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.');
+        return;
+      }
+
       if (widget.isVenueSignup) {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
@@ -173,6 +197,19 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
           final isLoggedIn = await AuthRepository().restoreSession();
           if (!mounted) return;
           if (isLoggedIn) {
+            final pendingInvite = await VenueInviteRepository().getPendingInvite();
+            if (!mounted) return;
+            if (pendingInvite != null) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => VenueInvitePage(token: pendingInvite.token)),
+                (route) => false,
+              );
+              return;
+            }
+            if (widget.isInviteSignup) {
+              setState(() => _error = 'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.');
+              return;
+            }
             if (widget.isVenueSignup) {
               Navigator.of(context).pushReplacement(
                 MaterialPageRoute(builder: (_) => const VenueContextOnboardingPage()),

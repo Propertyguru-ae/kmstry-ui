@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_invite_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/auth_repository.dart';
 import 'auth_routes.dart';
@@ -263,6 +265,19 @@ class _LoginPageState extends State<LoginPage> {
         _passCtrl.text,
       );
       if (!mounted) return;
+
+      final pendingInvite = await VenueInviteRepository().getPendingInvite();
+      if (!mounted) return;
+      if (pendingInvite != null) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VenueInvitePage(token: pendingInvite.token),
+          ),
+          (route) => false,
+        );
+        return;
+      }
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
     } catch (e) {

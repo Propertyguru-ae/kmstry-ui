@@ -1,19 +1,27 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:kmstry_frontend/core/theme/app_colors.dart';
-import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'add_venue_event_page.dart';
 import '../data/venue_event_repository.dart';
 
+const _kMagenta = Color(0xFFE020D8);
+const _kTurkuaz = Color(0xFF1FD9A8);
+const _kMavi    = Color(0xFF1A9FE8);
+const _kTuruncu = Color(0xFFF08838);
+const _kRed     = Color(0xFFEF4444);
+
 class VenueEventDetailPage extends StatefulWidget {
-  final String venueId;
   final VenueUpcomingEvent event;
+  final String venueId;
+  final VoidCallback? onChanged;
 
   const VenueEventDetailPage({
     super.key,
-    required this.venueId,
     required this.event,
+    required this.venueId,
+    this.onChanged,
   });
 
   @override
@@ -21,469 +29,841 @@ class VenueEventDetailPage extends StatefulWidget {
 }
 
 class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
-  final _repo = VenueEventRepository();
-
-  // Edit state
-  bool _editing = false;
-  bool _saving = false;
-  bool _deleting = false;
-
-  late final TextEditingController _titleCtrl;
-  late final TextEditingController _descCtrl;
-  late final TextEditingController _priceCtrl;
-  late DateTime _startAt;
-  late DateTime _endAt;
-  late List<String> _existingPhotos;
-  final List<File> _newPhotos = [];
-
-  static const _kBg     = Color(0xFF06091A);
-  static const _kSheet  = Color(0xFF0B1322);
-  static const _kCard   = Color(0xFF0D1A30);
-  static const _kBlueLt = AppColors.blueDark;
-  static const _kBorder = Color(0xFF162040);
-  static const _kDim    = Color(0xFF3A5070);
-  static const _kText   = Color(0xFFC8D8F0);
-  static const _kRed    = Color(0xFFEF4444);
+  late VenueUpcomingEvent _event;
 
   @override
   void initState() {
     super.initState();
-    _titleCtrl = TextEditingController(text: widget.event.title);
-    _descCtrl  = TextEditingController(text: widget.event.description ?? '');
-    _priceCtrl = TextEditingController(
-      text: widget.event.priceAed != null ? '${widget.event.priceAed}' : '',
-    );
-    _startAt = widget.event.startAt;
-    _endAt   = widget.event.endAt;
-    _existingPhotos = List.from(widget.event.photos);
+    _event = widget.event;
   }
 
-  @override
-  void dispose() {
-    _titleCtrl.dispose();
-    _descCtrl.dispose();
-    _priceCtrl.dispose();
-    super.dispose();
-  }
-
-  String _formatDt(DateTime dt) {
-    const days   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    return '${days[(dt.weekday - 1) % 7]}, ${dt.day} ${months[dt.month - 1]} · $h:$m';
-  }
-
-  Future<void> _pickDate({required bool isStart}) async {
-    final now     = DateTime.now();
-    final initial = isStart ? _startAt : _endAt;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: now.subtract(const Duration(days: 1)),
-      lastDate: now.add(const Duration(days: 365)),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.dark(primary: _kBlueLt, surface: _kCard),
-        ),
-        child: child!,
-      ),
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.dark(primary: _kBlueLt, surface: _kCard),
-        ),
-        child: child!,
-      ),
-    );
-    if (time == null || !mounted) return;
-    final dt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    setState(() {
-      if (isStart) {
-        _startAt = dt;
-        if (_endAt.isBefore(dt)) _endAt = dt.add(const Duration(hours: 3));
-      } else {
-        _endAt = dt;
+  Future<void> _reloadEvent() async {
+    try {
+      final venue = await VenueRepository().getVenueById(widget.venueId);
+      final updated = venue.upcomingEvents.where((e) => e.id == _event.id).firstOrNull;
+      if (updated != null && mounted) {
+        setState(() => _event = updated);
       }
-    });
-  }
-
-  Future<void> _pickPhoto() async {
-    if (_existingPhotos.length + _newPhotos.length >= 3) return;
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (picked == null || !mounted) return;
-    setState(() => _newPhotos.add(File(picked.path)));
-  }
-
-  Future<void> _save() async {
-    if (_titleCtrl.text.trim().isEmpty) return;
-    setState(() => _saving = true);
-    try {
-      final priceText = _priceCtrl.text.trim();
-      await _repo.updateEvent(
-        venueId: widget.venueId,
-        eventId: widget.event.id,
-        title: _titleCtrl.text.trim(),
-        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-        startAt: _startAt,
-        endAt: _endAt,
-        priceAed: priceText.isEmpty ? null : int.tryParse(priceText),
-        clearPrice: priceText.isEmpty,
-      );
-      for (final photo in _newPhotos) {
-        await _repo.uploadPhoto(
-          venueId: widget.venueId,
-          eventId: widget.event.id,
-          file: photo,
-        );
-      }
-      if (!mounted) return;
-      Navigator.pop(context, true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      await showPremiumErrorDialog(context, message: 'Could not save changes.');
-    }
-  }
-
-  Future<void> _confirmDelete() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _kSheet,
-        title: const Text('Delete Event', style: TextStyle(color: _kText)),
-        content: const Text('This event will be permanently deleted.',
-            style: TextStyle(color: _kDim)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: _kDim)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: _kRed)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    setState(() => _deleting = true);
-    try {
-      await _repo.deleteEvent(venueId: widget.venueId, eventId: widget.event.id);
-      if (!mounted) return;
-      Navigator.pop(context, true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _deleting = false);
-      await showPremiumErrorDialog(context, message: 'Could not delete event.');
-    }
-  }
-
-  Future<void> _removeExistingPhoto(String url) async {
-    try {
-      await _repo.removePhoto(
-        venueId: widget.venueId,
-        eventId: widget.event.id,
-        photoUrl: url,
-      );
-      setState(() => _existingPhotos.remove(url));
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not remove photo'), behavior: SnackBarBehavior.floating),
-      );
-    }
+    } catch (_) {}
+    widget.onChanged?.call();
   }
 
   @override
   Widget build(BuildContext context) {
+    final event    = _event;
+    final isDark    = Theme.of(context).brightness == Brightness.dark;
+    final kBg       = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kCard     = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
+    final kBorder   = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
+    final kText     = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+    final kDim      = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    final canManage = VenueSession.instance.can(VenuePermission.eventManage);
+
+    final photos = event.photos.isNotEmpty
+        ? event.photos
+        : (event.photo != null ? [event.photo!] : <String>[]);
+    final isFree = event.priceAed == null || event.priceAed == 0;
+
     return Scaffold(
-      backgroundColor: _kBg,
-      appBar: AppBar(
-        backgroundColor: _kBg,
-        elevation: 0,
-        title: Text(
-          _editing ? 'Edit Event' : 'Event',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: _kText),
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: _kText),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          if (!_editing) ...[
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, color: _kBlueLt, size: 20),
-              onPressed: () => setState(() => _editing = true),
-              tooltip: 'Edit',
+      backgroundColor: kBg,
+      body: CustomScrollView(
+        slivers: [
+          // ── App bar ────────────────────────────────────────────────────
+          SliverAppBar(
+            backgroundColor: kBg,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            pinned: true,
+            automaticallyImplyLeading: false,
+            title: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : Colors.black.withValues(alpha: 0.05),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.07),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.chevron_left_rounded,
+                      size: 22,
+                      color: isDark ? const Color(0xFF607090) : const Color(0xFF6B7280),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+              ],
             ),
-            IconButton(
-              icon: _deleting
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: _kRed))
-                  : const Icon(Icons.delete_outline, color: _kRed, size: 20),
-              onPressed: _deleting ? null : _confirmDelete,
-              tooltip: 'Delete',
+            actions: canManage
+                ? [
+                    _AppBarBtn(
+                      icon: Icons.edit_outlined,
+                      color: _kTurkuaz,
+                      isDark: isDark,
+                      onTap: () => _openEdit(context, isDark, kBg, kCard, kBorder, kText, kDim),
+                    ),
+                    _AppBarBtn(
+                      icon: Icons.delete_outline_rounded,
+                      color: _kRed,
+                      isDark: isDark,
+                      onTap: () => _confirmDelete(context, isDark),
+                    ),
+                    const SizedBox(width: 6),
+                  ]
+                : null,
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(1),
+              child: Container(
+                height: 1,
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.05)
+                    : Colors.black.withValues(alpha: 0.06),
+              ),
             ),
-          ] else ...[
-            if (_saving)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 18),
-                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: _kBlueLt))),
-              )
-            else ...[
-              TextButton(
-                onPressed: () => setState(() => _editing = false),
-                child: const Text('Cancel', style: TextStyle(color: _kDim)),
-              ),
-              TextButton(
-                onPressed: _save,
-                child: const Text('Save', style: TextStyle(color: _kBlueLt, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ],
+          ),
+
+          // ── Content ────────────────────────────────────────────────────
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 52),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+
+                // ── 1. Title ─────────────────────────────────────────────
+                Text(
+                  event.title,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                    color: kText,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // ── 2. Date & price chips ─────────────────────────────────
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _InfoChip(
+                      icon: Icons.calendar_today_outlined,
+                      label: event.formattedDate,
+                      color: _kTurkuaz,
+                      isDark: isDark,
+                    ),
+                    _InfoChip(
+                      icon: isFree
+                          ? Icons.card_giftcard_outlined
+                          : Icons.confirmation_num_outlined,
+                      label: isFree
+                          ? 'Free entry'
+                          : '${event.currency} ${event.priceAed} min.',
+                      color: isFree ? _kTurkuaz : _kTuruncu,
+                      isDark: isDark,
+                    ),
+                    if (event.isRecurring)
+                      _InfoChip(
+                        icon: Icons.repeat_rounded,
+                        label: 'Recurring',
+                        color: _kMagenta,
+                        isDark: isDark,
+                      ),
+                    if (event.capacity != null || event.rsvpCount > 0)
+                      _InfoChip(
+                        icon: Icons.people_outline_rounded,
+                        label: event.capacity != null
+                            ? '${event.rsvpCount} / ${event.capacity}'
+                            : '${event.rsvpCount} attending',
+                        color: (event.capacity != null && event.rsvpCount >= event.capacity!)
+                            ? _kRed
+                            : _kMavi,
+                        isDark: isDark,
+                      ),
+                  ],
+                ),
+
+                // ── 3. Description ────────────────────────────────────────
+                if (event.description != null && event.description!.isNotEmpty) ...[
+                  _divider(isDark),
+                  _SectionLabel(
+                    icon: Icons.notes_rounded,
+                    label: 'About',
+                    color: _kMavi,
+                    kText: kText,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    event.description!,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: kDim,
+                      height: 1.7,
+                    ),
+                  ),
+                ],
+
+                // ── 4. Kmstry Offers ──────────────────────────────────────
+                if (event.offerTitle != null) ...[
+                  _divider(isDark),
+                  _SectionLabel(
+                    icon: Icons.local_offer_outlined,
+                    label: 'Kmstry Offer',
+                    color: _kTuruncu,
+                    kText: kText,
+                  ),
+                  const SizedBox(height: 10),
+                  _OfferCard(
+                    title: event.offerTitle!,
+                    type: event.offerType,
+                    discountValue: event.offerDiscountValue,
+                    isDark: isDark,
+                    kCard: kCard,
+                    kBorder: kBorder,
+                    kText: kText,
+                    kDim: kDim,
+                  ),
+                ],
+
+                // ── 5. Capacity & Attendees ───────────────────────────────
+                if (canManage && (event.capacity != null || event.rsvpCount > 0)) ...[
+                  _divider(isDark),
+                  _SectionLabel(
+                    icon: Icons.people_outline_rounded,
+                    label: 'Attendees',
+                    color: _kTurkuaz,
+                    kText: kText,
+                  ),
+                  const SizedBox(height: 10),
+                  _AttendeeBar(
+                    rsvpCount: event.rsvpCount,
+                    capacity: event.capacity,
+                    isDark: isDark,
+                    kCard: kCard,
+                    kBorder: kBorder,
+                    kText: kText,
+                    kDim: kDim,
+                  ),
+                ],
+
+                // ── 6. Partner Benefits ───────────────────────────────────
+                if (event.partnershipBenefits.isNotEmpty) ...[
+                  _divider(isDark),
+                  _SectionLabel(
+                    icon: Icons.handshake_outlined,
+                    label: 'Partner Benefits',
+                    color: _kMavi,
+                    kText: kText,
+                  ),
+                  const SizedBox(height: 10),
+                  ...event.partnershipBenefits.map(
+                    (b) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _BenefitCard(
+                        benefit: b,
+                        isDark: isDark,
+                        kCard: kCard,
+                        kBorder: kBorder,
+                        kText: kText,
+                        kDim: kDim,
+                      ),
+                    ),
+                  ),
+                ],
+
+                // ── 7. Gallery ────────────────────────────────────────────
+                if (photos.isNotEmpty) ...[
+                  _divider(isDark),
+                  _SectionLabel(
+                    icon: Icons.photo_library_outlined,
+                    label: 'Gallery',
+                    color: _kMagenta,
+                    kText: kText,
+                  ),
+                  const SizedBox(height: 10),
+                  _Gallery(photos: photos),
+                ],
+
+              ]),
+            ),
+          ),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: Colors.white.withValues(alpha: 0.05)),
+      ),
+    );
+  }
+
+  Future<void> _openEdit(
+    BuildContext context, bool isDark,
+    Color kBg, Color kCard, Color kBorder, Color kText, Color kDim,
+  ) async {
+    String? editScope;
+    if (_event.isRecurring) {
+      editScope = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _EditScopeSheet(
+          event: _event, isDark: isDark,
+          kBg: kBg, kCard: kCard, kBorder: kBorder, kText: kText, kDim: kDim,
+        ),
+      );
+      if (editScope == null || !context.mounted) return;
+    }
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddVenueEventPage(
+          venueId: widget.venueId,
+          existing: _event,
+          editScope: editScope,
         ),
       ),
-      body: _editing ? _buildEditBody() : _buildViewBody(),
     );
+    if (result == true && context.mounted) {
+      await _reloadEvent();
+    }
   }
 
-  // ── View mode ──────────────────────────────────────────────────────────────
-
-  Widget _buildViewBody() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // Photos
-        if (_existingPhotos.isNotEmpty) ...[
-          SizedBox(
-            height: 80,
-            child: Row(
-              children: _existingPhotos.map((url) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(url, width: 80, height: 80, fit: BoxFit.cover),
-                ),
-              )).toList(),
-            ),
+  Future<void> _confirmDelete(BuildContext context, bool isDark) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF0B1322) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text('Delete Event',
+            style: TextStyle(
+              fontSize: 16, fontWeight: FontWeight.w800,
+              color: isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827),
+            )),
+        content: Text(
+          '"${_event.title}" will be permanently deleted.',
+          style: TextStyle(
+            fontSize: 13,
+            color: isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B),
           ),
-          const SizedBox(height: 16),
-        ],
-
-        // Title
-        Text(widget.event.title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _kText)),
-        const SizedBox(height: 10),
-
-        // Date
-        _infoRow(Icons.calendar_today_outlined, _formatDt(widget.event.startAt)),
-        const SizedBox(height: 6),
-        _infoRow(Icons.flag_outlined, _formatDt(widget.event.endAt)),
-
-        if (widget.event.priceAed != null) ...[
-          const SizedBox(height: 6),
-          _infoRow(
-            Icons.payments_outlined,
-            widget.event.priceAed == 0 ? 'Free' : 'AED ${widget.event.priceAed}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel',
+                style: TextStyle(
+                    color: isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete',
+                style: TextStyle(color: _kRed, fontWeight: FontWeight.w700)),
           ),
         ],
-
-        if (widget.event.description != null && widget.event.description!.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          const Divider(color: Color(0xFF0D1A30)),
-          const SizedBox(height: 12),
-          Text(widget.event.description!,
-              style: const TextStyle(fontSize: 14, color: _kText, height: 1.6)),
-        ],
-      ],
+      ),
     );
+    if (ok != true || !context.mounted) return;
+    try {
+      await VenueEventRepository().deleteEvent(venueId: widget.venueId, eventId: _event.id);
+      if (context.mounted) {
+        widget.onChanged?.call();
+        Navigator.pop(context, true);
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not delete event'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
-  Widget _infoRow(IconData icon, String text) {
+  Widget _divider(bool isDark) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 20),
+    child: Container(
+      height: 1,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          Colors.transparent,
+          isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.09),
+          Colors.transparent,
+        ]),
+      ),
+    ),
+  );
+}
+
+// ─── Info chip ────────────────────────────────────────────────────────────────
+
+class _InfoChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool isDark;
+
+  const _InfoChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Section label ────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final Color kText;
+
+  const _SectionLabel({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.kText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 15, color: _kBlueLt),
+        Container(
+          width: 26, height: 26,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, size: 12, color: color),
+        ),
         const SizedBox(width: 8),
-        Text(text, style: const TextStyle(fontSize: 13, color: _kDim, fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
-
-  // ── Edit mode ──────────────────────────────────────────────────────────────
-
-  Widget _buildEditBody() {
-    final totalPhotos = _existingPhotos.length + _newPhotos.length;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _field(controller: _titleCtrl, label: 'Title', maxLength: 120),
-        const SizedBox(height: 12),
-        _field(controller: _descCtrl, label: 'Description (optional)', maxLines: 3, maxLength: 1000),
-        const SizedBox(height: 12),
-        _field(controller: _priceCtrl, label: 'Price AED (optional)', keyboardType: TextInputType.number),
-        const SizedBox(height: 20),
-
-        _DateRow(label: 'Start', value: _formatDt(_startAt), onTap: () => _pickDate(isStart: true)),
-        const SizedBox(height: 10),
-        _DateRow(label: 'End',   value: _formatDt(_endAt),   onTap: () => _pickDate(isStart: false)),
-
-        const SizedBox(height: 24),
-        const Text('Photos (up to 3)',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _kText)),
-        const SizedBox(height: 10),
-
-        SizedBox(
-          height: 110,
-          child: Row(
-            children: [
-              // Existing photos
-              ..._existingPhotos.map((url) => Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: Stack(children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(url, width: 100, height: 110, fit: BoxFit.cover),
-                  ),
-                  Positioned(
-                    top: 4, right: 4,
-                    child: GestureDetector(
-                      onTap: () => _removeExistingPhoto(url),
-                      child: _removeBtn(),
-                    ),
-                  ),
-                ]),
-              )),
-              // New local photos
-              ..._newPhotos.asMap().entries.map((e) => Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: Stack(children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(e.value, width: 100, height: 110, fit: BoxFit.cover),
-                  ),
-                  Positioned(
-                    top: 4, right: 4,
-                    child: GestureDetector(
-                      onTap: () => setState(() => _newPhotos.removeAt(e.key)),
-                      child: _removeBtn(),
-                    ),
-                  ),
-                ]),
-              )),
-              // Add button
-              if (totalPhotos < 3)
-                GestureDetector(
-                  onTap: _pickPhoto,
-                  child: Container(
-                    width: 100, height: 110,
-                    decoration: BoxDecoration(
-                      color: _kCard,
-                      border: Border.all(color: _kBorder, width: 1.5),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.add_photo_alternate_outlined, size: 26, color: _kDim),
-                        const SizedBox(height: 4),
-                        Text('Add photo', style: TextStyle(fontSize: 11, color: _kDim)),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 32),
-      ],
-    );
-  }
-
-  Widget _removeBtn() => Container(
-    width: 22, height: 22,
-    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.7), shape: BoxShape.circle),
-    child: const Icon(Icons.close, size: 13, color: Colors.white),
-  );
-
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    int maxLines = 1,
-    int? maxLength,
-    TextInputType? keyboardType,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _kDim)),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: controller,
-          maxLines: maxLines,
-          maxLength: maxLength,
-          keyboardType: keyboardType,
-          style: const TextStyle(fontSize: 14, color: _kText),
-          decoration: InputDecoration(
-            counterStyle: const TextStyle(color: _kDim, fontSize: 11),
-            filled: true,
-            fillColor: _kCard,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: _kBorder),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: _kBorder),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: _kBlueLt, width: 1.5),
-            ),
-          ),
-        ),
+        Text(label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+              color: color,
+            )),
       ],
     );
   }
 }
 
-class _DateRow extends StatelessWidget {
-  final String label;
-  final String value;
+// ─── Offer card ───────────────────────────────────────────────────────────────
+
+class _OfferCard extends StatelessWidget {
+  final String title;
+  final String? type;
+  final double? discountValue;
+  final bool isDark;
+  final Color kCard, kBorder, kText, kDim;
+
+  const _OfferCard({
+    required this.title,
+    required this.type,
+    required this.discountValue,
+    required this.isDark,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.kDim,
+  });
+
+  String get _typeLabel {
+    if (type == null) return '';
+    switch (type) {
+      case 'BOGO':           return 'Buy 1 Get 1 Free';
+      case 'PERCENT_OFF':    return discountValue != null ? '%${discountValue!.toInt()} off' : 'Percentage discount';
+      case 'FIXED_DISCOUNT': return discountValue != null ? '${discountValue!.toStringAsFixed(0)} discount' : 'Fixed discount';
+      case 'FREE_ITEM':      return 'Free item included';
+      case 'BUNDLE':         return 'Bundle deal';
+      default:               return type!;
+    }
+  }
+
+  String get _badge {
+    if (type == null) return '';
+    switch (type) {
+      case 'BOGO':           return 'BOGO';
+      case 'PERCENT_OFF':    return discountValue != null ? '%${discountValue!.toInt()} Off' : '% Off';
+      case 'FIXED_DISCOUNT': return discountValue != null ? '${discountValue!.toStringAsFixed(0)} Off' : 'Discount';
+      case 'FREE_ITEM':      return 'Free Item';
+      case 'BUNDLE':         return 'Bundle';
+      default:               return type!;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kCard,
+        border: Border.all(color: _kTuruncu.withValues(alpha: 0.3), width: 1.5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(
+              color: _kTuruncu.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.local_offer_outlined, size: 17, color: _kTuruncu),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700, color: kText,
+                    )),
+                if (type != null) ...[
+                  const SizedBox(height: 3),
+                  Text(_typeLabel,
+                      style: TextStyle(fontSize: 12, color: kDim)),
+                ],
+              ],
+            ),
+          ),
+          if (type != null) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: _kTuruncu.withValues(alpha: 0.12),
+                border: Border.all(color: _kTuruncu.withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(_badge,
+                  style: const TextStyle(
+                    fontSize: 10, fontWeight: FontWeight.w800, color: _kTuruncu,
+                  )),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Benefit card ─────────────────────────────────────────────────────────────
+
+class _BenefitCard extends StatelessWidget {
+  final EventPartnerBenefit benefit;
+  final bool isDark;
+  final Color kCard, kBorder, kText, kDim;
+
+  const _BenefitCard({
+    required this.benefit,
+    required this.isDark,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.kDim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: kCard,
+        border: Border.all(color: kBorder),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: _kMavi.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.handshake_outlined, size: 16, color: _kMavi),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(benefit.platformDisplayName,
+                    style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700, color: kText,
+                    )),
+                const SizedBox(height: 3),
+                Text(benefit.offerLabel,
+                    style: TextStyle(fontSize: 12, color: kDim)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: _kMavi.withValues(alpha: 0.10),
+              border: Border.all(color: _kMavi.withValues(alpha: 0.25)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(benefit.offerTypeDisplayName,
+                style: const TextStyle(
+                  fontSize: 10, fontWeight: FontWeight.w700, color: _kMavi,
+                )),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Gallery ──────────────────────────────────────────────────────────────────
+
+class _Gallery extends StatelessWidget {
+  final List<String> photos;
+  const _Gallery({required this.photos});
+
+  @override
+  Widget build(BuildContext context) {
+    if (photos.length == 1) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.network(
+          photos.first,
+          width: double.infinity,
+          height: 200,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1,
+      ),
+      itemCount: photos.length,
+      itemBuilder: (_, i) => ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.network(photos[i], fit: BoxFit.cover),
+      ),
+    );
+  }
+}
+
+// ─── App bar button ───────────────────────────────────────────────────────────
+
+class _AppBarBtn extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final bool isDark;
   final VoidCallback onTap;
 
-  const _DateRow({required this.label, required this.value, required this.onTap});
-
-  static const _kCard   = Color(0xFF0D1A30);
-  static const _kBorder = Color(0xFF162040);
-  static const _kText   = Color(0xFFC8D8F0);
-  static const _kBlueLt = AppColors.blueDark;
+  const _AppBarBtn({
+    required this.icon,
+    required this.color,
+    required this.isDark,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        margin: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
+        width: 34, height: 34,
         decoration: BoxDecoration(
-          color: _kCard,
-          border: Border.all(color: _kBorder),
-          borderRadius: BorderRadius.circular(12),
+          shape: BoxShape.circle,
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Icon(icon, size: 15, color: color),
+      ),
+    );
+  }
+}
+
+// ─── Attendee bar ─────────────────────────────────────────────────────────────
+
+class _AttendeeBar extends StatelessWidget {
+  final int rsvpCount;
+  final int? capacity;
+  final bool isDark;
+  final Color kCard, kBorder, kText, kDim;
+
+  const _AttendeeBar({
+    required this.rsvpCount,
+    required this.capacity,
+    required this.isDark,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.kDim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFull = capacity != null && rsvpCount >= capacity!;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.people_outline_rounded, size: 16, color: _kTurkuaz),
+              const SizedBox(width: 6),
+              Text(
+                capacity != null
+                    ? '$rsvpCount / $capacity attending'
+                    : '$rsvpCount attending',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText),
+              ),
+              const Spacer(),
+              if (isFull)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('Full',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _kRed)),
+                ),
+            ],
+          ),
+          if (capacity != null) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: (rsvpCount / capacity!).clamp(0.0, 1.0),
+                minHeight: 6,
+                backgroundColor: isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  isFull ? _kRed : _kTurkuaz,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Edit scope sheet ─────────────────────────────────────────────────────────
+
+class _EditScopeSheet extends StatelessWidget {
+  final VenueUpcomingEvent event;
+  final bool isDark;
+  final Color kBg, kCard, kBorder, kText, kDim;
+
+  const _EditScopeSheet({
+    required this.event,
+    required this.isDark,
+    required this.kBg,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.kDim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: kBg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white12 : Colors.black12,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text('Edit recurring event',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText)),
+          const SizedBox(height: 6),
+          Text('"${event.title}"',
+              style: TextStyle(fontSize: 13, color: kDim),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 18),
+          _option(context, 'this', 'This event only', Icons.looks_one_outlined),
+          const SizedBox(height: 8),
+          _option(context, 'thisAndFollowing', 'This and following events', Icons.arrow_forward_rounded),
+          const SizedBox(height: 8),
+          _option(context, 'all', 'All events in series', Icons.repeat_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _option(BuildContext ctx, String value, String label, IconData icon) {
+    return GestureDetector(
+      onTap: () => Navigator.pop(ctx, value),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: kCard,
+          border: Border.all(color: kBorder),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today_outlined, size: 16, color: _kBlueLt),
-            const SizedBox(width: 10),
-            Text('$label: $value',
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500, color: _kText)),
+            Icon(icon, size: 16, color: _kTurkuaz),
+            const SizedBox(width: 12),
+            Text(label,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kText)),
           ],
         ),
       ),

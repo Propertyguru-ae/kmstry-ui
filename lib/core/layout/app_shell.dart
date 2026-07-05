@@ -49,7 +49,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
-  String _userInitial = 'D';
+  String _userInitial = '?';
   int _unreadNotificationCount = 0;
   int _unreadDmCount = 0;
   final NotificationRepository _notificationRepo = NotificationRepository();
@@ -378,9 +378,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       } else if (isVenueCtx && allKnownVenues.isNotEmpty) {
         activeLabel = allKnownVenues.first.name;
       }
+      final email = me['email']?.toString().trim();
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
           _userInitial = fullName[0].toUpperCase();
+        } else if (username != null && username.isNotEmpty) {
+          _userInitial = username[0].toUpperCase();
+        } else if (email != null && email.isNotEmpty) {
+          _userInitial = email[0].toUpperCase();
         }
         _isVenueContext = isVenueCtx;
         _isPendingClaim = hasPendingClaim && activeVenues.isEmpty;
