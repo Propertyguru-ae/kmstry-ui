@@ -51,6 +51,7 @@ enum VenuePermission {
   viewAnalytics,
   memberManage,
   roleManage,
+  partnershipManage,
 }
 
 extension VenuePermissionExt on VenuePermission {
@@ -82,6 +83,8 @@ extension VenuePermissionExt on VenuePermission {
         return 'MEMBER_MANAGE';
       case VenuePermission.roleManage:
         return 'ROLE_MANAGE';
+      case VenuePermission.partnershipManage:
+        return 'PARTNERSHIP_MANAGE';
     }
   }
 
@@ -113,6 +116,8 @@ extension VenuePermissionExt on VenuePermission {
         return 'Manage team members';
       case VenuePermission.roleManage:
         return 'Manage roles & permissions';
+      case VenuePermission.partnershipManage:
+        return 'Manage partnerships';
     }
   }
 

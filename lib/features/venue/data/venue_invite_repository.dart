@@ -99,6 +99,65 @@ class CreatedInvite {
   String get roleDisplay => venueRoleName ?? role;
 }
 
+/// createInvite şu sonuçları döndürebilir:
+/// - [linkCreated]: girilen email'in hesabı yok → web kayıt linki oluştu
+/// - [existingUserRequestSent]: email zaten bir hesaba ait → username daveti
+///   gibi in-app istek gönderildi (push + bildirim)
+/// - [alreadyMember]: email zaten bu venue'nun aktif üyesi
+/// - [alreadyInvited]: email için bekleyen bir davet zaten var
+enum InviteResultType {
+  linkCreated,
+  existingUserRequestSent,
+  alreadyMember,
+  alreadyInvited,
+}
+
+class InviteResult {
+  final InviteResultType type;
+  final String email;
+  final String role;
+
+  // Sadece linkCreated durumunda dolu:
+  final String? id;
+  final String? token;
+  final String? inviteUrl;
+  final String? venueRoleName;
+  final String? expiresAt;
+
+  const InviteResult({
+    required this.type,
+    required this.email,
+    required this.role,
+    this.id,
+    this.token,
+    this.inviteUrl,
+    this.venueRoleName,
+    this.expiresAt,
+  });
+
+  bool get isLink => type == InviteResultType.linkCreated;
+
+  factory InviteResult.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type']?.toString();
+    final type = switch (typeStr) {
+      'EXISTING_USER_REQUEST_SENT' => InviteResultType.existingUserRequestSent,
+      'ALREADY_MEMBER' => InviteResultType.alreadyMember,
+      'ALREADY_INVITED' => InviteResultType.alreadyInvited,
+      _ => InviteResultType.linkCreated,
+    };
+    return InviteResult(
+      type: type,
+      email: json['email']?.toString() ?? '',
+      role: json['role']?.toString() ?? '',
+      id: json['id']?.toString(),
+      token: json['token']?.toString(),
+      inviteUrl: json['inviteUrl']?.toString(),
+      venueRoleName: json['venueRoleName']?.toString(),
+      expiresAt: json['expiresAt']?.toString(),
+    );
+  }
+}
+
 class VenueInviteRepository {
   final ApiClient _api = ApiClient();
 
@@ -118,14 +177,16 @@ class VenueInviteRepository {
     await _api.post('/invites/$token/accept', headers: headers, body: {});
   }
 
-  Future<CreatedInvite> createInvite({
+  Future<InviteResult> createInvite({
     required String venueId,
+    required String email,
     required VenueMemberRole role,
     String? venueRoleId,
     int expiresInDays = 7,
   }) async {
     final headers = await _authHeaders();
     final body = <String, dynamic>{
+      'email': email.trim(),
       'role': role.apiValue,
       'expiresInDays': expiresInDays,
     };
@@ -136,7 +197,7 @@ class VenueInviteRepository {
       headers: headers,
       body: body,
     );
-    return CreatedInvite.fromJson(Map<String, dynamic>.from(data as Map));
+    return InviteResult.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
   Future<List<CreatedInvite>> listInvites(String venueId) async {

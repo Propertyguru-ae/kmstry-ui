@@ -42,6 +42,7 @@ const _permMeta = <VenuePermission, _PermMeta>{
   VenuePermission.viewAnalytics: _PermMeta(Icons.insights_outlined,      _PC.mavi),
   VenuePermission.memberManage:  _PermMeta(Icons.manage_accounts_outlined, _PC.magenta),
   VenuePermission.roleManage:    _PermMeta(Icons.shield_outlined,        _PC.magenta),
+  VenuePermission.partnershipManage: _PermMeta(Icons.handshake_outlined,  _PC.turkuaz),
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────

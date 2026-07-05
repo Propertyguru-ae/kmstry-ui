@@ -32,14 +32,6 @@
 				<string>com.googleusercontent.apps.525936528438-7h5hgd52v6mg4qvcmou9cjcjuc3pcht7</string>
 			</array>
 		</dict>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.brightminds.kmstry</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>kmstry</string>
-			</array>
-		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
