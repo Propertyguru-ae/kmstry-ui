@@ -608,58 +608,22 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     return Container(
       color: bg,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: double.infinity,
-            child: GestureDetector(
-              onTap: _openAddMember,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.person_add_outlined, size: 18,
-                        color: colors.onSurface.withValues(alpha: 0.8)),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Add Member',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: colors.onSurface.withValues(alpha: 0.85),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: _openAddMember,
+          icon: const Icon(Icons.person_add_outlined, size: 18),
+          label: const Text(
+            'Add Member',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: _openAddMember,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.link_rounded, size: 14,
-                    color: colors.onSurface.withValues(alpha: 0.4)),
-                const SizedBox(width: 5),
-                Text(
-                  'Share invite link',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colors.onSurface.withValues(alpha: 0.45),
-                  ),
-                ),
-              ],
-            ),
+          style: FilledButton.styleFrom(
+            backgroundColor: _TeamColors.turkuaz,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1210,6 +1174,169 @@ class VenueAddMemberPage extends StatefulWidget {
 }
 
 class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
+  bool _showInviteLink = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF0B1322) : theme.scaffoldBackgroundColor;
+
+    return Scaffold(
+      backgroundColor: bg,
+      appBar: AppBar(
+        backgroundColor: bg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: _NavBtn(
+          icon: Icons.arrow_back_ios_new_rounded,
+          onTap: () => Navigator.pop(context),
+          isDark: isDark,
+        ),
+        title: const Text('Add Member',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        centerTitle: true,
+      ),
+      body: Column(
+        children: [
+          // ── Toggle ────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: _ModeToggle(
+              showInviteLink: _showInviteLink,
+              isDark: isDark,
+              onChanged: (v) => setState(() => _showInviteLink = v),
+            ),
+          ),
+          // ── Content ───────────────────────────────────────────────────
+          Expanded(
+            child: _showInviteLink
+                ? _InviteLinkTab(venueId: widget.venueId, venueRoles: const [])
+                : _UsernameSearchTab(venueId: widget.venueId, repo: widget.repo),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Mode Toggle (segmented control) ─────────────────────────────────────────
+
+class _ModeToggle extends StatelessWidget {
+  final bool showInviteLink;
+  final bool isDark;
+  final ValueChanged<bool> onChanged;
+
+  const _ModeToggle({
+    required this.showInviteLink,
+    required this.isDark,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8);
+    final activeBg = isDark ? const Color(0xFF1C2A3A) : Colors.white;
+    final colors = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+      child: Row(
+        children: [
+          _ToggleTab(
+            label: 'Find by Username',
+            icon: Icons.person_search_outlined,
+            isActive: !showInviteLink,
+            activeBg: activeBg,
+            activeColor: _TeamColors.turkuaz,
+            inactiveColor: colors.onSurface.withValues(alpha: 0.45),
+            onTap: () => onChanged(false),
+          ),
+          _ToggleTab(
+            label: 'Invite Link',
+            icon: Icons.link_rounded,
+            isActive: showInviteLink,
+            activeBg: activeBg,
+            activeColor: _TeamColors.mavi,
+            inactiveColor: colors.onSurface.withValues(alpha: 0.45),
+            onTap: () => onChanged(true),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToggleTab extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isActive;
+  final Color activeBg;
+  final Color activeColor;
+  final Color inactiveColor;
+  final VoidCallback onTap;
+
+  const _ToggleTab({
+    required this.label,
+    required this.icon,
+    required this.isActive,
+    required this.activeBg,
+    required this.activeColor,
+    required this.inactiveColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isActive ? activeBg : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: isActive
+                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.07), blurRadius: 6, offset: const Offset(0, 2))]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16, color: isActive ? activeColor : inactiveColor),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                  color: isActive ? activeColor : inactiveColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Username Search Tab ──────────────────────────────────────────────────────
+
+class _UsernameSearchTab extends StatefulWidget {
+  final String venueId;
+  final VenueMemberRepository repo;
+
+  const _UsernameSearchTab({required this.venueId, required this.repo});
+
+  @override
+  State<_UsernameSearchTab> createState() => _UsernameSearchTabState();
+}
+
+class _UsernameSearchTabState extends State<_UsernameSearchTab> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
   Timer? _debounce;
@@ -1302,336 +1429,400 @@ class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF0B1322) : theme.scaffoldBackgroundColor;
 
-    return Scaffold(
-      backgroundColor: bg,
-      appBar: AppBar(
-        backgroundColor: bg,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        leading: _NavBtn(
-          icon: Icons.arrow_back_ios_new_rounded,
-          onTap: () => Navigator.pop(context),
-          isDark: isDark,
-        ),
-        title: const Text('Add Member',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-        centerTitle: true,
-      ),
-      body: _loadingRoles
-          ? const Center(child: CircularProgressIndicator(color: _TeamColors.turkuaz))
-          : Column(
+    if (_loadingRoles) {
+      return const Center(child: CircularProgressIndicator(color: _TeamColors.turkuaz));
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // ── Search ─────────────────────────────────────
-                        TextField(
-                          controller: _searchCtrl,
-                          focusNode: _searchFocus,
-                          onChanged: _onSearchChanged,
-                          autofocus: true,
-                          decoration: InputDecoration(
-                            hintText: 'Search by username…',
-                            prefixIcon: const Icon(Icons.search, size: 20),
-                            suffixIcon: _searching
-                                ? const Padding(
-                                    padding: EdgeInsets.all(12),
-                                    child: SizedBox(width: 16, height: 16,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2, color: _TeamColors.turkuaz)),
+                // ── Search ─────────────────────────────────────
+                TextField(
+                  controller: _searchCtrl,
+                  focusNode: _searchFocus,
+                  onChanged: _onSearchChanged,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Search by username…',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _searching
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: _TeamColors.turkuaz)),
+                          )
+                        : (_searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () => setState(() {
+                                  _searchCtrl.clear();
+                                  _results = [];
+                                  _selected = null;
+                                }),
+                              )
+                            : null),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: colors.outline.withValues(alpha: 0.3)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: _TeamColors.turkuaz, width: 1.5),
+                    ),
+                  ),
+                ),
+
+                // ── Search results ──────────────────────────────
+                if (_results.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                      border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: _results.length,
+                      separatorBuilder: (_, __) =>
+                          Divider(height: 1, color: colors.outline.withValues(alpha: 0.12)),
+                      itemBuilder: (_, i) {
+                        final u = _results[i];
+                        return ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          leading: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.14),
+                            backgroundImage: u.photo != null && u.photo!.isNotEmpty
+                                ? NetworkImage(u.photo!) : null,
+                            child: u.photo == null || u.photo!.isEmpty
+                                ? Text(
+                                    u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
+                                    style: const TextStyle(color: _TeamColors.turkuaz,
+                                        fontSize: 13, fontWeight: FontWeight.w700),
                                   )
-                                : (_searchCtrl.text.isNotEmpty
-                                    ? IconButton(
-                                        icon: const Icon(Icons.close, size: 18),
-                                        onPressed: () => setState(() {
-                                          _searchCtrl.clear();
-                                          _results = [];
-                                          _selected = null;
-                                        }),
-                                      )
-                                    : null),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(color: colors.outline.withValues(alpha: 0.3)),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(color: _TeamColors.turkuaz, width: 1.5),
-                            ),
+                                : null,
+                          ),
+                          title: Text(u.displayName,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          subtitle: u.username != null
+                              ? Text('@${u.username}',
+                                  style: TextStyle(fontSize: 12,
+                                      color: colors.onSurface.withValues(alpha: 0.5)))
+                              : null,
+                          onTap: () {
+                            _searchFocus.unfocus();
+                            setState(() {
+                              _selected = u;
+                              _results = [];
+                              _searchCtrl.clear();
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+
+                // ── Selected user card ──────────────────────────
+                if (_selected != null && _results.isEmpty) ...[
+                  const SizedBox(height: 20),
+                  Text('Selected User',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                          color: colors.onSurface.withValues(alpha: 0.5))),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _TeamColors.turkuaz.withValues(alpha: 0.08),
+                      border: Border.all(color: _TeamColors.turkuaz.withValues(alpha: 0.28)),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.2),
+                          backgroundImage: _selected!.photo != null && _selected!.photo!.isNotEmpty
+                              ? NetworkImage(_selected!.photo!) : null,
+                          child: _selected!.photo == null || _selected!.photo!.isEmpty
+                              ? Text(
+                                  _selected!.displayName.isNotEmpty
+                                      ? _selected!.displayName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: _TeamColors.turkuaz,
+                                      fontSize: 15, fontWeight: FontWeight.w800),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_selected!.displayName,
+                                  style: const TextStyle(fontSize: 14,
+                                      fontWeight: FontWeight.w700, color: _TeamColors.turkuaz)),
+                              if (_selected!.username != null)
+                                Text('@${_selected!.username}',
+                                    style: TextStyle(fontSize: 12,
+                                        color: _TeamColors.turkuaz.withValues(alpha: 0.65))),
+                            ],
                           ),
                         ),
+                        GestureDetector(
+                          onTap: () => setState(() => _selected = null),
+                          child: Icon(Icons.close_rounded, size: 18,
+                              color: _TeamColors.turkuaz.withValues(alpha: 0.6)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
-                        // ── Search results ──────────────────────────────
-                        if (_results.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: isDark ? const Color(0xFF0F1520) : colors.surface,
-                              border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: ListView.separated(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              padding: EdgeInsets.zero,
-                              itemCount: _results.length,
-                              separatorBuilder: (_, __) =>
-                                  Divider(height: 1, color: colors.outline.withValues(alpha: 0.12)),
-                              itemBuilder: (_, i) {
-                                final u = _results[i];
-                                return ListTile(
-                                  dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                                  leading: CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.14),
-                                    backgroundImage: u.photo != null && u.photo!.isNotEmpty
-                                        ? NetworkImage(u.photo!) : null,
-                                    child: u.photo == null || u.photo!.isEmpty
-                                        ? Text(
-                                            u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
-                                            style: const TextStyle(color: _TeamColors.turkuaz,
-                                                fontSize: 13, fontWeight: FontWeight.w700),
-                                          )
-                                        : null,
-                                  ),
-                                  title: Text(u.displayName,
-                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                                  subtitle: u.username != null
-                                      ? Text('@${u.username}',
-                                          style: TextStyle(fontSize: 12,
-                                              color: colors.onSurface.withValues(alpha: 0.5)))
-                                      : null,
-                                  onTap: () {
-                                    _searchFocus.unfocus();
-                                    setState(() {
-                                      _selected = u;
-                                      _results = [];
-                                      _searchCtrl.clear();
-                                    });
-                                  },
-                                );
-                              },
+                // ── Role selector ───────────────────────────────
+                if (_roles.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Text('Role',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                          color: colors.onSurface.withValues(alpha: 0.5))),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: () => setState(() => _roleDropdownOpen = !_roleDropdownOpen),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                        border: Border.all(
+                          color: _roleDropdownOpen
+                              ? _TeamColors.mavi
+                              : _TeamColors.mavi.withValues(alpha: 0.4),
+                          width: _roleDropdownOpen ? 1.5 : 1,
+                        ),
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(12),
+                          topRight: const Radius.circular(12),
+                          bottomLeft: Radius.circular(_roleDropdownOpen ? 0 : 12),
+                          bottomRight: Radius.circular(_roleDropdownOpen ? 0 : 12),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _selectedRole?.name ?? 'Select a role',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: _selectedRole != null
+                                    ? colors.onSurface
+                                    : colors.onSurface.withValues(alpha: 0.4),
+                              ),
                             ),
                           ),
-                        ],
-
-                        // ── Selected user card ──────────────────────────
-                        if (_selected != null && _results.isEmpty) ...[
-                          const SizedBox(height: 20),
-                          Text('Selected User',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                                  color: colors.onSurface.withValues(alpha: 0.5))),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                            decoration: BoxDecoration(
-                              color: _TeamColors.turkuaz.withValues(alpha: 0.08),
-                              border: Border.all(color: _TeamColors.turkuaz.withValues(alpha: 0.28)),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.2),
-                                  backgroundImage: _selected!.photo != null && _selected!.photo!.isNotEmpty
-                                      ? NetworkImage(_selected!.photo!) : null,
-                                  child: _selected!.photo == null || _selected!.photo!.isEmpty
-                                      ? Text(
-                                          _selected!.displayName.isNotEmpty
-                                              ? _selected!.displayName[0].toUpperCase() : '?',
-                                          style: const TextStyle(color: _TeamColors.turkuaz,
-                                              fontSize: 15, fontWeight: FontWeight.w800),
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(_selected!.displayName,
-                                          style: const TextStyle(fontSize: 14,
-                                              fontWeight: FontWeight.w700, color: _TeamColors.turkuaz)),
-                                      if (_selected!.username != null)
-                                        Text('@${_selected!.username}',
-                                            style: TextStyle(fontSize: 12,
-                                                color: _TeamColors.turkuaz.withValues(alpha: 0.65))),
-                                    ],
-                                  ),
-                                ),
-                                GestureDetector(
-                                  onTap: () => setState(() => _selected = null),
-                                  child: Icon(Icons.close_rounded, size: 18,
-                                      color: _TeamColors.turkuaz.withValues(alpha: 0.6)),
-                                ),
-                              ],
-                            ),
+                          AnimatedRotation(
+                            turns: _roleDropdownOpen ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(Icons.keyboard_arrow_down_rounded,
+                                color: _TeamColors.mavi.withValues(alpha: 0.8), size: 22),
                           ),
                         ],
-
-                        // ── Role selector ───────────────────────────────
-                        if (_roles.isNotEmpty) ...[
-                          const SizedBox(height: 24),
-                          Text('Role',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                                  color: colors.onSurface.withValues(alpha: 0.5))),
-                          const SizedBox(height: 8),
-                          // ── Role field ──────────────────────────────
-                          GestureDetector(
-                            onTap: () => setState(() => _roleDropdownOpen = !_roleDropdownOpen),
+                      ),
+                    ),
+                  ),
+                  if (_roleDropdownOpen)
+                    Container(
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                        border: Border(
+                          left: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                          right: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                          bottom: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          bottomLeft: Radius.circular(12),
+                          bottomRight: Radius.circular(12),
+                        ),
+                      ),
+                      child: Column(
+                        children: _roles.map((role) {
+                          final isSelected = _selectedRole?.id == role.id;
+                          return InkWell(
+                            onTap: () => setState(() {
+                              _selectedRole = role;
+                              _roleDropdownOpen = false;
+                            }),
+                            borderRadius: role == _roles.last
+                                ? const BorderRadius.only(
+                                    bottomLeft: Radius.circular(12),
+                                    bottomRight: Radius.circular(12),
+                                  )
+                                : null,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                               decoration: BoxDecoration(
-                                color: isDark ? const Color(0xFF0F1520) : colors.surface,
-                                border: Border.all(
-                                  color: _roleDropdownOpen
-                                      ? _TeamColors.mavi
-                                      : _TeamColors.mavi.withValues(alpha: 0.4),
-                                  width: _roleDropdownOpen ? 1.5 : 1,
-                                ),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(12),
-                                  topRight: const Radius.circular(12),
-                                  bottomLeft: Radius.circular(_roleDropdownOpen ? 0 : 12),
-                                  bottomRight: Radius.circular(_roleDropdownOpen ? 0 : 12),
-                                ),
+                                color: isSelected
+                                    ? _TeamColors.mavi.withValues(alpha: 0.12)
+                                    : Colors.transparent,
+                                border: role != _roles.last
+                                    ? Border(bottom: BorderSide(
+                                        color: _TeamColors.mavi.withValues(alpha: 0.15)))
+                                    : null,
                               ),
                               child: Row(
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      _selectedRole?.name ?? 'Select a role',
+                                      role.name,
                                       style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                        color: _selectedRole != null
-                                            ? colors.onSurface
-                                            : colors.onSurface.withValues(alpha: 0.4),
+                                        fontSize: 14,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                        color: isSelected
+                                            ? _TeamColors.mavi
+                                            : colors.onSurface.withValues(alpha: 0.85),
                                       ),
                                     ),
                                   ),
-                                  AnimatedRotation(
-                                    turns: _roleDropdownOpen ? 0.5 : 0,
-                                    duration: const Duration(milliseconds: 200),
-                                    child: Icon(Icons.keyboard_arrow_down_rounded,
-                                        color: _TeamColors.mavi.withValues(alpha: 0.8), size: 22),
-                                  ),
+                                  if (isSelected)
+                                    const Icon(Icons.check_rounded,
+                                        color: _TeamColors.mavi, size: 18),
                                 ],
                               ),
                             ),
-                          ),
-
-                          // ── Role dropdown list ───────────────────────
-                          if (_roleDropdownOpen)
-                            Container(
-                              decoration: BoxDecoration(
-                                color: isDark ? const Color(0xFF0F1520) : colors.surface,
-                                border: Border(
-                                  left: BorderSide(color: _TeamColors.mavi, width: 1.5),
-                                  right: BorderSide(color: _TeamColors.mavi, width: 1.5),
-                                  bottom: BorderSide(color: _TeamColors.mavi, width: 1.5),
-                                ),
-                                borderRadius: const BorderRadius.only(
-                                  bottomLeft: Radius.circular(12),
-                                  bottomRight: Radius.circular(12),
-                                ),
-                              ),
-                              child: Column(
-                                children: _roles.map((role) {
-                                  final isSelected = _selectedRole?.id == role.id;
-                                  return InkWell(
-                                    onTap: () => setState(() {
-                                      _selectedRole = role;
-                                      _roleDropdownOpen = false;
-                                    }),
-                                    borderRadius: role == _roles.last
-                                        ? const BorderRadius.only(
-                                            bottomLeft: Radius.circular(12),
-                                            bottomRight: Radius.circular(12),
-                                          )
-                                        : null,
-                                    child: Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                      decoration: BoxDecoration(
-                                        color: isSelected
-                                            ? _TeamColors.mavi.withValues(alpha: 0.12)
-                                            : Colors.transparent,
-                                        border: role != _roles.last
-                                            ? Border(bottom: BorderSide(
-                                                color: _TeamColors.mavi.withValues(alpha: 0.15)))
-                                            : null,
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              role.name,
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                                color: isSelected
-                                                    ? _TeamColors.mavi
-                                                    : colors.onSurface.withValues(alpha: 0.85),
-                                              ),
-                                            ),
-                                          ),
-                                          if (isSelected)
-                                            const Icon(Icons.check_rounded,
-                                                color: _TeamColors.mavi, size: 18),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
-                            ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-
-                // ── Bottom Add button ───────────────────────────────────
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _selected == null || _adding ? null : _add,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _TeamColors.turkuaz,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.3),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                        child: _adding
-                            ? const SizedBox(width: 22, height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : Text(
-                                _selected == null
-                                    ? 'Select a user first'
-                                    : 'Add as ${_selectedRole?.name ?? 'Member'}',
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                              ),
+                          );
+                        }).toList(),
                       ),
                     ),
-                  ),
-                ),
+                ],
               ],
             ),
+          ),
+        ),
+
+        // ── Bottom Add button ─────────────────────────────────────────
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _selected == null || _adding ? null : _add,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _TeamColors.turkuaz,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.3),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: _adding
+                    ? const SizedBox(width: 22, height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text(
+                        _selected == null
+                            ? 'Select a user first'
+                            : 'Add as ${_selectedRole?.name ?? 'Member'}',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Davet linki sheet loader (roles'u sheet açıkken fetch eder) ──────────────
+
+class _InviteLinkSheetLoader extends StatefulWidget {
+  final String venueId;
+  final VenueMemberRepository repo;
+  const _InviteLinkSheetLoader({required this.venueId, required this.repo});
+
+  @override
+  State<_InviteLinkSheetLoader> createState() => _InviteLinkSheetLoaderState();
+}
+
+class _InviteLinkSheetLoaderState extends State<_InviteLinkSheetLoader> {
+  List<VenueRole>? _roles;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.repo.getRoles(widget.venueId).then((roles) {
+      if (mounted) setState(() => _roles = roles);
+    }).catchError((_) {
+      if (mounted) setState(() => _roles = []);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (_roles == null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(
+                color: colors.onSurface.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: colors.onSurface.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            _InviteLinkTab(venueId: widget.venueId, venueRoles: _roles!),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1650,18 +1841,43 @@ class _InviteLinkTab extends StatefulWidget {
 
 class _InviteLinkTabState extends State<_InviteLinkTab> {
   final _inviteRepo = VenueInviteRepository();
+  final _memberRepo = VenueMemberRepository();
   VenueRole? _selectedRole;
   bool _generating = false;
+  bool _loadingRoles = false;
+  List<VenueRole> _roles = [];
   CreatedInvite? _created;
 
   @override
   void initState() {
     super.initState();
     if (widget.venueRoles.isNotEmpty) {
+      _roles = widget.venueRoles;
       _selectedRole = widget.venueRoles.firstWhere(
         (r) => r.id == 'STAFF',
         orElse: () => widget.venueRoles.last,
       );
+    } else {
+      _loadRoles();
+    }
+  }
+
+  Future<void> _loadRoles() async {
+    setState(() => _loadingRoles = true);
+    try {
+      final roles = await _memberRepo.getRoles(widget.venueId);
+      if (!mounted) return;
+      setState(() {
+        _roles = roles;
+        _selectedRole = roles.firstWhere(
+          (r) => r.id == 'STAFF',
+          orElse: () => roles.isNotEmpty ? roles.last : roles.first,
+        );
+        _loadingRoles = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingRoles = false);
     }
   }
 
@@ -1681,6 +1897,7 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         venueRoleId: customId,
       );
       if (!mounted) return;
+      debugPrint('[InviteLink] generated: ${invite.inviteUrl}');
       setState(() {
         _created = invite;
         _generating = false;
@@ -1712,6 +1929,10 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+
+    if (_loadingRoles) {
+      return const Center(child: CircularProgressIndicator(color: _TeamColors.mavi));
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
@@ -1747,9 +1968,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
           const SizedBox(height: 20),
 
           // Role picker
-          if (widget.venueRoles.isNotEmpty) ...[
+          if (_roles.isNotEmpty) ...[
             _VenueRolePicker(
-              roles: widget.venueRoles,
+              roles: _roles,
               selected: _selectedRole,
               onChanged: (r) => setState(() {
                 _selectedRole = r;
@@ -1848,15 +2069,17 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      OutlinedButton(
-                        onPressed: () => setState(() => _created = null),
-                        style: OutlinedButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => setState(() => _created = null),
+                          style: OutlinedButton.styleFrom(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: const Text('New'),
                         ),
-                        child: const Text('New'),
                       ),
                     ],
                   ),

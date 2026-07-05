@@ -63,6 +63,7 @@ dependencies:
   app_links: ^6.4.1
   socket_io_client: ^3.1.4
   video_thumbnail: ^0.5.3
+  package_info_plus: ^8.1.2
 
 dev_dependencies:
   flutter_test:

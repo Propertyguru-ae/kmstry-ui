@@ -22,6 +22,8 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.da
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
 
+import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
+
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
 class VenueDetailPage extends StatefulWidget {
@@ -517,7 +519,17 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         ),
         const SizedBox(height: 8),
         ...events.map(
-          (event) => Container(
+          (event) => GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PersonalEventDetailPage(
+                  event: event,
+                  venueId: widget.venue.id,
+                ),
+              ),
+            ),
+            child: Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -594,6 +606,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               ],
             ),
           ),
+          ), // GestureDetector
         ),
       ],
     );

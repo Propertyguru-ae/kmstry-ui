@@ -88,7 +88,7 @@ extension VenuePermissionExt on VenuePermission {
   String get label {
     switch (this) {
       case VenuePermission.eventManage:
-        return 'Create / edit / delete events';
+        return 'Manage events';
       case VenuePermission.storyManage:
         return 'Post / manage stories';
       case VenuePermission.storyViewStats:
@@ -126,6 +126,7 @@ extension VenuePermissionExt on VenuePermission {
 
 class VenueMemberUser {
   final String id;
+  final String? email;
   final String? fullName;
   final String? username;
   final String? photo;
@@ -134,6 +135,7 @@ class VenueMemberUser {
 
   const VenueMemberUser({
     required this.id,
+    this.email,
     this.fullName,
     this.username,
     this.photo,
@@ -144,6 +146,7 @@ class VenueMemberUser {
   factory VenueMemberUser.fromJson(Map<String, dynamic> json) {
     return VenueMemberUser(
       id: json['id']?.toString() ?? '',
+      email: json['email']?.toString(),
       fullName: (json['fullName'] ?? json['full_name'])?.toString(),
       username: json['username']?.toString(),
       photo: json['photo']?.toString(),
@@ -155,6 +158,7 @@ class VenueMemberUser {
   String get displayName {
     if (fullName != null && fullName!.isNotEmpty) return fullName!;
     if (username != null && username!.isNotEmpty) return '@$username';
+    if (email != null && email!.isNotEmpty) return email!;
     return 'Member';
   }
 }

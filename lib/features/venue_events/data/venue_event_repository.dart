@@ -17,6 +17,7 @@ class VenueEventRepository {
     required DateTime endAt,
     int? priceAed,
     String currency = 'TRY',
+    int? capacity,
     Map<String, dynamic>? recurrence,
   }) async {
     final token = await SecureStorage.getAccessToken();
@@ -30,6 +31,7 @@ class VenueEventRepository {
         'endAt': endAt.toUtc().toIso8601String(),
         if (priceAed != null) 'priceAed': priceAed,
         'currency': currency,
+        if (capacity != null) 'capacity': capacity,
         if (recurrence != null) 'recurrence': recurrence,
       },
     );
@@ -73,6 +75,8 @@ class VenueEventRepository {
     int? priceAed,
     bool clearPrice = false,
     String? currency,
+    int? capacity,
+    bool clearCapacity = false,
     String? editScope, // 'this' | 'thisAndFollowing' | 'all'
     Map<String, dynamic>? recurrence,
   }) async {
@@ -87,6 +91,7 @@ class VenueEventRepository {
         if (endAt != null) 'endAt': endAt.toUtc().toIso8601String(),
         if (clearPrice) 'priceAed': null else if (priceAed != null) 'priceAed': priceAed,
         if (currency != null) 'currency': currency,
+        if (clearCapacity) 'capacity': null else if (capacity != null) 'capacity': capacity,
         if (editScope != null) 'editScope': editScope,
         if (recurrence != null) 'recurrence': recurrence,
       },
@@ -110,7 +115,6 @@ class VenueEventRepository {
     required String photoUrl,
   }) async {
     final token = await SecureStorage.getAccessToken();
-    // DELETE with body — use patch endpoint workaround via http directly
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/events/$eventId/photos');
     final req = http.Request('DELETE', uri)
       ..headers['Authorization'] = 'Bearer $token'
@@ -128,5 +132,41 @@ class VenueEventRepository {
       '/venues/$venueId/events/$eventId',
       headers: {'Authorization': 'Bearer $token'},
     );
+  }
+
+  Future<Map<String, dynamic>> rsvpEvent({
+    required String venueId,
+    required String eventId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.post(
+      '/venues/$venueId/events/$eventId/rsvp',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<void> cancelRsvp({
+    required String venueId,
+    required String eventId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/venues/$venueId/events/$eventId/rsvp',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getEventRsvps({
+    required String venueId,
+    required String eventId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/$venueId/events/$eventId/rsvps',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 }

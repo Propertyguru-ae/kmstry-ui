@@ -9,8 +9,10 @@ class UsernameOnboardingPage extends StatefulWidget {
   final String? initialUsername;
   /// Opsiyonel — "Maybe later" basıldığında çağrılır. Null ise authGate'e yönlendirilir.
   final VoidCallback? onCancel;
+  /// Opsiyonel — "Maybe later" basıldığında bu route'a gidilir. onCancel'a göre önceliklidir.
+  final String? cancelRoute;
 
-  const UsernameOnboardingPage({super.key, this.initialUsername, this.onCancel});
+  const UsernameOnboardingPage({super.key, this.initialUsername, this.onCancel, this.cancelRoute});
 
   @override
   State<UsernameOnboardingPage> createState() => _UsernameOnboardingPageState();
@@ -153,7 +155,9 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
         actions: [
           TextButton(
             onPressed: () {
-              if (widget.onCancel != null) {
+              if (widget.cancelRoute != null) {
+                Navigator.of(context).pushReplacementNamed(widget.cancelRoute!);
+              } else if (widget.onCancel != null) {
                 widget.onCancel!();
               } else {
                 Navigator.pushReplacementNamed(context, AuthRoutes.authGate);

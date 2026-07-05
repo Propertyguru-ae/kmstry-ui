@@ -32,6 +32,14 @@
 				<string>com.googleusercontent.apps.525936528438-7h5hgd52v6mg4qvcmou9cjcjuc3pcht7</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.brightminds.kmstry</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>kmstry</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
@@ -45,6 +53,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>We need camera access to let you take photos and share moments.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We need access to your photo library to let you share photos and videos.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>We use your location to show nearby venues and improve discovery.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

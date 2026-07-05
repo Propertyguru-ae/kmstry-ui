@@ -29,7 +29,8 @@ enum _Step { search, contact, documents, review }
 /// Sayfa açılırken mevcut draft kontrol edilir ve varsa kaldığı adımdan devam edilir.
 class VenueContextOnboardingPage extends StatefulWidget {
   final bool fromAppShell;
-  const VenueContextOnboardingPage({super.key, this.fromAppShell = false});
+  final VoidCallback? onCancel;
+  const VenueContextOnboardingPage({super.key, this.fromAppShell = false, this.onCancel});
 
   @override
   State<VenueContextOnboardingPage> createState() =>
@@ -610,12 +611,18 @@ class _VenueContextOnboardingPageState
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (_step != _Step.search)
+          if (_step != _Step.search || widget.onCancel != null)
             GestureDetector(
-              onTap: () => setState(() {
-                _step = _Step.values[_step.index - 1];
-                _error = null;
-              }),
+              onTap: () {
+                if (_step != _Step.search) {
+                  setState(() {
+                    _step = _Step.values[_step.index - 1];
+                    _error = null;
+                  });
+                } else {
+                  widget.onCancel!();
+                }
+              },
               child: Container(
                 width: 38, height: 38,
                 decoration: BoxDecoration(
