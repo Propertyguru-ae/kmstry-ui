@@ -62,6 +62,18 @@ class PushManager {
     });
   }
 
+  /// Oturum kapanınca (logout / hesap silme) çağrılır.
+  ///
+  /// Backend, logout'ta kullanıcının tüm device token'larını `is_active=false`
+  /// yapar. Aynı fiziksel cihazın FCM token'ı değişmediği için, in-memory
+  /// `_lastRegisteredToken` guard'ı sıfırlanmazsa bir sonraki login'de
+  /// `_tryRegisterToken` "zaten kayıtlı" deyip atlar ve yeni kullanıcının
+  /// token'ı backend'de hiç aktifleşmez → push gelmez. Bu yüzden guard'ı
+  /// sıfırlıyoruz; böylece sonraki login token'ı yeniden register eder.
+  void onSessionEnded() {
+    _lastRegisteredToken = null;
+  }
+
   Future<void> ensureRegisteredIfAllowed() async {
     try {
       debugPrint('[PUSH] ensureRegisteredIfAllowed: start');

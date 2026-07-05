@@ -12,6 +12,7 @@ import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
 import '../../venue_stories/data/venue_story_viewed_cache.dart';
 import '../../stories/data/story_viewed_cache.dart';
+import '../../../core/push/push_manager.dart';
 
 class AuthRepository {
   // ── One-time app bootstrap ────────────────────────────────────────────────
@@ -389,6 +390,10 @@ class AuthRepository {
     }
     await _googleSignIn.signOut();
 
+    // Backend logout tüm device token'ları pasifleştirir; guard'ı sıfırla ki
+    // sonraki login aynı cihaz token'ını yeniden aktif kaydetsin.
+    PushManager.instance.onSessionEnded();
+
     await SecureStorage.clearSession();
     invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
@@ -402,6 +407,7 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
     await _googleSignIn.signOut();
+    PushManager.instance.onSessionEnded();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
     VenueStoryViewedCache.instance.clear();
