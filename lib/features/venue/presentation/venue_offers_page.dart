@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_offer_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_offer_repository.dart';
 import 'add_external_partnership_page.dart';
@@ -189,25 +191,30 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
                         itemBuilder: (_, i) => _PartnershipCard(
                           item: filtered[i],
                           venueId: widget.venueId,
+                          canManage: _canManagePartnerships,
                           onDeleted: _load,
                           onEdited: _load,
                         ),
                       ),
                     ),
         ),
-        _AddButton(
-          label: 'Add Partnership',
-          icon: Icons.add,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AddExternalPartnershipPage(venueId: widget.venueId),
-            ),
-          ).then((_) => _load()),
-        ),
+        if (_canManagePartnerships)
+          _AddButton(
+            label: 'Add Partnership',
+            icon: Icons.add,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AddExternalPartnershipPage(venueId: widget.venueId),
+              ),
+            ).then((_) => _load()),
+          ),
       ],
     );
   }
+
+  bool get _canManagePartnerships =>
+      VenueSession.instance.can(VenuePermission.partnershipManage);
 
   void _showPlatformFilter() {
     final options = ExternalPartnershipPlatform.values
@@ -369,12 +376,14 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
 class _PartnershipCard extends StatelessWidget {
   final ExternalPartnershipModel item;
   final String venueId;
+  final bool canManage;
   final VoidCallback onDeleted;
   final VoidCallback onEdited;
 
   const _PartnershipCard({
     required this.item,
     required this.venueId,
+    required this.canManage,
     required this.onDeleted,
     required this.onEdited,
   });
@@ -433,24 +442,26 @@ class _PartnershipCard extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.edit_outlined,
-                size: 18, color: colors.onSurface.withValues(alpha: 0.5)),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => EditExternalPartnershipPage(
-                  venueId: venueId,
-                  item: item,
+          if (canManage) ...[
+            IconButton(
+              icon: Icon(Icons.edit_outlined,
+                  size: 18, color: colors.onSurface.withValues(alpha: 0.5)),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => EditExternalPartnershipPage(
+                    venueId: venueId,
+                    item: item,
+                  ),
                 ),
-              ),
-            ).then((saved) { if (saved == true) onEdited(); }),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline,
-                size: 18, color: colors.error.withValues(alpha: 0.7)),
-            onPressed: () => _confirmDelete(context),
-          ),
+              ).then((saved) { if (saved == true) onEdited(); }),
+            ),
+            IconButton(
+              icon: Icon(Icons.delete_outline,
+                  size: 18, color: colors.error.withValues(alpha: 0.7)),
+              onPressed: () => _confirmDelete(context),
+            ),
+          ],
         ],
       ),
     );

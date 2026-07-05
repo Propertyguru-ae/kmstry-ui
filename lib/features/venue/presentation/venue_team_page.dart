@@ -1842,11 +1842,18 @@ class _InviteLinkTab extends StatefulWidget {
 class _InviteLinkTabState extends State<_InviteLinkTab> {
   final _inviteRepo = VenueInviteRepository();
   final _memberRepo = VenueMemberRepository();
+  final _emailCtrl = TextEditingController();
   VenueRole? _selectedRole;
   bool _generating = false;
   bool _loadingRoles = false;
   List<VenueRole> _roles = [];
-  CreatedInvite? _created;
+  InviteResult? _result;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -1881,9 +1888,26 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
     }
   }
 
+  bool _isValidEmail(String v) {
+    final s = v.trim();
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(s);
+  }
+
   Future<void> _generate() async {
     final role = _selectedRole;
     if (role == null || _generating) return;
+
+    final email = _emailCtrl.text.trim();
+    if (!_isValidEmail(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid email address'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     setState(() => _generating = true);
     try {
       final enumRole =
@@ -1891,15 +1915,15 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
       final customId =
           (role.id != 'ADMIN' && role.id != 'STAFF') ? role.id : null;
 
-      final invite = await _inviteRepo.createInvite(
+      final result = await _inviteRepo.createInvite(
         venueId: widget.venueId,
+        email: email,
         role: enumRole,
         venueRoleId: customId,
       );
       if (!mounted) return;
-      debugPrint('[InviteLink] generated: ${invite.inviteUrl}');
       setState(() {
-        _created = invite;
+        _result = result;
         _generating = false;
       });
     } catch (e) {
@@ -1907,7 +1931,7 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
       setState(() => _generating = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to generate: $e'),
+          content: Text('Failed: $e'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -1915,8 +1939,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
   }
 
   void _copyLink() {
-    if (_created == null) return;
-    Clipboard.setData(ClipboardData(text: _created!.inviteUrl));
+    final url = _result?.inviteUrl;
+    if (url == null) return;
+    Clipboard.setData(ClipboardData(text: url));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Link copied'),
@@ -1953,8 +1978,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Generate a link and share it via WhatsApp, SMS or any channel. '
-                    'The person taps it, opens the app, and joins with the selected role.',
+                    'Enter the person\'s email and pick a role. If they already have '
+                    'a KMSTRY account, a join request is sent to them. If not, a '
+                    'registration link is created to share via WhatsApp, SMS or any channel.',
                     style: TextStyle(
                       fontSize: 13,
                       color: colors.onSurface.withValues(alpha: 0.75),
@@ -1967,6 +1993,27 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
           ),
           const SizedBox(height: 20),
 
+          // Email
+          TextField(
+            controller: _emailCtrl,
+            enabled: _result == null,
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
+            textCapitalization: TextCapitalization.none,
+            onChanged: (_) {
+              if (_result != null) setState(() => _result = null);
+            },
+            decoration: InputDecoration(
+              labelText: 'Email',
+              hintText: 'person@example.com',
+              prefixIcon: const Icon(Icons.mail_outline, size: 20),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // Role picker
           if (_roles.isNotEmpty) ...[
             _VenueRolePicker(
@@ -1974,14 +2021,14 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
               selected: _selectedRole,
               onChanged: (r) => setState(() {
                 _selectedRole = r;
-                _created = null; // rol değişince eski linki sıfırla
+                _result = null; // rol değişince eski sonucu sıfırla
               }),
             ),
             const SizedBox(height: 20),
           ],
 
           // Generate button
-          if (_created == null)
+          if (_result == null)
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -1993,9 +2040,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.link_rounded, size: 18),
+                    : const Icon(Icons.send_rounded, size: 18),
                 label: Text(
-                  _generating ? 'Generating...' : 'Generate Invite Link',
+                  _generating ? 'Sending...' : 'Send Invite',
                   style: const TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w700),
                 ),
@@ -2007,86 +2054,182 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
               ),
             ),
 
-          // Generated link card
-          if (_created != null) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: colors.primary.withValues(alpha: 0.3), width: 1.5),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.check_circle,
-                          color: colors.primary, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Invite link ready',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: colors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _created!.inviteUrl,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colors.onSurface.withValues(alpha: 0.6),
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Role: ${_created!.roleDisplay}  ·  Expires in 7 days',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colors.onSurface.withValues(alpha: 0.45),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: _copyLink,
-                          icon: const Icon(Icons.copy, size: 16),
-                          label: const Text('Copy Link'),
-                          style: FilledButton.styleFrom(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => setState(() => _created = null),
-                          style: OutlinedButton.styleFrom(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: const Text('New'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+          // Result card
+          if (_result != null) ...[
+            switch (_result!.type) {
+              InviteResultType.linkCreated => _buildLinkResult(colors),
+              InviteResultType.existingUserRequestSent => _buildInfoResult(
+                  colors,
+                  icon: Icons.mark_email_read_outlined,
+                  title: 'Request sent',
+                  message:
+                      '${_result!.email} already has a KMSTRY account. A join request '
+                      'was sent — they\'ll get a notification and appear in the team '
+                      'list once they accept.',
+                ),
+              InviteResultType.alreadyMember => _buildInfoResult(
+                  colors,
+                  icon: Icons.group_rounded,
+                  title: 'Already a member',
+                  message:
+                      '${_result!.email} is already an active member of this venue.',
+                ),
+              InviteResultType.alreadyInvited => _buildInfoResult(
+                  colors,
+                  icon: Icons.hourglass_top_rounded,
+                  title: 'Invite pending',
+                  message:
+                      '${_result!.email} already has a pending invite for this venue. '
+                      'They just need to accept it.',
+                ),
+            },
           ],
+        ],
+      ),
+    );
+  }
+
+  // Yeni kişi: paylaşılacak kayıt linki
+  Widget _buildLinkResult(ColorScheme colors) {
+    final r = _result!;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: colors.primary.withValues(alpha: 0.3), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.check_circle, color: colors.primary, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Invite link ready',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: colors.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            r.inviteUrl ?? '',
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.onSurface.withValues(alpha: 0.6),
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${r.email}  ·  Expires in 7 days',
+            style: TextStyle(
+              fontSize: 11,
+              color: colors.onSurface.withValues(alpha: 0.45),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _copyLink,
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy Link'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => setState(() {
+                    _result = null;
+                    _emailCtrl.clear();
+                  }),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('New'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Bilgi kartı: istek gönderildi / zaten üye / davet bekliyor
+  Widget _buildInfoResult(
+    ColorScheme colors, {
+    required IconData icon,
+    required String title,
+    required String message,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: colors.primary.withValues(alpha: 0.3), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: colors.primary, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              color: colors.onSurface.withValues(alpha: 0.75),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () => setState(() {
+                _result = null;
+                _emailCtrl.clear();
+              }),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Send another'),
+            ),
+          ),
         ],
       ),
     );

@@ -81,14 +81,8 @@ class _AppLinksBootstrapState extends State<AppLinksBootstrap> {
 
     final segments = uri.pathSegments;
 
-    // /invite/:token
-    if (segments.length >= 2 && segments[0].toLowerCase() == 'invite') {
-      final token = segments[1];
-      if (token.isNotEmpty) {
-        nav.pushNamed(AuthRoutes.venueInvite, arguments: token);
-        return;
-      }
-    }
+    // NOT: /invite/:token linki artık web-only (kmstry-site kayıt formu).
+    // Uygulama bu linki ele almaz; kasıtlı olarak yönlendirme yapılmıyor.
 
     // /auth/reset-password?token=...
     if (segments.any((s) => s.toLowerCase() == 'reset-password')) {

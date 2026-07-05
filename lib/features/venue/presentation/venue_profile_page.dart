@@ -852,7 +852,8 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                         const SizedBox(height: 8),
 
                         // ── Offers & Benefits ─────────────────────────────
-                        if (isOwner)
+                        if (isOwner ||
+                            session.can(VenuePermission.partnershipManage))
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: _SectionCard(
