@@ -1,0 +1,82 @@
+import 'package:flutter/foundation.dart';
+
+/// Advanced Filters (KMSTRY+) state for the "who's here" attendee list.
+/// Immutable value object; `toQueryParameters` serialises to the backend
+/// query contract on GET /venues/:id/checkins.
+@immutable
+class AttendeeFilter {
+  final String? gender; // 'male' | 'female'
+  final int? minAge;
+  final int? maxAge;
+  final String? vibe;
+  final String? intent;
+
+  const AttendeeFilter({
+    this.gender,
+    this.minAge,
+    this.maxAge,
+    this.vibe,
+    this.intent,
+  });
+
+  static const empty = AttendeeFilter();
+
+  bool get isEmpty =>
+      gender == null &&
+      minAge == null &&
+      maxAge == null &&
+      (vibe == null || vibe!.isEmpty) &&
+      (intent == null || intent!.isEmpty);
+
+  bool get isNotEmpty => !isEmpty;
+
+  /// Number of active filter facets — drives the badge on the filter button.
+  int get activeCount {
+    var n = 0;
+    if (gender != null) n++;
+    if (minAge != null || maxAge != null) n++;
+    if (vibe != null && vibe!.isNotEmpty) n++;
+    if (intent != null && intent!.isNotEmpty) n++;
+    return n;
+  }
+
+  AttendeeFilter copyWith({
+    Object? gender = _sentinel,
+    Object? minAge = _sentinel,
+    Object? maxAge = _sentinel,
+    Object? vibe = _sentinel,
+    Object? intent = _sentinel,
+  }) {
+    return AttendeeFilter(
+      gender: gender == _sentinel ? this.gender : gender as String?,
+      minAge: minAge == _sentinel ? this.minAge : minAge as int?,
+      maxAge: maxAge == _sentinel ? this.maxAge : maxAge as int?,
+      vibe: vibe == _sentinel ? this.vibe : vibe as String?,
+      intent: intent == _sentinel ? this.intent : intent as String?,
+    );
+  }
+
+  Map<String, String> toQueryParameters() {
+    final q = <String, String>{};
+    if (gender != null) q['gender'] = gender!;
+    if (minAge != null) q['minAge'] = '$minAge';
+    if (maxAge != null) q['maxAge'] = '$maxAge';
+    if (vibe != null && vibe!.isNotEmpty) q['vibe'] = vibe!;
+    if (intent != null && intent!.isNotEmpty) q['intent'] = intent!;
+    return q;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AttendeeFilter &&
+      other.gender == gender &&
+      other.minAge == minAge &&
+      other.maxAge == maxAge &&
+      other.vibe == vibe &&
+      other.intent == intent;
+
+  @override
+  int get hashCode => Object.hash(gender, minAge, maxAge, vibe, intent);
+}
+
+const Object _sentinel = Object();

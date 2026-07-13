@@ -1,6 +1,22 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'venue_member_model.dart';
+
+/// getMyPermissions yanıtı: rol izinleri + venue plan kademesi + açık özellikler.
+class MyVenueAccess {
+  final List<VenuePermission> permissions;
+  final VenuePlan plan;
+  final DateTime? planUntil;
+  final Set<VenueFeature> features;
+
+  const MyVenueAccess({
+    required this.permissions,
+    required this.plan,
+    required this.planUntil,
+    required this.features,
+  });
+}
 
 class VenueMemberRepository {
   final ApiClient _api = ApiClient();
@@ -244,15 +260,25 @@ class VenueMemberRepository {
   // ── My permissions ──────────────────────────────────────────────────────────
 
   /// Oturum açmış kullanıcının bu venue'daki aktif permission listesini döner.
-  Future<List<VenuePermission>> getMyPermissions(String venueId) async {
+  Future<MyVenueAccess> getMyPermissions(String venueId) async {
     final headers = await _authHeaders();
     final data = await _api.get('/venues/$venueId/my-permissions', headers: headers);
     final map = Map<String, dynamic>.from(data as Map);
-    final raw = (map['permissions'] as List? ?? []);
-    return raw
+    final perms = (map['permissions'] as List? ?? [])
         .map((e) => VenuePermissionExt.fromApi(e.toString()))
         .whereType<VenuePermission>()
         .toList();
+    final features = (map['features'] as List? ?? [])
+        .map((e) => VenueFeatureX.fromApi(e.toString()))
+        .whereType<VenueFeature>()
+        .toSet();
+    final until = map['planUntil'] != null ? DateTime.tryParse(map['planUntil'].toString()) : null;
+    return MyVenueAccess(
+      permissions: perms,
+      plan: VenuePlanX.fromApi(map['plan']?.toString()),
+      planUntil: until,
+      features: features,
+    );
   }
 
   // ── User search ─────────────────────────────────────────────────────────────

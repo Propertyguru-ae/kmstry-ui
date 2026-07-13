@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_owner_stats_model.dart';
+import 'venue_analytics_model.dart';
 
 class VenueOwnerRepository {
   final ApiClient _api = ApiClient();
@@ -23,6 +24,31 @@ class VenueOwnerRepository {
     final data = await _api.get('/venues/$venueId/owner-stats', headers: headers);
     final map = Map<String, dynamic>.from(data as Map);
     return VenueOwnerStatsResponse.fromJson(map);
+  }
+
+  /// range: '7d' | '30d' | '90d'. from/to verilirse (YYYY-MM-DD) özel aralık.
+  Future<VenueAnalytics> getAnalytics(
+    String venueId, {
+    String range = '7d',
+    String? from,
+    String? to,
+  }) async {
+    final headers = await _authHeaders();
+    final q = (from != null && to != null)
+        ? 'from=$from&to=$to'
+        : 'range=$range';
+    final data = await _api.get('/venues/$venueId/analytics?$q', headers: headers);
+    return VenueAnalytics.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<List<WeeklyReport>> getWeeklyReports(String venueId) async {
+    final headers = await _authHeaders();
+    final data = await _api.get('/venues/$venueId/reports', headers: headers);
+    final map = Map<String, dynamic>.from(data as Map);
+    return (map['reports'] as List? ?? [])
+        .whereType<Map>()
+        .map((e) => WeeklyReport.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   Future<VenueOwnerStatsVenue> updateVenue(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -487,6 +488,26 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return ProfileActionState.showActions;
   }
 
+  Future<void> _undoPass() async {
+    if (_isSendingAction) return;
+    final targetUserId = _profile?.user.id ?? widget.userId;
+    if (targetUserId == null || targetUserId.isEmpty) return;
+    try {
+      setState(() => _isSendingAction = true);
+      await _repo.undoPass(targetUserId);
+      if (!mounted) return;
+      // Optimistic settle — undo has no server-side side effects to reconcile.
+      setState(() {
+        _actionState = ProfileActionState.showActions;
+        _isSendingAction = false;
+      });
+      _rememberActionState(targetUserId, ProfileActionState.showActions);
+    } catch (e) {
+      debugPrint('❌ undo pass error: $e');
+      if (mounted) setState(() => _isSendingAction = false);
+    }
+  }
+
   Future<void> _handleAction(String action) async {
     if (_isBlocked) {
       return;
@@ -539,8 +560,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 ? ProfileActionState.matched
                 : ProfileActionState.waitingResponse)
           : ProfileActionState.proactivePass;
+      // Settle the UI immediately from the optimistic state — no full reload,
+      // so the buttons don't flash through a loading state.
       setState(() {
         _actionState = nextState;
+        _isSendingAction = false;
+        _sendingActionType = null;
       });
       _rememberActionState(targetUserId, nextState);
       if (action == 'interested' && !isAcceptFlow) {
@@ -549,11 +574,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         await SecureStorage.removePendingInterestedUserId(targetUserId);
       }
 
-      // Best effort reload profile to sync authoritative server state.
-      await _loadProfile();
+      // Only "interested" can create a mutual match server-side; sync that in
+      // the background without blocking the (already correct) UI. Pass is final.
+      if (action == 'interested') {
+        unawaited(_loadProfile());
+      }
     } catch (e) {
       debugPrint('❌ feed action error: $e');
-    } finally {
       if (mounted) {
         setState(() {
           _isSendingAction = false;
@@ -2085,6 +2112,20 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 );
 }
 
+  /// A button's inner content: a spinner when THIS action is in flight,
+  /// otherwise its label. Keeps both buttons at full size so nothing jumps.
+  Widget _actionButtonChild(String label, String forAction, Color spinnerColor) {
+    final loading = _isSendingAction && _sendingActionType == forAction;
+    if (loading) {
+      return SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2.1, color: spinnerColor),
+      );
+    }
+    return Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
+  }
+
   Widget _buildActionBar() {
     if (_isBlocked) {
       return Text(
@@ -2096,30 +2137,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     switch (_actionState!) {
       case ProfileActionState.incomingInterested:
       case ProfileActionState.showActions:
-        if (_isSendingAction && _sendingActionType == 'interested') {
-          return const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.1,
-                  color: AppTheme.brandPrimary,
-                ),
-              ),
-              SizedBox(width: 8),
-              Text(
-                'Sending interest...',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          );
-        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2156,11 +2173,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                         elevation: 0.5,
+                        foregroundColor: AppTheme.brandPrimary,
+                        // Keep the label readable (dimmed) while the other action runs.
+                        disabledForegroundColor:
+                            AppTheme.brandPrimary.withValues(alpha: 0.45),
                       ),
-                      child: const Text(
+                      child: _actionButtonChild(
                         'Interested',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        'interested',
+                        AppTheme.brandPrimary,
                       ),
                     ),
                   ),
@@ -2185,12 +2206,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                         elevation: 0,
+                        // Stay filled (slightly dimmed) while sending, so the
+                        // in-button spinner reads as loading — not disabled.
+                        disabledBackgroundColor:
+                            Theme.of(context).colorScheme.primary.withValues(
+                                  alpha: 0.6,
+                                ),
+                        disabledForegroundColor: Colors.white,
                       ),
-                      child: const Text(
-                        'Pass',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      child: _actionButtonChild('Pass', 'pass', Colors.white),
                     ),
                   ),
                 ),
@@ -2201,9 +2225,30 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       case ProfileActionState.proactivePass:
       case ProfileActionState.reactivePass:
-        return const Text(
-          'You passed.',
-          style: TextStyle(color: Colors.white70, fontSize: 16),
+        // Show Undo whenever the pass is MINE — proactive or reactive alike.
+        // (If they passed me, my action isn't "pass", so no Undo is shown.)
+        final iPassed = _profile?.myActionAtThisVenue == 'pass';
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'You passed.',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            if (iPassed) ...[
+              const SizedBox(width: 10),
+              TextButton.icon(
+                onPressed: _isSendingAction ? null : _undoPass,
+                icon: const Icon(Icons.undo_rounded, size: 18),
+                label: const Text('Undo'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+            ],
+          ],
         );
 
       case ProfileActionState.waitingResponse:

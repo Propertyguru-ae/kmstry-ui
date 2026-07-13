@@ -8,11 +8,22 @@ import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_analytics_screen.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_upload_docs_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
+import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
+
+/// DEMO bayrağı — "Here right now" boşken tasarımı göstermek için sahte misafir
+/// enjekte eder (patrona demo). Canlıya çıkmadan ÖNCE false yap.
+const bool _kDemoHereNow = true;
 
 class VenueAccountHomePage extends StatefulWidget {
   final String? venueId;
@@ -132,6 +143,10 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
           'Dashboard',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.onSurface),
         ),
+        actions: const [
+          NotificationBell(),
+          SizedBox(width: 4),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(color: kBorder, height: 1),
@@ -186,23 +201,86 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
       backgroundColor: kSheet,
       child: ListView(
         children: [
-          _buildStatStrip(context, s),
-          const SizedBox(height: 2),
+          // 1) Live pulse — "right now"
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+            child: _LivePulseCard(
+              activeNow: s.activeNow,
+              maleNow: s.maleNow,
+              femaleNow: s.femaleNow,
+            ),
+          ),
+
+          // 2) Today snapshot — delta'lı 3 mini KPI
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: _TodaySnapshotRow(
+              todayTotal: s.todayTotal,
+              deltaPct: s.todayVsYesterdayPct,
+              storyViews: s.storyViewsToday,
+              followers: s.followerCount,
+              // Story views yalnızca Stories özelliği olan planlarda anlamlı.
+              showStoryViews: VenueSession.instance.hasFeature(VenueFeature.stories),
+            ),
+          ),
+
+          // 3) Today's events — yalnızca Events özelliği olan planlarda göster.
+          if (VenueSession.instance.hasFeature(VenueFeature.events)) ...[
+            const SizedBox(height: 12),
+            _buildTodaysEvents(context, d.venue),
+          ],
 
           if (_showPersonalBanner) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: _buildPersonalBanner(context),
             ),
-            const SizedBox(height: 2),
           ],
 
-          _buildWeeklyTrend(context, s),
+          // 4) Live guests + stories (kimse yoksa bile göster)
+          const SizedBox(height: 12),
+          _buildGuestChips(context, d.activeGuests, s.anonymousNow),
 
-          if (d.activeGuests.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            _buildGuestChips(context, d.activeGuests),
-          ],
+          // 4) Mini haftalık trend → tam analytics'e giriş.
+          // Advanced analytics (Live+) yoksa "See full analytics" gösterme,
+          // kartı da tıklanamaz yap (geç 'failed to load' hatasını önler).
+          const SizedBox(height: 12),
+          if (VenueSession.instance.hasFeature(VenueFeature.advancedAnalytics) &&
+              (VenueSession.instance.isOwner ||
+                  VenueSession.instance.can(VenuePermission.viewAnalytics)))
+            InkWell(
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => VenueAnalyticsScreen(
+                  venueId: d.venue.id,
+                  venueName: d.venue.name,
+                ),
+              )),
+              child: Container(
+                color: kSheet,
+                child: Column(
+                  children: [
+                    _buildWeeklyTrend(context, s),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Text('See full analytics',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colors.primary)),
+                          Icon(Icons.chevron_right, size: 16, color: colors.primary),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Container(
+              color: kSheet,
+              padding: const EdgeInsets.only(bottom: 14),
+              child: _buildWeeklyTrend(context, s),
+            ),
 
           SizedBox(
             height: 32 + MediaQuery.of(context).padding.bottom + kBottomNavigationBarHeight,
@@ -501,18 +579,6 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
 
   // ── Stat strip ────────────────────────────────────────────────────────────────
 
-  Widget _buildStatStrip(BuildContext context, VenueOwnerStats s) {
-    final weekTotal = s.weeklyTrend.fold(0, (a, p) => a + p.count);
-    final colors    = Theme.of(context).colorScheme;
-    return _StatStrip(children: [
-      _StatCell(label: 'Today',     value: '${s.todayTotal}'),
-      _StatDivider(),
-      _StatCell(label: 'This Week', value: '$weekTotal'),
-      _StatDivider(),
-      _StatCell(label: 'Followers', value: _formatCount(s.followerCount), accent: colors.primary),
-    ]);
-  }
-
   Widget _buildStatStripPlaceholder(BuildContext context) {
     return _StatStrip(children: [
       _StatCell(label: 'Today',     value: '0'),
@@ -662,13 +728,98 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
     );
   }
 
-  // ── Guest chips ───────────────────────────────────────────────────────────────
+  // ── Today's events ────────────────────────────────────────────────────────────
 
-  Widget _buildGuestChips(BuildContext context, List<VenueActiveGuest> guests) {
+  Widget _buildTodaysEvents(BuildContext context, VenueOwnerStatsVenue venue) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colors = Theme.of(context).colorScheme;
     final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
     final kText  = colors.onSurface;
+    final kDim   = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+
+    final now      = DateTime.now();
+    final dayStart = DateTime(now.year, now.month, now.day);
+    final dayEnd   = dayStart.add(const Duration(days: 1));
+    // Bugün başlayan veya bugüne taşan (devam eden) event'ler
+    final todays = venue.upcomingEvents.where((e) {
+      final s = e.startAt.toLocal();
+      final en = e.endAt.toLocal();
+      return s.isBefore(dayEnd) && en.isAfter(dayStart);
+    }).toList()
+      ..sort((a, b) => a.startAt.compareTo(b.startAt));
+
+    return Container(
+      color: kSheet,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event_outlined, size: 17, color: kText),
+              const SizedBox(width: 8),
+              Text("Today's Events",
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kText)),
+              if (todays.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('${todays.length}',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: colors.primary)),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (todays.isEmpty)
+            Row(
+              children: [
+                Icon(Icons.event_busy_outlined, size: 18, color: kDim.withValues(alpha: 0.7)),
+                const SizedBox(width: 8),
+                Text('No events today',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kDim)),
+              ],
+            )
+          else
+            ...todays.map((e) => Padding(
+                  padding: EdgeInsets.only(bottom: e == todays.last ? 0 : 10),
+                  child: _TodayEventCard(
+                    event: e,
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => VenueEventDetailPage(event: e, venueId: venue.id, onChanged: _load),
+                    )),
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+
+  // ── Guest chips ───────────────────────────────────────────────────────────────
+
+  Widget _buildGuestChips(BuildContext context, List<VenueActiveGuest> guests, int anonymousNow) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = Theme.of(context).colorScheme;
+    final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
+    final kText  = colors.onSurface;
+
+    // DEMO: gerçek check-in yokken tasarımı göstermek için. Canlıya çıkmadan
+    // _kDemoHereNow = false yap.
+    if (_kDemoHereNow && guests.isEmpty && anonymousNow == 0) {
+      guests = const [
+        VenueActiveGuest(id: 'd1', fullName: 'dnzhtoo', gender: 'MALE', checkinId: 'c1'),
+        VenueActiveGuest(id: 'd2', fullName: 'yanhtoo', gender: 'FEMALE', checkinId: 'c2'),
+        VenueActiveGuest(id: 'd3', fullName: 'samchehab', gender: 'MALE', checkinId: 'c3'),
+        VenueActiveGuest(id: 'd4', fullName: 'rachellem__', gender: 'FEMALE', checkinId: 'c4'),
+      ];
+      anonymousNow = 2;
+    }
+
+    final totalHere = guests.length + anonymousNow;
 
     return Container(
       color: kSheet,
@@ -689,24 +840,49 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
                     color: colors.primary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text('${guests.length}',
+                  child: Text('$totalHere',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
                           color: colors.primary)),
                 ),
+                if (anonymousNow > 0) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.visibility_off_outlined, size: 13, color: kText.withValues(alpha: 0.45)),
+                  const SizedBox(width: 4),
+                  Text('$anonymousNow private',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
+                          color: kText.withValues(alpha: 0.5))),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 12),
-          SizedBox(
-            height: 88,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.only(right: 18),
-              itemCount: guests.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 10),
-              itemBuilder: (_, i) => _GuestChip(guest: guests[i]),
+          if (guests.isEmpty && anonymousNow == 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 18, top: 6, bottom: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.people_outline, size: 18, color: kText.withValues(alpha: 0.35)),
+                  const SizedBox(width: 8),
+                  Text('No one here yet',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                          color: kText.withValues(alpha: 0.5))),
+                ],
+              ),
+            )
+          else
+            SizedBox(
+              height: 88,
+              // Görünür misafirler + (varsa) anonimleri temsil eden tek kesikli baloncuk
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(right: 18),
+                itemCount: guests.length + (anonymousNow > 0 ? 1 : 0),
+                separatorBuilder: (context, index) => const SizedBox(width: 10),
+                itemBuilder: (_, i) => i < guests.length
+                    ? _GuestChip(guest: guests[i])
+                    : _AnonymousChip(count: anonymousNow),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -774,12 +950,6 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
-  static String _formatCount(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000)    return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
-
   String _shortDayLabel(String isoDate) {
     try {
       final parts = isoDate.split('-');
@@ -813,15 +983,14 @@ class _StatStrip extends StatelessWidget {
 class _StatCell extends StatelessWidget {
   final String label;
   final String value;
-  final Color? accent;
-  const _StatCell({required this.label, required this.value, this.accent});
+  const _StatCell({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     final theme      = Theme.of(context);
     final isDark     = theme.brightness == Brightness.dark;
     final kDim       = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
-    final valueColor = accent ?? theme.colorScheme.onSurface;
+    final valueColor = theme.colorScheme.onSurface;
 
     return Expanded(
       child: Padding(
@@ -850,6 +1019,37 @@ class _StatDivider extends StatelessWidget {
 }
 
 // ─── Guest chip ───────────────────────────────────────────────────────────────
+
+/// Anonymous Mode misafirlerini temsil eden kesikli baloncuk (kimlik yok, sayı var).
+class _AnonymousChip extends StatelessWidget {
+  final int count;
+  const _AnonymousChip({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final kDim = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4);
+    return SizedBox(
+      width: 52,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: kDim.withValues(alpha: 0.5), width: 1),
+            ),
+            child: Icon(Icons.visibility_off_outlined, size: 20, color: kDim),
+          ),
+          const SizedBox(height: 5),
+          Text('+$count',
+              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: kDim)),
+        ],
+      ),
+    );
+  }
+}
 
 class _GuestChip extends StatefulWidget {
   final VenueActiveGuest guest;
@@ -1052,4 +1252,276 @@ class _SquareStoryRingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SquareStoryRingPainter old) => old.colors != colors;
+}
+
+// ── Analytics glance card (dashboard → full analytics) ────────────────────────
+
+// ── Dashboard: Live pulse ("right now") ─────────────────────────────────────────
+class _LivePulseCard extends StatelessWidget {
+  final int activeNow;
+  final int maleNow;
+  final int femaleNow;
+  const _LivePulseCard({required this.activeNow, required this.maleNow, required this.femaleNow});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = Theme.of(context).colorScheme;
+    const teal = Color(0xFF1FD9A8);
+    final live = activeNow > 0;
+    final accent = live ? teal : colors.onSurface.withValues(alpha: 0.4);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: live
+              ? [teal.withValues(alpha: isDark ? 0.22 : 0.14), const Color(0xFF1A9FE8).withValues(alpha: isDark ? 0.16 : 0.08)]
+              : [colors.onSurface.withValues(alpha: 0.06), colors.onSurface.withValues(alpha: 0.03)],
+        ),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(width: 8, height: 8, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Text(live ? 'LIVE NOW' : 'QUIET',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: accent)),
+              ]),
+              const SizedBox(height: 6),
+              Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                Text('$activeNow', style: TextStyle(fontSize: 40, fontWeight: FontWeight.w800, color: colors.onSurface, height: 1)),
+                const SizedBox(width: 8),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(activeNow == 1 ? 'guest here' : 'guests here',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: colors.onSurface.withValues(alpha: 0.6))),
+                ),
+              ]),
+            ],
+          ),
+          const Spacer(),
+          if (live)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _genderRow('♂', maleNow, const Color(0xFF1A9FE8)),
+                const SizedBox(height: 8),
+                _genderRow('♀', femaleNow, const Color(0xFFE020D8)),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _genderRow(String symbol, int count, Color color) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(symbol, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: color)),
+      const SizedBox(width: 6),
+      Text('$count', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color)),
+    ]);
+  }
+}
+
+// ── Dashboard: Today snapshot (delta'lı 3 KPI) ──────────────────────────────────
+class _TodaySnapshotRow extends StatelessWidget {
+  final int todayTotal;
+  final int? deltaPct;
+  final int storyViews;
+  final int followers;
+  final bool showStoryViews;
+  const _TodaySnapshotRow({
+    required this.todayTotal,
+    required this.deltaPct,
+    required this.storyViews,
+    required this.followers,
+    this.showStoryViews = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Expanded(child: _kpi(context, 'Check-ins today', '$todayTotal', delta: deltaPct)),
+      if (showStoryViews) ...[
+        const SizedBox(width: 10),
+        Expanded(child: _kpi(context, 'Story views', _fmtCount(storyViews))),
+      ],
+      const SizedBox(width: 10),
+      Expanded(child: _kpi(context, 'Followers', _fmtCount(followers))),
+    ]);
+  }
+
+  Widget _kpi(BuildContext context, String label, String value, {int? delta}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = Theme.of(context).colorScheme;
+    final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
+    Widget? deltaChip;
+    if (delta != null && delta != 0) {
+      final up = delta > 0;
+      final c = up ? const Color(0xFF1FD9A8) : const Color(0xFFF08838);
+      deltaChip = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(up ? Icons.arrow_upward : Icons.arrow_downward, size: 11, color: c),
+        Text('${delta.abs()}%', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c)),
+      ]);
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(color: kSheet, borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Flexible(child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: colors.onSurface))),
+            if (deltaChip != null) ...[const SizedBox(width: 4), deltaChip],
+          ]),
+          const SizedBox(height: 4),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: colors.onSurface.withValues(alpha: 0.55))),
+        ],
+      ),
+    );
+  }
+}
+
+String _fmtCount(int n) {
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(n % 1000000 == 0 ? 0 : 1)}M';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(n % 1000 == 0 ? 0 : 1)}k';
+  return '$n';
+}
+
+// ── Dashboard: Today's event card (full details) ────────────────────────────────
+class _TodayEventCard extends StatelessWidget {
+  final VenueUpcomingEvent event;
+  final VoidCallback onTap;
+  const _TodayEventCard({required this.event, required this.onTap});
+
+  String _time(DateTime d) {
+    final l = d.toLocal();
+    final h = l.hour.toString().padLeft(2, '0');
+    final m = l.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = Theme.of(context).colorScheme;
+    final kText  = colors.onSurface;
+    final kDim   = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    const teal   = Color(0xFF1FD9A8);
+    const orange = Color(0xFFF08838);
+
+    final cover = event.photo ?? (event.photos.isNotEmpty ? event.photos.first : null);
+
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.4)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: cover != null
+                        ? Image.network(cover, width: 54, height: 54, fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _placeholder(colors))
+                        : _placeholder(colors),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(event.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kText)),
+                            ),
+                            if (event.isRecurring) ...[
+                              const SizedBox(width: 6),
+                              Icon(Icons.repeat, size: 14, color: kDim),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(children: [
+                          Icon(Icons.schedule, size: 13, color: kDim),
+                          const SizedBox(width: 4),
+                          Text('${_time(event.startAt)} – ${_time(event.endAt)}',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kDim)),
+                        ]),
+                        if (event.description != null && event.description!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(event.description!, maxLines: 2, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: kDim, height: 1.3)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _chip(Icons.people_alt_outlined,
+                      event.capacity != null ? '${event.rsvpCount}/${event.capacity} RSVP' : '${event.rsvpCount} RSVP',
+                      colors.primary),
+                  if (event.priceAed != null && event.priceAed! > 0)
+                    _chip(Icons.sell_outlined, '${event.priceAed} ${event.currency}', teal),
+                  if (event.hasOffer)
+                    _chip(Icons.local_offer_outlined, event.offerTypeLabel!, orange),
+                  if (event.partnershipCount > 0)
+                    _chip(Icons.handshake_outlined,
+                        '${event.partnershipCount} partner${event.partnershipCount > 1 ? 's' : ''}',
+                        const Color(0xFF1A9FE8)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder(ColorScheme colors) => Container(
+        width: 54, height: 54,
+        color: colors.primary.withValues(alpha: 0.10),
+        child: Icon(Icons.event, color: colors.primary.withValues(alpha: 0.7), size: 24),
+      );
+
+  Widget _chip(IconData icon, String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
+        ]),
+      );
 }

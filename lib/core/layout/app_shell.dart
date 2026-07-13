@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/core/user/user_session.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
+import 'package:kmstry_frontend/features/home/presentation/personal_home_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
 import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
+import 'package:kmstry_frontend/features/people/presentation/who_is_nearby_page.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
-import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
@@ -25,6 +29,7 @@ import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_manage_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
@@ -338,6 +343,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Future<void> _loadUserInitial() async {
     try {
       final me = await AuthRepository().getMe();
+      // Keep KMSTRY+ entitlement fresh for the CURRENT account (fixes stale
+      // premium leaking across account switches).
+      UserSession.instance.applyFromMe(me);
       final context = MeContextModel.fromMe(me);
       if (!mounted) return;
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
@@ -399,15 +407,30 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ..addAll(context.memberVenues);
         _activeAccount = activeLabel;
         _activeVenueId = resolvedVenueId;
+        // Venue has fewer tabs than personal; clamp a stale personal index.
         if (_isVenueContext && _currentIndex > 3) {
           _currentIndex = 0;
         }
       });
+
+      // Venue izinlerini context çözülür çözülmez yükle — böylece Manage/Profile'a
+      // gidildiğinde gecikme/pop-in olmaz. Kişisel context'te oturumu temizle.
+      if (isVenueCtx && resolvedVenueId != null) {
+        final match = allKnownVenues.where((v) => v.id == resolvedVenueId);
+        final roleStr = match.isNotEmpty ? match.first.role : null;
+        final role = VenueMemberRoleExt.fromApi(roleStr ?? 'STAFF');
+        if (VenueSession.instance.venueId != resolvedVenueId || !VenueSession.instance.loaded) {
+          VenueSession.instance.load(resolvedVenueId, role);
+        }
+      } else if (!isVenueCtx) {
+        VenueSession.instance.clear();
+      }
     } catch (_) {}
   }
 
   Future<void> _logout(BuildContext context) async {
     try {
+      UserSession.instance.clear();
       await AuthRepository().logout();
       if (!context.mounted) return;
 
@@ -444,16 +467,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _loadUnreadNotificationCount();
   }
 
-  void _onItemTapped(int index) {
-    if (!_isVenueContext && index == 2) {
-      _dmListKey.currentState?.loadChats();
-      _scheduleDmRefresh();
-    }
-    // Venue context: index 2 = notifications; Personal: index 1 = notifications
-    final notifIndex = _isVenueContext ? 2 : 1;
-    if (index == notifIndex) {
-      _loadUnreadNotificationCount();
-    }
+  void _onItemTapped(int index, [VoidCallback? onSelected]) {
+    // Tab-specific side effects come from the tab descriptor — no hardcoded
+    // indices, so navbar order can change freely without breaking anything.
+    onSelected?.call();
     setState(() {
       _currentIndex = index;
     });
@@ -696,27 +713,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final pages = _isVenueContext
-        ? <Widget>[
-            VenueAccountHomePage(venueId: _activeVenueId),
-            VenueOwnerGuestsPage(venueId: _activeVenueId, isPendingClaim: _isPendingClaim, isRejectedClaim: _isRejectedClaim),
-            const NotificationPage(),
-            VenueProfilePage(
-              activeVenueName:
-                  _activeAccount == 'Personal' ? null : _activeAccount,
-              venueNames: _memberVenues.map((v) => v.name).toList(),
-              venueId: _activeVenueId,
-            ),
-          ]
-        : <Widget>[
-            const VenueHomePage(),
-            const NotificationPage(),
-            DmListPage(key: _dmListKey),
-            const PeoplePage(),
-            const ProfilePage(),
-          ];
-    final safeIndex = _currentIndex >= pages.length
-        ? pages.length - 1
+    final tabs = _isVenueContext
+        ? _venueTabs(isDark, theme)
+        : _personalTabs(isDark, theme);
+    final safeIndex = _currentIndex >= tabs.length
+        ? tabs.length - 1
         : _currentIndex;
 
     return NotificationUnreadScope(
@@ -728,8 +729,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       },
       child: Scaffold(
         extendBody: true,
-        body: pages[safeIndex],
-        bottomNavigationBar: _buildNavBar(safeIndex, isDark, theme, context),
+        body: tabs[safeIndex].page,
+        bottomNavigationBar: _buildNavBar(tabs, safeIndex, isDark, theme),
       ),
     );
   }
@@ -762,42 +763,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           color: isDark ? colors.primary : colors.onSurface,
         ),
       ),
-    );
-  }
-
-  Widget _buildNotificationIcon(Color color) {
-    final icon = Icon(Icons.notifications_none, size: 27, color: color);
-    if (_unreadNotificationCount <= 0) {
-      return icon;
-    }
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        icon,
-        Positioned(
-          right: -4,
-          top: -2,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-            decoration: const BoxDecoration(
-              color: AppTheme.brandCta,
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              _unreadNotificationCount > 99
-                  ? '99+'
-                  : '$_unreadNotificationCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -835,76 +800,129 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
+  /// Builds a nav-icon closure so an icon's active/inactive rendering stays
+  /// coupled to its tab (no index math).
+  Widget Function(bool) _navIconBuilder(
+    IconData filled,
+    IconData outlined,
+    ThemeData theme,
+  ) {
+    final activeColor = theme.colorScheme.onSurface;
+    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha: 0.30);
+    return (bool active) => Icon(
+          active ? filled : outlined,
+          size: 28,
+          color: active ? activeColor : inactiveColor,
+        );
+  }
+
+  /// Personal-context tabs. Order here is the ONLY source of truth — the body,
+  /// the navbar and tap side-effects all derive from it, so reordering is safe.
+  /// Notifications are intentionally absent: reached via the Home header bell.
+  List<_NavTab> _personalTabs(bool isDark, ThemeData theme) {
+    final activeColor = theme.colorScheme.onSurface;
+    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha: 0.30);
+    return [
+      _NavTab(
+        page: const PersonalHomePage(),
+        icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
+      ),
+      _NavTab(
+        page: const VenueHomePage(),
+        icon: _navIconBuilder(
+          Icons.location_on,
+          Icons.location_on_outlined,
+          theme,
+        ),
+      ),
+      _NavTab(
+        page: const WhoIsNearbyPage(),
+        icon: _navIconBuilder(
+          Icons.person_pin_circle,
+          Icons.person_pin_circle_outlined,
+          theme,
+        ),
+      ),
+      _NavTab(
+        page: DmListPage(key: _dmListKey),
+        icon: (active) =>
+            _buildMessageIcon(active ? activeColor : inactiveColor),
+        onSelected: () {
+          _dmListKey.currentState?.loadChats();
+          _scheduleDmRefresh();
+        },
+      ),
+      _NavTab(
+        page: const PeoplePage(),
+        icon: _navIconBuilder(
+          Icons.people_alt,
+          Icons.people_alt_outlined,
+          theme,
+        ),
+      ),
+      _NavTab(
+        page: const ProfilePage(),
+        icon: (active) => _buildProfileAvatar(
+          isActive: active,
+          isDark: isDark,
+          theme: theme,
+        ),
+      ),
+    ];
+  }
+
+  /// Venue-context tabs. Notifications reached via the Dashboard header bell.
+  List<_NavTab> _venueTabs(bool isDark, ThemeData theme) {
+    return [
+      _NavTab(
+        page: VenueAccountHomePage(venueId: _activeVenueId),
+        icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
+      ),
+      _NavTab(
+        page: VenueOwnerGuestsPage(
+          venueId: _activeVenueId,
+          isPendingClaim: _isPendingClaim,
+          isRejectedClaim: _isRejectedClaim,
+        ),
+        icon: _navIconBuilder(Icons.people, Icons.people_outline, theme),
+      ),
+      _NavTab(
+        page: VenueManagePage(venueId: _activeVenueId),
+        icon: _navIconBuilder(Icons.grid_view, Icons.grid_view_outlined, theme),
+      ),
+      _NavTab(
+        page: VenueProfilePage(
+          activeVenueName: _activeAccount == 'Personal' ? null : _activeAccount,
+          venueNames: _memberVenues.map((v) => v.name).toList(),
+          venueId: _activeVenueId,
+        ),
+        icon: (active) => _buildProfileAvatar(
+          isActive: active,
+          isDark: isDark,
+          theme: theme,
+        ),
+      ),
+    ];
+  }
+
   Widget _buildNavBar(
+    List<_NavTab> tabs,
     int safeIndex,
     bool isDark,
     ThemeData theme,
-    BuildContext ctx,
   ) {
     final colors = theme.colorScheme;
-    final activeColor = colors.onSurface;
-    final inactiveColor = colors.onSurface.withValues(alpha: 0.30);
 
-    Widget navIcon(IconData filled, IconData outlined, int index) {
-      return Icon(
-        safeIndex == index ? filled : outlined,
-        size: 28,
-        color: safeIndex == index ? activeColor : inactiveColor,
-      );
-    }
-
-    Widget navItem(int index, Widget child, {VoidCallback? onLongPress}) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _onItemTapped(index),
-        onLongPress: onLongPress,
-        child: SizedBox.expand(
-          child: Center(child: child),
+    final List<Widget> items = [
+      for (var i = 0; i < tabs.length; i++)
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _onItemTapped(i, tabs[i].onSelected),
+          child: SizedBox.expand(
+            child: Center(child: tabs[i].icon(safeIndex == i)),
+          ),
         ),
-      );
-    }
-
-    final List<Widget> items = _isVenueContext
-        ? [
-            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
-            navItem(1, navIcon(Icons.people, Icons.people_outline, 1)),
-            navItem(
-              2,
-              _buildNotificationIcon(
-                safeIndex == 2 ? activeColor : inactiveColor,
-              ),
-            ),
-            navItem(
-              3,
-              _buildProfileAvatar(
-                isActive: safeIndex == 3,
-                isDark: isDark,
-                theme: theme,
-              ),
-            ),
-          ]
-        : [
-            navItem(0, navIcon(Icons.home, Icons.home_outlined, 0)),
-            navItem(
-              1,
-              _buildNotificationIcon(
-                safeIndex == 1 ? activeColor : inactiveColor,
-              ),
-            ),
-            navItem(
-              2,
-              _buildMessageIcon(safeIndex == 2 ? activeColor : inactiveColor),
-            ),
-            navItem(3, navIcon(Icons.people_alt, Icons.people_alt_outlined, 3)),
-            navItem(
-              4,
-              _buildProfileAvatar(
-                isActive: safeIndex == 4,
-                isDark: isDark,
-                theme: theme,
-              ),
-            ),
-          ];
+    ];
 
     return Container(
       decoration: BoxDecoration(
@@ -929,4 +947,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+/// A single navbar destination: its page, its icon (given active state) and an
+/// optional side-effect to run when the tab is selected. Keeping all three
+/// together is what removes hardcoded index assumptions from the shell.
+class _NavTab {
+  final Widget page;
+  final Widget Function(bool active) icon;
+  final VoidCallback? onSelected;
+
+  const _NavTab({required this.page, required this.icon, this.onSelected});
 }

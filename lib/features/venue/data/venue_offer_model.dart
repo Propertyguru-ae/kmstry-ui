@@ -4,6 +4,10 @@ enum VenueOfferType {
   FIXED_DISCOUNT,
   FREE_ITEM,
   BUNDLE,
+  BUFFET,
+  SET_MENU,
+  OPEN_DRINK,
+  OPEN_FOOD,
 }
 
 enum OfferRedemptionStatus {
@@ -20,6 +24,7 @@ class VenueOfferModel {
   final String? description;
   final VenueOfferType type;
   final double? discountValue;
+  final double? price;
   final String? terms;
   final DateTime? validFrom;
   final DateTime? validUntil;
@@ -37,6 +42,7 @@ class VenueOfferModel {
     this.description,
     required this.type,
     this.discountValue,
+    this.price,
     this.terms,
     this.validFrom,
     this.validUntil,
@@ -52,7 +58,7 @@ class VenueOfferModel {
       id: json['id'] as String,
       venueId: json['venue_id'] as String,
       eventId: json['event_id'] as String?,
-      title: json['title'] as String,
+      title: json['title'] as String? ?? '',
       description: json['description'] as String?,
       type: VenueOfferType.values.firstWhere(
         (e) => e.name == json['type'],
@@ -61,6 +67,7 @@ class VenueOfferModel {
       discountValue: json['discount_value'] != null
           ? (json['discount_value'] as num).toDouble()
           : null,
+      price: json['price'] != null ? (json['price'] as num).toDouble() : null,
       terms: json['terms'] as String?,
       validFrom: json['valid_from'] != null ? DateTime.parse(json['valid_from'] as String) : null,
       validUntil: json['valid_until'] != null ? DateTime.parse(json['valid_until'] as String) : null,
@@ -84,6 +91,14 @@ class VenueOfferModel {
         return 'Free Item';
       case VenueOfferType.BUNDLE:
         return 'Bundle Deal';
+      case VenueOfferType.BUFFET:
+        return 'Buffet';
+      case VenueOfferType.SET_MENU:
+        return 'Set Menu';
+      case VenueOfferType.OPEN_DRINK:
+        return 'Open Drink';
+      case VenueOfferType.OPEN_FOOD:
+        return 'Open Food';
     }
   }
 

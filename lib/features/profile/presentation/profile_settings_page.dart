@@ -31,6 +31,9 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   bool _hasVenueMembership = false;
   bool _canDeleteCurrentContextProfile = false;
   String? _activeVenueId;
+  bool _isPremium = false;
+  bool _isAnonymous = false;
+  bool _togglingAnonymous = false;
 
   @override
   void initState() {
@@ -64,6 +67,8 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
         _activeVenueId =
             meContext.activeVenueId ??
             (meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null);
+        _isPremium = me['isPremium'] == true;
+        _isAnonymous = me['isAnonymous'] == true;
         _loading = false;
       });
     } catch (_) {
@@ -95,6 +100,69 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
       // Revert on failure
       if (mounted) setState(() => _receiveTestNotifications = !enabled);
     }
+  }
+
+  Future<void> _setAnonymous(bool enabled) async {
+    // Premium değilse ve açmaya çalışıyorsa KMSTRY+ upsell göster.
+    if (enabled && !_isPremium) {
+      _showPremiumUpsell();
+      return;
+    }
+    setState(() {
+      _isAnonymous = enabled;
+      _togglingAnonymous = true;
+    });
+    try {
+      await AuthRepository().setAnonymous(enabled);
+    } catch (_) {
+      if (mounted) setState(() => _isAnonymous = !enabled); // revert
+    } finally {
+      if (mounted) setState(() => _togglingAnonymous = false);
+    }
+  }
+
+  void _showPremiumUpsell() {
+    final colors = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(22, 26, 22, 22),
+        decoration: BoxDecoration(color: colors.surface, borderRadius: BorderRadius.circular(24)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60, height: 60,
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFE020D8)),
+              child: const Icon(Icons.visibility_off_rounded, color: Colors.white, size: 28),
+            ),
+            const SizedBox(height: 16),
+            Text('Go invisible with KMSTRY+',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: colors.onSurface)),
+            const SizedBox(height: 8),
+            Text('Anonymous Mode lets you check in and browse without appearing to others. '
+                'Unlock it and more with KMSTRY+.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, height: 1.4, color: colors.onSurface.withValues(alpha: 0.6))),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE020D8),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text('Coming soon', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _setNotifications(bool enabled) async {
@@ -289,6 +357,46 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                     'Privacy',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: colors.primary.withValues(alpha: 0.12),
+                      ),
+                    ),
+                    child: SwitchListTile(
+                      value: _isAnonymous,
+                      onChanged: _togglingAnonymous ? null : _setAnonymous,
+                      activeThumbColor: colors.secondary,
+                      activeTrackColor: colors.secondary.withValues(alpha: 0.4),
+                      secondary: Icon(Icons.visibility_off_outlined, color: colors.onSurface.withValues(alpha: 0.7)),
+                      title: Row(
+                        children: [
+                          Text('Anonymous Mode', style: TextStyle(color: colors.onSurface)),
+                          if (!_isPremium) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE020D8).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text('KMSTRY+',
+                                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFE020D8))),
+                            ),
+                          ],
+                        ],
+                      ),
+                      subtitle: Text(
+                        _isAnonymous
+                            ? 'You are invisible — check in without appearing to others'
+                            : 'Check in and browse without appearing to others',
+                        style: TextStyle(color: colors.onSurface.withValues(alpha: 0.65)),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),

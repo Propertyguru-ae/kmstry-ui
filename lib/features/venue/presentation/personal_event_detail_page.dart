@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/core/user/user_session.dart';
+import 'package:kmstry_frontend/core/user/premium_feature.dart';
+import 'package:kmstry_frontend/core/user/premium_gate.dart';
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const _kMagenta = Color(0xFFE020D8);
@@ -36,6 +39,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
   late int _rsvpCount;
   int? _capacity;
   bool _userHasRsvp = false;
+  DateTime? _rsvpOpensAt; // T46: general RSVP open time (publish + 24h)
   late VenueUpcomingEvent _event;
 
   @override
@@ -45,6 +49,37 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     _rsvpCount = widget.event.rsvpCount;
     _capacity  = widget.event.capacity;
     _loadDetail();
+    // Premium status drives the early-access gate; refresh once loaded.
+    UserSession.instance.ensureLoaded().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  /// True when the free user must still wait for general RSVP to open.
+  bool get _earlyAccessLocked =>
+      !UserSession.instance.isPremium &&
+      _rsvpOpensAt != null &&
+      DateTime.now().isBefore(_rsvpOpensAt!) &&
+      !_userHasRsvp;
+
+  String get _opensInLabel {
+    final opensAt = _rsvpOpensAt;
+    if (opensAt == null) return 'Opens soon';
+    final d = opensAt.difference(DateTime.now());
+    if (d.inHours >= 1) return 'Opens in ${d.inHours}h';
+    if (d.inMinutes >= 1) return 'Opens in ${d.inMinutes}m';
+    return 'Opens soon';
+  }
+
+  Future<void> _openEarlyAccessUpsell() async {
+    await PremiumGate.ensure(
+      context,
+      PremiumFeature.priorityEventAccess,
+      title: 'RSVP opens 24h early with KMSTRY+',
+      message:
+          'KMSTRY+ members can RSVP to events 24 hours before everyone else.',
+      icon: Icons.event_available_rounded,
+    );
   }
 
   Future<void> _loadDetail() async {
@@ -61,6 +96,9 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
           _rsvpCount  = map['rsvpCount'] is num ? (map['rsvpCount'] as num).toInt() : 0;
           _capacity   = map['capacity'] is num ? (map['capacity'] as num).toInt() : null;
           _userHasRsvp = map['userHasRsvp'] == true;
+          _rsvpOpensAt = DateTime.tryParse(
+            map['rsvpOpensAt']?.toString() ?? '',
+          );
           _loading    = false;
         });
       }
@@ -92,9 +130,14 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: _kRed),
-        );
+        // T46: server rejected because general RSVP hasn't opened yet.
+        if (e.toString().contains('EARLY_ACCESS_LOCKED')) {
+          _openEarlyAccessUpsell();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.toString()), backgroundColor: _kRed),
+          );
+        }
       }
     } finally {
       if (mounted) setState(() => _rsvping = false);
@@ -105,7 +148,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final kBg    = isDark ? const Color(0xFF0D1525) : Colors.white;
     final kText  = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim   = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    final kDim   = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
 
     showModalBottomSheet(
       context: context,
@@ -128,7 +171,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     final kCard   = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
     final kBorder = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
     final kText   = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim    = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    final kDim    = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
 
     final event  = _event;
     final photos = event.photos.isNotEmpty
@@ -136,6 +179,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
         : (event.photo != null ? [event.photo!] : <String>[]);
     final isFree = event.priceAed == null || event.priceAed == 0;
     final isFull = _capacity != null && _rsvpCount >= _capacity!;
+    final earlyLocked = _earlyAccessLocked; // T46: general RSVP not open yet
 
     return Scaffold(
       backgroundColor: kBg,
@@ -246,14 +290,14 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                             ],
 
                             // ── Kmstry Offer ──────────────────────────────────
-                            if (event.offerTitle != null) ...[
+                            if (event.offerType != null) ...[
                               _divider(isDark),
                               _SectionLabel(icon: Icons.local_offer_outlined, label: 'Kmstry Offer', color: _kTuruncu, kText: kText),
                               const SizedBox(height: 10),
                               _OfferCard(
-                                title: event.offerTitle!,
+                                conditions: event.offerTitle,
                                 type: event.offerType,
-                                discountValue: event.offerDiscountValue,
+                                price: event.offerPrice,
                                 isDark: isDark, kCard: kCard, kBorder: kBorder, kText: kText, kDim: kDim,
                               ),
                             ],
@@ -317,18 +361,28 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
               : SizedBox(
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: (_rsvping || (isFull && !_userHasRsvp)) ? null : _toggleRsvp,
+                    onPressed: _rsvping
+                        ? null
+                        : earlyLocked
+                            ? _openEarlyAccessUpsell
+                            : (isFull && !_userHasRsvp)
+                                ? null
+                                : _toggleRsvp,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _userHasRsvp
-                          ? (isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA))
-                          : isFull
-                              ? kCard
-                              : _kMagenta,
-                      foregroundColor: _userHasRsvp
-                          ? kDim
-                          : isFull
+                      backgroundColor: earlyLocked
+                          ? _kMagenta
+                          : _userHasRsvp
+                              ? (isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA))
+                              : isFull
+                                  ? kCard
+                                  : _kMagenta,
+                      foregroundColor: earlyLocked
+                          ? Colors.white
+                          : _userHasRsvp
                               ? kDim
-                              : Colors.white,
+                              : isFull
+                                  ? kDim
+                                  : Colors.white,
                       disabledBackgroundColor: kCard,
                       disabledForegroundColor: kDim,
                       elevation: 0,
@@ -348,20 +402,24 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                _userHasRsvp
-                                    ? Icons.check_circle_outline_rounded
-                                    : isFull
-                                        ? Icons.block_rounded
-                                        : Icons.how_to_reg_outlined,
+                                earlyLocked
+                                    ? Icons.lock_clock_rounded
+                                    : _userHasRsvp
+                                        ? Icons.check_circle_outline_rounded
+                                        : isFull
+                                            ? Icons.block_rounded
+                                            : Icons.how_to_reg_outlined,
                                 size: 18,
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                _userHasRsvp
-                                    ? 'You\'re attending — Cancel'
-                                    : isFull
-                                        ? 'Event is full'
-                                        : 'Attend',
+                                earlyLocked
+                                    ? '$_opensInLabel · KMSTRY+ early'
+                                    : _userHasRsvp
+                                        ? 'You\'re attending — Cancel'
+                                        : isFull
+                                            ? 'Event is full'
+                                            : 'Attend',
                                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                               ),
                             ],
@@ -447,16 +505,16 @@ class _SectionLabel extends StatelessWidget {
 // ─── Offer card ───────────────────────────────────────────────────────────────
 
 class _OfferCard extends StatelessWidget {
-  final String title;
+  final String? conditions;
   final String? type;
-  final double? discountValue;
+  final double? price;
   final bool isDark;
   final Color kCard, kBorder, kText, kDim;
 
   const _OfferCard({
-    required this.title,
+    required this.conditions,
     required this.type,
-    required this.discountValue,
+    required this.price,
     required this.isDark,
     required this.kCard,
     required this.kBorder,
@@ -466,8 +524,12 @@ class _OfferCard extends StatelessWidget {
 
   String _typeLabel() {
     switch (type) {
-      case 'PERCENT_OFF':    return discountValue != null ? '%${discountValue!.toStringAsFixed(0)} off' : 'Percent off';
-      case 'FIXED_DISCOUNT': return discountValue != null ? '${discountValue!.toStringAsFixed(0)} off' : 'Fixed discount';
+      case 'BUFFET':     return 'Buffet';
+      case 'SET_MENU':   return 'Set Menu';
+      case 'OPEN_DRINK': return 'Open Drink';
+      case 'OPEN_FOOD':  return 'Open Food';
+      case 'PERCENT_OFF':    return 'Percent off';
+      case 'FIXED_DISCOUNT': return 'Fixed discount';
       case 'FREE_ITEM':      return 'Free item';
       case 'BUNDLE':         return 'Bundle deal';
       case 'BOGO':           return 'Buy one get one';
@@ -499,12 +561,16 @@ class _OfferCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText)),
-                if (_typeLabel().isNotEmpty)
-                  Text(_typeLabel(), style: TextStyle(fontSize: 12, color: kDim)),
+                Text(_typeLabel().isNotEmpty ? _typeLabel() : 'Offer',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText)),
+                if (conditions != null && conditions!.trim().isNotEmpty)
+                  Text(conditions!, style: TextStyle(fontSize: 12, color: kDim)),
               ],
             ),
           ),
+          if (price != null)
+            Text(price!.toStringAsFixed(0),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _kTuruncu)),
         ],
       ),
     );

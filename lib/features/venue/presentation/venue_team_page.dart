@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/venue/plan_gate.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
@@ -479,7 +481,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     final activeMembers  = _members.where((m) => m.status == VenueMemberStatus.active).toList();
     final pendingMembers = _members.where((m) => m.status == VenueMemberStatus.pending).toList();
     final terminalMembers = _members.where((m) => m.status.isTerminal).toList();
-    final roleCount = _roleCount;
+    // Free plan tek operatörlü — rol hiyerarşisi yok, sadece owner sayılır.
+    final roleCount = VenueSession.instance.hasFeature(VenueFeature.roleLevels) ? _roleCount : 1;
 
     if (_members.isEmpty) {
       return Column(
@@ -605,25 +608,66 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 
   Widget _buildAddMemberBar(ColorScheme colors, bool isDark) {
     final bg = isDark ? const Color(0xFF06091A) : const Color(0xFFF7F8FA);
+    final plan = VenueSession.instance.plan;
+    final limit = plan.staffLimit; // null = sınırsız
+    // Koltuğu dolduranlar: aktif + bekleyen üyeler (owner dahil).
+    final used = _members.where((m) => m.status == VenueMemberStatus.active || m.status == VenueMemberStatus.pending).length;
+    final atLimit = limit != null && used >= limit;
+
     return Container(
       color: bg,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-      child: SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: _openAddMember,
-          icon: const Icon(Icons.person_add_outlined, size: 18),
-          label: const Text(
-            'Add Member',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Koltuk sayacı — deneyip hata almadan durumu göster.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.groups_outlined, size: 15, color: colors.onSurface.withValues(alpha: 0.5)),
+                const SizedBox(width: 6),
+                Text(
+                  limit == null
+                      ? '$used staff · ${plan.label} plan (unlimited)'
+                      : '$used / $limit ${limit == 1 ? 'seat' : 'seats'} used · ${plan.label} plan',
+                  style: TextStyle(fontSize: 12.5, color: colors.onSurface.withValues(alpha: 0.6)),
+                ),
+              ],
+            ),
           ),
-          style: FilledButton.styleFrom(
-            backgroundColor: _TeamColors.turkuaz,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
+          if (atLimit)
+            FilledButton.icon(
+              onPressed: () => PlanGate.openPaywall(context, feature: null),
+              icon: const Icon(Icons.lock_outline, size: 18),
+              label: Text(
+                limit == 1 ? 'Upgrade to add staff' : 'Upgrade for more seats',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: plan.color,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            )
+          else
+            FilledButton.icon(
+              onPressed: _openAddMember,
+              icon: const Icon(Icons.person_add_outlined, size: 18),
+              label: const Text(
+                'Add Member',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: _TeamColors.turkuaz,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -383,6 +383,7 @@ class VenueUpcomingEvent {
   final String? offerTitle;
   final String? offerType;
   final double? offerDiscountValue;
+  final double? offerPrice;
   final int? capacity;
   final int rsvpCount;
 
@@ -404,11 +405,31 @@ class VenueUpcomingEvent {
     this.offerTitle,
     this.offerType,
     this.offerDiscountValue,
+    this.offerPrice,
     this.capacity,
     this.rsvpCount = 0,
   });
 
   bool get isRecurring => recurringRuleId != null;
+
+  /// Offer var mı? (conditions/title opsiyonel — tip varsa offer vardır)
+  bool get hasOffer => offerType != null;
+
+  /// Offer tipinin kısa etiketi (chip'lerde gösterim için).
+  String? get offerTypeLabel {
+    switch (offerType) {
+      case 'BUFFET':     return 'Buffet';
+      case 'SET_MENU':   return 'Set Menu';
+      case 'OPEN_DRINK': return 'Open Drink';
+      case 'OPEN_FOOD':  return 'Open Food';
+      case 'BOGO':           return 'BOGO';
+      case 'PERCENT_OFF':    return 'Percent Off';
+      case 'FIXED_DISCOUNT': return 'Discount';
+      case 'FREE_ITEM':      return 'Free Item';
+      case 'BUNDLE':         return 'Bundle';
+      default:               return offerType == null ? null : 'Offer';
+    }
+  }
 
   factory VenueUpcomingEvent.fromJson(Map<String, dynamic> json) {
     final startRaw = json['startAt'] ?? json['start_at'] ?? '';
@@ -454,6 +475,11 @@ class VenueUpcomingEvent {
           ? (json['offerDiscountValue'] as num).toDouble()
           : json['offer_discount_value'] is num
               ? (json['offer_discount_value'] as num).toDouble()
+              : null,
+      offerPrice: json['offerPrice'] is num
+          ? (json['offerPrice'] as num).toDouble()
+          : json['offer_price'] is num
+              ? (json['offer_price'] as num).toDouble()
               : null,
       capacity: json['capacity'] is num ? (json['capacity'] as num).toInt() : null,
       rsvpCount: json['rsvpCount'] is num ? (json['rsvpCount'] as num).toInt() : 0,

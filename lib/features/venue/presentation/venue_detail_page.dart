@@ -6,6 +6,7 @@ import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -23,6 +24,7 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_reposito
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
 
 import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -58,6 +60,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int? _checkinCountActive;
   int? _checkinCountMale;
   int? _checkinCountFemale;
+  bool _isAnonymous = false; // Anonymous Mode blocks story sharing
 
   @override
   void initState() {
@@ -70,6 +73,37 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _loadEnrichedVenueData();
     _refreshCheckinStats();
     _loadHeaderStories();
+    _loadAnonymousStatus();
+  }
+
+  void _showAnonymousStoryBlockedDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.visibility_off_rounded, size: 28),
+        title: const Text("You're in Anonymous Mode"),
+        content: const Text(
+          "While Anonymous Mode is on, you're invisible — so you can't share "
+          "stories (no one would see them).\n\n"
+          "To share a story, turn it off from:\n"
+          "Settings › Account Center › Manage Accounts › your account.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadAnonymousStatus() async {
+    try {
+      final me = await AuthRepository().getMe();
+      if (!mounted) return;
+      setState(() => _isAnonymous = me['isAnonymous'] == true);
+    } catch (_) {}
   }
 
   Future<void> _loadHeaderStories() async {
@@ -355,6 +389,18 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final checkinId = _activeCheckinId;
     if (checkinId == null) return;
 
+    // Anonymous Mode: block sharing before the camera opens. Fresh check so a
+    // just-toggled state isn't missed.
+    try {
+      final me = await AuthRepository().getMe(forceRefresh: true);
+      final anon = me['isAnonymous'] == true;
+      if (mounted && _isAnonymous != anon) setState(() => _isAnonymous = anon);
+      if (anon) {
+        if (mounted) _showAnonymousStoryBlockedDialog();
+        return;
+      }
+    } catch (_) {}
+
     final file = await Navigator.push<File>(
       context,
       MaterialPageRoute(
@@ -624,114 +670,38 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
-  Widget _buildCheckinStatsSection() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final colors = theme.colorScheme;
-    final total = _displayCheckinTotal;
+  /// Small icon + value pill used in the header line under the venue name.
+  Widget _headerCount(IconData icon, String value) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: Colors.grey.shade600),
+        const SizedBox(width: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Men/Women share as icon-only percentages, shown to the right of the total.
+  List<Widget> _headerGenderPcts() {
     final male = _checkinCountMale;
     final female = _checkinCountFemale;
-    final hasAnyData = total != null || male != null || female != null;
-    final cardColor = isDark
-        ? colors.surface.withValues(alpha: 0.82)
-        : Colors.white;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.14)
-        : Colors.black.withValues(alpha: 0.08);
-
-    Widget statTile({
-      required IconData icon,
-      required String label,
-      required String value,
-    }) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: isDark
-              ? colors.surface.withValues(alpha: 0.96)
-              : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: colors.onSurface.withValues(alpha: 0.8)),
-            const SizedBox(width: 8),
-            Text(
-              '$label: $value',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: colors.onSurface,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.28)
-                : Colors.black.withValues(alpha: 0.06),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-        
-          if (!hasAnyData && _loadingCheckinStats)
-            const SizedBox(
-              height: 18,
-              width: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else if (!hasAnyData)
-            Text(
-              'Be the first to check in.',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: colors.onSurface.withValues(alpha: 0.72),
-              ),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                statTile(
-                  icon: Icons.people_outline_rounded,
-                  label: 'Total',
-                  value: '${total ?? 0}',
-                ),
-                statTile(
-                  icon: Icons.man_rounded,
-                  label: 'Men',
-                  value: '${male ?? 0}',
-                ),
-                statTile(
-                  icon: Icons.woman_rounded,
-                  label: 'Women',
-                  value: '${female ?? 0}',
-                ),
-              ],
-            ),
-        ],
-      ),
-    );
+    final base = (male ?? 0) + (female ?? 0);
+    if (base == 0) return const [];
+    final malePct = ((male ?? 0) * 100 / base).round();
+    final femalePct = 100 - malePct;
+    return [
+      const SizedBox(width: 10),
+      _headerCount(Icons.man_rounded, '$malePct%'),
+      const SizedBox(width: 8),
+      _headerCount(Icons.woman_rounded, '$femalePct%'),
+    ];
   }
 
   bool _hasValidLatLng(Venue v) {
@@ -911,6 +881,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                     widget.venue.status,
                     style: const TextStyle(color: Colors.grey),
                   ),
+                  if (_displayCheckinTotal != null) ...[
+                    const SizedBox(width: 12),
+                    _headerCount(Icons.people_rounded, '$_displayCheckinTotal'),
+                    ..._headerGenderPcts(),
+                  ],
                 ],
               ),
 
@@ -923,6 +898,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   venueId: _resolvedVenueIdForCurrentDetail!,
                   isUploading: _storyUploading,
                   onAddStory: hasActiveCheckinHere ? _openAddStory : null,
+                  anonymousLocked: _isAnonymous,
                 ),
 
               const SizedBox(height: 8),
@@ -968,9 +944,22 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               ),
               const SizedBox(height: 6),
 
-              /// CHECK-IN STATS
-              _buildCheckinStatsSection(),
-              const SizedBox(height: 10),
+              /// CHECK-IN STATS — counts now live in the header line under the
+              /// venue name; only surface an invite when nobody's checked in.
+              if (_displayCheckinTotal == null && !_loadingCheckinStats) ...[
+                Text(
+                  'Be the first to check in.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.72),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
 
               /// 🟢 OPEN STATUS
               if (opening != null)
@@ -1014,6 +1003,10 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   _enrichedVenueData!['description'] as String,
                 ),
               ],
+
+              /// GALLERY (yatay şerit — boşsa kendini gizler)
+              if (widget.venue.isInDb && widget.venue.id.isNotEmpty)
+                VenueGalleryStrip(venueId: widget.venue.id),
 
               /// UPCOMING EVENTS
               if (_enrichedVenueData?['upcomingEvents'] is List &&

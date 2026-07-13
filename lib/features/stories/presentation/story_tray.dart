@@ -13,11 +13,16 @@ class StoryTray extends StatefulWidget {
   /// Story yükleniyorsa "Me" balonu çevresinde loading çemberi döner.
   final bool isUploading;
 
+  /// Anonymous Mode açıksa "+" balonu soluk/inactive görünür; basınca ekleme
+  /// yerine [onAddStory] bilgilendirme popup'ı gösterir.
+  final bool anonymousLocked;
+
   const StoryTray({
     super.key,
     required this.venueId,
     this.onAddStory,
     this.isUploading = false,
+    this.anonymousLocked = false,
   });
 
   @override
@@ -182,6 +187,7 @@ class _StoryTrayState extends State<StoryTray> {
               allSeen: meSeen,
               onAddStory: hasAdd ? widget.onAddStory! : null,
               onViewStories: hasMe ? _openMyStories : null,
+              anonymousLocked: widget.anonymousLocked,
             );
           }
 
@@ -337,6 +343,7 @@ class _MeBubble extends StatefulWidget {
   final bool allSeen;
   final VoidCallback? onAddStory;
   final VoidCallback? onViewStories;
+  final bool anonymousLocked;
 
   const _MeBubble({
     required this.myStories,
@@ -344,6 +351,7 @@ class _MeBubble extends StatefulWidget {
     this.allSeen = false,
     this.onAddStory,
     this.onViewStories,
+    this.anonymousLocked = false,
   });
 
   @override
@@ -497,14 +505,23 @@ class _MeBubbleState extends State<_MeBubble>
                         width: 20,
                         height: 20,
                         decoration: BoxDecoration(
-                          color: color,
+                          // Anonymous: dim the "+" so it reads as inactive.
+                          color: widget.anonymousLocked
+                              ? Colors.grey.shade500
+                              : color,
                           shape: BoxShape.circle,
                           border: Border.all(
                             color: Theme.of(context).scaffoldBackgroundColor,
                             width: 1.5,
                           ),
                         ),
-                        child: const Icon(Icons.add, color: Colors.white, size: 13),
+                        child: Icon(
+                          widget.anonymousLocked
+                              ? Icons.lock_outline_rounded
+                              : Icons.add,
+                          color: Colors.white,
+                          size: 13,
+                        ),
                       ),
                     ),
                   ),
