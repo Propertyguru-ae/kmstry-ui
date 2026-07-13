@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
-import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'add_venue_event_page.dart';
 import 'venue_event_detail_page.dart';
 import '../data/venue_event_repository.dart';
@@ -36,7 +35,6 @@ class VenueEventsListPage extends StatefulWidget {
 class _VenueEventsListPageState extends State<VenueEventsListPage> {
   late List<VenueUpcomingEvent> _events;
   final _repo      = VenueEventRepository();
-  final _venueRepo = VenueOwnerRepository();
 
   // Day strip state
   late DateTime _selectedDay;   // single-day OR range start
@@ -57,6 +55,16 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
     final now    = DateTime.now();
     _selectedDay = DateTime(now.year, now.month, now.day);
     _viewMonth   = DateTime(now.year, now.month);
+    // Caller (ör. Manage) event'leri henüz yüklememiş olabilir — kendimiz çekiyoruz.
+    _fetchEvents();
+  }
+
+  Future<void> _fetchEvents() async {
+    try {
+      final events = await _repo.listEvents(widget.venueId);
+      if (!mounted) return;
+      setState(() => _events = events);
+    } catch (_) {}
   }
 
   @override
@@ -76,9 +84,9 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
   Future<void> _refreshEvents() async {
     widget.onRefresh();
     try {
-      final stats = await _venueRepo.getOwnerStats(widget.venueId);
+      final events = await _repo.listEvents(widget.venueId);
       if (!mounted) return;
-      setState(() => _events = stats.venue.upcomingEvents);
+      setState(() => _events = events);
     } catch (_) {}
   }
 
@@ -100,7 +108,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
       return !day.isBefore(from) && !day.isAfter(toDay);
     }).toList()
       ..sort((a, b) => a.startAt.compareTo(b.startAt));
-    if (_filterOffer)   result = result.where((e) => e.offerTitle != null).toList();
+    if (_filterOffer)   result = result.where((e) => e.hasOffer).toList();
     if (_filterPartner) result = result.where((e) => e.partnershipCount > 0).toList();
     return result;
   }
@@ -566,6 +574,22 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                 : Colors.black.withValues(alpha: 0.06),
           ),
 
+          // ── Total count ──────────────────────────────────────────────
+          if (filtered.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Row(
+                children: [
+                  Text('Total: ',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kDim)),
+                  Text('${filtered.length}',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _kMagenta)),
+                  Text(filtered.length == 1 ? ' event' : ' events',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kDim)),
+                ],
+              ),
+            ),
+
           // ── Events list ──────────────────────────────────────────────
           Expanded(
             child: filtered.isEmpty
@@ -624,7 +648,61 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                     },
                   ),
           ),
+
+          // ── Create event button ──────────────────────────────────────
+          if (canManage)
+            _CreateEventBar(
+              isDark: isDark,
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AddVenueEventPage(venueId: widget.venueId),
+                  ),
+                );
+                _refreshEvents();
+              },
+            ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Create event bar ─────────────────────────────────────────────────────────
+
+class _CreateEventBar extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _CreateEventBar({required this.isDark, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).padding.bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + bottom),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.black.withValues(alpha: 0.07),
+          ),
+        ),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: onTap,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Create Event'),
+          style: FilledButton.styleFrom(
+            backgroundColor: _kMagenta,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
       ),
     );
   }
@@ -841,15 +919,15 @@ class _EventRow extends StatelessWidget {
                         style: TextStyle(fontSize: 11.5, color: kDim, height: 1.4),
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
-                  if (event.offerTitle != null || event.partnershipCount > 0 || event.capacity != null || event.rsvpCount > 0) ...[
+                  if (event.hasOffer || event.partnershipCount > 0 || event.capacity != null || event.rsvpCount > 0) ...[
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 5,
                       runSpacing: 4,
                       children: [
-                        if (event.offerTitle != null)
+                        if (event.hasOffer)
                           _Badge(icon: Icons.local_offer_outlined,
-                              label: event.offerTitle!, color: _kTuruncu),
+                              label: event.offerTypeLabel!, color: _kTuruncu),
                         if (event.partnershipCount > 0)
                           _Badge(
                             icon: Icons.handshake_outlined,

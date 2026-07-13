@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
-import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'add_venue_event_page.dart';
 import '../data/venue_event_repository.dart';
@@ -39,11 +38,13 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
 
   Future<void> _reloadEvent() async {
     try {
-      final venue = await VenueRepository().getVenueById(widget.venueId);
-      final updated = venue.upcomingEvents.where((e) => e.id == _event.id).firstOrNull;
-      if (updated != null && mounted) {
-        setState(() => _event = updated);
-      }
+      // Tek event'i dedike endpoint'ten çekiyoruz — getVenueById listesi
+      // is_published+end_at>now+take:5 ile filtreli olduğundan güncel event'i kaçırabilir.
+      final updated = await VenueEventRepository().getEventDetail(
+        venueId: widget.venueId,
+        eventId: _event.id,
+      );
+      if (mounted) setState(() => _event = updated);
     } catch (_) {}
     widget.onChanged?.call();
   }
@@ -212,7 +213,7 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                 ],
 
                 // ── 4. Kmstry Offers ──────────────────────────────────────
-                if (event.offerTitle != null) ...[
+                if (event.offerType != null) ...[
                   _divider(isDark),
                   _SectionLabel(
                     icon: Icons.local_offer_outlined,
@@ -222,9 +223,9 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                   ),
                   const SizedBox(height: 10),
                   _OfferCard(
-                    title: event.offerTitle!,
+                    conditions: event.offerTitle,
                     type: event.offerType,
-                    discountValue: event.offerDiscountValue,
+                    price: event.offerPrice,
                     isDark: isDark,
                     kCard: kCard,
                     kBorder: kBorder,
@@ -482,16 +483,16 @@ class _SectionLabel extends StatelessWidget {
 // ─── Offer card ───────────────────────────────────────────────────────────────
 
 class _OfferCard extends StatelessWidget {
-  final String title;
+  final String? conditions;
   final String? type;
-  final double? discountValue;
+  final double? price;
   final bool isDark;
   final Color kCard, kBorder, kText, kDim;
 
   const _OfferCard({
-    required this.title,
+    required this.conditions,
     required this.type,
-    required this.discountValue,
+    required this.price,
     required this.isDark,
     required this.kCard,
     required this.kBorder,
@@ -500,28 +501,22 @@ class _OfferCard extends StatelessWidget {
   });
 
   String get _typeLabel {
-    if (type == null) return '';
     switch (type) {
+      case 'BUFFET':     return 'Buffet';
+      case 'SET_MENU':   return 'Set Menu';
+      case 'OPEN_DRINK': return 'Open Drink';
+      case 'OPEN_FOOD':  return 'Open Food';
+      // Eski tipler (geriye dönük)
       case 'BOGO':           return 'Buy 1 Get 1 Free';
-      case 'PERCENT_OFF':    return discountValue != null ? '%${discountValue!.toInt()} off' : 'Percentage discount';
-      case 'FIXED_DISCOUNT': return discountValue != null ? '${discountValue!.toStringAsFixed(0)} discount' : 'Fixed discount';
+      case 'PERCENT_OFF':    return 'Percentage discount';
+      case 'FIXED_DISCOUNT': return 'Fixed discount';
       case 'FREE_ITEM':      return 'Free item included';
       case 'BUNDLE':         return 'Bundle deal';
-      default:               return type!;
+      default:               return type ?? '';
     }
   }
 
-  String get _badge {
-    if (type == null) return '';
-    switch (type) {
-      case 'BOGO':           return 'BOGO';
-      case 'PERCENT_OFF':    return discountValue != null ? '%${discountValue!.toInt()} Off' : '% Off';
-      case 'FIXED_DISCOUNT': return discountValue != null ? '${discountValue!.toStringAsFixed(0)} Off' : 'Discount';
-      case 'FREE_ITEM':      return 'Free Item';
-      case 'BUNDLE':         return 'Bundle';
-      default:               return type!;
-    }
-  }
+  String get _badge => price != null ? '${price!.toStringAsFixed(0)}' : '';
 
   @override
   Widget build(BuildContext context) {
@@ -547,19 +542,19 @@ class _OfferCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
+                Text(_typeLabel,
                     style: TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w700, color: kText,
                     )),
-                if (type != null) ...[
+                if (conditions != null && conditions!.trim().isNotEmpty) ...[
                   const SizedBox(height: 3),
-                  Text(_typeLabel,
+                  Text(conditions!,
                       style: TextStyle(fontSize: 12, color: kDim)),
                 ],
               ],
             ),
           ),
-          if (type != null) ...[
+          if (price != null) ...[
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),

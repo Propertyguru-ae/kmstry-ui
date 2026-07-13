@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/venue/plan_gate.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
@@ -221,12 +223,20 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
   }
 
   Widget _buildBody(ColorScheme colors, bool isDark) {
+    // Free plan'da rol hiyerarşisi (Admin/Manager/Staff + custom) kapalı — Social+.
+    final planLocked = !VenueSession.instance.hasFeature(VenueFeature.roleLevels);
+    final canEdit = _canManageRoles && !planLocked;
     return Column(
       children: [
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
             children: [
+              // Free plan: rol hiyerarşisi kapalı — sadece kilit banner göster,
+              // Admin/Staff/custom rol kartlarını hiç listeleme.
+              if (planLocked)
+                _buildPlanLockBanner(colors)
+              else ...[
               // ── Info banner ──────────────────────────────────────────────
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
@@ -264,7 +274,7 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: _RoleCard(
                   rs: _roles[i],
-                  canManage: _canManageRoles,
+                  canManage: canEdit,
                   isDark: isDark,
                   onSave: () => _saveRole(_roles[i]),
                   onDelete: () => _deleteRole(_roles[i]),
@@ -275,6 +285,7 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
                   onToggleExpand: () => setState(() => _roles[i].expanded = !_roles[i].expanded),
                 ),
               )),
+              ],
             ],
           ),
         ),
@@ -287,23 +298,70 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: SizedBox(
                 width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _addRole,
-                  icon: const Icon(Icons.add_rounded, size: 20),
-                  label: const Text('Add Role',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _PC.turkuaz,
-                    foregroundColor: const Color(0xFF06091A),
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 0,
-                  ),
-                ),
+                child: planLocked
+                    ? FilledButton.icon(
+                        onPressed: () => PlanGate.openPaywall(context),
+                        icon: const Icon(Icons.lock_outline, size: 18),
+                        label: const Text('Upgrade to unlock roles',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: VenuePlan.social.color,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          elevation: 0,
+                        ),
+                      )
+                    : FilledButton.icon(
+                        onPressed: _addRole,
+                        icon: const Icon(Icons.add_rounded, size: 20),
+                        label: const Text('Add Role',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _PC.turkuaz,
+                          foregroundColor: const Color(0xFF06091A),
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          elevation: 0,
+                        ),
+                      ),
               ),
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildPlanLockBanner(ColorScheme colors) {
+    final c = VenuePlan.social.color;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => PlanGate.openPaywall(context),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: 0.1),
+            border: Border.all(color: c.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.lock_outline, size: 18, color: c),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Role levels are a Social plan feature. On Free, your venue is single-operator (owner only). '
+                  'Upgrade to assign Admin, Manager & Staff roles.',
+                  style: TextStyle(color: colors.onSurface.withValues(alpha: 0.75), fontSize: 12.5, height: 1.4),
+                ),
+              ),
+              Icon(Icons.chevron_right, color: c),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

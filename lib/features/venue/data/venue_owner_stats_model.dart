@@ -62,9 +62,13 @@ class VenueWeeklyTrendPoint {
 
 class VenueOwnerStats {
   final int activeNow;
+  final int anonymousNow;
   final int maleNow;
   final int femaleNow;
   final int todayTotal;
+  final int yesterdayTotal;
+  final int yesterdaySoFar;
+  final int? todayVsYesterdayPct;
   final int totalAllTime;
   final List<VenueWeeklyTrendPoint> weeklyTrend;
   final int followerCount;
@@ -72,9 +76,13 @@ class VenueOwnerStats {
 
   const VenueOwnerStats({
     required this.activeNow,
+    this.anonymousNow = 0,
     required this.maleNow,
     required this.femaleNow,
     required this.todayTotal,
+    this.yesterdayTotal = 0,
+    this.yesterdaySoFar = 0,
+    this.todayVsYesterdayPct,
     required this.totalAllTime,
     required this.weeklyTrend,
     this.followerCount = 0,
@@ -85,9 +93,15 @@ class VenueOwnerStats {
     final trend = (json['weeklyTrend'] ?? json['weekly_trend']) as List? ?? [];
     return VenueOwnerStats(
       activeNow: (json['activeNow'] ?? json['active_now'] as num? ?? 0).toInt(),
+      anonymousNow: (json['anonymousNow'] ?? json['anonymous_now'] as num? ?? 0).toInt(),
       maleNow: (json['maleNow'] ?? json['male_now'] as num? ?? 0).toInt(),
       femaleNow: (json['femaleNow'] ?? json['female_now'] as num? ?? 0).toInt(),
       todayTotal: (json['todayTotal'] ?? json['today_total'] as num? ?? 0).toInt(),
+      yesterdayTotal: (json['yesterdayTotal'] ?? json['yesterday_total'] as num? ?? 0).toInt(),
+      yesterdaySoFar: (json['yesterdaySoFar'] ?? json['yesterday_so_far'] as num? ?? 0).toInt(),
+      todayVsYesterdayPct: (json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct']) == null
+          ? null
+          : ((json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct']) as num).toInt(),
       totalAllTime: (json['totalAllTime'] ?? json['total_all_time'] as num? ?? 0).toInt(),
       weeklyTrend: trend
           .whereType<Map>()

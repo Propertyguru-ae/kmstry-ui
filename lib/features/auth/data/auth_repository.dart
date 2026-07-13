@@ -43,6 +43,7 @@ class AuthRepository {
   // ─────────────────────────────────────────────────────────────────────────
 
   final AuthApi _api = AuthApi();
+  final ApiClient _http = ApiClient();
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId:
@@ -690,6 +691,17 @@ class AuthRepository {
       final body = await response.stream.bytesToString();
       throw Exception('Upload failed: ${response.statusCode} $body');
     }
+  }
+
+  /// Anonymous Mode (KMSTRY+) aç/kapa. Premium değilse backend PREMIUM_REQUIRED döner.
+  Future<void> setAnonymous(bool enabled) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _http.patch(
+      '/users/me/anonymous',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'enabled': enabled},
+    );
   }
 
   Future<void> updatePermissions(Map<String, dynamic> data) async {

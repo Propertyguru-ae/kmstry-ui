@@ -16,12 +16,14 @@ import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboar
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_edit_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_offers_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
+import 'package:kmstry_frontend/core/venue/plan_gate.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/add_venue_event_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_events_list_page.dart';
@@ -66,8 +68,14 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     try {
       final stories = await _venueStoryRepo.getVenueStories(venueId);
       if (!mounted) return;
+      // Backend "viewed_by_me" bu oturumda henüz güncellenmemiş olabilir; oturum-içi
+      // izlenme cache'ini overlay ediyoruz ki sayfaya geri dönünce halka gri kalsın.
+      final cache = VenueStoryViewedCache.instance;
       setState(() {
-        _avatarStories = stories;
+        _avatarStories = [
+          for (final s in stories)
+            (s.viewedByMe || cache.isViewed(s.id)) ? s.copyWith(viewedByMe: true) : s,
+        ];
       });
     } catch (_) {}
   }
@@ -179,6 +187,136 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       );
     } finally {
       if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  Widget _buildAbout(VenueOwnerStatsVenue venue, bool canEdit) {
+    final colors = Theme.of(context).colorScheme;
+    final kText = colors.onSurface;
+    final kDim = kText.withValues(alpha: 0.55);
+    final desc = venue.description?.trim() ?? '';
+    final hasDesc = desc.isNotEmpty;
+
+    // Açıklama yoksa ve düzenleme yetkisi de yoksa hiç gösterme (detay sayfasıyla tutarlı).
+    if (!hasDesc && !canEdit) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('About', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kText)),
+              const Spacer(),
+              if (canEdit)
+                GestureDetector(
+                  onTap: () => _editAbout(venue),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(hasDesc ? Icons.edit_outlined : Icons.add, size: 14, color: colors.primary),
+                      const SizedBox(width: 4),
+                      Text(hasDesc ? 'Edit' : 'Add',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: colors.primary)),
+                    ]),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            hasDesc ? desc : 'Tell customers about your venue — vibe, music, what makes it special.',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.5,
+              color: hasDesc ? kText.withValues(alpha: 0.75) : kDim,
+              fontStyle: hasDesc ? FontStyle.normal : FontStyle.italic,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editAbout(VenueOwnerStatsVenue venue) async {
+    final controller = TextEditingController(text: venue.description ?? '');
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        final kCard = isDark ? const Color(0xFF0B1322) : Colors.white;
+        final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+        final kDim = isDark ? const Color(0xFFB1B4BB) : const Color(0xFF5D6B7B);
+        bool saving = false;
+        return StatefulBuilder(builder: (ctx, setSheet) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+              decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(22)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 36, height: 4, decoration: BoxDecoration(color: kDim.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 16),
+                  Text('About', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: kText)),
+                  const SizedBox(height: 4),
+                  Text('Shown on your public venue page.', style: TextStyle(fontSize: 12, color: kDim)),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: controller,
+                    maxLength: 1000,
+                    maxLines: 6,
+                    minLines: 4,
+                    textCapitalization: TextCapitalization.sentences,
+                    style: TextStyle(fontSize: 14, height: 1.5, color: kText),
+                    decoration: InputDecoration(
+                      hintText: 'Tell customers about your venue…',
+                      hintStyle: TextStyle(color: kDim.withValues(alpha: 0.7)),
+                      filled: true,
+                      fillColor: isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: saving ? null : () async {
+                        setSheet(() => saving = true);
+                        Navigator.pop(ctx, controller.text.trim());
+                      },
+                      style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                      child: saving
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+    if (saved == null || !mounted) return;
+    try {
+      final updated = await VenueOwnerRepository().updateVenue(venue.id, description: saved);
+      if (mounted) setState(() => _venue = updated);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: $e'), behavior: SnackBarBehavior.floating),
+      );
     }
   }
 
@@ -353,6 +491,22 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   Future<void> _openAddStory() async {
     final venueId = _venue?.id;
     if (venueId == null || _uploadingStory) return;
+
+    // Plan kilidi: Free venue story paylaşamaz. Kamerayı hiç açmadan,
+    // baştan etkileyici bir upsell göster.
+    if (!PlanGate.allows(VenueFeature.stories)) {
+      await PlanGate.ensureWithUpsell(
+        context,
+        VenueFeature.stories,
+        icon: Icons.amp_stories_rounded,
+        title: 'Share Stories with your guests',
+        message: 'Post 24-hour photo & video moments that pull people in and drive foot traffic. '
+            'Stories are part of the Social plan — upgrade to start engaging your audience.',
+        onAllowed: () {},
+      );
+      return;
+    }
+
     setState(() => _uploadingStory = true);
     try {
       await Navigator.push<bool>(
@@ -802,103 +956,41 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                             children: [
                               _RoleBadge(role: _venueRole, colors: colors),
                               const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: _showTypePicker,
-                                child: _TypeBadge(
-                                  type: venue?.type,
-                                  updating: _updatingType,
-                                  colors: colors,
-                                ),
-                              ),
+                              Builder(builder: (_) {
+                                final canEditType =
+                                    session.isOwner || session.can(VenuePermission.venueEdit);
+                                return GestureDetector(
+                                  onTap: canEditType ? _showTypePicker : null,
+                                  child: _TypeBadge(
+                                    type: venue?.type,
+                                    updating: _updatingType,
+                                    editable: canEditType,
+                                    colors: colors,
+                                  ),
+                                );
+                              }),
                             ],
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        // NOT: Yönetim aksiyonları (Events, Offers, Team, Push)
+                        // artık "Manage" sekmesinde. Profil = kimlik + stories + edit.
 
-                        // ── Quick content actions ─────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _QuickActionsBar(
-                            onEvent: session.can(VenuePermission.eventManage) ? _openAddEvent : null,
-                            onPush: session.can(VenuePermission.sendPush) ? () => _comingSoon('Push Notification') : null,
-                            onStory: session.can(VenuePermission.storyManage) ? _openAddStory : null,
-                            colors: colors,
-                          ),
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        // ── Team management ───────────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _SectionCard(
-                            child: _ActionRow(
-                              icon: Icons.group_outlined,
-                              label: (isOwner ||
-                                      session.can(VenuePermission.memberManage) ||
-                                      session.can(VenuePermission.roleManage))
-                                  ? 'Team Management'
-                                  : 'Team',
-                              subtitle: isOwner
-                                  ? 'Manage members & roles'
-                                  : 'View team',
-                              onTap: venue != null ? _openTeam : null,
-                              colors: colors,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // ── Offers & Benefits ─────────────────────────────
-                        if (isOwner ||
-                            session.can(VenuePermission.partnershipManage))
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: _SectionCard(
-                              child: _ActionRow(
-                                icon: Icons.local_offer_outlined,
-                                label: 'Offers & Benefits',
-                                subtitle: 'Manage offers and external partnerships',
-                                onTap: venue != null
-                                    ? () => Navigator.of(context).push(MaterialPageRoute(
-                                          builder: (_) => VenueOffersPage(
-                                            venueId: venue!.id,
-                                            venueName: venue!.name,
-                                          ),
-                                        ))
-                                    : null,
-                                colors: colors,
-                              ),
-                            ),
+                        // ── About ─────────────────────────────────────────
+                        if (venue != null)
+                          _buildAbout(
+                            venue,
+                            session.isOwner || session.can(VenuePermission.venueEdit),
                           ),
 
-                        const SizedBox(height: 8),
-
-                        // ── Events ────────────────────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _EventsSection(
-                            events: venue?.upcomingEvents ?? const [],
-                            venueId: venue?.id ?? '',
-                            onAdd: session.can(VenuePermission.eventManage) ? _openAddEvent : null,
-                            onGoToList: _openEventsList,
-                            onEventChanged: _loadVenueProfile,
-                            colors: colors,
+                        // ── Gallery ───────────────────────────────────────
+                        if (venue != null) ...[
+                          const SizedBox(height: 18),
+                          VenueGallerySection(
+                            venueId: venue.id,
+                            canEdit: session.isOwner || session.can(VenuePermission.venueEdit),
                           ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // ── Push notifications ────────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: _PostsSection(
-                            onAdd: () => _comingSoon('Posts'),
-                            colors: colors,
-                          ),
-                        ),
+                        ],
 
                         SizedBox(
                           height: MediaQuery.of(context).padding.bottom +
@@ -1125,7 +1217,9 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar>
     }
 
     return GestureDetector(
-      onTap: hasStories ? _openViewer : null,
+      onTap: hasStories
+          ? _openViewer
+          : (widget.canAddStory && !widget.isUploading ? widget.onAddStory : null),
       onLongPress: hasStories ? _showViewers : null,
       child: Stack(
         clipBehavior: Clip.none,
@@ -1338,8 +1432,9 @@ class _Brand {
 class _TypeBadge extends StatelessWidget {
   final String? type;
   final bool updating;
+  final bool editable;
   final ColorScheme colors;
-  const _TypeBadge({required this.type, required this.updating, required this.colors});
+  const _TypeBadge({required this.type, required this.updating, required this.editable, required this.colors});
 
   static const _labels = {
     'bar': 'Bar',
@@ -1389,8 +1484,10 @@ class _TypeBadge extends StatelessWidget {
               color: _Brand.turkuaz,
             ),
           ),
-          const SizedBox(width: 4),
-          const Icon(Icons.edit_outlined, size: 11, color: _Brand.turkuaz),
+          if (editable) ...[
+            const SizedBox(width: 4),
+            const Icon(Icons.edit_outlined, size: 11, color: _Brand.turkuaz),
+          ],
         ],
       ),
     );
@@ -1750,16 +1847,16 @@ class _EventCard extends StatelessWidget {
             ],
 
             // ── Offers & Partner Benefits badges ────────────────────────
-            if (event.offerTitle != null || event.partnershipCount > 0) ...[
+            if (event.hasOffer || event.partnershipCount > 0) ...[
               const SizedBox(height: 8),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  if (event.offerTitle != null)
+                  if (event.hasOffer)
                     _BenefitBadge(
                       icon: Icons.local_offer_outlined,
-                      label: event.offerTitle!,
+                      label: event.offerTypeLabel!,
                       color: const Color(0xFFF08838),
                     ),
                   if (event.partnershipCount > 0)

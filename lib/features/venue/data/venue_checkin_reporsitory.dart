@@ -8,18 +8,26 @@ import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/checkin_photo_model.dart';
 import 'package:kmstry_frontend/features/venue/data/ping_response.dart';
 import 'venue_checkin_model.dart';
+import 'attendee_filter.dart';
 
 class VenueCheckinRepository {
-  Future<List<VenueCheckin>> getWhoIsHere(String venueId) async {
+  Future<List<VenueCheckin>> getWhoIsHere(
+    String venueId, {
+    AttendeeFilter? filter,
+  }) async {
     final accessToken = await SecureStorage.getAccessToken();
     if (accessToken == null) {
       throw Exception('UnAuth: No access token available');
     }
 
     try {
+      final query = filter?.toQueryParameters() ?? const <String, String>{};
+      final uri = Uri.parse(
+        '${AppConfig.baseUrl}/venues/$venueId/checkins',
+      ).replace(queryParameters: query.isEmpty ? null : query);
       final res = await http
           .get(
-            Uri.parse('${AppConfig.baseUrl}/venues/$venueId/checkins'),
+            uri,
             headers: {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer ${accessToken}',

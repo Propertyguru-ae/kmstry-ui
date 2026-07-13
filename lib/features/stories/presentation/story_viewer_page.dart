@@ -126,9 +126,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
     _repo.recordView(story.id).ignore();
     StoryViewedCache.markViewed(story.id).ignore();
-    // Venue operator kendi story'sini izlerken kayıt yapılmaz (showViewers=true).
-    // Böylece operator viewers listesinde kendi adı görünmez.
-    if (widget.venueId != null && !widget.showViewers) {
+    // Venue story izlenmesi HER ZAMAN kaydedilir (operator dahil) — böylece izlenme
+    // durumu kalıcı olur ve logout/login sonrası halka gri kalır. Operator'ın viewers
+    // listesinde kendini görmemesi backend'de (getStoryViewers) isteği yapan kişi
+    // hariç tutularak sağlanır.
+    if (widget.venueId != null) {
       VenueStoryRepository().recordView(widget.venueId!, story.id).ignore();
     }
 

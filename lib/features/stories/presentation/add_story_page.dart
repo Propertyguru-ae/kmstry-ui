@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 class AddStoryPage extends StatefulWidget {
   final String checkinId;
@@ -19,7 +20,32 @@ class _AddStoryPageState extends State<AddStoryPage> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _openCamera());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startFlow());
+  }
+
+  /// Anonymous users can't share a story (it would reveal them at the venue).
+  /// Warn early — before the camera opens. The backend enforces this too.
+  Future<void> _startFlow() async {
+    if (!mounted) return;
+    try {
+      // Force a fresh fetch — a cached /me may predate a just-toggled Anonymous
+      // Mode, which would let the camera open only to be rejected on upload.
+      final me = await AuthRepository().getMe(forceRefresh: true);
+      if (me['isAnonymous'] == true) {
+        if (!mounted) return;
+        await showPremiumErrorDialog(
+          context,
+          message:
+              "You're in Anonymous Mode. Turn it off to share a story — otherwise no one can see it.",
+        );
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+    } catch (_) {
+      // Best-effort; the backend still blocks anonymous story creation.
+    }
+    if (!mounted) return;
+    await _openCamera();
   }
 
   Future<void> _openCamera() async {
@@ -61,12 +87,16 @@ class _AddStoryPageState extends State<AddStoryPage> {
         mediaType: isVideo ? 'video' : 'photo',
       );
       success = true;
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _uploading = false);
+      final blockedByAnonymous =
+          e.toString().contains('ANONYMOUS_STORY_BLOCKED');
       await showPremiumErrorDialog(
         context,
-        message: 'Could not upload story. Please try again.',
+        message: blockedByAnonymous
+            ? "You're in Anonymous Mode. Turn it off to share a story."
+            : 'Could not upload story. Please try again.',
       );
       if (mounted) Navigator.pop(context);
       return;

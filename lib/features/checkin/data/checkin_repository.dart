@@ -256,6 +256,16 @@ class CheckinRepository {
     );
   }
 
+  /// Undo a previous "pass" toward [targetUserId] (removes the pass so the
+  /// profile becomes actionable again). Backend only clears `pass` actions.
+  Future<void> undoPass(String targetUserId) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/feed/actions/$targetUserId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
   Future<void> blockUser(String targetUserId) async {
     final token = await SecureStorage.getAccessToken();
 

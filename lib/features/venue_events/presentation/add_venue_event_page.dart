@@ -54,7 +54,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
 
   // Event Offer
   bool _createOffer = false;
-  VenueOfferType _offerType = VenueOfferType.BOGO;
+  VenueOfferType _offerType = VenueOfferType.BUFFET;
   late final TextEditingController _offerTitleCtrl;
   late final TextEditingController _offerDiscountCtrl;
   String? _existingOfferId; // for update in edit mode
@@ -92,14 +92,14 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
       }
     }
 
-    // Pre-fill offer
-    if (e != null && e.offerTitle != null) {
+    // Pre-fill offer (offerId/offerType olan event'te offer var — conditions opsiyonel)
+    if (e != null && (e.offerId != null || e.offerType != null)) {
       _createOffer      = true;
       _existingOfferId  = e.offerId;
-      _offerTitleCtrl   = TextEditingController(text: e.offerTitle);
+      _offerTitleCtrl   = TextEditingController(text: e.offerTitle ?? '');
       _offerType        = _parseOfferType(e.offerType);
       _offerDiscountCtrl = TextEditingController(
-        text: e.offerDiscountValue != null ? '${e.offerDiscountValue!.toStringAsFixed(0)}' : '',
+        text: e.offerPrice != null ? '${e.offerPrice!.toStringAsFixed(0)}' : '',
       );
     } else {
       _offerTitleCtrl    = TextEditingController();
@@ -125,11 +125,16 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
 
   VenueOfferType _parseOfferType(String? raw) {
     switch (raw) {
+      case 'SET_MENU':   return VenueOfferType.SET_MENU;
+      case 'OPEN_DRINK': return VenueOfferType.OPEN_DRINK;
+      case 'OPEN_FOOD':  return VenueOfferType.OPEN_FOOD;
+      case 'BUFFET':     return VenueOfferType.BUFFET;
+      // Eski tipler (geriye dönük) — yeni event'lerde kullanılmıyor.
       case 'PERCENT_OFF':    return VenueOfferType.PERCENT_OFF;
       case 'FIXED_DISCOUNT': return VenueOfferType.FIXED_DISCOUNT;
       case 'FREE_ITEM':      return VenueOfferType.FREE_ITEM;
       case 'BUNDLE':         return VenueOfferType.BUNDLE;
-      default:               return VenueOfferType.BOGO;
+      default:               return VenueOfferType.BUFFET;
     }
   }
 
@@ -144,47 +149,58 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
     super.dispose();
   }
 
-  Future<void> _pickDate({required bool isStart}) async {
+  ThemeData _pickerTheme(BuildContext ctx, bool isDark) => Theme.of(ctx).copyWith(
+        colorScheme: isDark
+            ? const ColorScheme.dark(primary: _kTurkuaz, surface: Color(0xFF0D1A30))
+            : ColorScheme.light(primary: _kTurkuaz),
+      );
+
+  /// Google Calendar tarzı: tek gün + start/end saat. End ≤ Start ise gece
+  /// yarısını aşar (ertesi gün) — start ve end DateTime'larını buna göre kurar.
+  void _applyDateTimes({DateTime? date, TimeOfDay? startTime, TimeOfDay? endTime}) {
+    final base = date ?? _startAt ?? DateTime.now();
+    final st = startTime ??
+        (_startAt != null ? TimeOfDay.fromDateTime(_startAt!) : const TimeOfDay(hour: 20, minute: 0));
+    final et = endTime ??
+        (_endAt != null ? TimeOfDay.fromDateTime(_endAt!) : const TimeOfDay(hour: 23, minute: 0));
+
+    var start = DateTime(base.year, base.month, base.day, st.hour, st.minute);
+    var end = DateTime(base.year, base.month, base.day, et.hour, et.minute);
+    if (!end.isAfter(start)) end = end.add(const Duration(days: 1)); // gece yarısını aşar
+    setState(() {
+      _startAt = start;
+      _endAt = end;
+    });
+  }
+
+  Future<void> _pickEventDate() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final now     = DateTime.now();
-    final initial = isStart ? (_startAt ?? now) : (_endAt ?? _startAt ?? now);
+    final now = DateTime.now();
     final date = await showDatePicker(
       context: context,
-      initialDate: initial,
+      initialDate: _startAt ?? now,
       firstDate: now.subtract(const Duration(days: 1)),
       lastDate: now.add(const Duration(days: 365)),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: isDark
-              ? const ColorScheme.dark(primary: _kTurkuaz, surface: Color(0xFF0D1A30))
-              : ColorScheme.light(primary: _kTurkuaz),
-        ),
-        child: child!,
-      ),
+      builder: (ctx, child) => Theme(data: _pickerTheme(ctx, isDark), child: child!),
     );
     if (date == null || !mounted) return;
+    _applyDateTimes(date: date);
+  }
+
+  Future<void> _pickTime({required bool isStart}) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final current = isStart ? _startAt : _endAt;
     final time = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: isDark
-              ? const ColorScheme.dark(primary: _kTurkuaz, surface: Color(0xFF0D1A30))
-              : ColorScheme.light(primary: _kTurkuaz),
-        ),
-        child: child!,
-      ),
+      initialTime: current != null ? TimeOfDay.fromDateTime(current) : const TimeOfDay(hour: 20, minute: 0),
+      builder: (ctx, child) => Theme(data: _pickerTheme(ctx, isDark), child: child!),
     );
     if (time == null || !mounted) return;
-    final dt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    setState(() {
-      if (isStart) {
-        _startAt = dt;
-        if (_endAt != null && _endAt!.isBefore(dt)) _endAt = dt.add(const Duration(hours: 3));
-      } else {
-        _endAt = dt;
-      }
-    });
+    if (isStart) {
+      _applyDateTimes(startTime: time);
+    } else {
+      _applyDateTimes(endTime: time);
+    }
   }
 
   Future<void> _pickPhoto() async {
@@ -244,12 +260,23 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                     Text('Partner Benefits',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText)),
                     const Spacer(),
-                    if (selected.isNotEmpty)
+                    if (_activePartnerships.isNotEmpty &&
+                        selected.length < _activePartnerships.length)
+                      GestureDetector(
+                        onTap: () => setSheet(() {
+                          selected.addAll(_activePartnerships.map((p) => p.id));
+                        }),
+                        child: Text('Select all',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _kMavi)),
+                      ),
+                    if (selected.isNotEmpty) ...[
+                      const SizedBox(width: 14),
                       GestureDetector(
                         onTap: () => setSheet(() => selected.clear()),
                         child: Text('Clear',
                             style: TextStyle(fontSize: 13, color: kLabel)),
                       ),
+                    ],
                   ],
                 ),
               ),
@@ -440,7 +467,18 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           if (_repeatEndMode == 'count')
             'maxOccurrences': _repeatCount,
         };
-        await _repo.createEvent(
+        // Recurring: partnership/offer'ı backend tüm occurrence'lara uygular.
+        // Conditions (title) opsiyonel — offer, _createOffer açıksa gönderilir.
+        final recurringOffer = _createOffer
+            ? <String, dynamic>{
+                if (_offerTitleCtrl.text.trim().isNotEmpty)
+                  'title': _offerTitleCtrl.text.trim(),
+                'type': _offerType.name,
+                if (_offerDiscountCtrl.text.isNotEmpty)
+                  'price': double.tryParse(_offerDiscountCtrl.text),
+              }
+            : null;
+        final createdSeries = await _repo.createEvent(
           venueId:    widget.venueId,
           title:      _titleCtrl.text.trim(),
           description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
@@ -450,8 +488,17 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           currency:   _currency,
           capacity:   capacity,
           recurrence: recurrence,
+          partnershipIds: _selectedPartnershipIds.isNotEmpty ? _selectedPartnershipIds.toList() : null,
+          offer: recurringOffer,
         );
-        eventId = ''; // recurring: no single event ID for photos
+        // Foto'ları seriye yükle — backend tüm occurrence'lara uygular
+        final ruleId = createdSeries['recurringRuleId']?.toString();
+        if (ruleId != null && ruleId.isNotEmpty) {
+          for (final photo in _newPhotos) {
+            await _repo.uploadRecurringPhoto(venueId: widget.venueId, ruleId: ruleId, file: photo);
+          }
+        }
+        eventId = ''; // recurring: occurrence'lar backend'de bağlandı, client-side attach yok
       } else {
         final created = await _repo.createEvent(
           venueId:     widget.venueId,
@@ -477,16 +524,15 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           );
         } catch (_) {}
       }
-      if (eventId.isNotEmpty && _createOffer && _offerTitleCtrl.text.trim().isNotEmpty) {
+      if (eventId.isNotEmpty && _createOffer) {
         try {
-          final needsValue = _offerType == VenueOfferType.PERCENT_OFF ||
-              _offerType == VenueOfferType.FIXED_DISCOUNT;
           final body = {
-            'title': _offerTitleCtrl.text.trim(),
+            if (_offerTitleCtrl.text.trim().isNotEmpty)
+              'title': _offerTitleCtrl.text.trim(),
             'type': _offerType.name,
             'event_id': eventId,
-            if (needsValue && _offerDiscountCtrl.text.isNotEmpty)
-              'discount_value': double.tryParse(_offerDiscountCtrl.text),
+            if (_offerDiscountCtrl.text.isNotEmpty)
+              'price': double.tryParse(_offerDiscountCtrl.text),
           };
           if (_existingOfferId != null) {
             await _offerRepo.update(widget.venueId, _existingOfferId!, body);
@@ -556,15 +602,28 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
     return '${days[(dt.weekday - 1) % 7]}, ${dt.day} ${months[dt.month - 1]} · $h:$m';
   }
 
+  String _formatDate(DateTime dt) {
+    const days   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${days[(dt.weekday - 1) % 7]}, ${dt.day} ${months[dt.month - 1]} ${dt.year}';
+  }
+
+  String _formatTime(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  /// End, start'tan sonraki güne mi taşıyor (gece yarısını aştı mı)?
+  bool get _crossesMidnight =>
+      _startAt != null && _endAt != null && _endAt!.day != _startAt!.day;
+
   @override
   Widget build(BuildContext context) {
     final isDark   = Theme.of(context).brightness == Brightness.dark;
     final kBg      = isDark ? const Color(0xFF06091A) : Colors.white;
     final kCard    = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
     final kBorder  = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
-    final kDim     = isDark ? const Color(0xFF253A58) : const Color(0xFF9CA3AF);
+    final kDim     = isDark ? const Color(0xFFB1B4BB) : const Color(0xFF9CA3AF);
     final kText    = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kLabel   = isDark ? const Color(0xFF2E4560) : const Color(0xFF6B7280);
+    final kLabel   = isDark ? const Color(0xFFB1B4BB) : const Color(0xFF6B7280);
 
     return Scaffold(
       backgroundColor: kBg,
@@ -650,33 +709,56 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
             // ── Date & Time ────────────────────────────────────────────
             _SectionLabel(icon: Icons.event_outlined, color: _kTurkuaz, label: 'Date & Time', kLabel: kLabel),
             const SizedBox(height: 8),
+            // Tek gün seçimi
+            _DateBtn(
+              label: 'DATE',
+              value: _startAt != null ? _formatDate(_startAt!) : null,
+              iconBg: _kTurkuaz.withValues(alpha: 0.15),
+              iconColor: _kTurkuaz,
+              icon: Icons.calendar_today_rounded,
+              kCard: kCard, kBorder: kBorder, kText: kText,
+              onTap: _pickEventDate,
+            ),
+            const SizedBox(height: 10),
+            // Başlangıç / bitiş saati
             Row(
               children: [
                 Expanded(
                   child: _DateBtn(
-                    label: 'START',
-                    value: _startAt != null ? _formatDt(_startAt!) : null,
+                    label: 'START TIME',
+                    value: _startAt != null ? _formatTime(_startAt!) : null,
                     iconBg: _kTurkuaz.withValues(alpha: 0.15),
                     iconColor: _kTurkuaz,
                     icon: Icons.play_arrow_rounded,
                     kCard: kCard, kBorder: kBorder, kText: kText,
-                    onTap: () => _pickDate(isStart: true),
+                    onTap: () => _pickTime(isStart: true),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: _DateBtn(
-                    label: 'END',
-                    value: _endAt != null ? _formatDt(_endAt!) : null,
+                    label: 'END TIME',
+                    value: _endAt != null ? _formatTime(_endAt!) : null,
                     iconBg: _kTuruncu.withValues(alpha: 0.15),
                     iconColor: _kTuruncu,
                     icon: Icons.stop_rounded,
                     kCard: kCard, kBorder: kBorder, kText: kText,
-                    onTap: () => _pickDate(isStart: false),
+                    onTap: () => _pickTime(isStart: false),
                   ),
                 ),
               ],
             ),
+            if (_crossesMidnight) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.nightlight_round, size: 13, color: kLabel),
+                  const SizedBox(width: 6),
+                  Text('Ends next day (+1)',
+                      style: TextStyle(fontSize: 11.5, color: kLabel, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ],
 
             _divider(isDark),
 
@@ -818,7 +900,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
             Align(
               alignment: Alignment.centerRight,
               child: Text('Up to 3 photos',
-                  style: TextStyle(fontSize: 10.5, color: isDark ? const Color(0xFF2E4560) : const Color(0xFFB0B8C8))),
+                  style: TextStyle(fontSize: 10.5, color: isDark ? const Color(0xFFB1B4BB) : const Color(0xFFB0B8C8))),
             ),
 
             _divider(isDark),
@@ -830,6 +912,11 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
               label: 'Partner Benefits',
               optional: true,
               kLabel: kLabel,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Select the partnerships you want to offer at this event.',
+              style: TextStyle(fontSize: 11.5, height: 1.35, color: kDim.withValues(alpha: 0.8)),
             ),
             const SizedBox(height: 8),
             if (_loadingPartnerships)
@@ -1003,11 +1090,10 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            (VenueOfferType.BOGO, 'BOGO'),
-                            (VenueOfferType.PERCENT_OFF, '% Off'),
-                            (VenueOfferType.FIXED_DISCOUNT, 'Fixed Discount'),
-                            (VenueOfferType.FREE_ITEM, 'Free Item'),
-                            (VenueOfferType.BUNDLE, 'Bundle'),
+                            (VenueOfferType.BUFFET, 'Buffet'),
+                            (VenueOfferType.SET_MENU, 'Set Menu'),
+                            (VenueOfferType.OPEN_DRINK, 'Open Drink'),
+                            (VenueOfferType.OPEN_FOOD, 'Open Food'),
                           ].map((o) => GestureDetector(
                             onTap: () => setState(() => _offerType = o.$1),
                             child: AnimatedContainer(
@@ -1030,15 +1116,18 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                           )).toList(),
                         ),
                         const SizedBox(height: 14),
-                        Text('Offer title',
+                        Text('Offer conditions',
                             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText)),
+                        const SizedBox(height: 4),
+                        Text('Optional — describe any conditions for this offer.',
+                            style: TextStyle(fontSize: 11, color: kDim.withValues(alpha: 0.7))),
                         const SizedBox(height: 8),
                         TextFormField(
                           controller: _offerTitleCtrl,
                           style: TextStyle(fontSize: 13, color: kText),
                           decoration: InputDecoration(
-                            hintText: 'e.g. BOGO Cocktails Tonight',
-                            hintStyle: TextStyle(fontSize: 13, color: kLabel.withValues(alpha: 0.6)),
+                            hintText: 'e.g. Valid until 22:00, min 2 guests',
+                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.5)),
                             filled: true,
                             fillColor: kCard,
                             border: OutlineInputBorder(
@@ -1052,35 +1141,30 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                             contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
                           ),
                         ),
-                        if (_offerType == VenueOfferType.PERCENT_OFF ||
-                            _offerType == VenueOfferType.FIXED_DISCOUNT) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            _offerType == VenueOfferType.PERCENT_OFF ? 'Discount %' : 'Discount amount',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _offerDiscountCtrl,
-                            keyboardType: TextInputType.number,
-                            style: TextStyle(fontSize: 13, color: kText),
-                            decoration: InputDecoration(
-                              hintText: _offerType == VenueOfferType.PERCENT_OFF ? '20' : '50',
-                              hintStyle: TextStyle(fontSize: 13, color: kLabel.withValues(alpha: 0.6)),
-                              filled: true,
-                              fillColor: kCard,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: kBorder),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide(color: kBorder),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                        const SizedBox(height: 12),
+                        Text('Price',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText)),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _offerDiscountCtrl,
+                          keyboardType: TextInputType.number,
+                          style: TextStyle(fontSize: 13, color: kText),
+                          decoration: InputDecoration(
+                            hintText: 'e.g. 150',
+                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.5)),
+                            filled: true,
+                            fillColor: kCard,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: kBorder),
                             ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: kBorder),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -1250,7 +1334,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                                   child: Text('ENDS',
                                       style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
                                           letterSpacing: 0.8,
-                                          color: isDark ? const Color(0xFF2E4560) : const Color(0xFF9CA3AF))),
+                                          color: isDark ? const Color(0xFFB1B4BB) : const Color(0xFF9CA3AF))),
                                 ),
 
                                 Row(
@@ -1317,7 +1401,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                                                 color: _repeatEndsOn != null
                                                     ? (isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827))
-                                                    : (isDark ? const Color(0xFF3A5070) : const Color(0xFF9CA3AF))),
+                                                    : (isDark ? const Color(0xFFB1B4BB) : const Color(0xFF9CA3AF))),
                                           ),
                                         ],
                                       ),
@@ -1534,7 +1618,7 @@ class _EventField extends StatelessWidget {
       style: TextStyle(fontSize: 14, color: kText),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: kDim),
+        hintStyle: TextStyle(color: kDim.withValues(alpha: 0.5)),
         counterStyle: TextStyle(color: kDim.withValues(alpha: 0.6), fontSize: 10),
         filled: true,
         fillColor: kCard,
@@ -1607,7 +1691,7 @@ class _DateBtn extends StatelessWidget {
                   Text(label,
                       style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
                           color: kBorder == const Color(0xFF162040)
-                              ? const Color(0xFF3A5070)
+                              ? const Color(0xFFB1B4BB)
                               : const Color(0xFF9CA3AF))),
                   const SizedBox(height: 1),
                   Text(
@@ -1615,7 +1699,7 @@ class _DateBtn extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: hasVal ? FontWeight.w600 : FontWeight.w400,
-                      color: hasVal ? kText : const Color(0xFF253A58),
+                      color: hasVal ? kText : const Color(0xFFB1B4BB),
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1732,12 +1816,12 @@ class _FreqBtn extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: active ? _kMagenta : const Color(0xFF3A5070)),
+              Icon(icon, size: 18, color: active ? _kMagenta : const Color(0xFFB1B4BB)),
               const SizedBox(height: 5),
               Text(label,
                   style: TextStyle(
                     fontSize: 11.5, fontWeight: FontWeight.w700,
-                    color: active ? _kMagenta : const Color(0xFF3A5070),
+                    color: active ? _kMagenta : const Color(0xFFB1B4BB),
                   )),
             ],
           ),
@@ -1784,12 +1868,12 @@ class _EndModeBtn extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: active ? activeColor : const Color(0xFF3A5070)),
+              Icon(icon, size: 16, color: active ? activeColor : const Color(0xFFB1B4BB)),
               const SizedBox(height: 4),
               Text(label,
                   style: TextStyle(
                     fontSize: 11.5, fontWeight: FontWeight.w700,
-                    color: active ? activeColor : const Color(0xFF3A5070),
+                    color: active ? activeColor : const Color(0xFFB1B4BB),
                   )),
             ],
           ),
@@ -1927,12 +2011,12 @@ class _DiscountBtn extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(icon, size: 18,
-                  color: isActive ? _kTurkuaz : const Color(0xFF2E4560)),
+                  color: isActive ? _kTurkuaz : const Color(0xFFB1B4BB)),
               const SizedBox(height: 5),
               Text(label,
                   style: TextStyle(
                     fontSize: 11, fontWeight: FontWeight.w600,
-                    color: isActive ? _kTurkuaz : const Color(0xFF2E4560),
+                    color: isActive ? _kTurkuaz : const Color(0xFFB1B4BB),
                   )),
             ],
           ),

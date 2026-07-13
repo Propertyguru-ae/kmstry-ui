@@ -5,9 +5,36 @@ import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 
 class VenueEventRepository {
   final ApiClient _api = ApiClient();
+
+  /// Hafif event listesi — owner-stats'ın ağır sorgusunu çalıştırmaz.
+  Future<List<VenueUpcomingEvent>> listEvents(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/$venueId/events',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return (data as List)
+        .whereType<Map>()
+        .map((e) => VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// Tek event'in taze hâlini çeker (filtre yok — güncelleme sonrası detay yenilemek için).
+  Future<VenueUpcomingEvent> getEventDetail({
+    required String venueId,
+    required String eventId,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/$venueId/events/$eventId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(data as Map));
+  }
 
   Future<Map<String, dynamic>> createEvent({
     required String venueId,
@@ -19,6 +46,8 @@ class VenueEventRepository {
     String currency = 'TRY',
     int? capacity,
     Map<String, dynamic>? recurrence,
+    List<String>? partnershipIds,
+    Map<String, dynamic>? offer,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final data = await _api.post(
@@ -33,6 +62,8 @@ class VenueEventRepository {
         'currency': currency,
         if (capacity != null) 'capacity': capacity,
         if (recurrence != null) 'recurrence': recurrence,
+        if (partnershipIds != null && partnershipIds.isNotEmpty) 'partnershipIds': partnershipIds,
+        if (offer != null) 'offer': offer,
       },
     );
     return Map<String, dynamic>.from(data as Map);
@@ -45,6 +76,34 @@ class VenueEventRepository {
   }) async {
     final token = await SecureStorage.getAccessToken();
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/events/$eventId/photos');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers['Authorization'] = 'Bearer $token';
+
+    final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
+    final mimeSplit = mimeType.split('/');
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+      ),
+    );
+
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode >= 400) {
+      throw Exception('Photo upload failed (${streamed.statusCode}): $body');
+    }
+  }
+
+  /// Recurring seri için tek foto yükler; backend URL'i tüm occurrence'lara uygular.
+  Future<void> uploadRecurringPhoto({
+    required String venueId,
+    required String ruleId,
+    required File file,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/events/recurring/$ruleId/photos');
     final request = http.MultipartRequest('POST', uri);
     request.headers['Authorization'] = 'Bearer $token';
 
