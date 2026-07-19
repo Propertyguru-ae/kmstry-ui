@@ -611,7 +611,9 @@ class _VenueContextOnboardingPageState
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (_step != _Step.search || widget.onCancel != null)
+          if (_step != _Step.search ||
+              widget.onCancel != null ||
+              Navigator.of(context).canPop())
             GestureDetector(
               onTap: () {
                 if (_step != _Step.search) {
@@ -619,8 +621,12 @@ class _VenueContextOnboardingPageState
                     _step = _Step.values[_step.index - 1];
                     _error = null;
                   });
-                } else {
+                } else if (widget.onCancel != null) {
                   widget.onCancel!();
+                } else {
+                  // Opened via Navigator.push (e.g. from Manage Accounts) —
+                  // pop back instead of forcing a sign-out.
+                  Navigator.of(context).maybePop();
                 }
               },
               child: Container(

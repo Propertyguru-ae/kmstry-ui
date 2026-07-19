@@ -48,25 +48,31 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
     final isDark = theme.brightness == Brightness.dark;
     final ctx = _context;
 
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kBorder = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFD9E1EA);
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: kBg,
       appBar: AppBar(
-        backgroundColor: theme.appBarTheme.backgroundColor,
+        backgroundColor: kBg,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.onSurface),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         title: Text(
           'Manage Accounts',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
           ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.05)
-                : Colors.grey[200],
-            height: 1,
-          ),
+          child: Container(color: kBorder, height: 1),
         ),
       ),
       body: _loading

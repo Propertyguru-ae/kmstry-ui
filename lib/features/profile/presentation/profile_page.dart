@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:ui'; // Glassmorphism efekti için
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
+import '../../checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -12,6 +14,9 @@ import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/edit_profile_page.dart';
+import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/people/presentation/friends_list_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
@@ -40,6 +45,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   final CheckinRepository _checkinRepo = CheckinRepository();
   final VenueContextRepository _venueContextRepository =
       VenueContextRepository();
+  final MatchRepository _matchRepo = MatchRepository();
+
+  /// Friends (match) sayısı — null iken "—" gösterilir.
+  int? _friendCount;
+
+  /// Aktif check-in'in mekânı (header'daki lokasyon satırı için).
+  Venue? _activeVenue;
+
   String? _checkinVibe;
 
   /// Sunucudaki kalıcı bio; check-in vibe boşsa gösterim için kullanılır.
@@ -384,6 +397,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _loadActiveVenueForHeader() async {
+    final venue = await _loadActiveCheckinVenue();
+    if (!mounted || venue == null) return;
+    setState(() => _activeVenue = venue);
+  }
+
   Future<void> _openActiveVenueDetail() async {
     if (_openingVenueDetail || _activeCheckin == null) return;
     setState(() => _openingVenueDetail = true);
@@ -451,11 +470,24 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     await _refreshNotificationWarningState();
   }
 
+  Future<void> _loadFriendCount() async {
+    try {
+      final matches = await _matchRepo.getMatches();
+      if (!mounted) return;
+      setState(() => _friendCount = matches.length);
+    } catch (_) {
+      // Sessiz geç — istatistik "—" kalır.
+    }
+  }
+
   Future<void> _loadProfile() async {
     setState(() {
       _loading = true;
       _profileErrorMessage = null;
     });
+    // Friend (match) sayısını arka planda çek — profil yüklemesini bloklamasın.
+    unawaited(_loadFriendCount());
+
     try {
       final me = await AuthRepository().getMe();
       print('ME :  $me');
@@ -507,8 +539,28 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         _checkinWhatBrings = _extractWhatBrings(activeCheckin);
         _checkinVibe = checkinVibe;
         _media = media;
+        _activeVenue = _venueFromActiveCheckin(activeCheckin);
         _loading = false;
       });
+      // Uygulama geneline aktif check-in'i senkronla — venue detay sayfası
+      // ("Who's here?" vs "Check in") ve ping yöneticisi bunu okur. Taze
+      // login/uygulama açılışında ActiveCheckinService boş olabiliyor.
+      final activeCheckinId = activeCheckin?['id']?.toString();
+      if (activeCheckin != null &&
+          activeCheckinId != null &&
+          activeCheckinId.isNotEmpty) {
+        ActiveCheckinService().setActiveCheckin(
+          activeCheckinId,
+          venueId: activeCheckinVenueId,
+        );
+      } else {
+        ActiveCheckinService().clear();
+      }
+
+      // Payload'da venue yoksa arka planda id ile çekip header'ı güncelle.
+      if (activeCheckin != null && _activeVenue == null) {
+        unawaited(_loadActiveVenueForHeader());
+      }
     } catch (e) {
       debugPrint('Profile load failed: $e');
       if (!mounted) return;
@@ -1004,7 +1056,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark = theme.brightness == Brightness.dark;
 
     if (_loading) {
       return Scaffold(
@@ -1014,20 +1066,16 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ),
       );
     }
-    CheckinProfileMedia? featuredMedia;
-    if (_media.isNotEmpty) {
-      featuredMedia = _media.firstWhere(
-        (m) => m.isFeatured,
-        orElse: () => _media.first,
-      );
-    }
 
-    final bool hasFeaturedMedia = featuredMedia != null;
-    final bool hasFeaturedPhoto =
-        featuredMedia != null && featuredMedia.mediaType == MediaType.photo;
+    final photo = (_user?['photo'] ?? '').toString();
+    final fullName = (_user?['fullName'] ?? _user?['full_name'] ?? '')
+        .toString()
+        .trim();
+    final bio = (_user?['bio'] ?? '').toString().trim();
+    final onSurface = isDark ? Colors.white : Colors.black;
+    final subColor = isDark ? Colors.white60 : Colors.black54;
+    final canAddMore = _activeCheckin != null && _media.length < 6;
 
-    //print('CHECKIN VIBE geliyor mu  :  $_checkinVibe');
-    ///print('active ceckin geliyor mu  :  $_activeCheckin');
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -1051,626 +1099,442 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           ),
         ),
       ),
-      body: Stack(
-        children: [
-          /// 1. DİNAMİK ARKA PLAN (Resim yoksa şık bir Gradient)
-          Positioned.fill(
-            child: !hasFeaturedMedia
-                ? _buildModernEmptyStateBackground(isDark, theme)
-                : hasFeaturedPhoto
-                ? Image.network(
-                    featuredMedia.url,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
-                        _buildModernEmptyStateBackground(isDark, theme),
-                  )
-                : _buildVideoCover(
-                    media: featuredMedia,
-                    fit: BoxFit.cover,
-                    iconSize: 60,
-                  ),
-          ),
-
-          /// 2. BLUR & GRADIENT KATMANI (Daha derin bir görünüm için)
-          if (!hasFeaturedPhoto)
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                child: Container(
-                  color: isDark
-                      ? Colors.black.withOpacity(0.2)
-                      : Colors.black.withOpacity(0.16),
-                ),
-              ),
-            ),
-
-          /// 3. STANDART KARARTMA (Yazı okunabilirliği için)
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    isDark ? Colors.black : Colors.black.withOpacity(0.92),
-                    isDark
-                        ? Colors.black.withOpacity(0.4)
-                        : Colors.black.withOpacity(0.5),
-                    Colors.transparent,
-                  ],
-                  stops: const [0.0, 0.4, 0.8],
-                ),
-              ),
-            ),
-          ),
-
-          /// 4. İÇERİK (scroll + min yükseklik: Spacer taşması ve küçük ekranlar)
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  physics: const ClampingScrollPhysics(),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight,
+      body: RefreshIndicator(
+        onRefresh: _loadProfile,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Avatar + istatistikler ──────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: Row(
+                  children: [
+                    _buildProfileAvatar(photo, isDark),
+                    const SizedBox(width: 24),
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildStat(
+                            _friendCount?.toString() ?? '—',
+                            'Friends',
+                            onSurface,
+                            subColor,
+                            inactive: _friendCount == null,
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const FriendsListPage(),
+                                ),
+                              );
+                              if (mounted) unawaited(_loadFriendCount());
+                            },
+                          ),
+                          _buildStat(
+                            '0',
+                            'Venues',
+                            onSurface,
+                            subColor,
+                            inactive: true,
+                          ),
+                        ],
+                      ),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              // ── İsim + bio + edit ───────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (_profileErrorMessage != null)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: theme.colorScheme.errorContainer,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          _profileErrorMessage!,
-                                          style: TextStyle(
-                                            color: theme
-                                                .colorScheme
-                                                .onErrorContainer,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      TextButton(
-                                        onPressed: _loadProfile,
-                                        child: const Text('Retry'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            /// KULLANICI BİLGİLERİ
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (_activeCheckin != null) ...[
-                                    Row(
-                                      children: [
-                                        OutlinedButton.icon(
-                                          onPressed: _openingVenueDetail
-                                              ? null
-                                              : _openActiveVenueDetail,
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor: Colors.white,
-                                            side: BorderSide(
-                                              color: Colors.white.withValues(
-                                                alpha: 0.4,
-                                              ),
-                                            ),
-                                            backgroundColor: Colors.black
-                                                .withValues(alpha: 0.22),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 7,
-                                            ),
-                                            minimumSize: const Size(0, 34),
-                                            tapTargetSize: MaterialTapTargetSize
-                                                .shrinkWrap,
-                                            visualDensity: const VisualDensity(
-                                              horizontal: -1,
-                                              vertical: -1,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            textStyle: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          icon: _openingVenueDetail
-                                              ? const SizedBox(
-                                                  width: 14,
-                                                  height: 14,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                )
-                                              : const Icon(
-                                                  Icons.location_on_outlined,
-                                                  size: 15,
-                                                ),
-                                          label: const Text('Here now'),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 10),
-                                  ],
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '${_user?['fullName'] ?? 'Guest'} ${_user?['age'] ?? ''}',
-                                          style: TextStyle(
-                                            fontSize: 34,
-                                            fontWeight: FontWeight.w800,
-                                            color: Colors.white,
-                                            letterSpacing: -0.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (_user?['isAnonymous'] == true) ...[
-                                    const SizedBox(height: 10),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 7,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.35,
-                                        ),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.5,
-                                          ),
-                                        ),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.visibility_off_rounded,
-                                            size: 15,
-                                            color: Colors.white,
-                                          ),
-                                          SizedBox(width: 6),
-                                          Text(
-                                            "Anonymous mode on — you're invisible",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                  if (_showNotificationWarning) ...[
-                                    const SizedBox(height: 14),
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: theme.colorScheme.primary
-                                            .withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(14),
-                                        border: Border.all(
-                                          color: theme.colorScheme.primary
-                                              .withValues(alpha: 0.35),
-                                        ),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            "Turn on notifications so you don't miss matches.",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 10),
-                                          Row(
-                                            children: [
-                                              ElevatedButton(
-                                                onPressed:
-                                                    _enableNotificationsFromProfile,
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor:
-                                                      theme.colorScheme.primary,
-                                                  foregroundColor: theme
-                                                      .colorScheme
-                                                      .onPrimary,
-                                                  minimumSize: const Size(
-                                                    0,
-                                                    40,
-                                                  ),
-                                                  tapTargetSize:
-                                                      MaterialTapTargetSize
-                                                          .shrinkWrap,
-                                                  visualDensity:
-                                                      const VisualDensity(
-                                                        horizontal:
-                                                            VisualDensity
-                                                                .minimumDensity,
-                                                        vertical: VisualDensity
-                                                            .minimumDensity,
-                                                      ),
-                                                ),
-                                                child: const Text('Enable'),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 20),
-
-                                  /// BIO / VIBE glass kartı (şeffaf + blur)
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: BackdropFilter(
-                                      filter: ImageFilter.blur(
-                                        sigmaX: 14,
-                                        sigmaY: 14,
-                                      ),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 14,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                            colors: [
-                                              Colors.white.withValues(
-                                                alpha: hasFeaturedPhoto
-                                                    ? 0.14
-                                                    : 0.10,
-                                              ),
-                                              Colors.white.withValues(
-                                                alpha: hasFeaturedPhoto
-                                                    ? 0.06
-                                                    : 0.03,
-                                              ),
-                                            ],
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            16,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.white.withValues(
-                                              alpha: 0.18,
-                                            ),
-                                          ),
-                                        ),
-                                        child: LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            final vibeTrim =
-                                                (_checkinVibe ?? '').trim();
-                                            final bioTrim = (_profileBio ?? '')
-                                                .trim();
-                                            // Merkezi metin: check-in + vibe veya bio; yalnız bio; yoksa uyarı.
-                                            final vibeText =
-                                                _activeCheckin != null
-                                                ? (vibeTrim.isNotEmpty
-                                                      ? vibeTrim
-                                                      : (bioTrim.isNotEmpty
-                                                            ? bioTrim
-                                                            : 'Hello! This is my bio...'))
-                                                : (bioTrim.isNotEmpty
-                                                      ? bioTrim
-                                                      : '✨ You do not have an active check-in.');
-
-                                            final style = TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.9,
-                                              ),
-                                              fontSize: 15,
-                                              height: 1.4,
-                                            );
-
-                                            final isOverflowing =
-                                                _checkTextOverflow(
-                                                  vibeText,
-                                                  constraints.maxWidth -
-                                                      30, // 👈 ikon için boşluk
-                                                  style,
-                                                );
-
-                                            return AnimatedSize(
-                                              duration: const Duration(
-                                                milliseconds: 250,
-                                              ),
-                                              curve: Curves.easeInOut,
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    vibeText,
-                                                    style: style,
-                                                    maxLines: _isExpanded
-                                                        ? null
-                                                        : 2,
-                                                    overflow: _isExpanded
-                                                        ? TextOverflow.visible
-                                                        : TextOverflow.ellipsis,
-                                                  ),
-
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                          top: 8,
-                                                        ),
-                                                    child: Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        // 👈 See more sadece overflow varsa
-                                                        if (isOverflowing)
-                                                          GestureDetector(
-                                                            onTap: () {
-                                                              setState(() {
-                                                                _isExpanded =
-                                                                    !_isExpanded;
-                                                              });
-                                                            },
-                                                            child: Text(
-                                                              _isExpanded
-                                                                  ? 'See less'
-                                                                  : 'See more',
-                                                              style: TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w600,
-                                                              ),
-                                                            ),
-                                                          )
-                                                        else
-                                                          const SizedBox(), // boşluk dengesi için
-                                                        // Merkezi bio/vibe düzenleme (check-in olsun olmasın).
-                                                        GestureDetector(
-                                                          onTap:
-                                                              _openEditVibeModal,
-                                                          child: Icon(
-                                                            Icons.edit_outlined,
-                                                            size: 18,
-                                                            color:
-                                                                Colors.white70,
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-
-                                  if (_activeCheckin != null &&
-                                      _checkinWhatBrings.isNotEmpty) ...[
-                                    const SizedBox(height: 14),
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: 6,
-                                      children: _checkinWhatBrings.map((item) {
-                                        return Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: isDark
-                                                ? AppTheme.brandPrimary
-                                                      .withValues(alpha: 0.22)
-                                                : const Color(0xFFEAF1FF),
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                            border: Border.all(
-                                              color: AppTheme.brandPrimary
-                                                  .withValues(alpha: 0.45),
-                                            ),
-                                          ),
-                                          child: Text(
-                                            _formatWhatBringsLabel(item),
-                                            style: TextStyle(
-                                              color: isDark
-                                                  ? Colors.white
-                                                  : AppTheme.brandPrimary,
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        );
-                                      }).toList(),
-                                    ),
-                                  ],
-                                ],
+                        if (fullName.isNotEmpty)
+                          Flexible(
+                            child: Text(
+                              fullName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: onSurface,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
-
-                            const SizedBox(height: 6),
-
-                            if (_media.isNotEmpty ||
-                                _activeCheckin != null) ...[
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  left: 28,
-                                  right: 24,
-                                ),
-                                child: InkWell(
-                                  onTap: () {
-                                    setState(() {
-                                      _areMomentsExpanded =
-                                          !_areMomentsExpanded;
-                                    });
-                                  },
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 6,
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          _areMomentsExpanded
-                                              ? 'Close moments'
-                                              : 'See moments',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Icon(
-                                          _areMomentsExpanded
-                                              ? Icons.keyboard_arrow_up_rounded
-                                              : Icons
-                                                    .keyboard_arrow_down_rounded,
-                                          color: Colors.white,
-                                          size: 20,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 220),
-                                curve: Curves.easeInOut,
-                                child: _areMomentsExpanded
-                                    ? Column(
-                                        children: [
-                                          const SizedBox(height: 8),
-                                          const SizedBox(height: 8),
-                                          SizedBox(
-                                            height: 110,
-                                            child: ListView.separated(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 24,
-                                                  ),
-                                              scrollDirection: Axis.horizontal,
-                                              itemCount:
-                                                  _media.length +
-                                                  ((_activeCheckin != null &&
-                                                          _media.length < 6)
-                                                      ? 1
-                                                      : 0),
-                                              separatorBuilder: (_, __) =>
-                                                  const SizedBox(width: 12),
-                                              itemBuilder: (context, index) {
-                                                final canAddMore =
-                                                    _activeCheckin != null &&
-                                                    _media.length < 6;
-                                                if (canAddMore &&
-                                                    index == _media.length) {
-                                                  return _buildAddMomentTile();
-                                                }
-                                                return GestureDetector(
-                                                  onTap: () async {
-                                                    final reload =
-                                                        await Navigator.push(
-                                                          context,
-                                                          MaterialPageRoute(
-                                                            builder: (_) =>
-                                                                MomentsViewerPage(
-                                                                  media: _media,
-                                                                  initialIndex:
-                                                                      index,
-                                                                  allowFeature:
-                                                                      true,
-                                                                ),
-                                                          ),
-                                                        );
-
-                                                    if (reload == true) {
-                                                      await _loadProfile();
-                                                    }
-                                                  },
-                                                  child: ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          15,
-                                                        ),
-                                                    child: _buildMediaThumb(
-                                                      _media[index],
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                          ),
-                                          const SizedBox(height: 30),
-                                        ],
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                            ],
-                            const SizedBox(height: 26),
-                          ],
+                          ),
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: _openEditProfile,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.edit_outlined,
+                              size: 18,
+                              color: onSurface.withValues(alpha: 0.7),
+                            ),
+                          ),
                         ),
                       ],
                     ),
+                    if (bio.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        bio,
+                        style: TextStyle(
+                          color: onSurface,
+                          fontSize: 14,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              // ── Aktif check-in lokasyonu ────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: _buildActiveCheckinRow(isDark, onSurface, subColor),
+              ),
+              const SizedBox(height: 18),
+              // ── Check-in tag'leri (varsa) — grid'in üstünde ─────────────
+              if (_checkinWhatBrings.isNotEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.grey[200]!,
+                      ),
+                    ),
                   ),
-                );
-              },
-            ),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      children: _checkinWhatBrings.map((raw) {
+                        return Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.brandPrimary.withValues(
+                              alpha: 0.12,
+                            ),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: AppTheme.brandPrimary.withValues(
+                                alpha: 0.3,
+                              ),
+                            ),
+                          ),
+                          child: Text(
+                            _formatWhatBringsLabel(raw),
+                            style: TextStyle(
+                              color: onSurface,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ],
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: onSurface.withValues(alpha: 0.12),
+              ),
+              // ── Moments grid ────────────────────────────────────────────
+              _buildMomentsGrid(canAddMore, isDark, subColor),
+              const SizedBox(height: 24),
+            ],
           ),
-        ],
+        ),
       ),
     );
+  }
+
+  Widget _buildProfileAvatar(String photo, bool isDark) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 88,
+          height: 88,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.15)
+                  : Colors.grey[300]!,
+              width: 1,
+            ),
+          ),
+          child: ClipOval(
+            child: photo.isNotEmpty
+                ? Image.network(
+                    photo,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => _avatarFallback(isDark),
+                  )
+                : _avatarFallback(isDark),
+          ),
+        ),
+        // Avatar'ın sağ altına "+" — fotoğraf ekleme (şimdilik yalnızca görsel).
+        Positioned(
+          right: -2,
+          bottom: -2,
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: AppTheme.brandPrimary,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                width: 2.5,
+              ),
+            ),
+            child: const Icon(Icons.add_rounded, color: Colors.white, size: 18),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActiveCheckinRow(bool isDark, Color onSurface, Color subColor) {
+    if (_activeCheckin == null) {
+      return Row(
+        children: [
+          Icon(Icons.location_off_outlined, size: 18, color: subColor),
+          const SizedBox(width: 6),
+          Text(
+            'No active check-in',
+            style: TextStyle(color: subColor, fontSize: 14),
+          ),
+        ],
+      );
+    }
+    final rawVenue = _activeCheckin?['venue'];
+    final rawName = (rawVenue is Map ? rawVenue['name'] : null)
+        ?.toString()
+        .trim();
+    final venueName = (_activeVenue?.name.isNotEmpty ?? false)
+        ? _activeVenue!.name
+        : (rawName != null && rawName.isNotEmpty ? rawName : 'Checked in');
+    return InkWell(
+      onTap: _openingVenueDetail ? null : _openActiveVenueDetail,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(
+              Icons.location_on_rounded,
+              size: 18,
+              color: AppTheme.brandPrimary,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                venueName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: onSurface,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right_rounded, size: 18, color: subColor),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _avatarFallback(bool isDark) {
+    return Container(
+      color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFEDEDED),
+      child: Icon(
+        Icons.person_rounded,
+        size: 44,
+        color: isDark ? Colors.white38 : Colors.black26,
+      ),
+    );
+  }
+
+  /// Instagram tarzı istatistik sütunu. [inactive] ise gri ve tıklanamaz —
+  /// Friends (match) ve Venues (takip) sayıları henüz backend'de yok.
+  Widget _buildStat(
+    String value,
+    String label,
+    Color color,
+    Color sub, {
+    bool inactive = false,
+    VoidCallback? onTap,
+  }) {
+    final valueColor = inactive ? sub : color;
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(label, style: TextStyle(color: sub, fontSize: 13)),
+      ],
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: content,
+      ),
+    );
+  }
+
+  Widget _buildMomentsGrid(bool canAddMore, bool isDark, Color sub) {
+    final hasAny = _media.isNotEmpty || canAddMore;
+    if (!hasAny) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.camera_alt_outlined, size: 48, color: sub),
+              const SizedBox(height: 12),
+              Text(
+                'No moments yet',
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Check in to a venue and share your moments.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: sub, fontSize: 13.5),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final itemCount = _media.length + (canAddMore ? 1 : 0);
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (canAddMore && index == _media.length) {
+          return _buildAddGridCell(isDark);
+        }
+        final media = _media[index];
+        return GestureDetector(
+          onTap: () async {
+            final reload = await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MomentsViewerPage(
+                  media: _media,
+                  initialIndex: index,
+                  allowFeature: true,
+                ),
+              ),
+            );
+            if (reload == true) await _loadProfile();
+          },
+          child: _buildGridCell(media),
+        );
+      },
+    );
+  }
+
+  /// Grid'in ilk hücresindeki "+" — aktif check-in varken yeni moment ekler.
+  Widget _buildAddGridCell(bool isDark) {
+    return GestureDetector(
+      onTap: _uploadingMoment ? null : _addMomentPhoto,
+      child: Container(
+        color: isDark ? const Color(0xFF161616) : const Color(0xFFF0F0F0),
+        child: Center(
+          child: _uploadingMoment
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.add_rounded, size: 30, color: AppTheme.brandPrimary),
+        ),
+      ),
+    );
+  }
+
+  /// Instagram grid hücresi: kareyi tamamen doldurur (cover), video ise
+  /// poster + play ikonu gösterir.
+  Widget _buildGridCell(CheckinProfileMedia media) {
+    if (media.mediaType == MediaType.video) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          _buildVideoPosterLayer(media, fit: BoxFit.cover),
+          const Center(
+            child: Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
+          ),
+        ],
+      );
+    }
+    return Image.network(
+      media.url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => Container(color: const Color(0xFF1E1E1E)),
+    );
+  }
+
+  Future<void> _openEditProfile() async {
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditProfilePage(user: _user ?? const {}),
+      ),
+    );
+    if (updated == true && mounted) {
+      await _loadProfile();
+    }
   }
 
   /// RESİM OLMADIĞINDA GÖRÜNECEK MODERN GRADIENT

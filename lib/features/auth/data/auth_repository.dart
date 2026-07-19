@@ -6,6 +6,7 @@ import '../../../core/network/api_client.dart';
 import 'auth_api.dart';
 import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../../../core/config/app_config.dart';
@@ -380,6 +381,53 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Google login failed');
   }
 
+  Future<bool> loginWithApple({
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
+  }) async {
+    _log('🍎 Apple login started');
+
+    final credential = await SignInWithApple.getAppleIDCredential(
+      scopes: [
+        AppleIDAuthorizationScopes.email,
+        AppleIDAuthorizationScopes.fullName,
+      ],
+    );
+
+    final identityToken = credential.identityToken;
+    if (identityToken == null) {
+      throw Exception('Apple identityToken is null');
+    }
+
+    // Apple only sends the name on the FIRST authorization — forward it so the
+    // backend can seed the account. Subsequent logins have null name parts.
+    final nameParts = [credential.givenName, credential.familyName]
+        .where((p) => p != null && p.isNotEmpty)
+        .join(' ');
+
+    final response = await _api.loginWithApple(
+      identityToken: identityToken,
+      fullName: nameParts.isEmpty ? null : nameParts,
+      consentGiven: consentGiven,
+      termsVersionId: termsVersionId,
+      privacyVersionId: privacyVersionId,
+      consentSource: consentSource,
+    );
+    _log('📡 backend apple response = $response');
+
+    if (response['success'] == true) {
+      await SecureStorage.saveTokens(
+        accessToken: response['accessToken'],
+        refreshToken: response['refreshToken'],
+      );
+      return true;
+    }
+
+    throw Exception(response['message'] ?? 'Apple login failed');
+  }
+
   Future<void> logout() async {
     final refreshToken = await SecureStorage.getRefreshToken();
     if (refreshToken != null) {
@@ -701,6 +749,38 @@ class AuthRepository {
       '/users/me/anonymous',
       headers: {'Authorization': 'Bearer $token'},
       body: {'enabled': enabled},
+    );
+  }
+
+  /// Read Receipts (KMSTRY+) aç/kapa. Kapatmak premium ister; backend
+  /// premium değilse PREMIUM_REQUIRED döner.
+  Future<void> setReadReceipts(bool enabled) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _http.patch(
+      '/users/me/read-receipts',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'enabled': enabled},
+    );
+  }
+
+  /// Per-category push notification preferences. Partial updates allowed —
+  /// only the provided keys change. Mutes push delivery only (in-app kept).
+  Future<void> setNotificationPrefs({
+    bool? messages,
+    bool? invites,
+    bool? venueUpdates,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final body = <String, dynamic>{};
+    if (messages != null) body['messages'] = messages;
+    if (invites != null) body['invites'] = invites;
+    if (venueUpdates != null) body['venueUpdates'] = venueUpdates;
+    await _http.patch(
+      '/users/me/notification-prefs',
+      headers: {'Authorization': 'Bearer $token'},
+      body: body,
     );
   }
 

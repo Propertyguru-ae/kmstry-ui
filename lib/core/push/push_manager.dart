@@ -23,6 +23,7 @@ class PushManager {
 
   bool _initialized = false;
   String? _lastRegisteredToken;
+  final Set<String> _activeChatIds = <String>{};
   final StreamController<RemoteMessage> _foregroundMessagesController =
       StreamController<RemoteMessage>.broadcast();
 
@@ -56,10 +57,38 @@ class PushManager {
       // Android: system doesn't display banners for foreground FCM messages.
       // iOS: setForegroundNotificationPresentationOptions handles it natively.
       if (Platform.isAndroid) {
-        await _showLocalNotification(message);
+        if (!_shouldSuppressForegroundNotification(message)) {
+          await _showLocalNotification(message);
+        }
       }
       _foregroundMessagesController.add(message);
     });
+  }
+
+  void markChatVisible(String chatId) {
+    final normalized = chatId.trim();
+    if (normalized.isEmpty) return;
+    _activeChatIds.add(normalized);
+  }
+
+  void markChatHidden(String chatId) {
+    final normalized = chatId.trim();
+    if (normalized.isEmpty) return;
+    _activeChatIds.remove(normalized);
+  }
+
+  Future<String?> getDeviceTokenForRealtime() => _getFcmToken();
+
+  bool _shouldSuppressForegroundNotification(RemoteMessage message) {
+    final type = message.data['type']?.toString();
+    if (type != 'new_message') return false;
+    final camelChatId = message.data['chatId']?.toString().trim();
+    final snakeChatId = message.data['chat_id']?.toString().trim();
+    final chatId = camelChatId != null && camelChatId.isNotEmpty
+        ? camelChatId
+        : snakeChatId;
+    if (chatId == null || chatId.isEmpty) return false;
+    return _activeChatIds.contains(chatId);
   }
 
   /// Oturum kapanınca (logout / hesap silme) çağrılır.
@@ -79,7 +108,9 @@ class PushManager {
       debugPrint('[PUSH] ensureRegisteredIfAllowed: start');
       final permissionState = await _notificationPermissionService
           .readStateFromBackend();
-      debugPrint('[PUSH] permissionState: system=${permissionState.systemStatus}, account=${permissionState.accountPreference}, effective=${permissionState.effectiveStatus}');
+      debugPrint(
+        '[PUSH] permissionState: system=${permissionState.systemStatus}, account=${permissionState.accountPreference}, effective=${permissionState.effectiveStatus}',
+      );
       if (!permissionState.effectiveStatus) {
         debugPrint('[PUSH] ⛔ effectiveStatus=false — token kaydedilmiyor');
         return;
@@ -88,7 +119,9 @@ class PushManager {
       await _forceRefreshTokenIfStale();
 
       final token = await _getFcmToken();
-      debugPrint('[PUSH] fcmToken=${token == null ? "NULL" : "${token.substring(0, 20)}..."}');
+      debugPrint(
+        '[PUSH] fcmToken=${token == null ? "NULL" : "${token.substring(0, 20)}..."}',
+      );
       if (token == null) return;
 
       await _tryRegisterToken(token);
@@ -116,10 +149,12 @@ class PushManager {
 
       final storedVersion = await SecureStorage.read(_pushVersionKey);
       final lastRefreshRaw = await SecureStorage.read(_pushLastForceRefreshKey);
-      final lastRefresh =
-          lastRefreshRaw != null ? DateTime.tryParse(lastRefreshRaw) : null;
+      final lastRefresh = lastRefreshRaw != null
+          ? DateTime.tryParse(lastRefreshRaw)
+          : null;
       final isStale =
-          lastRefresh == null || DateTime.now().difference(lastRefresh) > _staleAfter;
+          lastRefresh == null ||
+          DateTime.now().difference(lastRefresh) > _staleAfter;
 
       if (storedVersion == currentVersion && !isStale) return;
 
@@ -209,7 +244,9 @@ class PushManager {
       }
       if (apns == null) {
         if (kDebugMode) {
-          debugPrint("⚠️ APNs token still null after retries — skipping FCM token fetch");
+          debugPrint(
+            "⚠️ APNs token still null after retries — skipping FCM token fetch",
+          );
         }
         return null;
       }
@@ -220,10 +257,9 @@ class PushManager {
   /// Shows a heads-up local notification for a foreground FCM message (Android only).
   Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
-    final title = notification?.title ??
-        (message.data['title'] as String? ?? '');
-    final body = notification?.body ??
-        (message.data['body'] as String? ?? '');
+    final title =
+        notification?.title ?? (message.data['title'] as String? ?? '');
+    final body = notification?.body ?? (message.data['body'] as String? ?? '');
 
     // Nothing to show.
     if (title.isEmpty && body.isEmpty) return;
@@ -242,16 +278,20 @@ class PushManager {
     final details = NotificationDetails(android: androidDetails);
 
     // Payload = message.data as JSON → used by tap handler for routing.
-    final payload =
-        message.data.isNotEmpty ? jsonEncode(message.data) : null;
+    final payload = message.data.isNotEmpty ? jsonEncode(message.data) : null;
 
     // Use a stable ID derived from the message so rapid duplicate messages
     // replace rather than stack.
     final id = (message.messageId ?? '').hashCode;
 
     try {
-      await notificationsPlugin.show(id, title, body, details,
-          payload: payload);
+      await notificationsPlugin.show(
+        id,
+        title,
+        body,
+        details,
+        payload: payload,
+      );
     } catch (e) {
       if (kDebugMode) {
         debugPrint('⚠️ Local notification show failed: $e');
@@ -293,7 +333,9 @@ class PushManager {
         debugPrint('[PUSH] ✅ FCM token registered (attempt $attempt)');
         return;
       } catch (e) {
-        debugPrint('[PUSH] ❌ FCM token register failed (attempt $attempt/$_maxRegisterAttempts): $e');
+        debugPrint(
+          '[PUSH] ❌ FCM token register failed (attempt $attempt/$_maxRegisterAttempts): $e',
+        );
 
         final isLastAttempt = attempt == _maxRegisterAttempts;
 

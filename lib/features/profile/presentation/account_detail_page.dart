@@ -4,6 +4,10 @@ import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
+import 'package:kmstry_frontend/features/profile/presentation/notifications_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/blocked_users_page.dart';
+import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_notifications_settings_page.dart';
 
 class AccountDetailPage extends StatefulWidget {
   final String accountName;
@@ -27,6 +31,10 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
   bool _isAnonymous = false;
   bool _togglingAnonymous = false;
   VenuePlan? _venuePlan;
+  int _blockedCount = 0;
+  // Gates the plan card so it renders once — avoids a "Free → Premium" flip (or
+  // a late-appearing venue plan banner) while the account data loads.
+  bool _planLoaded = false;
 
   @override
   void initState() {
@@ -40,23 +48,37 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
 
   Future<void> _loadVenuePlan() async {
     final id = widget.venueId;
-    if (id == null || id.isEmpty) return;
+    if (id == null || id.isEmpty) {
+      if (mounted) setState(() => _planLoaded = true);
+      return;
+    }
     try {
       final access = await VenueMemberRepository().getMyPermissions(id);
       if (!mounted) return;
       setState(() => _venuePlan = access.plan);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _planLoaded = true);
+    }
   }
 
   Future<void> _loadPersonalFlags() async {
     try {
       final me = await AuthRepository().getMe();
+      List<dynamic> blocked = const [];
+      try {
+        blocked = await MatchRepository().getBlockedUsers();
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _isPremium = me['isPremium'] == true;
         _isAnonymous = me['isAnonymous'] == true;
+        _blockedCount = blocked.length;
       });
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _planLoaded = true);
+    }
   }
 
   Future<void> _setAnonymous(bool enabled) async {
@@ -195,7 +217,9 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
           ),
         ),
       ),
-      body: ListView(
+      body: !_planLoaded
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
         padding: const EdgeInsets.all(16),
         children: [
           // Account info card
@@ -385,9 +409,60 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
                 ),
               ),
             ),
+            const SizedBox(height: 24),
+            // ── Who can see your account (personal only) ─────────
+            Text(
+              'WHO CAN SEE YOUR ACCOUNT',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: colors.onSurface.withValues(alpha: 0.45),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: colors.primary.withValues(alpha: 0.12)),
+              ),
+              child: ListTile(
+                leading: Icon(Icons.block_outlined, color: colors.onSurface.withValues(alpha: 0.7)),
+                title: Text('Blocked',
+                    style: TextStyle(color: colors.onSurface, fontWeight: FontWeight.w600)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$_blockedCount',
+                        style: TextStyle(
+                            fontSize: 15,
+                            color: colors.onSurface.withValues(alpha: 0.8),
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BlockedUsersPage()),
+                  );
+                  // Refresh count on return (a user may have been unblocked).
+                  if (!mounted) return;
+                  try {
+                    final blocked = await MatchRepository().getBlockedUsers();
+                    if (mounted) setState(() => _blockedCount = blocked.length);
+                  } catch (_) {}
+                },
+              ),
+            ),
           ],
 
           const SizedBox(height: 32),
+
+          // How you use KMSTRY — notifications for this account
+          _howYouUseSection(colors),
 
           // Delete button
           Container(
@@ -434,6 +509,77 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
           const SizedBox(height: 32),
         ],
       ),
+    );
+  }
+
+  /// "How you use KMSTRY" — notification settings for THIS account. Personal
+  /// opens the personal categories; venue opens per-venue categories.
+  Widget _howYouUseSection(ColorScheme colors) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark
+        ? colors.surface.withValues(alpha: 0.92)
+        : const Color(0xFFF8FBFD);
+    final cardBorder = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : const Color(0xFFE6EEF4);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'HOW YOU USE KMSTRY',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+            color: colors.onSurface.withValues(alpha: 0.45),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cardBorder),
+          ),
+          child: ListTile(
+            leading: Icon(Icons.notifications_none_rounded, color: colors.primary),
+            title: Text('Notifications',
+                style: TextStyle(
+                    color: colors.onSurface, fontWeight: FontWeight.w600)),
+            subtitle: Text(
+              widget.isVenue
+                  ? 'Team updates and event activity'
+                  : 'Messages, invites, venue updates',
+              style: TextStyle(
+                  color: colors.onSurface.withValues(alpha: 0.6), fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              final venueId = widget.venueId;
+              if (widget.isVenue && venueId != null && venueId.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VenueNotificationsSettingsPage(
+                      venueId: venueId,
+                      venueName: widget.accountName,
+                    ),
+                  ),
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsSettingsPage(),
+                  ),
+                );
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 enum ChatRealtimeConnectionState {
@@ -15,10 +16,7 @@ class ChatRealtimeEnvelope {
   final String event;
   final Map<String, dynamic> payload;
 
-  const ChatRealtimeEnvelope({
-    required this.event,
-    required this.payload,
-  });
+  const ChatRealtimeEnvelope({required this.event, required this.payload});
 }
 
 class ChatRealtimeService {
@@ -31,8 +29,16 @@ class ChatRealtimeService {
 
   io.Socket? _socket;
   String? _token;
+  String? _deviceToken;
   bool _disposed = false;
   final Set<String> _joinedChatIds = <String>{};
+
+  /// Presence heartbeat: backend'te `presence:user:<id>` key'i 120s TTL ile
+  /// tutuluyor. Bağlı ama boşta duran bir socket'te bu key yenilenmezse 2dk
+  /// sonra expire olup kullanıcı yanlışlıkla "offline" görünüyor. Bu timer,
+  /// socket bağlıyken periyodik `presence.ping` atarak TTL'i canlı tutar.
+  Timer? _presenceHeartbeat;
+  static const Duration _presenceHeartbeatInterval = Duration(seconds: 45);
 
   final Set<String> _seenEventIds = <String>{};
   final List<String> _seenEventOrder = <String>[];
@@ -47,10 +53,7 @@ class ChatRealtimeService {
   Stream<ChatRealtimeConnectionState> get connectionState =>
       _connectionController.stream;
 
-  Future<void> connect({
-    required String token,
-    required String chatId,
-  }) async {
+  Future<void> connect({required String token, required String chatId}) async {
     if (_disposed) return;
     final normalizedChatId = chatId.trim();
     if (normalizedChatId.isEmpty) return;
@@ -61,17 +64,20 @@ class ChatRealtimeService {
 
   Future<void> connectWithToken({required String token}) async {
     if (_disposed) return;
+    final deviceToken = await PushManager.instance.getDeviceTokenForRealtime();
 
     final shouldRecreateSocket =
         _socket == null ||
         _token != token ||
+        _deviceToken != deviceToken ||
         !_isSameOrigin(_buildSocketBaseUrl(), _socket!.io.uri);
 
     _token = token;
+    _deviceToken = deviceToken;
 
     if (shouldRecreateSocket) {
       await disconnect();
-      _createAndConnectSocket(token: token);
+      _createAndConnectSocket(token: token, deviceToken: deviceToken);
       return;
     }
 
@@ -86,6 +92,7 @@ class ChatRealtimeService {
   }
 
   Future<void> disconnect() async {
+    _stopPresenceHeartbeat();
     final socket = _socket;
     if (socket != null) {
       socket.dispose();
@@ -117,6 +124,14 @@ class ChatRealtimeService {
     _emitIfConnected('typing.stop', {'chatId': normalized});
   }
 
+  /// Okundu bilgisini socket üzerinden işaretle → anlık "seen" (HTTP hop yok).
+  /// Sunucu markRead çalıştırıp chat.read'i odaya broadcast eder.
+  void sendChatRead({required String chatId}) {
+    final normalized = chatId.trim();
+    if (normalized.isEmpty) return;
+    _emitIfConnected('chat.read', {'chatId': normalized});
+  }
+
   void joinChat(String chatId) {
     final normalized = chatId.trim();
     if (normalized.isEmpty) return;
@@ -133,7 +148,10 @@ class ChatRealtimeService {
     _emitIfConnected('chat.leave', {'chatId': normalized});
   }
 
-  void _createAndConnectSocket({required String token}) {
+  void _createAndConnectSocket({
+    required String token,
+    required String? deviceToken,
+  }) {
     final baseUrl = _buildSocketBaseUrl();
     final socket = io.io(
       baseUrl,
@@ -145,8 +163,16 @@ class ChatRealtimeService {
           .setReconnectionAttempts(1000)
           .setReconnectionDelay(1200)
           .setReconnectionDelayMax(8000)
-          .setAuth({'token': token})
-          .setExtraHeaders({'Authorization': 'Bearer $token'})
+          .setAuth({
+            'token': token,
+            if (deviceToken != null && deviceToken.isNotEmpty)
+              'deviceToken': deviceToken,
+          })
+          .setExtraHeaders({
+            'Authorization': 'Bearer $token',
+            if (deviceToken != null && deviceToken.isNotEmpty)
+              'x-device-token': deviceToken,
+          })
           .build(),
     );
     _socket = socket;
@@ -161,6 +187,7 @@ class ChatRealtimeService {
       debugPrint('💬 [Realtime] Socket baglandi');
       _connectionController.add(ChatRealtimeConnectionState.connected);
       _joinAllChats();
+      _startPresenceHeartbeat();
     });
 
     socket.onReconnect((_) {
@@ -168,6 +195,7 @@ class ChatRealtimeService {
       debugPrint('💬 [Realtime] Socket yeniden baglandi');
       _connectionController.add(ChatRealtimeConnectionState.connected);
       _joinAllChats();
+      _startPresenceHeartbeat();
       _eventsController.add(
         const ChatRealtimeEnvelope(
           event: 'socket.reconnected',
@@ -191,6 +219,7 @@ class ChatRealtimeService {
     socket.onDisconnect((_) {
       if (_disposed) return;
       debugPrint('💬 [Realtime] Socket baglantisi koptu');
+      _stopPresenceHeartbeat();
       _connectionController.add(ChatRealtimeConnectionState.disconnected);
     });
 
@@ -210,6 +239,7 @@ class ChatRealtimeService {
       'message.created',
       'message.updated',
       'message.deleted',
+      'message.reaction',
       'notification.created',
       'notification.updated',
       'notification.read',
@@ -228,10 +258,7 @@ class ChatRealtimeService {
     }
   }
 
-  void _handleIncomingEvent({
-    required String event,
-    required dynamic rawData,
-  }) {
+  void _handleIncomingEvent({required String event, required dynamic rawData}) {
     if (_disposed) return;
     final payload = _asMap(rawData);
     if (payload == null) return;
@@ -264,6 +291,33 @@ class ChatRealtimeService {
     }
   }
 
+  void _startPresenceHeartbeat() {
+    _presenceHeartbeat?.cancel();
+    // Bağlanır bağlanmaz bir kez gönder, sonra periyodik yenile.
+    _emitIfConnected('presence.ping', const <String, dynamic>{});
+    _presenceHeartbeat = Timer.periodic(_presenceHeartbeatInterval, (_) {
+      if (_disposed) return;
+      _emitIfConnected('presence.ping', const <String, dynamic>{});
+    });
+  }
+
+  void _stopPresenceHeartbeat() {
+    _presenceHeartbeat?.cancel();
+    _presenceHeartbeat = null;
+  }
+
+  /// Uygulama ön plana geldiğinde çağrılır — presence'i anında "online" yapar.
+  void notifyForeground() {
+    _emitIfConnected('presence.ping', const <String, dynamic>{});
+  }
+
+  /// Uygulama arka plana alındığında çağrılır — socket OS tarafından bir süre
+  /// canlı kalabildiği için, karşı tarafın hemen "offline" görmesi adına proaktif
+  /// olarak away sinyali gönderir.
+  void notifyAway() {
+    _emitIfConnected('presence.away', const <String, dynamic>{});
+  }
+
   void _emitIfConnected(String event, Map<String, dynamic> payload) {
     final socket = _socket;
     if (_disposed || socket == null || !socket.connected) return;
@@ -273,9 +327,7 @@ class ChatRealtimeService {
   Map<String, dynamic>? _asMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
     if (data is Map) {
-      return data.map(
-        (key, value) => MapEntry(key.toString(), value),
-      );
+      return data.map((key, value) => MapEntry(key.toString(), value));
     }
     return null;
   }

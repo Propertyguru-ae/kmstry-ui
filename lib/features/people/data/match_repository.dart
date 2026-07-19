@@ -164,6 +164,27 @@ class MatchRepository {
         .toList();
   }
 
+  /// Username müsait mi? (`GET /users/me/username-available`) — backend'in
+  /// updateMe ile aynı tekillik kontrolünü yapar. `({available, reason})` döner.
+  Future<({bool available, String? reason})> checkUsernameAvailability(
+    String username,
+  ) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    final encoded = Uri.encodeQueryComponent(username.trim());
+    final data = await _api.get(
+      '/users/me/username-available?username=$encoded',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (data is Map) {
+      return (
+        available: data['available'] == true,
+        reason: data['reason']?.toString(),
+      );
+    }
+    return (available: false, reason: null);
+  }
+
   Future<List<NearbyVenueUserItem>> listNearbyVenueUsers({
     int? radiusMeters,
   }) async {

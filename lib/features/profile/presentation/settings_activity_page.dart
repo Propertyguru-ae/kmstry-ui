@@ -8,10 +8,7 @@ import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/blocked_users_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/notifications_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
 class SettingsActivityPage extends StatefulWidget {
@@ -31,8 +28,6 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
   bool _loading = true;
   bool _accountNotificationsEnabled = false;
   bool _systemNotificationsEnabled = false;
-  bool _receiveTestNotifications = true;
-  int _blockedUsersCount = 0;
   bool _deletingAccount = false;
   bool _loggingOut = false;
   bool _canDeleteCurrentContextProfile = false;
@@ -81,18 +76,10 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     try {
       final me = await AuthRepository().getMe();
       final accountOptIn = me['notificationPermissionGranted'];
-      final receiveTest = me['receiveTestNotifications'];
       final accountEnabled = accountOptIn is bool ? accountOptIn : true;
       final permissionState = await _notificationPermissionService
           .readStateWithAccountPreference(accountEnabled);
       await SecureStorage.write(_notificationsEnabledKey, accountEnabled.toString());
-
-      // blocked count
-      int blockedCount = 0;
-      try {
-        final blocked = await MatchRepository().getBlockedUsers();
-        blockedCount = blocked.length;
-      } catch (_) {}
 
       final meContext = MeContextModel.fromMe(me);
 
@@ -113,8 +100,6 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
         _notificationGranted = notifGranted;
         _accountNotificationsEnabled = accountEnabled;
         _systemNotificationsEnabled = permissionState.systemGranted;
-        _receiveTestNotifications = receiveTest is bool ? receiveTest : true;
-        _blockedUsersCount = blockedCount;
         _isVenueContext = meContext.lastActiveContext?.toUpperCase() == 'VENUE';
         _canDeleteCurrentContextProfile = meContext.canDeleteCurrentContextProfile;
         _activeVenueId = meContext.activeVenueId ??
@@ -150,14 +135,6 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     }
   }
 
-  Future<void> _setTestNotifications(bool enabled) async {
-    setState(() => _receiveTestNotifications = enabled);
-    try {
-      await AuthRepository().updateMe({'receive_test_notifications': enabled});
-    } catch (_) {
-      if (mounted) setState(() => _receiveTestNotifications = !enabled);
-    }
-  }
 
   Future<void> _logout() async {
     if (_loggingOut) return;
@@ -230,25 +207,31 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
         ? Colors.white.withValues(alpha: 0.08)
         : const Color(0xFFE6EEF4);
 
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kBorder = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFD9E1EA);
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: kBg,
       appBar: AppBar(
-        backgroundColor: theme.appBarTheme.backgroundColor,
+        backgroundColor: kBg,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.onSurface),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         title: Text(
           'Settings & Activity',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
           ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.05)
-                : Colors.grey[200],
-            height: 1,
-          ),
+          child: Container(color: kBorder, height: 1),
         ),
       ),
       body: _loading
@@ -305,56 +288,7 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
                   colors: colors,
                 ),
 
-                const SizedBox(height: 24),
-
-                // ── How you use KMSTRY ───────────────────────────
-                _SectionLabel(label: 'How you use KMSTRY'),
                 const SizedBox(height: 8),
-                _Card(
-                  child: ListTile(
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const NotificationsSettingsPage())),
-                    leading: Icon(Icons.notifications_none_rounded, color: colors.primary),
-                    title: Text('Notifications',
-                        style: TextStyle(color: colors.onSurface, fontWeight: FontWeight.w600)),
-                    subtitle: Text('Messages, invites, venue updates',
-                        style: TextStyle(color: colors.onSurface.withValues(alpha: 0.6), fontSize: 13)),
-                    trailing: const Icon(Icons.chevron_right),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _Card(
-                  child: SwitchListTile(
-                    secondary: Icon(Icons.science_outlined, color: colors.primary),
-                    title: Text('Test Notifications',
-                        style: TextStyle(color: colors.onSurface, fontWeight: FontWeight.w600)),
-                    subtitle: Text('Receive nearby venue test pings',
-                        style: TextStyle(color: colors.onSurface.withValues(alpha: 0.6), fontSize: 13)),
-                    value: _receiveTestNotifications,
-                    onChanged: _setTestNotifications,
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Privacy ──────────────────────────────────────
-                _SectionLabel(label: 'Who can see your account'),
-              
-                const SizedBox(height: 8),
-                _Card(
-                  child: ListTile(
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const BlockedUsersPage())),
-                    title: Text('Blocked',
-                        style: TextStyle(color: colors.onSurface, fontWeight: FontWeight.w600)),
-                    trailing: Text('$_blockedUsersCount',
-                        style: TextStyle(
-                            fontSize: 16,
-                            color: colors.onSurface.withValues(alpha: 0.8),
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ),
-                const SizedBox(height: 32),
 
                 // ── Log Out ──────────────────────────────────────
                 _Card(
