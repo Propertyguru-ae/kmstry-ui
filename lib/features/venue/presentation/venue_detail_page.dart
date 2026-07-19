@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -55,12 +57,19 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
   Map<String, dynamic>? _enrichedVenueData;
-  bool _loadingDetails = true;
   bool _loadingCheckinStats = false;
   int? _checkinCountActive;
   int? _checkinCountMale;
   int? _checkinCountFemale;
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
+
+  // Backend'deki 200m check-in mesafe sınırıyla aynı değer (checkins.service.ts).
+  static const double _kCheckinMaxDistanceMeters = 200;
+
+  /// null = henüz doğrulanmadı → buton pasif kalır. Sadece kesin olarak
+  /// venue'nün 200m içinde olduğu ölçülünce true olur ("fail-closed").
+  bool? _isNearVenue;
+  bool _checkingProximity = true;
 
   @override
   void initState() {
@@ -68,12 +77,102 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _checkinCountActive = widget.venue.checkinCountActive;
     _checkinCountMale = widget.venue.checkinCountMale;
     _checkinCountFemale = widget.venue.checkinCountFemale;
-    _loadActiveCheckin();
-    _loadVenueDetails();
-    _loadEnrichedVenueData();
-    _refreshCheckinStats();
-    _loadHeaderStories();
-    _loadAnonymousStatus();
+    _primeActiveCheckinFromMemory();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startDeferredInitialLoads();
+    });
+  }
+
+  void _primeActiveCheckinFromMemory() {
+    final active = ActiveCheckinService();
+    final activeId = active.activeCheckinId;
+    if (activeId == null || activeId.isEmpty) return;
+    _activeCheckinId = activeId;
+    _activeCheckinVenueId = active.activeVenueId;
+    _loadingActiveCheckin = false;
+  }
+
+  void _startDeferredInitialLoads() {
+    unawaited(_loadVenueDetails());
+    unawaited(_loadActiveCheckin());
+    unawaited(_loadEnrichedVenueData());
+    unawaited(_checkProximity(useFreshGps: false));
+
+    if (_checkinCountActive == null &&
+        (_checkinCountMale == null || _checkinCountFemale == null)) {
+      unawaited(_refreshCheckinStats());
+    }
+
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      unawaited(_loadHeaderStories());
+    });
+    Future.delayed(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+      unawaited(_loadAnonymousStatus());
+    });
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      unawaited(_checkProximity(useFreshGps: true));
+    });
+  }
+
+  /// Gerçek venue'lerde kullanıcının fiziksel olarak mekânda olup olmadığını
+  /// kontrol eder — check-in butonu SADECE bu doğrulandıktan sonra aktif olur.
+  /// Alpha/Beta test venue'lerinde (isTestVenue) her zaman true döner, backend
+  /// mesafe kontrolünü zaten atlıyor.
+  ///
+  /// Hız için önce cihazda önbelleğe alınmış son konum (getLastKnownPosition,
+  /// neredeyse anında döner) kullanılıp buton hemen karar veriyor; ardından
+  /// arka planda taze bir GPS okumasıyla (5sn sınırlı) sonuç sessizce doğrulanıyor.
+  Future<void> _checkProximity({required bool useFreshGps}) async {
+    if (_enrichedVenueData?['isTestVenue'] == true) return;
+    if (!widget.venue.latitude.isFinite || !widget.venue.longitude.isFinite) {
+      if (mounted) setState(() => _checkingProximity = false);
+      return;
+    }
+
+    try {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) _applyProximityResult(lastKnown);
+    } catch (_) {}
+
+    if (!useFreshGps) {
+      if (mounted && _checkingProximity) {
+        setState(() => _checkingProximity = false);
+      }
+      return;
+    }
+
+    try {
+      final fresh = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+      _applyProximityResult(fresh);
+    } catch (_) {
+      // Konum alınamadı/zaman aşımı — hâlâ "checking" ise pasif göster,
+      // sunucu zaten check-in anında kesin kontrolü yapacak.
+      if (mounted && _checkingProximity) {
+        setState(() => _checkingProximity = false);
+      }
+    }
+  }
+
+  void _applyProximityResult(Position position) {
+    if (!mounted) return;
+    if (_enrichedVenueData?['isTestVenue'] == true) return;
+    final distance = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      widget.venue.latitude,
+      widget.venue.longitude,
+    );
+    setState(() {
+      _isNearVenue = distance <= _kCheckinMaxDistanceMeters;
+      _checkingProximity = false;
+    });
   }
 
   void _showAnonymousStoryBlockedDialog() {
@@ -127,16 +226,20 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         fullName: widget.venue.name,
         photo: widget.venue.photoUrl.isNotEmpty ? widget.venue.photoUrl : null,
       ),
-      stories: _headerStories.map((s) => StoryItem(
-        id: s.id,
-        mediaUrl: s.mediaUrl,
-        mediaType: s.mediaType,
-        thumbnailUrl: s.thumbnailUrl,
-        durationSecs: s.durationSecs,
-        expiresAt: s.expiresAt,
-        createdAt: s.createdAt,
-        viewCount: s.viewCount,
-      )).toList(),
+      stories: _headerStories
+          .map(
+            (s) => StoryItem(
+              id: s.id,
+              mediaUrl: s.mediaUrl,
+              mediaType: s.mediaType,
+              thumbnailUrl: s.thumbnailUrl,
+              durationSecs: s.durationSecs,
+              expiresAt: s.expiresAt,
+              createdAt: s.createdAt,
+              viewCount: s.viewCount,
+            ),
+          )
+          .toList(),
     );
     Navigator.push<StoryViewerResult>(
       context,
@@ -149,14 +252,23 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
           onClose: (lastIndex, allFinished) {
             final justViewed = allFinished
                 ? _headerStories.map((s) => s.id).toSet()
-                : { for (int i = 0; i <= lastIndex && i < _headerStories.length; i++) _headerStories[i].id };
+                : {
+                    for (
+                      int i = 0;
+                      i <= lastIndex && i < _headerStories.length;
+                      i++
+                    )
+                      _headerStories[i].id,
+                  };
             final cache = VenueStoryViewedCache.instance;
             justViewed.forEach(cache.mark);
             if (!mounted) return;
             setState(() {
               _headerStories = [
                 for (final s in _headerStories)
-                  (s.viewedByMe || justViewed.contains(s.id)) ? s.copyWith(viewedByMe: true) : s,
+                  (s.viewedByMe || justViewed.contains(s.id))
+                      ? s.copyWith(viewedByMe: true)
+                      : s,
               ];
             });
           },
@@ -182,7 +294,13 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     try {
       final data = await _venueContextRepo.getVenueById(widget.venue.id);
       if (!mounted) return;
-      setState(() => _enrichedVenueData = data);
+      setState(() {
+        _enrichedVenueData = data;
+        if (data['isTestVenue'] == true) {
+          _isNearVenue = true;
+          _checkingProximity = false;
+        }
+      });
     } catch (e) {
       debugPrint('⚠️ Could not load enriched venue data: $e');
     }
@@ -193,7 +311,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       final placeId = widget.venue.placeId;
 
       if (placeId == null || placeId.isEmpty) {
-        setState(() => _loadingDetails = false);
         return;
       }
 
@@ -203,12 +320,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
       setState(() {
         _venueDetails = data;
-        _loadingDetails = false;
       });
     } catch (e) {
       debugPrint('❌ Error loading venue details: $e');
-      if (!mounted) return;
-      setState(() => _loadingDetails = false);
     }
   }
 
@@ -353,7 +467,18 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       );
 
       // Check-in tamamlandıysa → who's here sayfasına direkt geç.
-      if (mounted && ActiveCheckinService().isCheckedInAt(resolvedVenueId)) {
+      final active = ActiveCheckinService();
+      if (mounted && active.isCheckedInAt(resolvedVenueId)) {
+        // Buton durumunu re-fetch yarışına bırakmadan hemen "Who's here?"e
+        // çevir — who's-here'den geri dönünce "Check in" gösterme bug'ını önler.
+        if (mounted) {
+          setState(() {
+            _activeCheckinId = active.activeCheckinId;
+            _activeCheckinVenueId = active.activeVenueId ?? resolvedVenueId;
+            _resolvedVenueIdForCurrentDetail = resolvedVenueId;
+            _loadingActiveCheckin = false;
+          });
+        }
         await Navigator.push(
           context,
           MaterialPageRoute(
@@ -385,6 +510,70 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     }
   }
 
+  /// Zaten bu venue'da aktif check-in varsa mesafe kontrolü uygulanmaz
+  /// (kullanıcı zaten orada, sadece "Who's here?"e gidiyor). Yeni check-in
+  /// için buton SADECE konum doğrulanıp venue'nün 200m içinde olduğu
+  /// kesinleşince aktif olur — doğrulanana kadar ve venue dışındaysa pasif
+  /// kalır, "You're not at this venue" yazar.
+  Widget _buildCheckinButton(bool hasActiveCheckinHere) {
+    final notVerifiedYet = !hasActiveCheckinHere && _isNearVenue != true;
+    final disabled =
+        _loadingActiveCheckin || _resolvingVenueForCheckin || notVerifiedYet;
+
+    String? label;
+    if (_resolvingVenueForCheckin) {
+      label = null; // spinner gösterilir, metin yok
+    } else if (hasActiveCheckinHere) {
+      label = "Who's here?";
+    } else if (_checkingProximity) {
+      label = 'Checking your location...';
+    } else if (_isNearVenue != true) {
+      label = "You're not at this venue";
+    } else {
+      label = 'Check in';
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        style: notVerifiedYet
+            ? OutlinedButton.styleFrom(
+                disabledForegroundColor: Colors.grey.shade600,
+                disabledBackgroundColor: Colors.grey.shade200,
+                side: BorderSide(color: Colors.grey.shade300),
+              )
+            : null,
+        onPressed: disabled
+            ? null
+            : () async {
+                if (hasActiveCheckinHere) {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => VenuePeoplePage(
+                        venue: widget.venue,
+                        listVenueId:
+                            _activeCheckinVenueId ??
+                            _resolvedVenueIdForCurrentDetail,
+                      ),
+                    ),
+                  );
+                  _refreshCheckinStats();
+                  return;
+                }
+                await _openCheckinFlow();
+              },
+        child: _resolvingVenueForCheckin
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Text(label!),
+      ),
+    );
+  }
+
   Future<void> _openAddStory() async {
     final checkinId = _activeCheckinId;
     if (checkinId == null) return;
@@ -393,10 +582,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // just-toggled state isn't missed.
     try {
       final me = await AuthRepository().getMe(forceRefresh: true);
+      if (!mounted) return;
       final anon = me['isAnonymous'] == true;
-      if (mounted && _isAnonymous != anon) setState(() => _isAnonymous = anon);
+      if (_isAnonymous != anon) setState(() => _isAnonymous = anon);
       if (anon) {
-        if (mounted) _showAnonymousStoryBlockedDialog();
+        _showAnonymousStoryBlockedDialog();
         return;
       }
     } catch (_) {}
@@ -413,7 +603,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
     // Determine media type from extension.
     final filePath = file.path;
-    final isVideo = filePath.endsWith('.mp4') ||
+    final isVideo =
+        filePath.endsWith('.mp4') ||
         filePath.endsWith('.mov') ||
         filePath.endsWith('.avi');
     final mediaType = isVideo ? 'video' : 'photo';
@@ -450,8 +641,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       debugPrint('❌ Story upload error: $e\n$st');
       if (!mounted) return;
       setState(() => _storyUploading = false);
-      await showPremiumErrorDialog(context,
-          message: 'Upload failed: $e');
+      await showPremiumErrorDialog(context, message: 'Upload failed: $e');
     }
   }
 
@@ -576,82 +766,85 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               ),
             ),
             child: Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? colors.surface
-                  : colors.primary.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: colors.outline.withValues(alpha: 0.18),
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? colors.surface
+                    : colors.primary.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: colors.outline.withValues(alpha: 0.18),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Builder(
+                    builder: (_) {
+                      final imgUrl = event.photos.isNotEmpty
+                          ? event.photos.first
+                          : event.photo;
+                      return imgUrl != null && imgUrl.isNotEmpty
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                imgUrl,
+                                width: 48,
+                                height: 48,
+                                fit: BoxFit.cover,
+                                errorBuilder: (ctx, err, st) =>
+                                    _eventIconPlaceholder(colors),
+                              ),
+                            )
+                          : _eventIconPlaceholder(colors);
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.title,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          event.formattedDate,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (event.priceAed != null)
+                    Text(
+                      '${event.priceAed} AED',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: colors.primary,
+                      ),
+                    )
+                  else
+                    Text(
+                      'Free',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade600,
+                      ),
+                    ),
+                ],
               ),
             ),
-            child: Row(
-              children: [
-                Builder(builder: (_) {
-                  final imgUrl = event.photos.isNotEmpty
-                      ? event.photos.first
-                      : event.photo;
-                  return imgUrl != null && imgUrl.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            imgUrl,
-                            width: 48,
-                            height: 48,
-                            fit: BoxFit.cover,
-                            errorBuilder: (ctx, err, st) => _eventIconPlaceholder(colors),
-                          ),
-                        )
-                      : _eventIconPlaceholder(colors);
-                }),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        event.title,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        event.formattedDate,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.onSurface.withValues(alpha: 0.55),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (event.priceAed != null)
-                  Text(
-                    '${event.priceAed} AED',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: colors.primary,
-                    ),
-                  )
-                else
-                  Text(
-                    'Free',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green.shade600,
-                    ),
-                  ),
-              ],
-            ),
-          ),
           ), // GestureDetector
         ),
       ],
@@ -718,12 +911,21 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     return '${v.address} ${v.city}'.trim().isNotEmpty;
   }
 
+  String _safeDisplayPhotoUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty || _isGooglePlacePhotoUrl(trimmed)) {
+      return 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
+    }
+    return trimmed;
+  }
+
   Future<void> _openDirections() async {
     final v = widget.venue;
     final hasLatLng = _hasValidLatLng(v);
     final placeId = v.placeId?.trim();
-    final labelQuery =
-        '${v.name} ${v.address} ${v.city}'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final labelQuery = '${v.name} ${v.address} ${v.city}'
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
     final latLng = hasLatLng ? '${v.latitude},${v.longitude}' : '';
     final destinationForUrl = labelQuery.isNotEmpty ? labelQuery : latLng;
     final destinationForApp = labelQuery.isNotEmpty ? labelQuery : latLng;
@@ -772,10 +974,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     for (final uri in launchOrder) {
       try {
         if (!await canLaunchUrl(uri)) continue;
-        await launchUrl(
-          uri,
-          mode: LaunchMode.externalApplication,
-        );
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
         return;
       } catch (_) {
         // Try next fallback uri.
@@ -841,273 +1040,273 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   // Space reserved for the floating back button
                   const SizedBox(height: 52),
 
-              /// HEADER
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _VenueDetailAvatarRing(
-                    photoUrl: widget.venue.photoUrl,
-                    hasStories: _headerStories.isNotEmpty,
-                    allSeen: _headerStories.isNotEmpty && _headerStories.every((s) => s.viewedByMe),
-                    onTap: _headerStories.isNotEmpty ? _openStoryViewer : null,
+                  /// HEADER
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _VenueDetailAvatarRing(
+                        photoUrl: widget.venue.photoUrl,
+                        hasStories: _headerStories.isNotEmpty,
+                        allSeen:
+                            _headerStories.isNotEmpty &&
+                            _headerStories.every((s) => s.viewedByMe),
+                        onTap: _headerStories.isNotEmpty
+                            ? _openStoryViewer
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          widget.venue.name,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      widget.venue.name,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
+
+                  const SizedBox(height: 4),
+
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.venue.status,
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      if (_displayCheckinTotal != null) ...[
+                        const SizedBox(width: 12),
+                        _headerCount(
+                          Icons.people_rounded,
+                          '$_displayCheckinTotal',
+                        ),
+                        ..._headerGenderPcts(),
+                      ],
+                    ],
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  /// STORY TRAY — başlık altında, cover image üstünde
+                  if (_resolvedVenueIdForCurrentDetail != null)
+                    StoryTray(
+                      key: ValueKey(
+                        '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
+                      ),
+                      venueId: _resolvedVenueIdForCurrentDetail!,
+                      isUploading: _storyUploading,
+                      onAddStory: hasActiveCheckinHere ? _openAddStory : null,
+                      anonymousLocked: _isAnonymous,
+                    ),
+
+                  const SizedBox(height: 8),
+
+                  /// COVER IMAGE
+                  Container(
+                    height: 220,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      image: DecorationImage(
+                        image: NetworkImage(
+                          _safeDisplayPhotoUrl(widget.venue.photoUrl),
+                        ),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.35),
+                            Colors.transparent,
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ],
-              ),
 
-              const SizedBox(height: 4),
+                  const SizedBox(height: 12),
 
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
+                  // Tag alanini simdilik gizliyoruz.
+
+                  /// ADDRESS
                   Text(
-                    widget.venue.status,
+                    _venueDetails?['address'] ?? widget.venue.address,
                     style: const TextStyle(color: Colors.grey),
                   ),
-                  if (_displayCheckinTotal != null) ...[
-                    const SizedBox(width: 12),
-                    _headerCount(Icons.people_rounded, '$_displayCheckinTotal'),
-                    ..._headerGenderPcts(),
-                  ],
-                ],
-              ),
+                  const SizedBox(height: 6),
 
-              const SizedBox(height: 8),
-
-              /// STORY TRAY — başlık altında, cover image üstünde
-              if (_resolvedVenueIdForCurrentDetail != null)
-                StoryTray(
-                  key: ValueKey('${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount'),
-                  venueId: _resolvedVenueIdForCurrentDetail!,
-                  isUploading: _storyUploading,
-                  onAddStory: hasActiveCheckinHere ? _openAddStory : null,
-                  anonymousLocked: _isAnonymous,
-                ),
-
-              const SizedBox(height: 8),
-
-              /// COVER IMAGE
-              Container(
-                height: 220,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  image: DecorationImage(
-                    image: NetworkImage(
-                      widget.venue.photoUrl.isNotEmpty
-                          ? widget.venue.photoUrl
-                          : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
+                  /// CHECK-IN STATS — counts now live in the header line under the
+                  /// venue name; only surface an invite when nobody's checked in.
+                  if (_displayCheckinTotal == null &&
+                      !_loadingCheckinStats) ...[
+                    Text(
+                      'Be the first to check in.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.72),
+                      ),
                     ),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.35),
-                        Colors.transparent,
+                    const SizedBox(height: 10),
+                  ],
+
+                  /// 🟢 OPEN STATUS
+                  if (opening != null)
+                    Text(
+                      isOpen ? 'Open now' : 'Closed',
+                      style: TextStyle(
+                        color: isOpen ? Colors.green : Colors.red,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+
+                  /// 🕐 TODAY HOURS
+                  if (weekdayText != null && weekdayText.isNotEmpty)
+                    Text(
+                      weekdayText[DateTime.now().weekday - 1],
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  if (_venueDetails?['rating'] != null)
+                    Row(
+                      children: [
+                        const Icon(Icons.star, color: Colors.amber, size: 16),
+                        const SizedBox(width: 4),
+                        Text(_venueDetails!['rating'].toStringAsFixed(1)),
                       ],
                     ),
-                  ),
-                ),
-              ),
 
-              const SizedBox(height: 12),
+                  const SizedBox(height: 8),
 
-              // Tag alanini simdilik gizliyoruz.
-
-              /// ADDRESS
-              Text(
-                _venueDetails?['address'] ?? widget.venue.address,
-                style: const TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 6),
-
-              /// CHECK-IN STATS — counts now live in the header line under the
-              /// venue name; only surface an invite when nobody's checked in.
-              if (_displayCheckinTotal == null && !_loadingCheckinStats) ...[
-                Text(
-                  'Be the first to check in.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.72),
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
-
-              /// 🟢 OPEN STATUS
-              if (opening != null)
-                Text(
-                  isOpen ? 'Open now' : 'Closed',
-                  style: TextStyle(
-                    color: isOpen ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-
-              /// 🕐 TODAY HOURS
-              if (weekdayText != null && weekdayText.isNotEmpty)
-                Text(
-                  weekdayText[DateTime.now().weekday - 1],
-                  style: const TextStyle(color: Colors.grey),
-                ),
-              if (_venueDetails?['rating'] != null)
-                Row(
-                  children: [
-                    const Icon(Icons.star, color: Colors.amber, size: 16),
-                    const SizedBox(width: 4),
-                    Text(_venueDetails!['rating'].toStringAsFixed(1)),
-                  ],
-                ),
-
-              const SizedBox(height: 8),
-
-              TextButton.icon(
-                onPressed: _canOpenDirections ? () => _openDirections() : null,
-                style: TextButton.styleFrom(foregroundColor: AppTheme.brandPrimary),
-                icon: const Icon(Icons.map),
-                label: const Text('Get Directions'),
-              ),
-
-              /// DESCRIPTION
-              if (_enrichedVenueData?['description'] != null &&
-                  (_enrichedVenueData!['description'] as String).isNotEmpty) ...[
-                const SizedBox(height: 16),
-                _buildDescriptionSection(
-                  _enrichedVenueData!['description'] as String,
-                ),
-              ],
-
-              /// GALLERY (yatay şerit — boşsa kendini gizler)
-              if (widget.venue.isInDb && widget.venue.id.isNotEmpty)
-                VenueGalleryStrip(venueId: widget.venue.id),
-
-              /// UPCOMING EVENTS
-              if (_enrichedVenueData?['upcomingEvents'] is List &&
-                  (_enrichedVenueData!['upcomingEvents'] as List).isNotEmpty) ...[
-                const SizedBox(height: 16),
-                _buildUpcomingEventsSection(
-                  (_enrichedVenueData!['upcomingEvents'] as List)
-                      .whereType<Map>()
-                      .map((e) => VenueUpcomingEvent.fromJson(
-                            Map<String, dynamic>.from(e),
-                          ))
-                      .toList(),
-                ),
-              ],
-
-              const SizedBox(height: 24),
-
-              /// WHO'S HERE / CHECK IN
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: _loadingActiveCheckin || _resolvingVenueForCheckin
-                      ? null
-                      : () async {
-                          if (hasActiveCheckinHere) {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VenuePeoplePage(
-                                  venue: widget.venue,
-                                  listVenueId:
-                                      _activeCheckinVenueId ??
-                                      _resolvedVenueIdForCurrentDetail,
-                                ),
+                  // Get Directions + Check-in yan yana — kullanıcı check-in
+                  // yapmak / "Who's here?" için sayfanın en altına inmek
+                  // zorunda kalmasın.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _canOpenDirections
+                              ? () => _openDirections()
+                              : null,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.brandPrimary,
+                            backgroundColor: Colors.transparent,
+                            side: BorderSide(
+                              color: AppTheme.brandPrimary.withValues(
+                                alpha: 0.5,
                               ),
-                            );
-                            _refreshCheckinStats();
-                            return;
-                          }
-                          await _openCheckinFlow();
-                        },
-                  child: Text(
-                    _resolvingVenueForCheckin
-                        ? 'Preparing venue...'
-                        : hasActiveCheckinHere
-                        ? "Who's here?"
-                        : "Check in",
+                            ),
+                          ),
+                          icon: const Icon(Icons.map, size: 18),
+                          label: const Text('Get Directions'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _buildCheckinButton(hasActiveCheckinHere),
+                      ),
+                    ],
                   ),
-                ),
-              ),
 
-              /// CHECK OUT — sadece bu venue'da aktif check-in varken görünür
-              if (hasActiveCheckinHere) ...[
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: _checkingOut
-                        ? null
-                        : () async {
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('Check out?'),
-                                content: const Text(
-                                  'You will leave this venue and your check-in will end.',
+                  /// CHECK OUT — sadece bu venue'da aktif check-in varken görünür
+                  if (hasActiveCheckinHere) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: _checkingOut
+                            ? null
+                            : () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Check out?'),
+                                    content: const Text(
+                                      'You will leave this venue and your check-in will end.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: const Text('Check out'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed == true) await _checkout();
+                              },
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                        ),
+                        child: _checkingOut
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
                                 ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(ctx, false),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(ctx, true),
-                                    child: const Text('Check out'),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (confirmed == true) await _checkout();
-                          },
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
+                              )
+                            : const Text('Check out'),
+                      ),
                     ),
-                    child: _checkingOut
-                        ? const SizedBox(
-                            height: 16,
-                            width: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Check out'),
-                  ),
-                ),
-              ],
-                ],       // Column children
-              ),         // Column
-            ),           // SingleChildScrollView
-          ),             // SafeArea
+                  ],
 
+                  /// DESCRIPTION
+                  if (_enrichedVenueData?['description'] != null &&
+                      (_enrichedVenueData!['description'] as String)
+                          .isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _buildDescriptionSection(
+                      _enrichedVenueData!['description'] as String,
+                    ),
+                  ],
+
+                  /// GALLERY (yatay şerit — boşsa kendini gizler)
+                  if (widget.venue.isInDb && widget.venue.id.isNotEmpty)
+                    VenueGalleryStrip(venueId: widget.venue.id),
+
+                  /// UPCOMING EVENTS
+                  if (_enrichedVenueData?['upcomingEvents'] is List &&
+                      (_enrichedVenueData!['upcomingEvents'] as List)
+                          .isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _buildUpcomingEventsSection(
+                      (_enrichedVenueData!['upcomingEvents'] as List)
+                          .whereType<Map>()
+                          .map(
+                            (e) => VenueUpcomingEvent.fromJson(
+                              Map<String, dynamic>.from(e),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
+                ], // Column children
+              ), // Column
+            ), // SingleChildScrollView
+          ), // SafeArea
           // ── Floating back button — always visible regardless of scroll ──
           Positioned(
             top: 0,
@@ -1119,8 +1318,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   color: Colors.black.withValues(alpha: 0.32),
                   shape: const CircleBorder(),
                   child: IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new,
-                        color: Colors.white, size: 18),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                     onPressed: () => Navigator.pop(context),
                     tooltip: 'Back',
                   ),
@@ -1128,8 +1330,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               ),
             ),
           ),
-        ],   // Stack children
-      ),     // Stack
+        ], // Stack children
+      ), // Stack
     );
   }
 }
@@ -1164,13 +1366,16 @@ class _VenueDetailAvatarRing extends StatelessWidget {
     const gap = 2.0;
     const totalSize = avatarSize + (ringWidth + gap) * 2;
 
-    final photo = photoUrl.isNotEmpty
-        ? photoUrl
-        : 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
+    final photo = _safeVenueDetailPhotoUrl(photoUrl);
 
     final avatar = ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: Image.network(photo, width: avatarSize, height: avatarSize, fit: BoxFit.cover),
+      child: Image.network(
+        photo,
+        width: avatarSize,
+        height: avatarSize,
+        fit: BoxFit.cover,
+      ),
     );
 
     if (!hasStories) return avatar;
@@ -1194,7 +1399,11 @@ class _VenueDetailAvatarRing extends StatelessWidget {
             ),
             Positioned.fill(
               child: CustomPaint(
-                painter: _DetailRingPainter(colors: ringColors, strokeWidth: ringWidth, radius: 10),
+                painter: _DetailRingPainter(
+                  colors: ringColors,
+                  strokeWidth: ringWidth,
+                  radius: 10,
+                ),
               ),
             ),
           ],
@@ -1209,20 +1418,45 @@ class _DetailRingPainter extends CustomPainter {
   final double strokeWidth;
   final double radius;
 
-  const _DetailRingPainter({required this.colors, required this.strokeWidth, required this.radius});
+  const _DetailRingPainter({
+    required this.colors,
+    required this.strokeWidth,
+    required this.radius,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(rect.deflate(strokeWidth / 2), Radius.circular(radius));
+    final rrect = RRect.fromRectAndRadius(
+      rect.deflate(strokeWidth / 2),
+      Radius.circular(radius),
+    );
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
-      ..shader = SweepGradient(colors: [...colors, colors.first]).createShader(rect);
+      ..shader = SweepGradient(
+        colors: [...colors, colors.first],
+      ).createShader(rect);
     canvas.drawRRect(rrect, paint);
   }
 
   @override
   bool shouldRepaint(covariant _DetailRingPainter old) =>
       old.colors != colors || old.strokeWidth != strokeWidth;
+}
+
+String _safeVenueDetailPhotoUrl(String url) {
+  final trimmed = url.trim();
+  if (trimmed.isEmpty || _isGooglePlacePhotoUrl(trimmed)) {
+    return 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
+  }
+  return trimmed;
+}
+
+bool _isGooglePlacePhotoUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  final host = uri.host.toLowerCase();
+  return host == 'maps.googleapis.com' &&
+      uri.path.contains('/maps/api/place/photo');
 }

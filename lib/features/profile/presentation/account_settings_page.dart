@@ -153,7 +153,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   }
 
   Future<void> _openPolicy(String path) async {
-    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
       await showPremiumErrorDialog(
@@ -295,8 +295,34 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       );
     }
 
+    final isDark = theme.brightness == Brightness.dark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kBorder = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFD9E1EA);
     return Scaffold(
-      appBar: AppBar(title: const Text('Accounts Center')),
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.onSurface),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: Text(
+          'Accounts Center',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(color: kBorder, height: 1),
+        ),
+      ),
       body: ListView(
         children: <Widget>[
           // ── Manage Accounts ──────────────────────────────────
@@ -508,7 +534,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 Icons.chevron_right_rounded,
                 color: colors.onSurface.withValues(alpha: 0.45),
               ),
-              onTap: () => _openPolicy('/legal/privacy'),
+              onTap: () => _openPolicy('/privacy'),
             ),
           ),
           premiumTile(
@@ -519,7 +545,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 Icons.chevron_right_rounded,
                 color: colors.onSurface.withValues(alpha: 0.45),
               ),
-              onTap: () => _openPolicy('/legal/terms'),
+              onTap: () => _openPolicy('/terms'),
             ),
           ),
           premiumTile(

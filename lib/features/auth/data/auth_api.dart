@@ -206,6 +206,27 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> loginWithApple({
+    required String identityToken,
+    String? fullName,
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
+  }) async {
+    final body = <String, dynamic>{
+      'identityToken': identityToken,
+      if (fullName != null && fullName.isNotEmpty) 'fullName': fullName,
+      if (consentGiven != null) 'consentGiven': consentGiven,
+      if (termsVersionId != null) 'termsVersionId': termsVersionId,
+      if (privacyVersionId != null) 'privacyVersionId': privacyVersionId,
+      if (consentSource != null) 'consentSource': consentSource,
+    };
+    final res = await _client.post('/auth/apple', body: body);
+
+    return res as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> me({required String accessToken}) async {
     final res = await _client.get(
       '/auth/me',

@@ -18,6 +18,7 @@ import 'cluster_service.dart';
 import 'dart:math' as math;
 import 'venue_detail_page.dart';
 import 'venue_checkin_stats_row.dart';
+import 'venue_list_item.dart';
 
 class VenueMapView extends StatefulWidget {
   final bool hideSearch;
@@ -26,6 +27,12 @@ class VenueMapView extends StatefulWidget {
   final ValueChanged<bool>? onSearchActivityChanged;
   final ValueChanged<Venue>? onVenueDetailClosed;
   final List<Venue> venues;
+  final List<Venue> listVenues;
+  final bool loadingVenues;
+  final bool loadingMoreVenues;
+  final bool hasMoreVenues;
+  final VoidCallback? onLoadMoreVenues;
+  final ValueChanged<String?>? onBrowseKeywordChanged;
   final String? selectedVenueId;
   final ValueChanged<Venue>? onVenueTap;
 
@@ -37,6 +44,12 @@ class VenueMapView extends StatefulWidget {
     this.onSearchActivityChanged,
     this.onVenueDetailClosed,
     this.venues = const [],
+    this.listVenues = const [],
+    this.loadingVenues = false,
+    this.loadingMoreVenues = false,
+    this.hasMoreVenues = false,
+    this.onLoadMoreVenues,
+    this.onBrowseKeywordChanged,
     this.selectedVenueId,
     this.onVenueTap,
   });
@@ -54,6 +67,8 @@ class _VenueMapViewState extends State<VenueMapView> {
       VenueContextRepository();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  final DraggableScrollableController _resultsSheetController =
+      DraggableScrollableController();
 
   LatLng? _currentLocation;
   GoogleMapController? _mapController;
@@ -82,6 +97,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   String? _searchError;
   List<Venue> _searchResults = const [];
   List<_PlaceSuggestion> _placeSuggestions = const [];
+  List<_CategoryAreaSuggestion> _categoryAreaSuggestions = const [];
 
   /// Last venue chosen from type search — shown as a normal map pin if not already on the map.
   Venue? _selectedSearchVenue;
@@ -111,6 +127,622 @@ class _VenueMapViewState extends State<VenueMapView> {
     'apartment',
     'residential_apartment',
   };
+
+  // ── Harita filtreleri ──────────────────────────────────────────────────────
+  /// Seçili kategoriler (venue.type): restaurant/cafe/bar/club/lounge. Boş = tümü.
+  final Set<String> _selectedCategories = <String>{};
+
+  /// Seçili external partnership platformları. Boş = filtre yok.
+  final Set<String> _selectedPartnerships = <String>{};
+
+  String? _selectedCuisineKeyword;
+  String? _selectedCuisineLabel;
+  bool _busyNowOnly = false;
+  bool _openNowOnly = false;
+  double? _minRating; // 4.0 / 4.5 / null
+  int? _maxDistanceMeters; // 1000 / 5000 / 10000 / null
+  bool _showResultsSheet = true;
+  bool _resultsSheetExpanded = false;
+
+  static const double _resultsSheetMinSize = 0.18;
+  static const double _resultsSheetInitialSize = 0.48;
+  static const double _resultsSheetMaxSize = 0.94;
+
+  static const List<({String key, String label, IconData icon})>
+  _categoryOptions = [
+    (key: 'restaurant', label: 'Restaurants', icon: Icons.restaurant_rounded),
+    (key: 'cafe', label: 'Cafes', icon: Icons.local_cafe_rounded),
+    (key: 'bar', label: 'Bars', icon: Icons.local_bar_rounded),
+    (key: 'club', label: 'Nightclubs', icon: Icons.nightlife_rounded),
+    (key: 'lounge', label: 'Lounges', icon: Icons.weekend_rounded),
+  ];
+
+  static const List<({String keyword, String label, IconData icon})>
+  _cuisineOptions = [
+    (keyword: 'pizza', label: 'Pizza', icon: Icons.local_pizza_rounded),
+    (keyword: 'sushi', label: 'Sushi', icon: Icons.set_meal_rounded),
+    (keyword: 'burger', label: 'Burger', icon: Icons.lunch_dining_rounded),
+    (
+      keyword: 'breakfast',
+      label: 'Breakfast',
+      icon: Icons.free_breakfast_rounded,
+    ),
+    (keyword: 'dessert', label: 'Dessert', icon: Icons.icecream_rounded),
+    (keyword: 'steak', label: 'Steak', icon: Icons.dinner_dining_rounded),
+    (keyword: 'seafood', label: 'Seafood', icon: Icons.set_meal_rounded),
+  ];
+
+  static const List<({String key, String label})> _partnershipOptions = [
+    (key: 'THE_ENTERTAINER', label: 'The Entertainer'),
+    (key: 'FAZAA', label: 'Fazaa'),
+    (key: 'ESAAD', label: 'ESAAD'),
+    (key: 'COBONE', label: 'Cobone'),
+    (key: 'GROUPON', label: 'Groupon'),
+    (key: 'OTHER', label: 'Other'),
+  ];
+
+  bool get _hasActiveFilters =>
+      _selectedCategories.isNotEmpty ||
+      _selectedPartnerships.isNotEmpty ||
+      _selectedCuisineKeyword != null ||
+      _busyNowOnly ||
+      _openNowOnly ||
+      _minRating != null ||
+      _maxDistanceMeters != null;
+
+  bool get _hasBrowseContext =>
+      _hasActiveFilters || _searchController.text.trim().isNotEmpty;
+
+  /// Kullanıcı filtrelerini tek bir venue'ye uygular.
+  bool _passesUserFilters(Venue v) {
+    if (_selectedCategories.isNotEmpty) {
+      final normalizedTypes = _normalizedVenueTypes(v);
+      if (!normalizedTypes.any(_selectedCategories.contains)) return false;
+    }
+    if (_busyNowOnly) {
+      if ((v.checkinCountActive ?? 0) <= 0) return false;
+    }
+    if (_openNowOnly) {
+      if (v.openNow != true) return false;
+    }
+    if (_minRating != null) {
+      final r = v.rating;
+      if (r == null || r < _minRating!) return false;
+    }
+    if (_maxDistanceMeters != null) {
+      final d = v.distanceMeters;
+      if (d == null || d > _maxDistanceMeters!) return false;
+    }
+    if (_selectedPartnerships.isNotEmpty) {
+      if (!v.partnershipPlatforms.any(_selectedPartnerships.contains)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _onFiltersChanged() {
+    setState(() {});
+    _recomputeClusters(force: true);
+  }
+
+  void _clearAllFilters() {
+    setState(() {
+      _selectedCategories.clear();
+      _selectedPartnerships.clear();
+      _selectedCuisineKeyword = null;
+      _selectedCuisineLabel = null;
+      _busyNowOnly = false;
+      _openNowOnly = false;
+      _minRating = null;
+      _maxDistanceMeters = null;
+      _searchController.clear();
+    });
+    widget.onBrowseKeywordChanged?.call(null);
+    _recomputeClusters(force: true);
+  }
+
+  // ── Kategori chip satırı ───────────────────────────────────────────────────
+  Widget _buildFilterChipsRow() {
+    return SizedBox(
+      height: 34,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        children: [
+          if (_hasActiveFilters)
+            _FilterChip(
+              icon: Icons.close_rounded,
+              label: 'Clear',
+              selected: false,
+              accent: Colors.redAccent,
+              onTap: _clearAllFilters,
+            ),
+          _FilterChip(
+            icon: Icons.local_fire_department_rounded,
+            label: 'Busy now',
+            selected: _busyNowOnly,
+            accent: AppTheme.brandPrimary,
+            onTap: _openBusyResults,
+          ),
+          for (final option in _categoryOptions)
+            _FilterChip(
+              icon: option.icon,
+              label: option.label,
+              selected:
+                  _selectedCategories.length == 1 &&
+                  _selectedCategories.contains(option.key),
+              onTap: () => _openCategoryResults(option.key),
+            ),
+          for (final option in _cuisineOptions)
+            _FilterChip(
+              icon: option.icon,
+              label: option.label,
+              selected: _selectedCuisineKeyword == option.keyword,
+              onTap: () => _openCuisineResults(option.keyword, option.label),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _openBusyResults() {
+    setState(() {
+      _selectedCategories.clear();
+      _selectedCuisineKeyword = null;
+      _selectedCuisineLabel = null;
+      _busyNowOnly = true;
+      _showResultsSheet = true;
+      _showSearchResults = false;
+      _searchController.text = 'Busy now';
+      _searchController.selection = TextSelection.collapsed(
+        offset: _searchController.text.length,
+      );
+    });
+    widget.onBrowseKeywordChanged?.call(null);
+    _onFiltersChanged();
+  }
+
+  void _openCategoryResults(String categoryKey) {
+    final label = _categoryLabelForKey(categoryKey);
+    setState(() {
+      _busyNowOnly = false;
+      _selectedCuisineKeyword = null;
+      _selectedCuisineLabel = null;
+      _selectedCategories
+        ..clear()
+        ..add(categoryKey);
+      _showResultsSheet = true;
+      _showSearchResults = false;
+      _searchController.text = label;
+      _searchController.selection = TextSelection.collapsed(
+        offset: _searchController.text.length,
+      );
+    });
+    widget.onBrowseKeywordChanged?.call(null);
+    _onFiltersChanged();
+  }
+
+  void _openCuisineResults(String keyword, String label) {
+    _searchDebounce?.cancel();
+    setState(() {
+      _busyNowOnly = false;
+      _selectedCategories.clear();
+      _selectedCuisineKeyword = keyword;
+      _selectedCuisineLabel = label;
+      _showResultsSheet = true;
+      _showSearchResults = false;
+      _searchError = null;
+      _searchLoading = false;
+      _searchResults = const [];
+      _placeSuggestions = const [];
+      _categoryAreaSuggestions = const [];
+      _selectedSearchVenue = null;
+      _searchController.text = label;
+      _searchController.selection = TextSelection.collapsed(
+        offset: _searchController.text.length,
+      );
+    });
+    widget.onBrowseKeywordChanged?.call(keyword);
+    _notifySearchActivity();
+    _recomputeClusters(force: true);
+  }
+
+  void _closeResultsSheet() {
+    if (_hasBrowseContext) {
+      _clearSearchAndFilters();
+      return;
+    }
+    _collapseResultsSheet();
+  }
+
+  void _collapseResultsSheet() {
+    _closeSearchPanel();
+    if (!_showResultsSheet) {
+      setState(() => _showResultsSheet = true);
+    }
+    if (_resultsSheetController.isAttached) {
+      _resultsSheetController.animateTo(
+        _resultsSheetMinSize,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  void _clearSearchAndFilters() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _selectedCategories.clear();
+      _selectedPartnerships.clear();
+      _selectedCuisineKeyword = null;
+      _selectedCuisineLabel = null;
+      _busyNowOnly = false;
+      _openNowOnly = false;
+      _minRating = null;
+      _maxDistanceMeters = null;
+      _searchLoading = false;
+      _searchError = null;
+      _searchResults = const [];
+      _placeSuggestions = const [];
+      _categoryAreaSuggestions = const [];
+      _selectedSearchVenue = null;
+      _showSearchResults = false;
+      _showResultsSheet = true;
+    });
+    widget.onBrowseKeywordChanged?.call(null);
+    _notifySearchActivity();
+    _recomputeClusters(force: true);
+    if (_resultsSheetController.isAttached) {
+      _resultsSheetController.animateTo(
+        _resultsSheetInitialSize,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  String get _resultsTitle {
+    if (_selectedCuisineLabel != null) return _selectedCuisineLabel!;
+    if (_busyNowOnly && _selectedCategories.isEmpty) return 'Busy now';
+    if (_selectedCategories.length == 1) {
+      final key = _selectedCategories.first;
+      for (final option in _categoryOptions) {
+        if (option.key == key) return option.label;
+      }
+    }
+    return 'Nearby venues';
+  }
+
+  String _categoryLabelForKey(String key) {
+    for (final option in _categoryOptions) {
+      if (option.key == key) return option.label;
+    }
+    return 'Nearby venues';
+  }
+
+  IconData _categoryIconForKey(String key) {
+    for (final option in _categoryOptions) {
+      if (option.key == key) return option.icon;
+    }
+    return Icons.place_rounded;
+  }
+
+  String? _categoryKeyForQuery(String rawQuery) {
+    final normalized = rawQuery
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ');
+    switch (normalized) {
+      case 'restaurant':
+      case 'restaurants':
+        return 'restaurant';
+      case 'cafe':
+      case 'cafes':
+      case 'coffee':
+      case 'coffee shop':
+      case 'coffee shops':
+        return 'cafe';
+      case 'bar':
+      case 'bars':
+      case 'pub':
+      case 'pubs':
+        return 'bar';
+      case 'nightclub':
+      case 'nightclubs':
+      case 'night club':
+      case 'night clubs':
+      case 'club':
+      case 'clubs':
+        return 'club';
+      case 'lounge':
+      case 'lounges':
+        return 'lounge';
+    }
+    return null;
+  }
+
+  ({String keyword, String label})? _cuisineForQuery(String rawQuery) {
+    final normalized = rawQuery
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    for (final option in _cuisineOptions) {
+      if (normalized == option.keyword.toLowerCase() ||
+          normalized == option.label.toLowerCase()) {
+        return (keyword: option.keyword, label: option.label);
+      }
+    }
+    switch (normalized) {
+      case 'pizzeria':
+      case 'pizzaci':
+      case 'pizzacı':
+        return (keyword: 'pizza', label: 'Pizza');
+      case 'hamburger':
+      case 'burgers':
+        return (keyword: 'burger', label: 'Burger');
+      case 'kahvalti':
+      case 'kahvaltı':
+      case 'brunch':
+        return (keyword: 'breakfast', label: 'Breakfast');
+      case 'tatli':
+      case 'tatlı':
+      case 'desserts':
+        return (keyword: 'dessert', label: 'Dessert');
+      case 'fish':
+      case 'sea food':
+      case 'balik':
+      case 'balık':
+        return (keyword: 'seafood', label: 'Seafood');
+    }
+    return null;
+  }
+
+  _CategoryAreaQuery? _categoryAreaQueryForSearch(String rawQuery) {
+    final trimmed = rawQuery.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (trimmed.isEmpty) return null;
+    final lower = trimmed.toLowerCase();
+    for (final option in _categoryOptions) {
+      final variants = _categoryQueryVariants(option.key);
+      for (final variant in variants) {
+        if (lower == variant) return null;
+        if (lower.startsWith('$variant ')) {
+          final areaQuery = trimmed.substring(variant.length).trim();
+          if (areaQuery.length < 2) return null;
+          return _CategoryAreaQuery(
+            categoryKey: option.key,
+            categoryLabel: option.label,
+            areaQuery: areaQuery,
+          );
+        }
+      }
+    }
+    return null;
+  }
+
+  List<String> _categoryQueryVariants(String key) {
+    switch (key) {
+      case 'restaurant':
+        return const ['restaurant', 'restaurants'];
+      case 'cafe':
+        return const ['cafe', 'cafes', 'coffee', 'coffee shop', 'coffee shops'];
+      case 'bar':
+        return const ['bar', 'bars', 'pub', 'pubs'];
+      case 'club':
+        return const [
+          'nightclub',
+          'nightclubs',
+          'night club',
+          'night clubs',
+          'club',
+          'clubs',
+        ];
+      case 'lounge':
+        return const ['lounge', 'lounges'];
+    }
+    return const [];
+  }
+
+  String get _advancedFilterSummary {
+    final parts = <String>[];
+    if (_openNowOnly) parts.add('Open now');
+    if (_minRating != null) parts.add('${_minRating!.toStringAsFixed(1)}+');
+    if (_selectedPartnerships.isNotEmpty) {
+      parts.add('${_selectedPartnerships.length} partnership');
+    }
+    return parts.isEmpty ? 'All nearby' : parts.join(' · ');
+  }
+
+  List<Venue> _filteredResultVenues() {
+    final source = widget.listVenues.isNotEmpty
+        ? widget.listVenues
+        : widget.venues;
+    final items = source.where(_passesUserFilters).toList()
+      ..sort(
+        (a, b) =>
+            (a.distanceMeters ?? 999999).compareTo(b.distanceMeters ?? 999999),
+      );
+    return items;
+  }
+
+  Future<void> _openFilterSheet({
+    required String title,
+    required Widget Function(StateSetter setSheetState) contentBuilder,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Container(
+              margin: EdgeInsets.fromLTRB(
+                12,
+                0,
+                12,
+                MediaQuery.of(ctx).padding.bottom + 12,
+              ),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF161C28) : colors.surface,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colors.onSurface.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: colors.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  contentBuilder(setSheetState),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openPartnershipSheet() {
+    return _openFilterSheet(
+      title: 'Partnerships',
+      contentBuilder: (setSheetState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              'Show only venues with an active offer or event on:',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.65),
+              ),
+            ),
+          ),
+          for (final o in _partnershipOptions)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              activeColor: AppTheme.brandPrimary,
+              value: _selectedPartnerships.contains(o.key),
+              title: Text(o.label),
+              onChanged: (checked) {
+                setSheetState(() {
+                  if (checked == true) {
+                    _selectedPartnerships.add(o.key);
+                  } else {
+                    _selectedPartnerships.remove(o.key);
+                  }
+                });
+                _onFiltersChanged();
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openRatingSheet() {
+    const options = <({String label, double? value})>[
+      (label: 'Any rating', value: null),
+      (label: '4.0+', value: 4.0),
+      (label: '4.5+', value: 4.5),
+    ];
+    return _openFilterSheet(
+      title: 'Minimum rating',
+      contentBuilder: (setSheetState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final o in options)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _minRating == o.value
+                    ? Icons.check_circle_rounded
+                    : Icons.circle_outlined,
+                color: _minRating == o.value
+                    ? AppTheme.brandPrimary
+                    : Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.45),
+              ),
+              title: Text(o.label),
+              onTap: () {
+                setSheetState(() => _minRating = o.value);
+                _onFiltersChanged();
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openDistanceSheet() {
+    const options = <({String label, int? value})>[
+      (label: 'Any distance', value: null),
+      (label: 'Within 1 km', value: 1000),
+      (label: 'Within 5 km', value: 5000),
+      (label: 'Within 10 km', value: 10000),
+    ];
+    return _openFilterSheet(
+      title: 'Distance',
+      contentBuilder: (setSheetState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final o in options)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _maxDistanceMeters == o.value
+                    ? Icons.check_circle_rounded
+                    : Icons.circle_outlined,
+                color: _maxDistanceMeters == o.value
+                    ? AppTheme.brandPrimary
+                    : Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.45),
+              ),
+              title: Text(o.label),
+              onTap: () {
+                setSheetState(() => _maxDistanceMeters = o.value);
+                _onFiltersChanged();
+                Navigator.pop(context);
+              },
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -188,11 +820,23 @@ class _VenueMapViewState extends State<VenueMapView> {
                 style: TextStyle(fontSize: 13, color: Colors.grey[600]),
               ),
               const SizedBox(height: 16),
-              _legendRow(const Color(0xFF2196F3), 'Just getting started', 'A few people checked in'),
+              _legendRow(
+                const Color(0xFF2196F3),
+                'Just getting started',
+                'A few people checked in',
+              ),
               const SizedBox(height: 12),
-              _legendRow(const Color(0xFFFF9800), 'It\'s picking up', 'Getting busier'),
+              _legendRow(
+                const Color(0xFFFF9800),
+                'It\'s picking up',
+                'Getting busier',
+              ),
               const SizedBox(height: 12),
-              _legendRow(const Color(0xFF4C1D95), 'It\'s a vibe', 'Packed! People are here'),
+              _legendRow(
+                const Color(0xFF4C1D95),
+                'It\'s a vibe',
+                'Packed! People are here',
+              ),
               const SizedBox(height: 20),
               Align(
                 alignment: Alignment.centerRight,
@@ -223,8 +867,14 @@ class _VenueMapViewState extends State<VenueMapView> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-            Text(sublabel, style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            Text(
+              sublabel,
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
           ],
         ),
       ],
@@ -238,15 +888,25 @@ class _VenueMapViewState extends State<VenueMapView> {
     _photoIconRefreshDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _resultsSheetController.dispose();
     _mapController?.dispose();
     super.dispose();
   }
 
   bool get _isSearchActive {
+    if (_isFilterDisplayQuery) return false;
     return _searchFocusNode.hasFocus ||
         _searchLoading ||
         _showSearchResults ||
         _searchController.text.trim().isNotEmpty;
+  }
+
+  bool get _isFilterDisplayQuery {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return false;
+    if (_busyNowOnly && query.toLowerCase() == 'busy now') return true;
+    return _selectedCategories.isNotEmpty &&
+        _categoryKeyForQuery(query) != null;
   }
 
   void _notifySearchActivity() {
@@ -299,7 +959,8 @@ class _VenueMapViewState extends State<VenueMapView> {
 
       final updated = LatLng(position.latitude, position.longitude);
       final prev = _currentLocation;
-      final moved = prev == null ||
+      final moved =
+          prev == null ||
           (updated.latitude - prev.latitude).abs() > 0.0005 ||
           (updated.longitude - prev.longitude).abs() > 0.0005;
 
@@ -504,9 +1165,9 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   Color _heatRingColor(int? count) {
     if (count == null || count == 0) return Colors.transparent;
-    if (count < 6) return const Color(0xFF2196F3);   // mavi — az kişi
-    if (count < 15) return const Color(0xFFFF9800);  // turuncu — orta
-    return const Color(0xFF4C1D95);                  // brand mor (çok koyu) — kalabalık
+    if (count < 6) return const Color(0xFF2196F3); // mavi — az kişi
+    if (count < 15) return const Color(0xFFFF9800); // turuncu — orta
+    return const Color(0xFF4C1D95); // brand mor (çok koyu) — kalabalık
   }
 
   double _heatStrokeWidth(int? count) {
@@ -522,14 +1183,13 @@ class _VenueMapViewState extends State<VenueMapView> {
     required bool isPressed,
   }) {
     final photoUrl = venue.photoUrl.trim();
-    if (photoUrl.isEmpty) {
+    if (photoUrl.isEmpty || _isGooglePlacePhotoUrl(photoUrl)) {
       return _fallbackSingleIcon(isSelected: isSelected, isPressed: isPressed);
     }
 
-    // 🧪 TEST — tüm heat durumlarını haritada görmek için. Prod'a geçince sil.
-    final testCount = venue.name.hashCode.abs() % 20;
-    final activeCount = (isPressed || isSelected) ? null : testCount;
-    // final activeCount = (isPressed || isSelected) ? null : venue.checkinCountActive;
+    final activeCount = (isPressed || isSelected)
+        ? null
+        : venue.checkinCountActive;
 
     final ringColor = (isPressed || isSelected)
         ? const Color(0xFF8B5CF6)
@@ -567,7 +1227,11 @@ class _VenueMapViewState extends State<VenueMapView> {
   }) {
     if (_photoMarkerIconLoadingKeys.contains(cacheKey)) return;
     _photoMarkerIconLoadingKeys.add(cacheKey);
-    _buildPhotoMarkerIcon(photoUrl: photoUrl, ringColor: ringColor, activeCount: activeCount)
+    _buildPhotoMarkerIcon(
+          photoUrl: photoUrl,
+          ringColor: ringColor,
+          activeCount: activeCount,
+        )
         .then((icon) {
           if (icon == null || !mounted) return;
           _photoMarkerIconCache[cacheKey] = icon;
@@ -629,7 +1293,7 @@ class _VenueMapViewState extends State<VenueMapView> {
         outerR,
         Paint()..color = const Color(0xFF0F172A),
       );
-      if (ringColor.alpha > 0) {
+      if ((ringColor.a * 255.0).round() > 0) {
         canvas.drawCircle(
           center,
           outerR,
@@ -653,9 +1317,10 @@ class _VenueMapViewState extends State<VenueMapView> {
       );
       canvas.restore();
 
-      final image = await recorder
-          .endRecording()
-          .toImage(physicalSize.toInt(), physicalSize.toInt());
+      final image = await recorder.endRecording().toImage(
+        physicalSize.toInt(),
+        physicalSize.toInt(),
+      );
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData?.buffer.asUint8List();
       if (pngBytes == null || pngBytes.isEmpty) return null;
@@ -729,7 +1394,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       ..strokeWidth = 4;
 
     canvas.drawCircle(center, radius - 2, fillPaint);
-    if (stroke.alpha > 0) {
+    if ((stroke.a * 255.0).round() > 0) {
       canvas.drawCircle(center, radius - 3, strokePaint);
     }
 
@@ -761,12 +1426,24 @@ class _VenueMapViewState extends State<VenueMapView> {
       final totalHeight = mainTp.height + 1 + subTp.height;
       final topY = (logicalSize - totalHeight) / 2;
       mainTp.paint(canvas, Offset((logicalSize - mainTp.width) / 2, topY));
-      subTp.paint(canvas, Offset((logicalSize - subTp.width) / 2, topY + mainTp.height + 1));
+      subTp.paint(
+        canvas,
+        Offset((logicalSize - subTp.width) / 2, topY + mainTp.height + 1),
+      );
     } else {
-      mainTp.paint(canvas, Offset((logicalSize - mainTp.width) / 2, (logicalSize - mainTp.height) / 2));
+      mainTp.paint(
+        canvas,
+        Offset(
+          (logicalSize - mainTp.width) / 2,
+          (logicalSize - mainTp.height) / 2,
+        ),
+      );
     }
 
-    final image = await recorder.endRecording().toImage(physicalSize, physicalSize);
+    final image = await recorder.endRecording().toImage(
+      physicalSize,
+      physicalSize,
+    );
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     final bytes = byteData?.buffer.asUint8List();
     if (bytes == null || bytes.isEmpty) {
@@ -869,6 +1546,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     if (venues.isEmpty) return const [];
     return venues
         .where((v) => _clusterInputFilters.every((f) => f(v)))
+        .where(_passesUserFilters)
         .toList();
   }
 
@@ -923,17 +1601,79 @@ class _VenueMapViewState extends State<VenueMapView> {
     final query = value.trim();
     if (query.isEmpty) {
       setState(() {
+        _selectedCategories.clear();
+        _selectedCuisineKeyword = null;
+        _selectedCuisineLabel = null;
+        _busyNowOnly = false;
         _searchLoading = false;
         _searchError = null;
         _searchResults = const [];
         _placeSuggestions = const [];
+        _categoryAreaSuggestions = const [];
         _showSearchResults = _searchFocusNode.hasFocus;
         _selectedSearchVenue = null;
+        _showResultsSheet = true;
       });
+      widget.onBrowseKeywordChanged?.call(null);
       _notifySearchActivity();
       _recomputeClusters(force: true);
       return;
     }
+
+    final categoryKey = _categoryKeyForQuery(query);
+    if (categoryKey != null) {
+      setState(() {
+        _busyNowOnly = false;
+        _selectedCuisineKeyword = null;
+        _selectedCuisineLabel = null;
+        _selectedCategories
+          ..clear()
+          ..add(categoryKey);
+        _searchLoading = false;
+        _searchError = null;
+        _searchResults = const [];
+        _placeSuggestions = const [];
+        _categoryAreaSuggestions = const [];
+        _showSearchResults = false;
+        _selectedSearchVenue = null;
+        _showResultsSheet = true;
+      });
+      widget.onBrowseKeywordChanged?.call(null);
+      _notifySearchActivity();
+      _recomputeClusters(force: true);
+      return;
+    }
+
+    final cuisine = _cuisineForQuery(query);
+    if (cuisine != null) {
+      setState(() {
+        _busyNowOnly = false;
+        _selectedCategories.clear();
+        _selectedCuisineKeyword = cuisine.keyword;
+        _selectedCuisineLabel = cuisine.label;
+        _searchLoading = false;
+        _searchError = null;
+        _searchResults = const [];
+        _placeSuggestions = const [];
+        _categoryAreaSuggestions = const [];
+        _showSearchResults = false;
+        _selectedSearchVenue = null;
+        _showResultsSheet = true;
+      });
+      widget.onBrowseKeywordChanged?.call(cuisine.keyword);
+      _notifySearchActivity();
+      _recomputeClusters(force: true);
+      return;
+    }
+
+    setState(() {
+      _selectedCategories.clear();
+      _selectedCuisineKeyword = null;
+      _selectedCuisineLabel = null;
+      _busyNowOnly = false;
+      _showResultsSheet = false;
+    });
+    widget.onBrowseKeywordChanged?.call(null);
 
     _searchDebounce = Timer(const Duration(milliseconds: 300), () {
       _performSearch(query);
@@ -952,16 +1692,15 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
 
     try {
+      final categoryAreaQuery = _categoryAreaQueryForSearch(query);
+      final placeQuery = categoryAreaQuery?.areaQuery ?? query;
       final futures = await Future.wait([
         _venueRepository.searchVenues(
           query: query,
           latitude: location.latitude,
           longitude: location.longitude,
         ),
-        _fetchPlaceSuggestions(
-          query: query,
-          location: location,
-        ),
+        _fetchPlaceSuggestions(query: placeQuery, location: location),
       ]);
 
       if (!mounted || token != _searchRequestToken) return;
@@ -971,6 +1710,18 @@ class _VenueMapViewState extends State<VenueMapView> {
       setState(() {
         _searchResults = _enrichSearchResultsWithNearbyVenues(venueResults);
         _placeSuggestions = placeResults;
+        _categoryAreaSuggestions = categoryAreaQuery == null
+            ? const []
+            : placeResults
+                  .take(4)
+                  .map(
+                    (place) => _CategoryAreaSuggestion(
+                      categoryKey: categoryAreaQuery.categoryKey,
+                      categoryLabel: categoryAreaQuery.categoryLabel,
+                      place: place,
+                    ),
+                  )
+                  .toList();
         _searchLoading = false;
       });
       _notifySearchActivity();
@@ -979,6 +1730,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       setState(() {
         _searchResults = const [];
         _placeSuggestions = const [];
+        _categoryAreaSuggestions = const [];
         _searchLoading = false;
         _searchError = 'Search failed. Please try again.';
       });
@@ -993,23 +1745,33 @@ class _VenueMapViewState extends State<VenueMapView> {
     required LatLng location,
   }) async {
     try {
-      final uri = Uri.https('maps.googleapis.com', '/maps/api/place/autocomplete/json', {
-        'input': query,
-        'language': 'tr',
-        'key': _googleApiKey,
-      });
+      final uri = Uri.https(
+        'maps.googleapis.com',
+        '/maps/api/place/autocomplete/json',
+        {'input': query, 'language': 'tr', 'key': _googleApiKey},
+      );
       final response = await http.get(uri).timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return const [];
       final data = json.decode(response.body) as Map<String, dynamic>;
       final predictions = data['predictions'] as List? ?? [];
-      return predictions.take(4).map((p) {
-        final map = p as Map<String, dynamic>;
-        return _PlaceSuggestion(
-          placeId: map['place_id']?.toString() ?? '',
-          mainText: (map['structured_formatting']?['main_text'] ?? map['description'] ?? '').toString(),
-          secondaryText: (map['structured_formatting']?['secondary_text'] ?? '').toString(),
-        );
-      }).where((s) => s.placeId.isNotEmpty).toList();
+      return predictions
+          .take(4)
+          .map((p) {
+            final map = p as Map<String, dynamic>;
+            return _PlaceSuggestion(
+              placeId: map['place_id']?.toString() ?? '',
+              mainText:
+                  (map['structured_formatting']?['main_text'] ??
+                          map['description'] ??
+                          '')
+                      .toString(),
+              secondaryText:
+                  (map['structured_formatting']?['secondary_text'] ?? '')
+                      .toString(),
+            );
+          })
+          .where((s) => s.placeId.isNotEmpty)
+          .toList();
     } catch (_) {
       return const [];
     }
@@ -1025,11 +1787,15 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
 
     try {
-      final uri = Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
-        'place_id': suggestion.placeId,
-        'fields': 'geometry',
-        'key': _googleApiKey,
-      });
+      final uri = Uri.https(
+        'maps.googleapis.com',
+        '/maps/api/place/details/json',
+        {
+          'place_id': suggestion.placeId,
+          'fields': 'geometry',
+          'key': _googleApiKey,
+        },
+      );
       final response = await http.get(uri).timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return;
       final data = json.decode(response.body) as Map<String, dynamic>;
@@ -1039,6 +1805,59 @@ class _VenueMapViewState extends State<VenueMapView> {
       final lng = (location['lng'] as num).toDouble();
       final target = LatLng(lat, lng);
 
+      await _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: target, zoom: 15),
+        ),
+      );
+      if (!mounted) return;
+      widget.onLocationResolved?.call(target);
+    } catch (_) {}
+  }
+
+  Future<void> _onCategoryAreaSuggestionTap(
+    _CategoryAreaSuggestion suggestion,
+  ) async {
+    _searchDebounce?.cancel();
+    _searchFocusNode.unfocus();
+    final searchText =
+        '${suggestion.categoryLabel} near ${suggestion.place.mainText}';
+    setState(() {
+      _busyNowOnly = false;
+      _selectedCategories
+        ..clear()
+        ..add(suggestion.categoryKey);
+      _showSearchResults = false;
+      _searchError = null;
+      _searchLoading = false;
+      _searchResults = const [];
+      _placeSuggestions = const [];
+      _categoryAreaSuggestions = const [];
+      _showResultsSheet = true;
+      _searchController.text = searchText;
+      _searchController.selection = TextSelection.collapsed(
+        offset: searchText.length,
+      );
+    });
+    _notifySearchActivity();
+    _recomputeClusters(force: true);
+
+    try {
+      final uri =
+          Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
+            'place_id': suggestion.place.placeId,
+            'fields': 'geometry',
+            'key': _googleApiKey,
+          });
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return;
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final location = data['result']?['geometry']?['location'];
+      if (location == null) return;
+      final target = LatLng(
+        (location['lat'] as num).toDouble(),
+        (location['lng'] as num).toDouble(),
+      );
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(target: target, zoom: 15),
@@ -1133,7 +1952,13 @@ class _VenueMapViewState extends State<VenueMapView> {
       distanceMeters: venue.distanceMeters,
       openNow: venue.openNow,
       rating: venue.rating,
+      ratingCount: venue.ratingCount,
       types: venue.types,
+      description: venue.description,
+      photos: venue.photos,
+      openingHours: venue.openingHours,
+      upcomingEvents: venue.upcomingEvents,
+      partnershipPlatforms: venue.partnershipPlatforms,
     );
   }
 
@@ -1162,7 +1987,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     }
   }
 
-  Future<void> _openVenueDetailFromMap(Venue venue) async {
+  Future<void> _openVenueDetailFromMap(
+    Venue venue, {
+    bool reopenMarkerPopup = false,
+  }) async {
     widget.onVenueTap?.call(venue);
     await Navigator.push(
       context,
@@ -1170,8 +1998,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     );
     if (!mounted) return;
     widget.onVenueDetailClosed?.call(venue);
-    // Keep the map UX continuous: return to same selected venue popup.
-    await _showVenueMarkerPopup(_latestVenueSnapshotFor(venue));
+    if (reopenMarkerPopup) {
+      // Pin popup'ından detay açıldıysa geri dönünce aynı pin bağlamını koru.
+      await _showVenueMarkerPopup(_latestVenueSnapshotFor(venue));
+    }
   }
 
   /// Short line for native [InfoWindow] (character-limited on some platforms).
@@ -1240,20 +2070,32 @@ class _VenueMapViewState extends State<VenueMapView> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       showDragHandle: false,
       builder: (sheetContext) {
         return SafeArea(
+          top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: EdgeInsets.fromLTRB(
+              0,
+              0,
+              0,
+              MediaQuery.of(sheetContext).padding.bottom,
+            ),
             child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(sheetContext).size.height * 0.48,
+              ),
               decoration: BoxDecoration(
                 color: surface,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: border),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(26),
+                ),
+                border: Border(top: BorderSide(color: border)),
                 boxShadow: [
                   BoxShadow(
                     blurRadius: 28,
-                    offset: const Offset(0, 12),
+                    offset: const Offset(0, -10),
                     color: isDark
                         ? Colors.black.withValues(alpha: 0.52)
                         : Colors.black.withValues(alpha: 0.12),
@@ -1261,7 +2103,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                 ],
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1398,7 +2240,10 @@ class _VenueMapViewState extends State<VenueMapView> {
                     FilledButton(
                       onPressed: () {
                         Navigator.pop(sheetContext);
-                        _openVenueDetailFromMap(liveVenue);
+                        _openVenueDetailFromMap(
+                          liveVenue,
+                          reopenMarkerPopup: true,
+                        );
                       },
                       child: const Text('Open'),
                     ),
@@ -1430,40 +2275,6 @@ class _VenueMapViewState extends State<VenueMapView> {
       _searchLoading = false;
     });
     _notifySearchActivity();
-  }
-
-  Widget _buildLogoButton() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Container(
-      width: 46,
-      height: 46,
-      decoration: BoxDecoration(
-        color: isDark
-            ? theme.colorScheme.surface.withValues(alpha: 0.92)
-            : Colors.white.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.28)
-              : Colors.black.withValues(alpha: 0.06),
-        ),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.5)
-                : Colors.black12,
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(7),
-      child: Image.asset(
-        'assets/images/kmstrylogo.png',
-        fit: BoxFit.contain,
-      ),
-    );
   }
 
   Widget _buildSearchBar() {
@@ -1533,10 +2344,7 @@ class _VenueMapViewState extends State<VenueMapView> {
           else if (_searchController.text.trim().isNotEmpty)
             InkWell(
               borderRadius: BorderRadius.circular(12),
-              onTap: () {
-                _searchController.clear();
-                _onSearchChanged('');
-              },
+              onTap: _clearSearchAndFilters,
               child: Padding(
                 padding: const EdgeInsets.all(4),
                 child: Icon(Icons.close, size: 18, color: iconColor),
@@ -1611,14 +2419,13 @@ class _VenueMapViewState extends State<VenueMapView> {
         padding: const EdgeInsets.all(16),
         child: Text(
           _searchError!,
-          style: TextStyle(
-            color: colors.error,
-            fontWeight: FontWeight.w600,
-          ),
+          style: TextStyle(color: colors.error, fontWeight: FontWeight.w600),
         ),
       );
     }
-    if (_searchResults.isEmpty && _placeSuggestions.isEmpty) {
+    if (_searchResults.isEmpty &&
+        _placeSuggestions.isEmpty &&
+        _categoryAreaSuggestions.isEmpty) {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
@@ -1631,6 +2438,80 @@ class _VenueMapViewState extends State<VenueMapView> {
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       shrinkWrap: true,
       children: [
+        if (_categoryAreaSuggestions.isNotEmpty) ...[
+          ..._categoryAreaSuggestions.map(
+            (suggestion) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _onCategoryAreaSuggestionTap(suggestion),
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? colors.surface.withValues(alpha: 0.92)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : const Color(0xFFE6EEF4),
+                      ),
+                    ),
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      leading: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: const Color(
+                            0xFF1A9FE8,
+                          ).withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _categoryIconForKey(suggestion.categoryKey),
+                          size: 18,
+                          color: const Color(0xFF1A9FE8),
+                        ),
+                      ),
+                      title: Text(
+                        suggestion.categoryLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: colors.onSurface,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'near ${suggestion.place.mainText}${suggestion.place.secondaryText.isNotEmpty ? ' · ${suggestion.place.secondaryText}' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.north_west_rounded,
+                        size: 18,
+                        color: colors.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_placeSuggestions.isNotEmpty || _searchResults.isNotEmpty)
+            const SizedBox(height: 4),
+        ],
         // ── Areas / Places ──────────────────────────────────────
         if (_placeSuggestions.isNotEmpty) ...[
           Padding(
@@ -1645,57 +2526,76 @@ class _VenueMapViewState extends State<VenueMapView> {
               ),
             ),
           ),
-          ..._placeSuggestions.map((place) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () => _onPlaceSuggestionTap(place),
-                child: Ink(
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? colors.surface.withValues(alpha: 0.92)
-                        : Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
+          ..._placeSuggestions.map(
+            (place) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _onPlaceSuggestionTap(place),
+                  child: Ink(
+                    decoration: BoxDecoration(
                       color: isDark
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : const Color(0xFFE6EEF4),
-                    ),
-                  ),
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    leading: Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(
-                        color: colors.primary.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(8),
+                          ? colors.surface.withValues(alpha: 0.92)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : const Color(0xFFE6EEF4),
                       ),
-                      child: Icon(Icons.location_on_outlined, size: 18, color: colors.primary),
                     ),
-                    title: Text(
-                      place.mainText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: FontWeight.w600, color: colors.onSurface),
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      leading: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: colors.primary.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.location_on_outlined,
+                          size: 18,
+                          color: colors.primary,
+                        ),
+                      ),
+                      title: Text(
+                        place.mainText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: colors.onSurface,
+                        ),
+                      ),
+                      subtitle: place.secondaryText.isNotEmpty
+                          ? Text(
+                              place.secondaryText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.onSurface.withValues(alpha: 0.55),
+                                fontSize: 12,
+                              ),
+                            )
+                          : null,
+                      trailing: Icon(
+                        Icons.arrow_outward,
+                        size: 16,
+                        color: colors.onSurface.withValues(alpha: 0.35),
+                      ),
                     ),
-                    subtitle: place.secondaryText.isNotEmpty
-                        ? Text(
-                            place.secondaryText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: colors.onSurface.withValues(alpha: 0.55), fontSize: 12),
-                          )
-                        : null,
-                    trailing: Icon(Icons.arrow_outward, size: 16, color: colors.onSurface.withValues(alpha: 0.35)),
                   ),
                 ),
               ),
             ),
-          )),
+          ),
           if (_searchResults.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
@@ -1712,113 +2612,113 @@ class _VenueMapViewState extends State<VenueMapView> {
         ],
         // ── Venues ──────────────────────────────────────────────
         ...List.generate(_searchResults.length, (index) {
-        final item = _searchResults[index];
-        final hasRating = item.rating != null && item.rating! > 0;
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => _onSearchResultTap(item),
-              child: Ink(
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? colors.surface.withValues(alpha: 0.92)
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
+          final item = _searchResults[index];
+          final hasRating = item.rating != null && item.rating! > 0;
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => _onSearchResultTap(item),
+                child: Ink(
+                  decoration: BoxDecoration(
                     color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : const Color(0xFFE6EEF4),
-                  ),
-                ),
-                child: ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  leading: Container(
-                    width: 30,
-                    height: 30,
-                    decoration: BoxDecoration(
-                      color: colors.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
+                        ? colors.surface.withValues(alpha: 0.92)
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : const Color(0xFFE6EEF4),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
-                        width: 24,
-                        height: 24,
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) => Icon(
-                          Icons.map_rounded,
-                          size: 18,
-                          color: colors.primary,
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    leading: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
+                          width: 24,
+                          height: 24,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) => Icon(
+                            Icons.map_rounded,
+                            size: 18,
+                            color: colors.primary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  title: Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: colors.onSurface,
+                    title: Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: colors.onSurface,
+                      ),
                     ),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        item.address.isNotEmpty ? item.address : '-',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.star_rounded,
-                                size: 14,
-                                color: Colors.amber,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                hasRating
-                                    ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
-                                    : 'Google rating unavailable',
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                            ],
-                          ),
-                          VenueCheckinStatsRow(
-                            venue: item,
-                            isDark: isDark,
-                            iconSize: 13,
-                            fontSize: 11,
-                            treatMissingStatsAsCheckInPrompt: true,
-                          ),
-                        ],
-                      ),
-                    ],
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          item.address.isNotEmpty ? item.address : '-',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.star_rounded,
+                                  size: 14,
+                                  color: Colors.amber,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  hasRating
+                                      ? 'Google rating ${item.rating!.toStringAsFixed(1)}'
+                                      : 'Google rating unavailable',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ],
+                            ),
+                            VenueCheckinStatsRow(
+                              venue: item,
+                              isDark: isDark,
+                              iconSize: 13,
+                              fontSize: 11,
+                              treatMissingStatsAsCheckInPrompt: true,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-      }),
+          );
+        }),
       ],
     );
   }
@@ -1836,6 +2736,297 @@ class _VenueMapViewState extends State<VenueMapView> {
     } else if (status.isPermanentlyDenied) {
       await openAppSettings();
     }
+  }
+
+  Widget _buildResultsSheet() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
+    final venues = _filteredResultVenues();
+
+    return NotificationListener<DraggableScrollableNotification>(
+      onNotification: (notification) {
+        final expanded = notification.extent > 0.62;
+        if (expanded != _resultsSheetExpanded) {
+          setState(() => _resultsSheetExpanded = expanded);
+        }
+        return false;
+      },
+      child: DraggableScrollableSheet(
+        controller: _resultsSheetController,
+        initialChildSize: _resultsSheetInitialSize,
+        minChildSize: _resultsSheetMinSize,
+        maxChildSize: _resultsSheetMaxSize,
+        builder: (context, controller) {
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF101722) : Colors.white,
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(_resultsSheetExpanded ? 0 : 26),
+              ),
+              border: Border(
+                top: BorderSide(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.10)
+                      : Colors.black.withValues(alpha: 0.06),
+                ),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: 28,
+                  offset: const Offset(0, -10),
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.55)
+                      : Colors.black.withValues(alpha: 0.12),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragUpdate: (details) {
+                    if (!_resultsSheetController.isAttached) return;
+                    final height = MediaQuery.of(context).size.height;
+                    final nextSize =
+                        (_resultsSheetController.size -
+                                (details.primaryDelta ?? 0) / height)
+                            .clamp(_resultsSheetMinSize, _resultsSheetMaxSize);
+                    _resultsSheetController.jumpTo(nextSize);
+                  },
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 44,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: colors.onSurface.withValues(alpha: 0.20),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _resultsTitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w800,
+                                      color: colors.onSurface,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    widget.loadingVenues && venues.isEmpty
+                                        ? 'Loading venues...'
+                                        : _advancedFilterSummary,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: colors.onSurface.withValues(
+                                        alpha: 0.55,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_hasBrowseContext)
+                              IconButton(
+                                tooltip: 'Clear',
+                                onPressed: _closeResultsSheet,
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildResultsAdvancedFilters(),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: widget.loadingVenues && venues.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : venues.isEmpty
+                      ? _buildNoVenueResults()
+                      : NotificationListener<ScrollNotification>(
+                          onNotification: (notification) {
+                            final metrics = notification.metrics;
+                            if (metrics.maxScrollExtent > 0 &&
+                                metrics.pixels >=
+                                    metrics.maxScrollExtent - 420) {
+                              widget.onLoadMoreVenues?.call();
+                            }
+                            return false;
+                          },
+                          child: ListView.builder(
+                            controller: controller,
+                            padding: EdgeInsets.only(
+                              bottom:
+                                  MediaQuery.of(context).padding.bottom + 20,
+                            ),
+                            itemCount: venues.length + 1,
+                            itemBuilder: (context, index) {
+                              if (index == venues.length) {
+                                return _buildResultsFooter();
+                              }
+                              final venue = venues[index];
+                              return VenueListItem(
+                                venue: venue,
+                                isSelected: _matchesSelectedVenue(venue),
+                                onTap: (v) => _openVenueDetailFromMap(v),
+                              );
+                            },
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildResultsAdvancedFilters() {
+    return SizedBox(
+      height: 38,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        children: [
+          if (_hasActiveFilters)
+            _ResultFilterChip(
+              icon: Icons.close_rounded,
+              label: 'Clear',
+              selected: false,
+              onTap: _clearSearchAndFilters,
+            ),
+          _ResultFilterChip(
+            icon: Icons.schedule_rounded,
+            label: 'Open now',
+            selected: _openNowOnly,
+            onTap: () {
+              setState(() => _openNowOnly = !_openNowOnly);
+              _onFiltersChanged();
+            },
+          ),
+          _ResultFilterChip(
+            icon: Icons.star_rounded,
+            label: _minRating == null
+                ? 'Top rated'
+                : '${_minRating!.toStringAsFixed(1)}+ rated',
+            selected: _minRating != null,
+            onTap: _openRatingSheet,
+          ),
+          _ResultFilterChip(
+            icon: Icons.handshake_outlined,
+            label: _selectedPartnerships.isEmpty
+                ? 'Partnership'
+                : '${_selectedPartnerships.length} selected',
+            selected: _selectedPartnerships.isNotEmpty,
+            onTap: _openPartnershipSheet,
+          ),
+          _ResultFilterChip(
+            icon: Icons.near_me_rounded,
+            label: _maxDistanceMeters == null
+                ? 'Distance'
+                : (_maxDistanceMeters! >= 1000
+                      ? '${(_maxDistanceMeters! / 1000).toStringAsFixed(0)} km'
+                      : '${_maxDistanceMeters!} m'),
+            selected: _maxDistanceMeters != null,
+            onTap: _openDistanceSheet,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultsFooter() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    if (widget.loadingMoreVenues) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.primary,
+            ),
+          ),
+        ),
+      );
+    }
+    if (!widget.hasMoreVenues) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: Text(
+            'No more venues',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.onSurface.withValues(alpha: 0.42),
+            ),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 18);
+  }
+
+  Widget _buildNoVenueResults() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 34),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.travel_explore_rounded,
+              size: 42,
+              color: colors.onSurface.withValues(alpha: 0.32),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No venues found',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: colors.onSurface,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Try widening your filters.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: colors.onSurface.withValues(alpha: 0.58),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1899,13 +3090,13 @@ class _VenueMapViewState extends State<VenueMapView> {
           onCameraMove: (position) {
             _latestCameraPosition = position;
           },
-          onTap: (_) => _closeSearchPanel(),
+          onTap: (_) => _collapseResultsSheet(),
           onCameraIdle: _recomputeClusters,
           markers: _markers,
         ),
 
         /// 🔍 SEARCH BAR
-        if (!widget.hideSearch)
+        if (!widget.hideSearch && !_showSearchResults)
           Positioned(
             top: 14,
             left: 16,
@@ -1913,23 +3104,21 @@ class _VenueMapViewState extends State<VenueMapView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    Expanded(child: _buildSearchBar()),
-                  ],
-                ),
+                Row(children: [Expanded(child: _buildSearchBar())]),
                 const SizedBox(height: 8),
                 _buildSearchResultsPanel(),
               ],
             ),
           ),
 
-        /// 🎛️ RIGHT CONTROLS
+        if (!widget.hideSearch && !_showSearchResults)
+          Positioned(top: 68, left: 0, right: 0, child: _buildFilterChipsRow()),
+
         if (!widget.hideSearch)
           Positioned(
             right: 16,
-            top: 90,
-            child: Column(
+            top: 110,
+            child: Row(
               children: [
                 _CircleIcon(
                   Icons.navigation_outlined,
@@ -1943,7 +3132,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                     widget.onLocationResolved?.call(_currentLocation!);
                   },
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(width: 8),
                 _CircleIcon(
                   Icons.info_outline,
                   onTap: () => _showHeatmapLegend(context),
@@ -1951,7 +3140,160 @@ class _VenueMapViewState extends State<VenueMapView> {
               ],
             ),
           ),
+
+        if (_showResultsSheet && !_showSearchResults && !_searchLoading)
+          _buildResultsSheet(),
       ],
+    );
+  }
+}
+
+/// 🏷️ Harita filtre chip'i (Google Maps'teki "Open now / Price" satırı gibi).
+class _FilterChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final Color? accent;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = accent ?? AppTheme.brandPrimary;
+    final bg = selected
+        ? accentColor
+        : (isDark
+              ? theme.colorScheme.surface.withValues(alpha: 0.95)
+              : Colors.white);
+    final fg = selected
+        ? Colors.white
+        : (isDark ? Colors.white : Colors.black87);
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+        elevation: 0,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(17),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11),
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(
+                color: selected
+                    ? accentColor
+                    : (isDark
+                          ? Colors.white.withValues(alpha: 0.18)
+                          : Colors.black.withValues(alpha: 0.10)),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: 8,
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.4)
+                      : Colors.black12,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 15, color: fg),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultFilterChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ResultFilterChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accent = AppTheme.brandPrimary;
+    final bg = selected
+        ? accent.withValues(alpha: isDark ? 0.24 : 0.14)
+        : (isDark
+              ? Colors.white.withValues(alpha: 0.06)
+              : const Color(0xFFF4F7FB));
+    final border = selected
+        ? accent.withValues(alpha: 0.55)
+        : (isDark
+              ? Colors.white.withValues(alpha: 0.10)
+              : Colors.black.withValues(alpha: 0.06));
+    final fg = selected
+        ? accent
+        : theme.colorScheme.onSurface.withValues(alpha: 0.78);
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(19),
+          onTap: onTap,
+          child: Ink(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(19),
+              border: Border.all(color: border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: fg),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: fg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1967,8 +3309,8 @@ class _CircleIcon extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     return Container(
-      width: 44,
-      height: 44,
+      width: 38,
+      height: 38,
       decoration: BoxDecoration(
         color: isDark
             ? theme.colorScheme.surface.withValues(alpha: 0.95)
@@ -1989,6 +3331,8 @@ class _CircleIcon extends StatelessWidget {
         ],
       ),
       child: IconButton(
+        padding: EdgeInsets.zero,
+        iconSize: 20,
         onPressed: onTap,
         icon: Icon(icon, color: isDark ? Colors.white : Colors.black87),
       ),
@@ -2006,4 +3350,36 @@ class _PlaceSuggestion {
     required this.mainText,
     required this.secondaryText,
   });
+}
+
+class _CategoryAreaQuery {
+  final String categoryKey;
+  final String categoryLabel;
+  final String areaQuery;
+
+  const _CategoryAreaQuery({
+    required this.categoryKey,
+    required this.categoryLabel,
+    required this.areaQuery,
+  });
+}
+
+class _CategoryAreaSuggestion {
+  final String categoryKey;
+  final String categoryLabel;
+  final _PlaceSuggestion place;
+
+  const _CategoryAreaSuggestion({
+    required this.categoryKey,
+    required this.categoryLabel,
+    required this.place,
+  });
+}
+
+bool _isGooglePlacePhotoUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  final host = uri.host.toLowerCase();
+  return host == 'maps.googleapis.com' &&
+      uri.path.contains('/maps/api/place/photo');
 }

@@ -16,7 +16,6 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_member_status_
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
-import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -665,26 +664,35 @@ class _NotificationPageState extends State<NotificationPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
+    final bg = isDark
+        ? const Color(0xFF0B0F17)
+        : theme.scaffoldBackgroundColor;
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : Colors.grey[200];
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: bg,
       appBar: AppBar(
-        backgroundColor: theme.appBarTheme.backgroundColor,
+        backgroundColor: bg,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.onSurface),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         title: Text(
           'Notifications',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
           ),
         ),
-        leading: const AppLogo(),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(
-            color: theme.brightness == Brightness.dark
-                ? Colors.white.withValues(alpha: 0.05)
-                : Colors.grey[200],
-            height: 1,
-          ),
+          child: Container(color: borderColor, height: 1),
         ),
       ),
       body: _buildBody(),

@@ -27,22 +27,45 @@ class PushDeepLinkHandler {
 
   final VenueRepository _venueRepo = VenueRepository();
 
-  /// [AppShell.initState] içinde çağırılır. NavigatorKey ile ekran
-  /// kontrolünü AppShell'e bırakır.
+  GlobalKey<NavigatorState>? _navigatorKey;
+
+  /// Uygulama tamamen kapalıyken bildirime basılıp açıldığında (`getInitialMessage`)
+  /// gelen data. Bu anda navigasyon ağacı henüz kurulmadığı ve AuthGate akışı
+  /// `pushAndRemoveUntil(... => false)` ile tüm route'ları sildiği için burada
+  /// hemen `push` etmek işe yaramaz — açtığımız sohbet sayfası anında silinir.
+  /// Bunun yerine data'yı saklarız; AppShell mount olduktan sonra
+  /// [consumePendingColdStart] ile güvenle route ederiz.
+  Map<String, dynamic>? _pendingColdStart;
+
+  /// [main] içinde çağırılır. NavigatorKey ile ekran kontrolünü paylaşır.
   void init(GlobalKey<NavigatorState> navigatorKey) {
-    // 1) Uygulama arka plandayken bildirime dokunuldu
+    _navigatorKey = navigatorKey;
+
+    // 1) Uygulama arka plandayken bildirime dokunuldu — navigasyon ağacı
+    //    zaten kurulu (AppShell ayakta), doğrudan route edebiliriz.
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
       _route(navigatorKey, message.data);
     });
 
-    // 2) Uygulama tamamen kapalıyken bildirime dokunuldu
+    // 2) Uygulama tamamen kapalıyken bildirime dokunuldu — hemen route etme,
+    //    AuthGate akışı bitip AppShell ayağa kalkınca tüket.
     FirebaseMessaging.instance.getInitialMessage().then((message) {
       if (message != null) {
-        // Navigasyon ağacı henüz hazır olmayabilir — bir frame bekle
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _route(navigatorKey, message.data);
-        });
+        _pendingColdStart = message.data;
       }
+    });
+  }
+
+  /// AppShell mount olduktan sonra çağrılır. Cold-start'ta bekleyen bir bildirim
+  /// varsa artık güvenle route eder (AuthGate zinciri tamamlandığı için silinmez).
+  void consumePendingColdStart() {
+    final data = _pendingColdStart;
+    final navigatorKey = _navigatorKey;
+    if (data == null || navigatorKey == null) return;
+    _pendingColdStart = null;
+    // AppShell'in ilk frame'i çizildikten sonra push et.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _route(navigatorKey, data);
     });
   }
 

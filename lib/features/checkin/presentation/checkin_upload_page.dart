@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
@@ -22,6 +23,7 @@ class LocalMedia {
 
 class CheckInPage extends StatefulWidget {
   final String venueId;
+
   /// Haritadan seçilen mekânın koordinatları; check-in isteğinde gönderilir (backend doğrulaması).
   final double venueLatitude;
   final double venueLongitude;
@@ -147,7 +149,9 @@ class _CheckInPageState extends State<CheckInPage> {
                             ),
                             decoration: BoxDecoration(
                               color: selected
-                                  ? AppTheme.brandPrimary.withValues(alpha: 0.12)
+                                  ? AppTheme.brandPrimary.withValues(
+                                      alpha: 0.12,
+                                    )
                                   : (isDark ? colors.surface : lightCardFill),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
@@ -333,11 +337,13 @@ class _CheckInPageState extends State<CheckInPage> {
 
     if (!mounted) return;
     setState(() {
-      _media.add(LocalMedia(
-        file: File(captured.path),
-        type: selectedType,
-        thumbnailPath: thumbPath,
-      ));
+      _media.add(
+        LocalMedia(
+          file: File(captured.path),
+          type: selectedType,
+          thumbnailPath: thumbPath,
+        ),
+      );
     });
   }
 
@@ -354,10 +360,7 @@ class _CheckInPageState extends State<CheckInPage> {
   /// Fotoğrafı öne çıkan olarak işaretleme
   void _setFeatured(int index) {
     if (_media[index].type != MediaType.photo) {
-      showPremiumErrorDialog(
-        context,
-        message: 'Only photos can be featured.',
-      );
+      showPremiumErrorDialog(context, message: 'Only photos can be featured.');
       return;
     }
     setState(() {
@@ -402,6 +405,27 @@ class _CheckInPageState extends State<CheckInPage> {
     final hasLocationPermission = await _ensureLocationPermissionForCheckin();
     if (!hasLocationPermission) return;
 
+    // Gerçek cihaz konumu — backend, gerçek (test dışı) venue'lerde bunu venue
+    // koordinatlarıyla karşılaştırıp 200m mesafe sınırını uygular. Alpha/Beta
+    // test venue'lerinde backend mesafe kontrolünü zaten atlıyor (is_test_venue).
+    double latitude;
+    double longitude;
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      latitude = position.latitude;
+      longitude = position.longitude;
+    } catch (_) {
+      if (mounted) {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Could not get your location. Please try again.',
+        );
+      }
+      return;
+    }
+
     // Total progress steps: 1 (create check-in) + N (media uploads)
     final totalSteps = 1 + _media.length;
     setState(() {
@@ -412,10 +436,6 @@ class _CheckInPageState extends State<CheckInPage> {
     });
 
     try {
-      // Seçilen venue'nun konumu; evden testte de mekânın kayıtlı koordinatı gider.
-      final latitude = widget.venueLatitude;
-      final longitude = widget.venueLongitude;
-
       // 1️⃣ Check-in oluştur
       final vibeText = _vibeController.text.trim();
       final checkinId = await _repo.createCheckin(
@@ -425,7 +445,10 @@ class _CheckInPageState extends State<CheckInPage> {
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
       );
-      ActiveCheckinService().setActiveCheckin(checkinId, venueId: widget.venueId);
+      ActiveCheckinService().setActiveCheckin(
+        checkinId,
+        venueId: widget.venueId,
+      );
 
       if (mounted) setState(() => _uploadCurrent = 1);
 
@@ -458,10 +481,13 @@ class _CheckInPageState extends State<CheckInPage> {
             if (isVideo) {
               _uploadStepLabel = "Uploading video... this may take a moment";
             } else {
-              final photoNum =
-                  _media.take(i + 1).where((m) => m.type == MediaType.photo).length;
-              final totalPhotos =
-                  _media.where((m) => m.type == MediaType.photo).length;
+              final photoNum = _media
+                  .take(i + 1)
+                  .where((m) => m.type == MediaType.photo)
+                  .length;
+              final totalPhotos = _media
+                  .where((m) => m.type == MediaType.photo)
+                  .length;
               _uploadStepLabel = "Uploading photo $photoNum of $totalPhotos...";
             }
           });
@@ -566,238 +592,241 @@ class _CheckInPageState extends State<CheckInPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 /// INFORMATION TEXT
-            Text(
-              'Select your featured photo by tapping on it. This will represents you at this venue.',
-              style: TextStyle(
-                color: colors.onSurface.withValues(alpha: 0.65),
-                fontSize: 13,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 20),
+                Text(
+                  'Select your featured photo by tapping on it. This will represents you at this venue.',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.65),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 20),
 
-            /// PHOTOS SECTION
-            Text(
-              'Photos',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: colors.onSurface,
-              ),
-            ),
-            const SizedBox(height: 12),
+                /// PHOTOS SECTION
+                Text(
+                  'Photos',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 12),
 
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                ...List.generate(_media.length, (index) {
-                  final item = _media[index];
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    ...List.generate(_media.length, (index) {
+                      final item = _media[index];
 
-                  return _buildMediaBox(
-                    index: index,
-                    isFeatured: _featuredPhotoIndex == index,
-                    media: item,
-                  );
-                }),
+                      return _buildMediaBox(
+                        index: index,
+                        isFeatured: _featuredPhotoIndex == index,
+                        media: item,
+                      );
+                    }),
 
-                if (_media.length < _maxMedia) _buildAddBox(),
-              ],
-            ),
+                    if (_media.length < _maxMedia) _buildAddBox(),
+                  ],
+                ),
 
-            const SizedBox(height: 30),
+                const SizedBox(height: 30),
 
-            /// VIBE SECTION
-            Text(
-              'Vibe',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: colors.onSurface,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _vibeController,
-              maxLines: 4,
-              maxLength: _vibeMaxLength,
-              textInputAction: TextInputAction.done,
-              onChanged: (_) {
-                setState(() {}); // Buton aktif/pasif için gerekli
-              },
-              buildCounter:
-                  (
-                    context, {
-                    required currentLength,
-                    required isFocused,
-                    maxLength,
-                  }) {
-                    final visibleLength =
-                        _vibeController.text.characters.length;
-
-                    final remaining = _vibeMaxLength - visibleLength;
-                    final isWarning = remaining <= 20;
-
-                    return Text(
-                      "$visibleLength / $_vibeMaxLength",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isWarning
-                            ? colors.secondary
-                            : colors.onSurface.withValues(alpha: 0.65),
-                        fontWeight: isWarning
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
-                    );
+                /// VIBE SECTION
+                Text(
+                  'Vibe',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _vibeController,
+                  maxLines: 4,
+                  maxLength: _vibeMaxLength,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) {
+                    setState(() {}); // Buton aktif/pasif için gerekli
                   },
+                  buildCounter:
+                      (
+                        context, {
+                        required currentLength,
+                        required isFocused,
+                        maxLength,
+                      }) {
+                        final visibleLength =
+                            _vibeController.text.characters.length;
 
-              decoration: InputDecoration(
-                hintText: 'Say something that helps people pick up your vibe.',
-                hintStyle: TextStyle(
-                  color: colors.onSurface.withValues(alpha: 0.5),
-                  fontSize: 14,
-                ),
-                filled: true,
-                fillColor: theme.brightness == Brightness.dark
-                    ? colors.surface.withValues(alpha: 0.75)
-                    : const Color(0xFFF8FBFD),
-                contentPadding: const EdgeInsets.all(16),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.brightness == Brightness.dark
-                        ? colors.onSurface.withValues(alpha: 0.14)
-                        : const Color(0xFFE6EEF4),
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: theme.brightness == Brightness.dark
-                        ? colors.onSurface.withValues(alpha: 0.14)
-                        : const Color(0xFFE6EEF4),
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: AppTheme.brandPrimary.withValues(alpha: 0.45),
-                    width: 1.1,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'What brings you to Kmstry?',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-                color: colors.onSurface,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Select one or more (up to 3)',
-              style: TextStyle(
-                color: colors.onSurface.withValues(alpha: 0.65),
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'This is optional, but it helps us rank people at the venue '
-              'from most compatible to least compatible for you.',
-              style: TextStyle(
-                color: colors.onSurface.withValues(alpha: 0.7),
-                fontSize: 12,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (_isLoadingOptions)
-              const Center(child: CircularProgressIndicator())
-            else
-              GestureDetector(
-                onTap: _openWhatBringsSelector,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isDark ? colors.surface : const Color(0xFFF8FBFD),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: AppTheme.brandPrimary.withValues(alpha: 0.25),
+                        final remaining = _vibeMaxLength - visibleLength;
+                        final isWarning = remaining <= 20;
+
+                        return Text(
+                          "$visibleLength / $_vibeMaxLength",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isWarning
+                                ? colors.secondary
+                                : colors.onSurface.withValues(alpha: 0.65),
+                            fontWeight: isWarning
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
+                        );
+                      },
+
+                  decoration: InputDecoration(
+                    hintText:
+                        'Say something that helps people pick up your vibe.',
+                    hintStyle: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.5),
+                      fontSize: 14,
+                    ),
+                    filled: true,
+                    fillColor: theme.brightness == Brightness.dark
+                        ? colors.surface.withValues(alpha: 0.75)
+                        : const Color(0xFFF8FBFD),
+                    contentPadding: const EdgeInsets.all(16),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: theme.brightness == Brightness.dark
+                            ? colors.onSurface.withValues(alpha: 0.14)
+                            : const Color(0xFFE6EEF4),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: theme.brightness == Brightness.dark
+                            ? colors.onSurface.withValues(alpha: 0.14)
+                            : const Color(0xFFE6EEF4),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppTheme.brandPrimary.withValues(alpha: 0.45),
+                        width: 1.1,
+                      ),
                     ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _selectedWhatBrings.isEmpty
-                              ? 'Select options'
-                              : _selectedWhatBrings
-                                    .map(_formatOptionLabel)
-                                    .join(', '),
-                          style: TextStyle(
-                            color: _selectedWhatBrings.isEmpty
-                                ? colors.onSurface.withValues(alpha: 0.5)
-                                : colors.onSurface,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'What brings you to Kmstry?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Select one or more (up to 3)',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.65),
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'This is optional, but it helps us rank people at the venue '
+                  'from most compatible to least compatible for you.',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.7),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_isLoadingOptions)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  GestureDetector(
+                    onTap: _openWhatBringsSelector,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? colors.surface
+                            : const Color(0xFFF8FBFD),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppTheme.brandPrimary.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _selectedWhatBrings.isEmpty
+                                  ? 'Select options'
+                                  : _selectedWhatBrings
+                                        .map(_formatOptionLabel)
+                                        .join(', '),
+                              style: TextStyle(
+                                color: _selectedWhatBrings.isEmpty
+                                    ? colors.onSurface.withValues(alpha: 0.5)
+                                    : colors.onSurface,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          const Icon(Icons.keyboard_arrow_down),
+                        ],
                       ),
-                      const Icon(Icons.keyboard_arrow_down),
-                    ],
+                    ),
+                  ),
+
+                const SizedBox(height: 40),
+
+                /// CHECK IN BUTTON
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: (_media.isEmpty || _isSubmitting)
+                        ? null
+                        : _submitCheckin,
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: theme.brightness == Brightness.dark
+                          ? Colors.black
+                          : Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: _isSubmitting
+                        ? CircularProgressIndicator(
+                            color: theme.brightness == Brightness.dark
+                                ? Colors.black
+                                : Colors.white,
+                          )
+                        : Text(
+                            'Check in',
+                            style: TextStyle(
+                              color: theme.brightness == Brightness.dark
+                                  ? Colors.black
+                                  : Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
                 ),
-              ),
-
-            const SizedBox(height: 40),
-
-            /// CHECK IN BUTTON
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: ElevatedButton(
-                onPressed: (_media.isEmpty || _isSubmitting)
-                    ? null
-                    : _submitCheckin,
-                style: ElevatedButton.styleFrom(
-                  foregroundColor: theme.brightness == Brightness.dark
-                      ? Colors.black
-                      : Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: _isSubmitting
-                    ? CircularProgressIndicator(
-                        color: theme.brightness == Brightness.dark
-                            ? Colors.black
-                            : Colors.white,
-                      )
-                    : Text(
-                        'Check in',
-                        style: TextStyle(
-                          color: theme.brightness == Brightness.dark
-                              ? Colors.black
-                              : Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-              ),
+                const SizedBox(height: 40),
+              ],
             ),
-            const SizedBox(height: 40),
-          ],
-        ),
-      ),
+          ),
 
           // ── Upload progress overlay ─────────────────────────────────────
           if (_isSubmitting) _buildUploadOverlay(theme),
@@ -840,10 +869,12 @@ class _CheckInPageState extends State<CheckInPage> {
                 child: CircularProgressIndicator(
                   value: progress,
                   strokeWidth: 3.5,
-                  backgroundColor:
-                      AppTheme.brandPrimary.withValues(alpha: 0.18),
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(AppTheme.brandPrimary),
+                  backgroundColor: AppTheme.brandPrimary.withValues(
+                    alpha: 0.18,
+                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppTheme.brandPrimary,
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -866,10 +897,12 @@ class _CheckInPageState extends State<CheckInPage> {
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 6,
-                  backgroundColor:
-                      AppTheme.brandPrimary.withValues(alpha: 0.15),
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(AppTheme.brandPrimary),
+                  backgroundColor: AppTheme.brandPrimary.withValues(
+                    alpha: 0.15,
+                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppTheme.brandPrimary,
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -917,10 +950,7 @@ class _CheckInPageState extends State<CheckInPage> {
               fit: StackFit.expand,
               children: [
                 if (media.thumbnailPath != null)
-                  Image.file(
-                    File(media.thumbnailPath!),
-                    fit: BoxFit.cover,
-                  )
+                  Image.file(File(media.thumbnailPath!), fit: BoxFit.cover)
                 else
                   Container(
                     color: isDark ? colors.surface : const Color(0xFFF8FBFD),

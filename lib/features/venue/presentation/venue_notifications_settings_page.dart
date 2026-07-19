@@ -1,22 +1,28 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 
-class NotificationsSettingsPage extends StatefulWidget {
-  const NotificationsSettingsPage({super.key});
+/// Venue-account push notification settings (per membership). Mirrors the
+/// personal notifications page. Muting a category stops its push delivery only;
+/// in-app notifications are unaffected.
+class VenueNotificationsSettingsPage extends StatefulWidget {
+  final String venueId;
+  final String venueName;
+  const VenueNotificationsSettingsPage({
+    super.key,
+    required this.venueId,
+    required this.venueName,
+  });
 
   @override
-  State<NotificationsSettingsPage> createState() =>
-      _NotificationsSettingsPageState();
+  State<VenueNotificationsSettingsPage> createState() =>
+      _VenueNotificationsSettingsPageState();
 }
 
-class _NotificationsSettingsPageState
-    extends State<NotificationsSettingsPage> {
-  // Per-category push preferences — backend-backed. Muting a category stops
-  // its push delivery only; in-app notifications are unaffected.
-  bool _messages = true;
-  bool _invites = true;
-  bool _venueUpdates = true;
-  bool _receiveTest = true;
+class _VenueNotificationsSettingsPageState
+    extends State<VenueNotificationsSettingsPage> {
+  final _repo = VenueOwnerRepository();
+  bool _team = true;
+  bool _events = true;
   bool _loading = true;
 
   @override
@@ -27,13 +33,11 @@ class _NotificationsSettingsPageState
 
   Future<void> _load() async {
     try {
-      final me = await AuthRepository().getMe();
+      final prefs = await _repo.getNotificationPrefs(widget.venueId);
       if (!mounted) return;
       setState(() {
-        _messages = me['notifMessagesEnabled'] != false;
-        _invites = me['notifInvitesEnabled'] != false;
-        _venueUpdates = me['notifVenueUpdatesEnabled'] != false;
-        _receiveTest = me['receiveTestNotifications'] != false;
+        _team = prefs['team'] ?? true;
+        _events = prefs['events'] ?? true;
         _loading = false;
       });
     } catch (_) {
@@ -41,39 +45,23 @@ class _NotificationsSettingsPageState
     }
   }
 
-  Future<void> _update({
-    bool? messages,
-    bool? invites,
-    bool? venueUpdates,
-  }) async {
-    // Optimistic — revert the specific toggle on failure.
+  Future<void> _update({bool? team, bool? events}) async {
     setState(() {
-      if (messages != null) _messages = messages;
-      if (invites != null) _invites = invites;
-      if (venueUpdates != null) _venueUpdates = venueUpdates;
+      if (team != null) _team = team;
+      if (events != null) _events = events;
     });
     try {
-      await AuthRepository().setNotificationPrefs(
-        messages: messages,
-        invites: invites,
-        venueUpdates: venueUpdates,
+      await _repo.setNotificationPrefs(
+        widget.venueId,
+        team: team,
+        events: events,
       );
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        if (messages != null) _messages = !messages;
-        if (invites != null) _invites = !invites;
-        if (venueUpdates != null) _venueUpdates = !venueUpdates;
+        if (team != null) _team = !team;
+        if (events != null) _events = !events;
       });
-    }
-  }
-
-  Future<void> _setTestNotifications(bool enabled) async {
-    setState(() => _receiveTest = enabled);
-    try {
-      await AuthRepository().updateMe({'receive_test_notifications': enabled});
-    } catch (_) {
-      if (mounted) setState(() => _receiveTest = !enabled);
     }
   }
 
@@ -115,7 +103,6 @@ class _NotificationsSettingsPageState
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // ── Push Notifications ───────────────────────────────
                 Text(
                   'Push Notifications',
                   style: theme.textTheme.titleMedium?.copyWith(
@@ -124,47 +111,29 @@ class _NotificationsSettingsPageState
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Choose what you get notified about. You\'ll still see '
-                  'everything in your in-app notifications.',
+                  'For ${widget.venueName}. You\'ll still see everything in '
+                  'your in-app notifications.',
                   style: TextStyle(
                     fontSize: 13,
                     color: colors.onSurface.withValues(alpha: 0.55),
                   ),
                 ),
                 const SizedBox(height: 12),
-                _NotifTile(
-                  icon: Icons.chat_bubble_outline_rounded,
-                  title: 'Messages',
-                  subtitle: 'New messages from your connections',
-                  value: _messages,
-                  onChanged: (v) => _update(messages: v),
+                _VenueNotifTile(
+                  icon: Icons.groups_outlined,
+                  title: 'Team updates',
+                  subtitle: 'Members joining, invite responses, role changes',
+                  value: _team,
+                  onChanged: (v) => _update(team: v),
                   colors: colors,
                 ),
                 const SizedBox(height: 8),
-                _NotifTile(
-                  icon: Icons.person_add_alt_1_outlined,
-                  title: 'Invites',
-                  subtitle: 'Connection requests and venue invites',
-                  value: _invites,
-                  onChanged: (v) => _update(invites: v),
-                  colors: colors,
-                ),
-                const SizedBox(height: 8),
-                _NotifTile(
-                  icon: Icons.location_on_outlined,
-                  title: 'Venue Updates',
-                  subtitle: 'Nearby venues and friends checking in — soon',
-                  value: _venueUpdates,
-                  onChanged: null, // coming soon — not wired yet
-                  colors: colors,
-                ),
-                const SizedBox(height: 8),
-                _NotifTile(
-                  icon: Icons.science_outlined,
-                  title: 'Test Notifications',
-                  subtitle: 'Receive nearby venue test pings',
-                  value: _receiveTest,
-                  onChanged: _setTestNotifications,
+                _VenueNotifTile(
+                  icon: Icons.event_available_outlined,
+                  title: 'Event activity',
+                  subtitle: 'When your events are filling up',
+                  value: _events,
+                  onChanged: (v) => _update(events: v),
                   colors: colors,
                 ),
                 const SizedBox(height: 32),
@@ -174,15 +143,15 @@ class _NotificationsSettingsPageState
   }
 }
 
-class _NotifTile extends StatelessWidget {
+class _VenueNotifTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
   final bool value;
-  final ValueChanged<bool>? onChanged;
+  final ValueChanged<bool> onChanged;
   final ColorScheme colors;
 
-  const _NotifTile({
+  const _VenueNotifTile({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -200,10 +169,7 @@ class _NotifTile extends StatelessWidget {
     final border = isDark
         ? Colors.white.withValues(alpha: 0.08)
         : const Color(0xFFE6EEF4);
-    final disabled = onChanged == null;
-    return Opacity(
-      opacity: disabled ? 0.55 : 1,
-      child: Container(
+    return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: bg,
@@ -239,7 +205,6 @@ class _NotifTile extends StatelessWidget {
             fontSize: 12,
           ),
         ),
-      ),
       ),
     );
   }

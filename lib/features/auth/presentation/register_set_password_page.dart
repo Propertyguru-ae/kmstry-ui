@@ -128,7 +128,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   }
 
   Future<void> _openPolicy(String path) async {
-    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
       await showPremiumErrorDialog(context, message: 'Unable to open policy link.');
@@ -513,7 +513,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                       const TextSpan(text: 'I agree to the '),
                                       WidgetSpan(
                                         child: GestureDetector(
-                                          onTap: () => _openPolicy('/legal/terms'),
+                                          onTap: () => _openPolicy('/terms'),
                                           child: Text(
                                             'Terms of Service',
                                             style: TextStyle(
@@ -528,7 +528,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                       const TextSpan(text: ' and '),
                                       WidgetSpan(
                                         child: GestureDetector(
-                                          onTap: () => _openPolicy('/legal/privacy'),
+                                          onTap: () => _openPolicy('/privacy'),
                                           child: Text(
                                             'Privacy Policy',
                                             style: TextStyle(

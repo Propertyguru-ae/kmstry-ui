@@ -34,7 +34,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _openPolicy(String path) async {
-    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
       await showPremiumErrorDialog(
@@ -85,7 +85,7 @@ class _LoginPageState extends State<LoginPage> {
                               children: [
                                 const Text('I agree to the '),
                                 InkWell(
-                                  onTap: () => _openPolicy('/legal/terms'),
+                                  onTap: () => _openPolicy('/terms'),
                                   child: Text(
                                     'Terms of Service',
                                     style: TextStyle(
@@ -96,7 +96,7 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 const Text(' and '),
                                 InkWell(
-                                  onTap: () => _openPolicy('/legal/privacy'),
+                                  onTap: () => _openPolicy('/privacy'),
                                   child: Text(
                                     'Privacy Policy',
                                     style: TextStyle(
@@ -143,6 +143,25 @@ class _LoginPageState extends State<LoginPage> {
       final consent = await _showGoogleConsentSheet();
       if (consent != true) return false;
       return authRepository.loginWithGoogle(
+        consentGiven: true,
+        termsVersionId: versions.termsVersionId,
+        privacyVersionId: versions.privacyVersionId,
+        consentSource: 'MOBILE',
+      );
+    }
+  }
+
+  Future<bool> _loginWithAppleWithConsentFlow() async {
+    final authRepository = AuthRepository();
+    try {
+      return await authRepository.loginWithApple();
+    } on ApiException catch (e) {
+      if (!_isConsentRequiredError(e)) rethrow;
+      final versions = await authRepository.getActiveLegalVersions();
+      if (!mounted) return false;
+      final consent = await _showGoogleConsentSheet();
+      if (consent != true) return false;
+      return authRepository.loginWithApple(
         consentGiven: true,
         termsVersionId: versions.termsVersionId,
         privacyVersionId: versions.privacyVersionId,
@@ -241,9 +260,25 @@ class _LoginPageState extends State<LoginPage> {
                   child: const Text('Continue with Google'),
                 ),
 
-              if (providers.contains('apple'))
+              if (providers.contains('apple') && Platform.isIOS)
                 ElevatedButton(
-                  onPressed: () {},
+                  onPressed: () async {
+                    final navigator = Navigator.of(context);
+                    try {
+                      final success = await _loginWithAppleWithConsentFlow();
+                      if (!context.mounted) return;
+                      if (success) {
+                        navigator.pop();
+                        navigator.pushReplacementNamed(AuthRoutes.authGate);
+                      }
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      await showPremiumErrorDialog(
+                        context,
+                        message: _friendlyLoginError(e),
+                      );
+                    }
+                  },
                   child: const Text('Continue with Apple'),
                 ),
             ],
@@ -479,10 +514,29 @@ class _LoginPageState extends State<LoginPage> {
 
                                   if (Platform.isIOS) ...[
                                     const SizedBox(width: 14),
-                                    _SocialCircle(label: '', onTap: () {}),
+                                    _SocialCircle(
+                                      label: '',
+                                      onTap: () async {
+                                        final navigator = Navigator.of(context);
+                                        try {
+                                          final success =
+                                              await _loginWithAppleWithConsentFlow();
+                                          if (!mounted) return;
+                                          if (success) {
+                                            navigator.pushReplacementNamed(
+                                              AuthRoutes.authGate,
+                                            );
+                                          }
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          await showPremiumErrorDialog(
+                                            context,
+                                            message: _friendlyLoginError(e),
+                                          );
+                                        }
+                                      },
+                                    ),
                                   ],
-                                  const SizedBox(width: 14),
-                                  _SocialCircle(label: 'f', onTap: () {}),
                                 ],
                               ),
 

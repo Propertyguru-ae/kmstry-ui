@@ -34,7 +34,6 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
   bool _verifying = false;
   String? _error;
 
-  String? _testOtpHint;
   int _secondsLeft = 0;
   Timer? _timer;
 
@@ -44,32 +43,24 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
   static const _blueDark = AppColors.blue;
   static const _pink    = Color(0xFF00D4C8);
 
-  String? _parseTestOtpFromResponse(Map<String, dynamic> response) {
-    const keys = ['otp', 'code', 'verificationCode', 'verification_code'];
-    for (final k in keys) {
-      final v = response[k];
-      if (v != null && v.toString().trim().isNotEmpty) return v.toString().trim();
-    }
-    final data = response['data'];
-    if (data is Map) {
-      final m = Map<String, dynamic>.from(data);
-      for (final k in keys) {
-        final v = m[k];
-        if (v != null && v.toString().trim().isNotEmpty) return v.toString().trim();
-      }
-    }
-    return null;
+  // Görünmez sentinel: her boş kutuda 1 karakter tutar ki mobil klavyede boş
+  // kutuda basılan backspace de onChanged'i tetiklesin (önceki kutuya geç + sil).
+  static const _zwsp = '\u200B';
+
+  void _setBox(int i, String digit) {
+    _digitCtrls[i].text = _zwsp + digit;
+    _digitCtrls[i].selection = TextSelection.collapsed(
+      offset: _digitCtrls[i].text.length,
+    );
   }
 
   @override
   void initState() {
     super.initState();
-    _digitCtrls      = List.generate(6, (_) => TextEditingController());
+    _digitCtrls      = List.generate(6, (_) => TextEditingController(text: _zwsp));
     _digitFocusNodes = List.generate(6, (_) => FocusNode());
     final initial = widget.initialOtpResponse;
     if (initial != null) {
-      
-      _testOtpHint    = _parseTestOtpFromResponse(initial);
       _startCooldown();
     } else {
       _sendOtp();
@@ -86,23 +77,36 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
   }
 
   void _syncOtpFromDigits() =>
-      _otpCtrl.text = _digitCtrls.map((c) => c.text).join();
-
+      _otpCtrl.text = _digitCtrls.map((c) => c.text.replaceAll(_zwsp, '')).join();
 
   void _handleDigitChanged(int index, String value) {
     final onlyDigits = value.replaceAll(RegExp(r'[^0-9]'), '');
-    if (onlyDigits.isEmpty) {
-      _digitCtrls[index].clear();
+
+    // Sentinel silindi → kutu zaten boştu; önceki kutuya geç ve onu temizle.
+    if (value.isEmpty) {
+      _setBox(index, '');
+      if (index > 0) {
+        _setBox(index - 1, '');
+        _digitFocusNodes[index - 1].requestFocus();
+      }
       _syncOtpFromDigits();
       setState(() {});
       return;
     }
+
+    // Rakam yok (dolu kutuda backspace ile rakam silindi) → boş kal.
+    if (onlyDigits.isEmpty) {
+      _setBox(index, '');
+      _syncOtpFromDigits();
+      setState(() {});
+      return;
+    }
+
+    // Yapıştırma / çoklu rakam → kutulara dağıt.
     if (onlyDigits.length > 1) {
       var cursor = index;
-      for (var i = 0; i < onlyDigits.length; i++) {
-        if (cursor >= _digitCtrls.length) break;
-        _digitCtrls[cursor].text = onlyDigits[i];
-        cursor++;
+      for (var i = 0; i < onlyDigits.length && cursor < _digitCtrls.length; i++, cursor++) {
+        _setBox(cursor, onlyDigits[i]);
       }
       _syncOtpFromDigits();
       if (cursor < _digitFocusNodes.length) {
@@ -113,10 +117,9 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
       setState(() {});
       return;
     }
-    _digitCtrls[index].text = onlyDigits;
-    _digitCtrls[index].selection = TextSelection.fromPosition(
-      TextPosition(offset: _digitCtrls[index].text.length),
-    );
+
+    // Tek rakam → yaz ve sonraki kutuya geç.
+    _setBox(index, onlyDigits);
     _syncOtpFromDigits();
     if (index < _digitFocusNodes.length - 1) {
       _digitFocusNodes[index + 1].requestFocus();
@@ -168,14 +171,10 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
 
   Future<void> _sendOtp() async {
     if (_sending) return;
-    setState(() { _sending = true; _error = null; _testOtpHint = null; });
+    setState(() { _sending = true; _error = null; });
     try {
-      final response = await AuthRepository().requestRegisterOtp(widget.email);
+      await AuthRepository().requestRegisterOtp(widget.email);
       if (!mounted) return;
-      setState(() {
-        
-        _testOtpHint    = _parseTestOtpFromResponse(response);
-      });
       _startCooldown();
     } catch (e) {
       if (!mounted) return;
@@ -320,46 +319,13 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'We sent a 6-digit code to this address. It expires in 45 seconds.',
+                          'We sent a 6-digit code to this address. It expires in 10 minutes.',
                           style: TextStyle(
                             fontSize: 12.5,
                             height: 1.55,
                             color: isDark ? const Color(0xFFB1B4BB) : Colors.black45,
                           ),
                         ),
-                        // Test OTP hint
-                        if (_testOtpHint != null) ...[
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? const Color(0x1F00D4C8)
-                                  : const Color(0xFFEEFBF4),
-                              border: Border.all(
-                                color: isDark
-                                    ? const Color(0x3300D4C8)
-                                    : const Color(0xFFB0E8CC),
-                              ),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.bug_report_outlined,
-                                    size: 14, color: _pink),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Test OTP: $_testOtpHint',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: _pink,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -420,7 +386,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                             // OTP boxes
                             Row(
                               children: List.generate(6, (i) {
-                                final hasValue = _digitCtrls[i].text.isNotEmpty;
+                                final hasValue = _digitCtrls[i].text.replaceAll(_zwsp, '').isNotEmpty;
                                 final isActive  = _digitFocusNodes[i].hasFocus;
                                 return Expanded(
                                   child: Container(
@@ -464,10 +430,6 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                               : AppColors.blueLight,
                                         ),
                                         autofillHints: const [AutofillHints.oneTimeCode],
-                                        inputFormatters: [
-                                          FilteringTextInputFormatter.digitsOnly,
-                                          LengthLimitingTextInputFormatter(1),
-                                        ],
                                         decoration: const InputDecoration(
                                           counterText: '',
                                           border: InputBorder.none,

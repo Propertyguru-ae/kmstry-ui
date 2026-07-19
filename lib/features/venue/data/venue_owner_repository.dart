@@ -26,6 +26,35 @@ class VenueOwnerRepository {
     return VenueOwnerStatsResponse.fromJson(map);
   }
 
+  /// Venue-account push notification preferences for this membership.
+  /// Returns { team: bool, events: bool }.
+  Future<Map<String, bool>> getNotificationPrefs(String venueId) async {
+    final headers = await _authHeaders();
+    final data =
+        await _api.get('/venues/$venueId/notification-prefs', headers: headers);
+    final map = Map<String, dynamic>.from(data as Map);
+    return {
+      'team': map['team'] != false,
+      'events': map['events'] != false,
+    };
+  }
+
+  Future<void> setNotificationPrefs(
+    String venueId, {
+    bool? team,
+    bool? events,
+  }) async {
+    final headers = await _authHeaders();
+    final body = <String, dynamic>{};
+    if (team != null) body['team'] = team;
+    if (events != null) body['events'] = events;
+    await _api.patch(
+      '/venues/$venueId/notification-prefs',
+      headers: headers,
+      body: body,
+    );
+  }
+
   /// range: '7d' | '30d' | '90d'. from/to verilirse (YYYY-MM-DD) özel aralık.
   Future<VenueAnalytics> getAnalytics(
     String venueId, {

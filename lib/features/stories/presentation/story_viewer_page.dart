@@ -7,22 +7,30 @@ import '../data/story_viewed_cache.dart';
 import '../../venue/data/venue_repository.dart';
 import '../../venue/presentation/venue_detail_page.dart';
 import '../../venue_stories/data/venue_story_repository.dart';
+import '../../reports/presentation/report_user_sheet.dart';
+import '../../auth/data/auth_repository.dart';
 
 class StoryViewerResult {
   final int lastStoryIndex;
   final bool allFinished;
-  const StoryViewerResult({required this.lastStoryIndex, required this.allFinished});
+  const StoryViewerResult({
+    required this.lastStoryIndex,
+    required this.allFinished,
+  });
 }
 
 class StoryViewerPage extends StatefulWidget {
   final List<StoryGroup> groups;
   final int initialGroupIndex;
   final int initialStoryIndex;
+
   /// Set when viewing venue stories — enables Instagram-style viewer count overlay (owner only)
   final String? venueId;
   final bool showViewers;
+
   /// Called just before pop — index of last shown story, allFinished=true if all stories played through
   final void Function(int lastIndex, bool allFinished)? onClose;
+
   /// Called when a story is deleted — passes the deleted storyId
   final void Function(String storyId)? onStoryDeleted;
   final bool canDelete;
@@ -57,13 +65,17 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   bool _videoReady = false;
   bool _advancing = false;
   bool _loadingStory = false;
-  int _progressKey = 0; // her story yüklenince artar → progress bar sıfırdan oluşturulur
-  final Map<int, int> _liveViewCounts = {}; // storyIndex → fresh count from sheet
+  int _progressKey =
+      0; // her story yüklenince artar → progress bar sıfırdan oluşturulur
+  final Map<int, int> _liveViewCounts =
+      {}; // storyIndex → fresh count from sheet
 
   static const Duration _photoDuration = Duration(seconds: 5);
 
   StoryGroup get _currentGroup => _groups[_groupIndex];
   StoryItem get _currentStory => _currentGroup.stories[_storyIndex];
+
+  String? _currentUserId;
 
   @override
   void initState() {
@@ -72,9 +84,31 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _groupIndex = widget.initialGroupIndex;
     _storyIndex = widget.initialStoryIndex;
     _loadStory();
+    _loadCurrentUserId();
     if (widget.showViewers && widget.venueId != null) {
       _prefetchViewCounts();
     }
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    try {
+      final me = await AuthRepository().getMe();
+      if (mounted) setState(() => _currentUserId = me['id'] as String?);
+    } catch (_) {}
+  }
+
+  Future<void> _openReportSheet(String targetUserId) async {
+    _pauseProgress();
+    final ok = await showReportUserSheet(context, targetUserId: targetUserId);
+    if (ok && mounted) {
+      widget.onClose?.call(_storyIndex, false);
+      Navigator.pop(
+        context,
+        StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: false),
+      );
+      return;
+    }
+    if (mounted) _resumeProgress();
   }
 
   Future<void> _prefetchViewCounts() async {
@@ -143,8 +177,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
         debugPrint('❌ Video initialize error: $e');
         if (!mounted) return;
         _loadingStory = false;
-        final fallback = AnimationController(vsync: this, duration: _photoDuration)
-          ..addStatusListener((s) { if (s == AnimationStatus.completed) _advance(); });
+        final fallback =
+            AnimationController(vsync: this, duration: _photoDuration)
+              ..addStatusListener((s) {
+                if (s == AnimationStatus.completed) _advance();
+              });
         setState(() => _progressController = fallback);
         fallback.forward();
         return;
@@ -155,7 +192,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       vc.addListener(() {
         if (_videoController != vc) return; // bu vc artık aktif değil
         final val = vc.value;
-        if (!val.isPlaying && !val.isBuffering &&
+        if (!val.isPlaying &&
+            !val.isBuffering &&
             val.duration.inMilliseconds > 0 &&
             val.position >= val.duration) {
           vc.removeListener(() {});
@@ -167,10 +205,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       await vc.play();
     } else {
       _loadingStory = false;
-      final progress = AnimationController(vsync: this, duration: _photoDuration)
-        ..addStatusListener((s) {
-          if (s == AnimationStatus.completed) _advance();
-        });
+      final progress =
+          AnimationController(vsync: this, duration: _photoDuration)
+            ..addStatusListener((s) {
+              if (s == AnimationStatus.completed) _advance();
+            });
       setState(() => _progressController = progress);
       progress.forward();
     }
@@ -181,8 +220,9 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     final group = _currentGroup;
     final groupIdx = _groupIndex;
     final placeholderIdx = _storyIndex;
-    final realCount =
-        group.stories.where((s) => !s.isUploadingPlaceholder).length;
+    final realCount = group.stories
+        .where((s) => !s.isUploadingPlaceholder)
+        .length;
 
     for (int i = 0; i < 60; i++) {
       await Future.delayed(const Duration(milliseconds: 1500));
@@ -233,7 +273,10 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       _loadStory();
     } else {
       widget.onClose?.call(_storyIndex, true);
-      Navigator.pop(context, StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: true));
+      Navigator.pop(
+        context,
+        StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: true),
+      );
     }
   }
 
@@ -261,7 +304,10 @@ class _StoryViewerPageState extends State<StoryViewerPage>
         title: const Text('Story\'yi sil?'),
         content: const Text('Bu story kalıcı olarak silinecek.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('İptal')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Sil', style: TextStyle(color: Colors.red)),
@@ -278,23 +324,31 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       widget.onStoryDeleted?.call(story.id);
       if (!mounted) return;
       final group = _currentGroup;
-      final newStories = List<StoryItem>.from(group.stories)..removeAt(_storyIndex);
+      final newStories = List<StoryItem>.from(group.stories)
+        ..removeAt(_storyIndex);
       if (newStories.isEmpty) {
         widget.onClose?.call(_storyIndex, true);
-        Navigator.pop(context, StoryViewerResult(lastStoryIndex: 0, allFinished: true));
+        Navigator.pop(
+          context,
+          StoryViewerResult(lastStoryIndex: 0, allFinished: true),
+        );
         return;
       }
       setState(() {
-        _groups[_groupIndex] = StoryGroup(user: group.user, stories: newStories);
-        if (_storyIndex >= newStories.length) _storyIndex = newStories.length - 1;
+        _groups[_groupIndex] = StoryGroup(
+          user: group.user,
+          stories: newStories,
+        );
+        if (_storyIndex >= newStories.length)
+          _storyIndex = newStories.length - 1;
       });
       _loadStory();
     } catch (e) {
       if (!mounted) return;
       _resumeProgress();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Silinemedi: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Silinemedi: $e')));
     }
   }
 
@@ -347,18 +401,20 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                     )
                   : story.isVideo
                   ? _videoReady && _videoController != null
-                      ? FittedBox(
-                          fit: BoxFit.cover,
-                          clipBehavior: Clip.hardEdge,
-                          child: SizedBox(
-                            width: _videoController!.value.size.width,
-                            height: _videoController!.value.size.height,
-                            child: VideoPlayer(_videoController!),
-                          ),
-                        )
-                      : const Center(
-                          child: CircularProgressIndicator(color: Colors.white),
-                        )
+                        ? FittedBox(
+                            fit: BoxFit.cover,
+                            clipBehavior: Clip.hardEdge,
+                            child: SizedBox(
+                              width: _videoController!.value.size.width,
+                              height: _videoController!.value.size.height,
+                              child: VideoPlayer(_videoController!),
+                            ),
+                          )
+                        : const Center(
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                            ),
+                          )
                   : Image.network(
                       story.mediaUrl,
                       fit: BoxFit.cover,
@@ -404,7 +460,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                           controller: (i == _storyIndex && !story.isVideo)
                               ? _progressController
                               : null,
-                          videoController: (i == _storyIndex && story.isVideo && _videoReady)
+                          videoController:
+                              (i == _storyIndex && story.isVideo && _videoReady)
                               ? _videoController
                               : null,
                         ),
@@ -448,7 +505,9 @@ class _StoryViewerPageState extends State<StoryViewerPage>
             ),
 
             // ── VENUE STORY: viewers count bar (Instagram-style) ──────────
-            if (widget.venueId != null && widget.showViewers && !story.isUploadingPlaceholder)
+            if (widget.venueId != null &&
+                widget.showViewers &&
+                !story.isUploadingPlaceholder)
               Positioned(
                 left: 0,
                 right: 0,
@@ -456,12 +515,18 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                 child: GestureDetector(
                   onTap: () => _openViewersList(story),
                   onVerticalDragEnd: (d) {
-                    if (d.primaryVelocity != null && d.primaryVelocity! < -100) {
+                    if (d.primaryVelocity != null &&
+                        d.primaryVelocity! < -100) {
                       _openViewersList(story);
                     }
                   },
                   child: Container(
-                    padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).padding.bottom + 20),
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      16,
+                      20,
+                      MediaQuery.of(context).padding.bottom + 20,
+                    ),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.bottomCenter,
@@ -474,7 +539,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 18),
+                        const Icon(
+                          Icons.remove_red_eye_outlined,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           '${_liveViewCounts[_storyIndex] ?? story.viewCount}',
@@ -485,10 +554,16 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                           ),
                         ),
                         const Spacer(),
-                        const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white60, size: 20),
+                        const Icon(
+                          Icons.keyboard_arrow_up_rounded,
+                          color: Colors.white60,
+                          size: 20,
+                        ),
                         const SizedBox(width: 2),
-                        const Text('viewers',
-                            style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        const Text(
+                          'viewers',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
                       ],
                     ),
                   ),
@@ -501,9 +576,13 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                 left: 16,
                 bottom: 32,
                 child: GestureDetector(
-                  onTap: () => _openVenueDetail(story.venueId!, story.venueName!),
+                  onTap: () =>
+                      _openVenueDetail(story.venueId!, story.venueName!),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),
                       borderRadius: BorderRadius.circular(20),
@@ -521,7 +600,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                             ),
                           )
                         else
-                          const Icon(Icons.location_on, color: Colors.white, size: 13),
+                          const Icon(
+                            Icons.location_on,
+                            color: Colors.white,
+                            size: 13,
+                          ),
                         const SizedBox(width: 4),
                         Text(
                           'at ${story.venueName}',
@@ -529,7 +612,9 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                             color: Colors.white,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            shadows: [Shadow(blurRadius: 3, color: Colors.black54)],
+                            shadows: [
+                              Shadow(blurRadius: 3, color: Colors.black54),
+                            ],
                           ),
                         ),
                       ],
@@ -571,16 +656,34 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                         ],
                       ),
                     ),
-                    if (widget.canDelete && widget.venueId != null && !story.isUploadingPlaceholder)
+                    if (widget.canDelete &&
+                        widget.venueId != null &&
+                        !story.isUploadingPlaceholder)
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.white),
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.white,
+                        ),
                         onPressed: _deleteCurrentStory,
+                      ),
+                    if (!story.isUploadingPlaceholder &&
+                        _currentUserId != null &&
+                        group.user.id != _currentUserId)
+                      IconButton(
+                        icon: const Icon(Icons.more_vert, color: Colors.white),
+                        onPressed: () => _openReportSheet(group.user.id),
                       ),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
                       onPressed: () {
                         widget.onClose?.call(_storyIndex, false);
-                        Navigator.pop(context, StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: false));
+                        Navigator.pop(
+                          context,
+                          StoryViewerResult(
+                            lastStoryIndex: _storyIndex,
+                            allFinished: false,
+                          ),
+                        );
                       },
                     ),
                   ],
@@ -588,8 +691,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
               ),
             ),
           ],
-          ),   // Stack
-        ),     // SizedBox
+        ), // Stack
+      ), // SizedBox
     );
   }
 
@@ -675,25 +778,27 @@ class _ProgressBar extends StatelessWidget {
                   return LinearProgressIndicator(
                     value: val,
                     backgroundColor: Colors.white30,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.white,
+                    ),
                   );
                 },
               )
             : active && controller != null
-                // Foto: AnimationController ile ilerler
-                ? AnimatedBuilder(
-                    animation: controller!,
-                    builder: (ctx, child) => LinearProgressIndicator(
-                      value: controller!.value,
-                      backgroundColor: Colors.white30,
-                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  )
-                : LinearProgressIndicator(
-                    value: completed ? 1.0 : 0.0,
-                    backgroundColor: Colors.white30,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                  ),
+            // Foto: AnimationController ile ilerler
+            ? AnimatedBuilder(
+                animation: controller!,
+                builder: (ctx, child) => LinearProgressIndicator(
+                  value: controller!.value,
+                  backgroundColor: Colors.white30,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : LinearProgressIndicator(
+                value: completed ? 1.0 : 0.0,
+                backgroundColor: Colors.white30,
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
       ),
     );
   }
@@ -706,7 +811,11 @@ class _ViewersSheet extends StatefulWidget {
   final String storyId;
   final void Function(int count)? onFreshCount;
 
-  const _ViewersSheet({required this.venueId, required this.storyId, this.onFreshCount});
+  const _ViewersSheet({
+    required this.venueId,
+    required this.storyId,
+    this.onFreshCount,
+  });
 
   @override
   State<_ViewersSheet> createState() => _ViewersSheetState();
@@ -727,9 +836,13 @@ class _ViewersSheetState extends State<_ViewersSheet> {
 
   Future<void> _load() async {
     try {
-      debugPrint('🔍 ViewersSheet: loading venueId=${widget.venueId} storyId=${widget.storyId}');
+      debugPrint(
+        '🔍 ViewersSheet: loading venueId=${widget.venueId} storyId=${widget.storyId}',
+      );
       final all = await _repo.getViewers(widget.venueId);
-      debugPrint('🔍 ViewersSheet: got ${all.length} stories, ids=${all.map((s) => s['story_id']).toList()}');
+      debugPrint(
+        '🔍 ViewersSheet: got ${all.length} stories, ids=${all.map((s) => s['story_id']).toList()}',
+      );
       final story = all.firstWhere(
         (s) => s['story_id'] == widget.storyId,
         orElse: () => <String, dynamic>{},
@@ -739,14 +852,20 @@ class _ViewersSheetState extends State<_ViewersSheet> {
         final freshCount = (story['view_count'] as num?)?.toInt() ?? 0;
         widget.onFreshCount?.call(freshCount);
         setState(() {
-          _viewers = List<Map<String, dynamic>>.from(story['viewers'] as List? ?? []);
+          _viewers = List<Map<String, dynamic>>.from(
+            story['viewers'] as List? ?? [],
+          );
           _viewCount = freshCount;
           _loading = false;
         });
       }
     } catch (e, st) {
       debugPrint('❌ ViewersSheet load error: $e\n$st');
-      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+      if (mounted)
+        setState(() {
+          _loading = false;
+          _error = e.toString();
+        });
     }
   }
 
@@ -770,7 +889,8 @@ class _ViewersSheetState extends State<_ViewersSheet> {
               // Handle
               const SizedBox(height: 10),
               Container(
-                width: 36, height: 4,
+                width: 36,
+                height: 4,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.25),
                   borderRadius: BorderRadius.circular(2),
@@ -783,10 +903,16 @@ class _ViewersSheetState extends State<_ViewersSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 18),
+                    const Icon(
+                      Icons.remove_red_eye_outlined,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                     const SizedBox(width: 8),
                     Text(
-                      _loading ? 'Viewers' : '$_viewCount ${_viewCount == 1 ? 'viewer' : 'viewers'}',
+                      _loading
+                          ? 'Viewers'
+                          : '$_viewCount ${_viewCount == 1 ? 'viewer' : 'viewers'}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
@@ -803,124 +929,165 @@ class _ViewersSheetState extends State<_ViewersSheet> {
               // List
               Expanded(
                 child: _loading
-                    ? const Center(child: CircularProgressIndicator(color: Colors.white30, strokeWidth: 2))
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          color: Colors.white30,
+                          strokeWidth: 2,
+                        ),
+                      )
                     : _error != null
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(_error!,
-                                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                                  textAlign: TextAlign.center),
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 12,
                             ),
-                          )
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
                     : _viewers.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.remove_red_eye_outlined,
-                                    color: Colors.white.withValues(alpha: 0.2), size: 40),
-                                const SizedBox(height: 12),
-                                Text('No views yet',
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.4),
-                                      fontSize: 14,
-                                    )),
-                              ],
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.remove_red_eye_outlined,
+                              color: Colors.white.withValues(alpha: 0.2),
+                              size: 40,
                             ),
-                          )
-                        : ListView.builder(
-                            controller: controller,
-                            padding: EdgeInsets.fromLTRB(0, 4, 0, bottom + 16),
-                            itemCount: _viewers.length,
-                            itemBuilder: (_, i) {
-                              final v = _viewers[i];
-                              final user = v['user'] as Map<String, dynamic>;
-                              final photo = user['photo'] as String?;
-                              final name = (user['full_name'] ?? user['username'] ?? 'User') as String;
-                              final username = user['username'] as String?;
-                              final venueRole = v['venue_role'] as String?;
-                              final viewedAt = v['viewed_at'] as String?;
-                              final dt = viewedAt != null ? DateTime.tryParse(viewedAt)?.toLocal() : null;
-                              final timeLabel = _timeLabel(dt);
+                            const SizedBox(height: 12),
+                            Text(
+                              'No views yet',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.4),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: controller,
+                        padding: EdgeInsets.fromLTRB(0, 4, 0, bottom + 16),
+                        itemCount: _viewers.length,
+                        itemBuilder: (_, i) {
+                          final v = _viewers[i];
+                          final user = v['user'] as Map<String, dynamic>;
+                          final photo = user['photo'] as String?;
+                          final name =
+                              (user['full_name'] ?? user['username'] ?? 'User')
+                                  as String;
+                          final username = user['username'] as String?;
+                          final venueRole = v['venue_role'] as String?;
+                          final viewedAt = v['viewed_at'] as String?;
+                          final dt = viewedAt != null
+                              ? DateTime.tryParse(viewedAt)?.toLocal()
+                              : null;
+                          final timeLabel = _timeLabel(dt);
 
-                              return ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-                                leading: CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: Colors.white12,
-                                  backgroundImage: photo != null && photo.isNotEmpty
-                                      ? NetworkImage(photo)
-                                      : null,
-                                  child: photo == null || photo.isEmpty
-                                      ? Text(
-                                          name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                                title: Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        name,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
+                          return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 2,
+                            ),
+                            leading: CircleAvatar(
+                              radius: 22,
+                              backgroundColor: Colors.white12,
+                              backgroundImage: photo != null && photo.isNotEmpty
+                                  ? NetworkImage(photo)
+                                  : null,
+                              child: photo == null || photo.isEmpty
+                                  ? Text(
+                                      name.isNotEmpty
+                                          ? name[0].toUpperCase()
+                                          : '?',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontWeight: FontWeight.w700,
                                       ),
+                                    )
+                                  : null,
+                            ),
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    if (venueRole != null && (venueRole == 'OWNER' || venueRole == 'ADMIN')) ...[
-                                      const SizedBox(width: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: venueRole == 'OWNER'
-                                              ? const Color(0xFF1A9FE8).withValues(alpha: 0.2)
-                                              : const Color(0xFF1FD9A8).withValues(alpha: 0.2),
-                                          borderRadius: BorderRadius.circular(4),
-                                          border: Border.all(
-                                            color: venueRole == 'OWNER'
-                                                ? const Color(0xFF1A9FE8).withValues(alpha: 0.5)
-                                                : const Color(0xFF1FD9A8).withValues(alpha: 0.5),
-                                          ),
-                                        ),
-                                        child: Text(
-                                          venueRole == 'OWNER' ? 'Owner' : 'Admin',
-                                          style: TextStyle(
-                                            color: venueRole == 'OWNER'
-                                                ? const Color(0xFF1A9FE8)
-                                                : const Color(0xFF1FD9A8),
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                subtitle: username != null
-                                    ? Text('@$username',
-                                        style: TextStyle(
-                                          color: Colors.white.withValues(alpha: 0.4),
-                                          fontSize: 12,
-                                        ))
-                                    : null,
-                                trailing: Text(
-                                  timeLabel,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.4),
-                                    fontSize: 12,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                              );
-                            },
-                          ),
+                                if (venueRole != null &&
+                                    (venueRole == 'OWNER' ||
+                                        venueRole == 'ADMIN')) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: venueRole == 'OWNER'
+                                          ? const Color(
+                                              0xFF1A9FE8,
+                                            ).withValues(alpha: 0.2)
+                                          : const Color(
+                                              0xFF1FD9A8,
+                                            ).withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: venueRole == 'OWNER'
+                                            ? const Color(
+                                                0xFF1A9FE8,
+                                              ).withValues(alpha: 0.5)
+                                            : const Color(
+                                                0xFF1FD9A8,
+                                              ).withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      venueRole == 'OWNER' ? 'Owner' : 'Admin',
+                                      style: TextStyle(
+                                        color: venueRole == 'OWNER'
+                                            ? const Color(0xFF1A9FE8)
+                                            : const Color(0xFF1FD9A8),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            subtitle: username != null
+                                ? Text(
+                                    '@$username',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.4,
+                                      ),
+                                      fontSize: 12,
+                                    ),
+                                  )
+                                : null,
+                            trailing: Text(
+                              timeLabel,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.4),
+                                fontSize: 12,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
             ],
           ),

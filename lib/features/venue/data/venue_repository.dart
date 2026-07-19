@@ -1,26 +1,52 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_model.dart';
+
 class NearbyVenuesResponse {
   final List<Venue> mapItems;
   final List<Venue> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final int count;
 
   NearbyVenuesResponse({
     required this.mapItems,
     required this.items,
+    required this.page,
+    required this.pageSize,
+    required this.total,
+    required this.count,
   });
 
+  bool get hasMore => page * pageSize < total;
+
   factory NearbyVenuesResponse.fromJson(Map<String, dynamic> json) {
+    final parsedItems = (json['items'] as List? ?? [])
+        .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
     return NearbyVenuesResponse(
       mapItems: (json['mapItems'] as List? ?? [])
           .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      items: (json['items'] as List? ?? [])
-          .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
-          .toList(),
+      items: parsedItems,
+      page: _parseInt(json['page']) ?? 1,
+      pageSize:
+          _parseInt(json['pageSize'] ?? json['page_size']) ??
+          parsedItems.length,
+      total: _parseInt(json['total']) ?? parsedItems.length,
+      count: _parseInt(json['count']) ?? parsedItems.length,
     );
   }
+
+  static int? _parseInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
 }
+
 class VenueRepository {
   final ApiClient _api = ApiClient();
 
@@ -56,22 +82,31 @@ class VenueRepository {
     return const [];
   }
 
+  Future<NearbyVenuesResponse> getNearbyVenues({
+    required double latitude,
+    required double longitude,
+    int page = 1,
+    int pageSize = 50,
+    String? keyword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
 
-Future<NearbyVenuesResponse> getNearbyVenues({
-  required double latitude,
-  required double longitude,
-}) async {
-  final token = await SecureStorage.getAccessToken();
-  final headers = token == null
-      ? const <String, String>{}
-      : <String, String>{'Authorization': 'Bearer $token'};
+    final normalizedPage = page < 1 ? 1 : page;
+    final normalizedPageSize = pageSize.clamp(1, 50);
+    final q = keyword?.trim();
+    final keywordPart = q != null && q.isNotEmpty
+        ? '&keyword=${Uri.encodeQueryComponent(q)}'
+        : '';
+    final path =
+        '/venues/discover?latitude=$latitude&longitude=$longitude&page=$normalizedPage&pageSize=$normalizedPageSize$keywordPart';
 
-  final path = '/venues/discover?latitude=$latitude&longitude=$longitude';
+    final data = await _api.get(path, headers: headers);
 
-  final data = await _api.get(path, headers: headers);
-
-  return NearbyVenuesResponse.fromJson(data);
-}
+    return NearbyVenuesResponse.fromJson(data);
+  }
 
   Future<List<Venue>> getMapMarkers({
     required double latitude,
@@ -126,15 +161,15 @@ Future<NearbyVenuesResponse> getNearbyVenues({
 
     // Build path — only include lat/lng when meaningful (non-zero) coordinates
     // are available. Without location the backend performs a text-only search.
-    final hasLocation = latitude != null &&
+    final hasLocation =
+        latitude != null &&
         longitude != null &&
         !(latitude == 0 && longitude == 0);
 
     final locationPart = hasLocation
         ? '&latitude=$latitude&longitude=$longitude'
         : '';
-    final path =
-        '/venues/search?query=$encodedQuery$locationPart&limit=$limit';
+    final path = '/venues/search?query=$encodedQuery$locationPart&limit=$limit';
 
     final data = await _api.get(path, headers: headers);
     return _parseVenueList(data);
@@ -150,7 +185,8 @@ Future<NearbyVenuesResponse> getNearbyVenues({
     if (data is List) {
       list = data;
     } else if (data is Map<String, dynamic>) {
-      final nested = data['items'] ?? data['venues'] ?? data['data'] ?? data['results'];
+      final nested =
+          data['items'] ?? data['venues'] ?? data['data'] ?? data['results'];
       if (nested is List) {
         list = nested;
       } else if (nested is Map<String, dynamic> && nested['items'] is List) {
@@ -179,7 +215,10 @@ Future<NearbyVenuesResponse> getNearbyVenues({
     );
     final map = Map<String, dynamic>.from(result as Map);
     final venueMap = map['venue'] as Map?;
-    final id = venueMap?['id']?.toString() ?? map['id']?.toString() ?? map['venueId']?.toString();
+    final id =
+        venueMap?['id']?.toString() ??
+        map['id']?.toString() ??
+        map['venueId']?.toString();
     if (id == null || id.isEmpty) throw Exception('Could not resolve venue ID');
     return id;
   }

@@ -21,6 +21,7 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
 import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
@@ -36,8 +37,10 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.d
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
+
   /// When true the shell opens directly in venue mode — no personal-tab flash.
   final bool initialIsVenueContext;
+
   /// Passed straight through to venue tabs so they don't re-fetch context.
   final String? initialVenueId;
 
@@ -102,13 +105,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _loadUnreadDmCount();
     PushManager.instance.reconcileNotificationState();
     _initCheckinPing();
+    // Cold-start'ta (uygulama kapalıyken) bildirime basılarak açıldıysa,
+    // AuthGate zinciri bitip shell ayağa kalktığı için artık güvenle route edilir.
+    PushDeepLinkHandler.instance.consumePendingColdStart();
   }
 
   void _initCheckinPing() {
     CheckinPingManager.I.configure(
       getLocation: () async {
+        // Low accuracy (network/cell-based) konum, sınıra yakın gerçek
+        // check-in'lerde 200m'yi yanlışlıkla aşıp check-in'i erken kapatabiliyordu.
         final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.low,
+          desiredAccuracy: LocationAccuracy.high,
         );
         return (lat: pos.latitude, lng: pos.longitude);
       },
@@ -116,7 +124,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Check-in süren sona erdi. Tekrar check-in yapabilirsin.'),
+            content: const Text(
+              'Check-in süren sona erdi. Tekrar check-in yapabilirsin.',
+            ),
             duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
           ),
@@ -144,6 +154,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_connectChatRealtime());
       unawaited(_notificationRealtime.ensureConnected());
+      // Ön plana dönünce presence'i anında "online" yap.
+      _chatRealtime.notifyForeground();
       PushManager.instance.reconcileNotificationState();
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
@@ -152,6 +164,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       AuthRepository.invalidateMeCache();
       _loadUserInitial();
     } else if (state == AppLifecycleState.paused) {
+      // Arka plana alınınca karşı taraf hemen "offline" görsün.
+      _chatRealtime.notifyAway();
       CheckinPingManager.I.stop();
     }
   }
@@ -236,7 +250,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _bindNotificationRealtime() {
-    _notificationStateSub = _notificationRealtime.connectionState.listen((state) {
+    _notificationStateSub = _notificationRealtime.connectionState.listen((
+      state,
+    ) {
       if (!mounted) return;
       if (state == ChatRealtimeConnectionState.connected ||
           state == ChatRealtimeConnectionState.reconnecting) {
@@ -311,7 +327,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   bool _applyDmUnreadPatch(Map<String, dynamic> payload) {
     final chatId = _readStringField(payload, const ['chatId', 'chat_id']);
-    final unread = _readIntField(payload, const ['unreadCount', 'unread_count']);
+    final unread = _readIntField(payload, const [
+      'unreadCount',
+      'unread_count',
+    ]);
     if (chatId == null || unread == null) return false;
 
     final previous = _chatUnreadById[chatId] ?? 0;
@@ -328,7 +347,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _applyNotificationUnreadPatch(Map<String, dynamic> payload) {
     final type = _readStringField(payload, const ['type']);
     if (type == 'new_message') return true;
-    final unread = _readIntField(payload, const ['unreadCount', 'unread_count']);
+    final unread = _readIntField(payload, const [
+      'unreadCount',
+      'unread_count',
+    ]);
     if (unread == null) return false;
     if (!mounted) return true;
     setState(() {
@@ -353,12 +375,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
       // Sadece ACTIVE venue'lar context switching için kullanılır.
-      final activeVenues = context.memberVenues.where((v) => v.isActive).toList();
-      final hasPendingClaim = context.memberVenues.any((v) => v.isPendingOwnerClaim);
-      final hasRejectedClaim = context.hasRejectedClaimOnly ||
+      final activeVenues = context.memberVenues
+          .where((v) => v.isActive)
+          .toList();
+      final hasPendingClaim = context.memberVenues.any(
+        (v) => v.isPendingOwnerClaim,
+      );
+      final hasRejectedClaim =
+          context.hasRejectedClaimOnly ||
           context.memberVenues.any((v) => v.isRejectedOwnerClaim);
       final hasVenueContext =
-          context.hasVenueMembership || activeVenues.isNotEmpty || hasPendingClaim || hasRejectedClaim;
+          context.hasVenueMembership ||
+          activeVenues.isNotEmpty ||
+          hasPendingClaim ||
+          hasRejectedClaim;
       final allKnownVenues = context.memberVenues;
       String? resolvedVenueId = context.activeVenueId;
       if (resolvedVenueId == null ||
@@ -367,10 +397,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         resolvedVenueId = activeVenues.isNotEmpty
             ? activeVenues.first.id
             : hasPendingClaim
-                ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id
-                : hasRejectedClaim
-                    ? context.memberVenues.firstWhere((v) => v.isRejectedOwnerClaim).id
-                    : null;
+            ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id
+            : hasRejectedClaim
+            ? context.memberVenues.firstWhere((v) => v.isRejectedOwnerClaim).id
+            : null;
       }
       // Rejected claim: last_active_context null'a sıfırlandı ama venue context'te kalmalı.
       final isVenueCtx = hasRejectedClaim
@@ -397,7 +427,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         }
         _isVenueContext = isVenueCtx;
         _isPendingClaim = hasPendingClaim && activeVenues.isEmpty;
-        _isRejectedClaim = hasRejectedClaim && !hasPendingClaim && activeVenues.isEmpty;
+        _isRejectedClaim =
+            hasRejectedClaim && !hasPendingClaim && activeVenues.isEmpty;
         _hasPersonalProfile = context.hasPersonalProfile;
         _personalAccountLabel = username != null && username.isNotEmpty
             ? '@$username'
@@ -419,7 +450,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final match = allKnownVenues.where((v) => v.id == resolvedVenueId);
         final roleStr = match.isNotEmpty ? match.first.role : null;
         final role = VenueMemberRoleExt.fromApi(roleStr ?? 'STAFF');
-        if (VenueSession.instance.venueId != resolvedVenueId || !VenueSession.instance.loaded) {
+        if (VenueSession.instance.venueId != resolvedVenueId ||
+            !VenueSession.instance.loaded) {
           VenueSession.instance.load(resolvedVenueId, role);
         }
       } else if (!isVenueCtx) {
@@ -521,10 +553,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       ...activeVenues.map(
                         (venue) => ListTile(
                           leading: CircleAvatar(
-                            backgroundColor:
-                                colors.primary.withValues(alpha: 0.12),
-                            child:
-                                Icon(Icons.storefront, color: colors.primary),
+                            backgroundColor: colors.primary.withValues(
+                              alpha: 0.12,
+                            ),
+                            child: Icon(
+                              Icons.storefront,
+                              color: colors.primary,
+                            ),
                           ),
                           title: Text(
                             venue.name,
@@ -556,8 +591,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       ...pendingVenues.map(
                         (venue) => ListTile(
                           leading: CircleAvatar(
-                            backgroundColor:
-                                colors.onSurface.withValues(alpha: 0.08),
+                            backgroundColor: colors.onSurface.withValues(
+                              alpha: 0.08,
+                            ),
                             child: Icon(
                               Icons.hourglass_top_rounded,
                               color: colors.onSurface.withValues(alpha: 0.45),
@@ -626,9 +662,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   Navigator.pop(context);
                   Navigator.of(this.context).push(
                     MaterialPageRoute(
-                      builder: (_) => const VenueContextOnboardingPage(
-                        fromAppShell: true,
-                      ),
+                      builder: (_) =>
+                          const VenueContextOnboardingPage(fromAppShell: true),
                     ),
                   );
                 },
@@ -655,8 +690,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
               // Personal hesap
               ListTile(
-                leading:
-                    Icon(Icons.person_outline, color: colors.onSurface),
+                leading: Icon(Icons.person_outline, color: colors.onSurface),
                 title: Text(
                   _isVenueContext
                       ? (_hasPersonalProfile
@@ -810,10 +844,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final activeColor = theme.colorScheme.onSurface;
     final inactiveColor = theme.colorScheme.onSurface.withValues(alpha: 0.30);
     return (bool active) => Icon(
-          active ? filled : outlined,
-          size: 28,
-          color: active ? activeColor : inactiveColor,
-        );
+      active ? filled : outlined,
+      size: 28,
+      color: active ? activeColor : inactiveColor,
+    );
   }
 
   /// Personal-context tabs. Order here is the ONLY source of truth — the body,
@@ -862,11 +896,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
       _NavTab(
         page: const ProfilePage(),
-        icon: (active) => _buildProfileAvatar(
-          isActive: active,
-          isDark: isDark,
-          theme: theme,
-        ),
+        icon: (active) =>
+            _buildProfileAvatar(isActive: active, isDark: isDark, theme: theme),
       ),
     ];
   }
@@ -896,11 +927,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           venueNames: _memberVenues.map((v) => v.name).toList(),
           venueId: _activeVenueId,
         ),
-        icon: (active) => _buildProfileAvatar(
-          isActive: active,
-          isDark: isDark,
-          theme: theme,
-        ),
+        icon: (active) =>
+            _buildProfileAvatar(isActive: active, isDark: isDark, theme: theme),
       ),
     ];
   }

@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
+import 'package:kmstry_frontend/features/messages/presntation/message_settings_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 class DmListPage extends StatefulWidget {
@@ -284,18 +285,37 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final colors = theme.colorScheme;
+    final bg = isDark
+        ? const Color(0xFF0B0F17)
+        : theme.scaffoldBackgroundColor;
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: bg,
       appBar: AppBar(
-        backgroundColor: theme.appBarTheme.backgroundColor,
+        backgroundColor: bg,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: const AppLogo(),
         title: Text(
           'Messages',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
           ),
         ),
-        leading: const AppLogo(),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings_outlined, color: colors.onSurface),
+            tooltip: 'Message settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const MessageSettingsPage(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(
