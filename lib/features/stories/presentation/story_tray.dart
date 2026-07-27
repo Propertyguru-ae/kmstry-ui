@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
+import '../data/story_viewed_cache.dart';
 import 'story_viewer_page.dart';
 
 class StoryTray extends StatefulWidget {
@@ -47,13 +48,10 @@ class _StoryTrayState extends State<StoryTray> {
   }
 
   Future<void> _load() async {
+    _loadMyStories();
     try {
-      final results = await Future.wait([
-        _repo.getMyStories(),
-        _repo.getVenueStories(widget.venueId),
-      ]);
+      final freshGroups = await _repo.getVenueStories(widget.venueId);
       if (!mounted) return;
-      final freshGroups = results[1] as List<StoryGroup>;
 
       // İlk yüklemede backend'in shuffle'lı sırasını kullan.
       // Sonraki yüklemelerde (viewer kapandıktan sonra) mevcut sırayı koru —
@@ -77,10 +75,15 @@ class _StoryTrayState extends State<StoryTray> {
           if (s.viewedByMe) backendViewed.add(s.id);
         }
       }
+      // İzlenme durumunu kalıcı cache ile birleştir — özellikle kendi ("Me")
+      // story'lerinde backend viewed_by_me false döndüğü için, sayfa yeniden
+      // yaratılınca halka tekrar renkli görünüyordu. Cache logout'ta temizlendiği
+      // için cross-user contamination riski yok.
+      final persistedViewed = await StoryViewedCache.loadAll();
+      if (!mounted) return;
       setState(() {
-        _myStories = results[0] as List<StoryItem>;
         _groups = orderedGroups;
-        _viewedIds = backendViewed;
+        _viewedIds = {...backendViewed, ...persistedViewed};
         _loading = false;
         _initialLoaded = true;
       });
@@ -88,6 +91,19 @@ class _StoryTrayState extends State<StoryTray> {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadMyStories() async {
+    try {
+      final stories = await _repo.getMyStories();
+      if (!mounted) return;
+      // getMyStories tüm venue'lardaki kendi story'lerini döndürür; bu tray
+      // venue'ya özel olduğu için yalnızca BU venue'nunkileri göster. Aksi
+      // halde Alpha'da paylaşılan story Beta detay sayfasında da görünüyordu.
+      final venueStories =
+          stories.where((s) => s.venueId == widget.venueId).toList();
+      setState(() => _myStories = venueStories);
+    } catch (_) {}
   }
 
   /// Verilen story listesinde ilk görülmemiş story'nin indexini döner.
@@ -101,11 +117,13 @@ class _StoryTrayState extends State<StoryTray> {
 
   void _openMyStories() {
     if (_myStories.isEmpty) return;
-    final realStories =
-        _myStories.where((s) => !s.isUploadingPlaceholder).toList();
+    final realStories = _myStories
+        .where((s) => !s.isUploadingPlaceholder)
+        .toList();
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'Me'),
       stories: _myStories,
+      isCurrentUserOwner: true,
     );
     final startIndex = _firstUnseenIndex(realStories);
     Navigator.push(
@@ -118,7 +136,13 @@ class _StoryTrayState extends State<StoryTray> {
           initialStoryIndex: startIndex,
         ),
       ),
-    ).then((_) { if (mounted) _load(); });
+    ).then((result) {
+      if (!mounted) return;
+      if (result is StoryViewerResult) {
+        _markMyStoriesViewed(result.lastStoryIndex, result.allFinished);
+      }
+      _load();
+    });
   }
 
   void _openViewer(int groupIndex) {
@@ -126,6 +150,7 @@ class _StoryTrayState extends State<StoryTray> {
         ? StoryGroup(
             user: StoryUser(id: 'me', fullName: 'Me'),
             stories: _myStories,
+            isCurrentUserOwner: true,
           )
         : null;
 
@@ -144,7 +169,42 @@ class _StoryTrayState extends State<StoryTray> {
           initialStoryIndex: startIndex,
         ),
       ),
-    ).then((_) { if (mounted) _load(); });
+    ).then((result) {
+      if (!mounted) return;
+      if (result is StoryViewerResult && result.lastStoryIndex >= 0) {
+        _markViewedForGroup(allGroups[offsetIndex], result);
+      }
+      _load();
+    });
+  }
+
+  void _markMyStoriesViewed(int lastIndex, bool allFinished) {
+    if (_myStories.isEmpty) return;
+    final ids = allFinished
+        ? _myStories.map((s) => s.id)
+        : [
+            for (int i = 0; i <= lastIndex && i < _myStories.length; i++)
+              _myStories[i].id,
+          ];
+    setState(() => _viewedIds = {..._viewedIds, ...ids});
+  }
+
+  void _markViewedForGroup(StoryGroup group, StoryViewerResult result) {
+    if (group.isCurrentUserOwner) {
+      _markMyStoriesViewed(result.lastStoryIndex, result.allFinished);
+      return;
+    }
+    final ids = result.allFinished
+        ? group.stories.map((s) => s.id)
+        : [
+            for (
+              int i = 0;
+              i <= result.lastStoryIndex && i < group.stories.length;
+              i++
+            )
+              group.stories[i].id,
+          ];
+    setState(() => _viewedIds = {..._viewedIds, ...ids});
   }
 
   @override
@@ -152,7 +212,7 @@ class _StoryTrayState extends State<StoryTray> {
     final hasAdd = widget.onAddStory != null;
     final hasMe = _myStories.isNotEmpty;
 
-    if (_loading) {
+    if (_loading && !hasAdd && !hasMe) {
       return const SizedBox(
         height: 90,
         child: Center(
@@ -180,7 +240,9 @@ class _StoryTrayState extends State<StoryTray> {
                 .where((s) => !s.isUploadingPlaceholder)
                 .map((s) => s.id)
                 .toList();
-            final meSeen = myIds.isNotEmpty && myIds.every((id) => _viewedIds.contains(id));
+            final meSeen =
+                myIds.isNotEmpty &&
+                myIds.every((id) => _viewedIds.contains(id));
             return _MeBubble(
               myStories: _myStories,
               isUploading: widget.isUploading,
@@ -194,7 +256,8 @@ class _StoryTrayState extends State<StoryTray> {
           final groupIndex = index - 1;
           final group = _groups[groupIndex];
           final ids = group.stories.map((s) => s.id).toList();
-          final seen = ids.isNotEmpty && ids.every((id) => _viewedIds.contains(id));
+          final seen =
+              ids.isNotEmpty && ids.every((id) => _viewedIds.contains(id));
           return _StoryBubble(
             group: group,
             allSeen: seen,
@@ -233,7 +296,8 @@ class _SquareRingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+    final rect =
+        Offset(strokeWidth / 2, strokeWidth / 2) &
         Size(size.width - strokeWidth, size.height - strokeWidth);
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
     final shader = SweepGradient(
@@ -259,11 +323,15 @@ class _SquareSpinnerPainter extends CustomPainter {
   final double strokeWidth;
   final double radius;
 
-  const _SquareSpinnerPainter({required this.strokeWidth, required this.radius});
+  const _SquareSpinnerPainter({
+    required this.strokeWidth,
+    required this.radius,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+    final rect =
+        Offset(strokeWidth / 2, strokeWidth / 2) &
         Size(size.width - strokeWidth, size.height - strokeWidth);
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
 
@@ -309,9 +377,9 @@ class _SquareSpinnerPainter extends CustomPainter {
 
 // ── Shared square avatar ───────────────────────────────────────────────────────
 
-const _kAvatarSize  = 54.0;
-const _kRingPad     = 3.0;
-const _kRingStroke  = 2.2;
+const _kAvatarSize = 54.0;
+const _kRingPad = 3.0;
+const _kRingStroke = 2.2;
 const _kAvatarRadius = 11.0;
 
 Widget _squareAvatar({
@@ -402,6 +470,7 @@ class _MeBubbleState extends State<_MeBubble>
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'Me'),
       stories: stories,
+      isCurrentUserOwner: true,
     );
     Navigator.push(
       context,
@@ -415,10 +484,10 @@ class _MeBubbleState extends State<_MeBubble>
   @override
   Widget build(BuildContext context) {
     final hasStories = widget.myStories.isNotEmpty;
-    final canAdd     = widget.onAddStory != null;
-    final uploading  = widget.isUploading;
-    final color      = Theme.of(context).colorScheme.primary;
-    final bubbleImg  = _bubbleImage(widget.myStories);
+    final canAdd = widget.onAddStory != null;
+    final uploading = widget.isUploading;
+    final color = Theme.of(context).colorScheme.primary;
+    final bubbleImg = _bubbleImage(widget.myStories);
 
     if (!hasStories && !canAdd) return const SizedBox.shrink();
 
@@ -428,7 +497,8 @@ class _MeBubbleState extends State<_MeBubble>
       placeholder: Center(
         child: Icon(
           hasStories ? Icons.videocam : Icons.person,
-          color: color, size: 24,
+          color: color,
+          size: 24,
         ),
       ),
     );
@@ -532,7 +602,10 @@ class _MeBubbleState extends State<_MeBubble>
               width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
               child: Text(
                 uploading ? 'Uploading…' : 'Me',
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
@@ -596,7 +669,10 @@ class _StoryBubble extends StatelessWidget {
               width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
               child: Text(
                 group.user.displayName,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,

@@ -286,23 +286,26 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   clipBehavior: Clip.none,
                   children: [
                     Container(
-                      width: 96,
-                      height: 96,
+                      width: 128,
+                      height: 128,
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
+                        borderRadius: BorderRadius.circular(30),
                         border: Border.all(
                           color: isDark
                               ? Colors.white.withValues(alpha: 0.15)
                               : Colors.grey[300]!,
                         ),
                       ),
-                      child: ClipOval(child: _buildAvatarImage(isDark)),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(30),
+                        child: _buildAvatarImage(isDark),
+                      ),
                     ),
                     if (_uploadingPhoto)
                       Positioned.fill(
                         child: Container(
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
+                            borderRadius: BorderRadius.circular(30),
                             color: Colors.black.withValues(alpha: 0.4),
                           ),
                           child: const Center(

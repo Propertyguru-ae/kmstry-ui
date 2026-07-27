@@ -8,6 +8,9 @@ class MatchItem {
   final String fullName;
   final String? checkinId;
   final String? venueId;
+  final String? venueName;
+  final String? venueType;
+  final String? venuePhoto;
   final String? bio;
 
   MatchItem({
@@ -18,6 +21,9 @@ class MatchItem {
     required this.fullName,
     this.checkinId,
     this.venueId,
+    this.venueName,
+    this.venueType,
+    this.venuePhoto,
     this.bio,
   });
 
@@ -26,7 +32,8 @@ class MatchItem {
     final user = userRaw is Map<String, dynamic>
         ? userRaw
         : (userRaw is Map ? Map<String, dynamic>.from(userRaw) : null);
-    final matchId = json['match_id'] as String? ?? json['matchId'] as String? ?? '';
+    final matchId =
+        json['match_id'] as String? ?? json['matchId'] as String? ?? '';
     final chatId = json['chat_id'] as String? ?? json['chatId'] as String?;
     final userId =
         json['user_id'] as String? ??
@@ -44,18 +51,36 @@ class MatchItem {
         user?['full_name'] as String? ??
         user?['fullName'] as String? ??
         '';
-    final checkinId = json['checkin_id'] as String? ?? json['checkinId'] as String?;
+    final checkinId =
+        json['checkin_id'] as String? ?? json['checkinId'] as String?;
     final venueId = json['venue_id'] as String? ?? json['venueId'] as String?;
-    final bio = (json['bio'] ??
-            json['bio_text'] ??
-            json['about'] ??
-            json['aboutMe'] ??
-            user?['bio'] ??
-            user?['bio_text'] ??
-            user?['about'] ??
-            user?['aboutMe'])
-        ?.toString()
-        .trim();
+    final venueRaw = json['venue'];
+    final venue = venueRaw is Map<String, dynamic>
+        ? venueRaw
+        : (venueRaw is Map ? Map<String, dynamic>.from(venueRaw) : null);
+    final venueName =
+        json['venue_name'] as String? ??
+        json['venueName'] as String? ??
+        venue?['name'] as String?;
+    final venueType =
+        json['venue_type'] as String? ??
+        json['venueType'] as String? ??
+        venue?['type'] as String?;
+    final venuePhoto =
+        json['venue_photo'] as String? ??
+        json['venuePhoto'] as String? ??
+        venue?['photo'] as String?;
+    final bio =
+        (json['bio'] ??
+                json['bio_text'] ??
+                json['about'] ??
+                json['aboutMe'] ??
+                user?['bio'] ??
+                user?['bio_text'] ??
+                user?['about'] ??
+                user?['aboutMe'])
+            ?.toString()
+            .trim();
 
     return MatchItem(
       matchId: matchId,
@@ -65,6 +90,15 @@ class MatchItem {
       fullName: fullName,
       checkinId: checkinId,
       venueId: venueId,
+      venueName: (venueName != null && venueName.trim().isNotEmpty)
+          ? venueName.trim()
+          : null,
+      venueType: (venueType != null && venueType.trim().isNotEmpty)
+          ? venueType.trim()
+          : null,
+      venuePhoto: (venuePhoto != null && venuePhoto.trim().isNotEmpty)
+          ? venuePhoto.trim()
+          : null,
       bio: (bio != null && bio.isNotEmpty) ? bio : null,
     );
   }

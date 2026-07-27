@@ -161,6 +161,10 @@ class _FriendsListPageState extends State<FriendsListPage> {
           isMatchedHint: true,
           chatIdHint: match.chatId,
           fallbackBio: (bio != null && bio.isNotEmpty) ? bio : null,
+          hintVenueId: match.venueId,
+          hintVenueName: match.venueName,
+          hintVenueType: match.venueType,
+          hintVenuePhoto: match.venuePhoto,
         ),
       ),
     );

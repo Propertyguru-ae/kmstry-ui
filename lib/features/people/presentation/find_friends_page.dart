@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
@@ -231,9 +232,14 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
         builder: (_) => ProfilePreviewPage(
           checkinId: active?.id,
           venueId: active?.venueId,
+          hintVenueId: active?.venueId,
+          hintVenueName: active?.venueName,
+          hintVenueType: active?.venueType,
+          hintVenuePhoto: active?.venuePhoto,
           userId: item.id,
           userName: item.fullName ?? '@${item.username}',
           userUsername: item.username,
+          userPhoto: item.photo,
           isMatchedHint: item.isMatched,
           chatIdHint: item.chatId,
           actionStateHint: actionHint,
@@ -264,11 +270,13 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
     return Scaffold(
       backgroundColor: bgBottom,
       appBar: AppBar(
+        leading: const AppLogo(),
         title: Text(
           'Find Friends',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w900,
-            letterSpacing: -0.8,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: theme.colorScheme.onSurface,
           ),
         ),
         backgroundColor: theme.appBarTheme.backgroundColor,
@@ -293,12 +301,12 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
           child: Column(
             children: [
               Container(
                 color: theme.appBarTheme.backgroundColor,
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                padding: const EdgeInsets.fromLTRB(4, 12, 4, 16),
                 child: Container(
                   decoration: BoxDecoration(
                     color: isDark
@@ -360,9 +368,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                 ),
               Expanded(
                 child: !hasQuery
-                    ? const Center(
-                        child: Text('Search friends by username'),
-                      )
+                    ? const Center(child: Text('Search friends by username'))
                     : _loading
                     ? Center(
                         child: CircularProgressIndicator(

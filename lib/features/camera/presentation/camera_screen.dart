@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:camera/camera.dart';
 import 'dart:io';
@@ -12,8 +15,6 @@ import 'preview_video_screen.dart';
 import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
 import '../data/video_mirror.dart';
-
-enum CaptureMode { photo, video }
 
 class CameraScreen extends StatefulWidget {
   final bool useFrontCamera;
@@ -29,19 +30,37 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen>
+    with SingleTickerProviderStateMixin {
   late CameraController _controller;
   late CameraDescription _currentCamera;
   int _recordSeconds = 0;
   Timer? _recordTimer;
-  final int _maxSeconds = 10; // şimdilik 5, premium'da 15 yapacağız
+  final int _maxSeconds = 60; // maksimum video süresi (Instagram tarzı halka bununla dolar)
   bool _isReady = false;
   bool _cameraPermissionDenied = false;
   bool _cameraPermissionPermanentlyDenied = false;
   bool _microphoneGranted = false;
-  CaptureMode _mode = CaptureMode.photo;
   bool _isRecording = false;
   bool _processingVideo = false;
+
+  // ---- Instagram tarzı basılı-tut jest state'i ----
+  /// Kayıt long-press ile mi başladı — parmak çekilince direkt durur.
+  bool _gestureRecording = false;
+  /// Parmak hâlâ ekranda mı (izin dialogu sırasında kalkarsa kayıt başlamasın).
+  bool _longPressActive = false;
+  // Reentrancy guard'ları — çift tetiklenmeyi engeller (örn. max süre timer'ı
+  // ile parmak bırakma aynı anda stop çağırabilir).
+  bool _isStartingVideo = false;
+  bool _isStoppingVideo = false;
+  bool _isCapturingPhoto = false;
+
+  /// Buton etrafındaki logo-renkli şerit — loading gibi 0→1 arası
+  /// _maxSeconds sürede butonun etrafında ilerler.
+  late final AnimationController _ringController = AnimationController(
+    vsync: this,
+    duration: Duration(seconds: _maxSeconds),
+  );
 
   ResolutionPreset _captureResolutionPreset() {
     // Her zaman yüksek çözünürlük — 720p (high) tüm platformlarda iyi kalite/boyut dengesi.
@@ -147,6 +166,16 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _takePicture() async {
     if (!_controller.value.isInitialized) return;
+    if (_isCapturingPhoto || _isRecording) return;
+    _isCapturingPhoto = true;
+    try {
+      await _takePictureInner();
+    } finally {
+      _isCapturingPhoto = false;
+    }
+  }
+
+  Future<void> _takePictureInner() async {
 
     // Ekranın gerçek oranını async'ten önce oku (context await sonrası geçersiz olabilir).
     // Bu oran = kullanıcının kamera önizlemesinde tam gördüğü alan.
@@ -161,47 +190,53 @@ class _CameraScreenState extends State<CameraScreen> {
       "${DateTime.now().millisecondsSinceEpoch}.jpg",
     );
 
-    File savedImage = await File(image.path).copy(filePath);
+    final File savedImage = await File(image.path).copy(filePath);
 
-    // -------- ORIENTATION + CROP FIX --------
+    // -------- ORIENTATION + MIRROR FIX (release davranışı) --------
+    // Bu düzeltme her zaman burada (çekimden hemen sonra, preview'dan önce)
+    // yapılıyordu ve TestFlight'ta doğru çalışıyor. Yeni kamera/yazı UI'ını
+    // eklerken yanlışlıkla kaldırılmıştı → ön kamera aynalı (selfie) upload
+    // ediliyordu. Geri getiriyoruz.
     final bytes = await savedImage.readAsBytes();
     final decoded = img.decodeImage(bytes);
-
     if (decoded != null) {
       // 1) EXIF orientation uygula → piksel verisi doğru yöne döner.
       img.Image fixed = img.bakeOrientation(decoded);
 
-      // 2) Ön kamera aynalama.
+      // 2) Ön kamera aynalama: CameraX ön kamera STILL fotoğrafını aynalı
+      // (selfie görünümü) kaydediyor; gerçeğe uygun olması (elin sağdaysa
+      // sağda) için geri çeviriyoruz.
       if (_currentCamera.lensDirection == CameraLensDirection.front) {
         fixed = img.flipHorizontal(fixed);
       }
 
-      // 3) Landscape geldiyse portre yap (lockCaptureOrientation güvencesi).
-      if (fixed.width > fixed.height) {
-        fixed = img.copyRotate(fixed, angle: 90);
-      }
+      // NOT: Eski "yataysa 90° döndür" adımı KALDIRILDI — Android'de
+      // bakeOrientation sonrası fotoğrafları yanlış çeviriyordu.
+      // bakeOrientation + lockCaptureOrientation yönü zaten doğru veriyor.
 
-      // 4) Kamera önizlemesinde görülen alanla birebir eşleştir.
-      //    Preview BoxFit.cover ile ekranı dolduruyordu → aynı center-crop uygula.
+      // 3) Kamera önizlemesinde görülen alanla birebir eşleştir
+      //    (preview BoxFit.cover ile ekranı dolduruyordu → aynı center-crop).
       final imageAr = fixed.width / fixed.height;
       if ((imageAr - screenAr).abs() > 0.005) {
         if (imageAr > screenAr) {
-          // Fotoğraf önizlemeden daha geniş → yanlarda fazlalık var, kırp.
           final newW = (fixed.height * screenAr).round();
           final x = ((fixed.width - newW) / 2).round();
-          fixed = img.copyCrop(fixed, x: x, y: 0, width: newW, height: fixed.height);
+          fixed =
+              img.copyCrop(fixed, x: x, y: 0, width: newW, height: fixed.height);
         } else {
-          // Fotoğraf önizlemeden daha uzun → üst/altta fazlalık var, kırp.
           final newH = (fixed.width / screenAr).round();
           final y = ((fixed.height - newH) / 2).round();
-          fixed = img.copyCrop(fixed, x: 0, y: y, width: fixed.width, height: newH);
+          fixed =
+              img.copyCrop(fixed, x: 0, y: y, width: fixed.width, height: newH);
         }
       }
 
-      // Video ile aynı genişlik (720px) — AR korunur
+      // Video ile aynı genişlik (720px) — AR korunur.
       if (fixed.width != 720) {
         final targetH = (720 * fixed.height / fixed.width).round();
-        fixed = img.copyResize(fixed, width: 720, height: targetH,
+        fixed = img.copyResize(fixed,
+            width: 720,
+            height: targetH,
             interpolation: img.Interpolation.linear);
       }
 
@@ -211,13 +246,46 @@ class _CameraScreenState extends State<CameraScreen> {
 
     if (!mounted) return;
 
-    Navigator.push(
+    // Preview'ı aç. Dosya artık doğru yönde/aynasız — PreviewScreen ham
+    // gösterip yazı overlay'i ekliyor (isolate işleme yok).
+    //
+    // Preview'ı await ediyoruz: "Use Photo" ile sonuç dönerse kamerayı KENDİMİZ
+    // kapatıp sonucu çağırana forward ediyoruz (standart desen). Böylece kamera
+    // "alttan" pop edilmiyor ve CameraX surface dispose crash'i olmuyor.
+    final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => PreviewScreen(file: savedImage)),
+      MaterialPageRoute(
+        builder: (_) => PreviewScreen(
+          file: savedImage,
+          isFrontCamera:
+              _currentCamera.lensDirection == CameraLensDirection.front,
+          screenAr: screenAr,
+        ),
+      ),
     );
+    if (!mounted) return;
+    if (result != null) {
+      Navigator.pop(context, result);
+    }
+    // result == null → kullanıcı "Retake" dedi, kamerada kal.
   }
 
-  Future<void> _startVideo() async {
+  /// [fromGesture] true ise kayıt basılı-tut jestiyle başlatılmıştır:
+  /// izin akışı sırasında parmak kalktıysa kayıt hiç başlamaz ve parmak
+  /// bırakılınca (kilitlenmediyse) otomatik durur.
+  Future<void> _startVideo({bool fromGesture = false}) async {
+    if (_isStartingVideo || _isRecording || !_controller.value.isInitialized) {
+      return;
+    }
+    _isStartingVideo = true;
+    try {
+      await _startVideoInner(fromGesture: fromGesture);
+    } finally {
+      _isStartingVideo = false;
+    }
+  }
+
+  Future<void> _startVideoInner({required bool fromGesture}) async {
     PermissionStatus micStatus;
     if (_microphoneGranted) {
       micStatus = PermissionStatus.granted;
@@ -268,12 +336,26 @@ class _CameraScreenState extends State<CameraScreen> {
       return;
     }
 
+    // İzin akışı (dialog) sırasında parmak kalktıysa jest kaydını başlatma.
+    if (fromGesture && !_longPressActive) return;
+    if (!mounted) return;
+
     await _controller.startVideoRecording();
+    HapticFeedback.lightImpact();
+    _ringController.forward(from: 0);
 
     setState(() {
       _isRecording = true;
       _recordSeconds = 0;
+      _gestureRecording = fromGesture;
     });
+
+    // Parmak, startVideoRecording await'i sırasında kalkmış olabilir —
+    // kayıt başladıysa ve jest bittiyse hemen durdur.
+    if (fromGesture && !_longPressActive) {
+      unawaited(_stopVideo());
+      return;
+    }
 
     _recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
@@ -287,13 +369,46 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _stopVideo() async {
+    // Çift stop koruması: max süre timer'ı ile parmak bırakma / stop butonuna
+    // basma aynı anda tetiklenebilir.
+    if (_isStoppingVideo) return;
+    // Controller'a da bak: state ile native kayıt durumu ayrışmış olabilir
+    // (örn. önceki stop denemesi exception yediyse).
+    if (!_isRecording && !_controller.value.isRecordingVideo) return;
+    _isStoppingVideo = true;
+    try {
+      await _stopVideoInner();
+    } finally {
+      _isStoppingVideo = false;
+    }
+  }
+
+  Future<void> _stopVideoInner() async {
     _recordTimer?.cancel();
+    _ringController.stop();
+    _ringController.reset();
 
-    final video = await _controller.stopVideoRecording();
+    // stopVideoRecording çok kısa kayıtlarda / start-stop yarışında platform
+    // exception atabilir. Ne olursa olsun UI state'i resetlenmeli — yoksa
+    // buton "kayıtta" takılı kalır ve kayıt hiç durmuyor gibi görünür.
+    XFile? video;
+    try {
+      video = await _controller.stopVideoRecording();
+    } catch (e) {
+      debugPrint('📹 stopVideoRecording failed: $e');
+    }
 
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+        _gestureRecording = false;
+      });
+    } else {
       _isRecording = false;
-    });
+      _gestureRecording = false;
+    }
+
+    if (video == null) return;
 
     final dir = await getTemporaryDirectory();
     final filePath = path.join(
@@ -313,16 +428,27 @@ class _CameraScreenState extends State<CameraScreen> {
     }
 
     if (!mounted) return;
-    Navigator.push(
+    // Preview'ı await et; "Use Video" ile sonuç dönerse kamerayı kendimiz
+    // kapatıp forward et (fotoğrafla aynı standart desen — alttan pop yok).
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => PreviewVideoScreen(file: savedVideo)),
     );
+    if (!mounted) return;
+    if (result != null) {
+      Navigator.pop(context, result);
+    }
   }
 
   @override
   void dispose() {
     _recordTimer?.cancel();
-    _controller.dispose();
+    _ringController.dispose();
+    // CameraX bazı geçiş durumlarında dispose'ta surface hatası atabiliyor;
+    // exception'ın yukarı sızıp uygulamayı bozmasını engelle.
+    try {
+      _controller.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -397,69 +523,10 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
           ),
 
-          if (_mode == CaptureMode.video && _isRecording)
-            Positioned(
-              top: 80,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.fiber_manual_record,
-                    color: Colors.red,
-                    size: 14,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _recordSeconds.toString().padLeft(2, '0'),
-                    style: const TextStyle(
-                      color: Colors.red,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (!_isRecording)
-            Positioned(
-              bottom: 120,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  GestureDetector(
-                    onTap: () => setState(() => _mode = CaptureMode.photo),
-                    child: Text(
-                      "PHOTO",
-                      style: TextStyle(
-                        color: _mode == CaptureMode.photo
-                            ? Colors.white
-                            : Colors.white54,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 40),
-                  GestureDetector(
-                    onTap: () => setState(() => _mode = CaptureMode.video),
-                    child: Text(
-                      "VIDEO",
-                      style: TextStyle(
-                        color: _mode == CaptureMode.video
-                            ? Colors.white
-                            : Colors.white54,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          // Süre göstergesi şimdilik gizli — ilerleme butonun etrafındaki
+          // renkli şeritten takip ediliyor.
+          // PHOTO/VIDEO mod seçici kaldırıldı: tek dokunuş = fotoğraf,
+          // basılı tut = video.
 
           Positioned(
             bottom: 40,
@@ -472,43 +539,84 @@ class _CameraScreenState extends State<CameraScreen> {
                 const SizedBox(width: 60),
 
                 // SHUTTER BUTTON
+                // Tek dokunuş: fotoğraf. Basılı tut (Instagram tarzı): video —
+                // parmak çekilince direkt durur; buton etrafında logo-renkli
+                // şerit loading gibi ilerler.
                 GestureDetector(
                   onTap: () async {
-                    if (_mode == CaptureMode.photo) {
-                      await _takePicture();
-                    } else {
-                      if (_isRecording) {
-                        await _stopVideo();
-                      } else {
-                        await _startVideo();
-                      }
+                    if (_isRecording) {
+                      // Güvenlik ağı: state bir şekilde kayıtta takıldıysa
+                      // dokunuş kaydı durdurur.
+                      await _stopVideo();
+                      return;
+                    }
+                    await _takePicture();
+                  },
+                  onLongPressStart: (_) {
+                    if (_isRecording) return;
+                    _longPressActive = true;
+                    unawaited(_startVideo(fromGesture: true));
+                  },
+                  onLongPressEnd: (_) {
+                    _longPressActive = false;
+                    if (_gestureRecording) {
+                      unawaited(_stopVideo());
                     }
                   },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 75,
-                    height: 75,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                      color: _mode == CaptureMode.video
-                          ? Colors.red
-                          : Colors.transparent,
-                    ),
-                    child: _mode == CaptureMode.video && _isRecording
-                        ? Center(
-                            child: Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(
-                                  6,
-                                ), // kare efekti
+                  onLongPressCancel: () {
+                    _longPressActive = false;
+                    if (_gestureRecording) {
+                      unawaited(_stopVideo());
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: _ringController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        // Kayıt sırasında logo-renkli şerit loading gibi
+                        // butonun etrafında ilerler (60 sn'de tam tur).
+                        foregroundPainter: _isRecording
+                            ? _RecordRingPainter(
+                                progress: _ringController.value,
+                              )
+                            : null,
+                        child: child,
+                      );
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      // Jest kaydı sırasında buton büyür (Instagram hissi).
+                      width: _gestureRecording && _isRecording ? 92 : 75,
+                      height: _gestureRecording && _isRecording ? 92 : 75,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          // Kayıt sırasında beyaz çerçeve yerine renkli şerit var.
+                          color:
+                              _isRecording ? Colors.transparent : Colors.white,
+                          width: 4,
+                        ),
+                        // Instagram tarzı: kırmızı yok — kayıtta hafif saydam
+                        // beyaz zemin, ortada beyaz kare (stop).
+                        color: _isRecording
+                            ? Colors.white24
+                            : Colors.transparent,
+                      ),
+                      child: _isRecording
+                          ? Center(
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(
+                                    6,
+                                  ), // kare efekti (stop)
+                                ),
                               ),
-                            ),
-                          )
-                        : null,
+                            )
+                          : null,
+                    ),
                   ),
                 ),
 
@@ -567,4 +675,51 @@ class _CameraScreenState extends State<CameraScreen> {
       ),
     );
   }
+}
+
+/// Kayıt sırasında shutter butonunun etrafında loading gibi ilerleyen,
+/// logo renklerinden (magenta → mavi → teal → turuncu) oluşan renkli şerit.
+/// [progress] 0→1: şerit saat 12'den başlayıp max sürede tam tur tamamlar.
+class _RecordRingPainter extends CustomPainter {
+  final double progress; // 0..1
+
+  const _RecordRingPainter({required this.progress});
+
+  static const List<Color> _logoColors = [
+    AppColors.magenta,
+    AppColors.blue,
+    AppColors.teal,
+    AppColors.orange,
+    AppColors.magenta, // sweep başlangıca yumuşak dönsün
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+
+    const strokeWidth = 5.0;
+    final center = Offset(size.width / 2, size.height / 2);
+    // Şerit, butonun hemen dışında dursun.
+    final radius = (size.shortestSide / 2) + 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    // Saat 12'den başla (üst orta).
+    const startAngle = -math.pi / 2;
+    final sweepAngle = 2 * math.pi * progress.clamp(0.0, 1.0);
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..shader = SweepGradient(
+        colors: _logoColors,
+        transform: const GradientRotation(startAngle),
+      ).createShader(rect);
+
+    canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(_RecordRingPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }

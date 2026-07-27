@@ -108,6 +108,30 @@ class VenueRepository {
     return NearbyVenuesResponse.fromJson(data);
   }
 
+  Future<List<Venue>> getRecommendedVenuesForMe({
+    double? latitude,
+    double? longitude,
+    int pageSize = 10,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final params = <String>[
+      'pageSize=${pageSize.clamp(1, 20)}',
+      if (latitude != null) 'latitude=$latitude',
+      if (longitude != null) 'longitude=$longitude',
+    ].join('&');
+
+    final data = await _api.get(
+      '/venues/recommended-for-me?$params',
+      headers: headers,
+    );
+
+    return _parseVenueList(data);
+  }
+
   Future<List<Venue>> getMapMarkers({
     required double latitude,
     required double longitude,

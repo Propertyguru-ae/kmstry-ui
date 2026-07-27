@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../data/story_model.dart';
+import '../../media/media_text_overlay.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
 import '../../venue/data/venue_repository.dart';
@@ -93,11 +94,25 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   Future<void> _loadCurrentUserId() async {
     try {
       final me = await AuthRepository().getMe();
-      if (mounted) setState(() => _currentUserId = me['id'] as String?);
+      if (mounted) setState(() => _currentUserId = me['id']?.toString());
     } catch (_) {}
   }
 
+  bool _isCurrentUserStory(StoryGroup group) {
+    if (group.isCurrentUserOwner) return true;
+    final currentId = _currentUserId?.trim();
+    final ownerId = group.user.id.trim();
+    return currentId != null && currentId.isNotEmpty && ownerId == currentId;
+  }
+
+  bool _canReportStoryOwner(StoryGroup group, StoryItem story) {
+    if (story.isUploadingPlaceholder) return false;
+    if (_currentUserId == null || _currentUserId!.trim().isEmpty) return false;
+    return !_isCurrentUserStory(group);
+  }
+
   Future<void> _openReportSheet(String targetUserId) async {
+    if (targetUserId.trim() == _currentUserId?.trim()) return;
     _pauseProgress();
     final ok = await showReportUserSheet(context, targetUserId: targetUserId);
     if (ok && mounted) {
@@ -167,6 +182,11 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     if (widget.venueId != null) {
       VenueStoryRepository().recordView(widget.venueId!, story.id).ignore();
     }
+
+    // Sonraki story'nin görselini/thumbnail'ını önden cache'e al (siyah ekran
+    // olmadan geçiş). Video preload'u aşağıda, mevcut video reuse edildikten
+    // SONRA yapılır (yoksa reuse edeceğimiz controller'ı yanlışlıkla silerdi).
+    _precacheNextStory();
 
     if (story.isVideo) {
       final vc = VideoPlayerController.networkUrl(Uri.parse(story.mediaUrl));
@@ -259,6 +279,42 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     }
   }
 
+  /// Bir sonraki story'yi (grup içindeki veya sonraki grubun ilk) döndürür.
+  StoryItem? _nextStoryItem() {
+    if (_storyIndex < _currentGroup.stories.length - 1) {
+      return _currentGroup.stories[_storyIndex + 1];
+    }
+    if (_groupIndex < _groups.length - 1) {
+      final next = _groups[_groupIndex + 1].stories;
+      return next.isNotEmpty ? next.first : null;
+    }
+    return null;
+  }
+
+  /// Sonraki story'nin görselini önden cache'e alır (fotoğrafta tam medya,
+  /// videoda thumbnail). ASLA _loadStory'yi bozmamalı — bütün gövde try/catch
+  /// içinde ve bir frame sonrasına ertelendi (context image-config için hazır
+  /// olsun). Hata sessizce yutulur, kritik değil.
+  void _precacheNextStory() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final next = _nextStoryItem();
+        if (next == null || next.isUploadingPlaceholder) return;
+        final url = next.isVideo ? next.thumbnailUrl : next.mediaUrl;
+        if (url == null || url.isEmpty) return;
+        precacheImage(NetworkImage(url), context).ignore();
+        if (next.isVideo &&
+            next.thumbnailUrl != null &&
+            next.thumbnailUrl!.isNotEmpty) {
+          precacheImage(NetworkImage(next.thumbnailUrl!), context).ignore();
+        }
+      } catch (_) {
+        // preload kritik değil; sessizce geç.
+      }
+    });
+  }
+
   void _advance() {
     if (!mounted || _advancing || _loadingStory) return;
     _advancing = true;
@@ -294,23 +350,31 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     }
   }
 
+  /// Bu story silinebilir mi? Venue story'de owner yetkisi (canDelete) veya
+  /// kişisel story'de kendi story'n (isCurrentUserOwner).
+  bool get _canDeleteCurrentStory {
+    if (_currentStory.isUploadingPlaceholder) return false;
+    if (widget.venueId != null) return widget.canDelete;
+    return _currentGroup.isCurrentUserOwner;
+  }
+
   Future<void> _deleteCurrentStory() async {
-    if (widget.venueId == null) return;
+    if (!_canDeleteCurrentStory) return;
     final story = _currentStory;
     _pauseProgress();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Story\'yi sil?'),
-        content: const Text('Bu story kalıcı olarak silinecek.'),
+        title: const Text('Delete story?'),
+        content: const Text('This story will be permanently deleted.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('İptal'),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sil', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -320,7 +384,12 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       return;
     }
     try {
-      await VenueStoryRepository().deleteStory(widget.venueId!, story.id);
+      // Venue story → VenueStoryRepository; kişisel story → StoryRepository.
+      if (widget.venueId != null) {
+        await VenueStoryRepository().deleteStory(widget.venueId!, story.id);
+      } else {
+        await _repo.deleteStory(story.id);
+      }
       widget.onStoryDeleted?.call(story.id);
       if (!mounted) return;
       final group = _currentGroup;
@@ -338,6 +407,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
         _groups[_groupIndex] = StoryGroup(
           user: group.user,
           stories: newStories,
+          isCurrentUserOwner: group.isCurrentUserOwner,
+          featuredPhotoUrl: group.featuredPhotoUrl,
         );
         if (_storyIndex >= newStories.length)
           _storyIndex = newStories.length - 1;
@@ -399,29 +470,79 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                         ],
                       ),
                     )
-                  : story.isVideo
-                  ? _videoReady && _videoController != null
-                        ? FittedBox(
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Thumbnail placeholder — anında görünür (düşük çözünürlük,
+                        // story tray'den zaten cache'te olabilir). Siyah ekran yerine
+                        // bu görünür, asıl medya yüklenince üstüne biner.
+                        if (story.thumbnailUrl != null &&
+                            story.thumbnailUrl!.isNotEmpty)
+                          Image.network(
+                            story.thumbnailUrl!,
                             fit: BoxFit.cover,
-                            clipBehavior: Clip.hardEdge,
-                            child: SizedBox(
-                              width: _videoController!.value.size.width,
-                              height: _videoController!.value.size.height,
-                              child: VideoPlayer(_videoController!),
-                            ),
-                          )
-                        : const Center(
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                            ),
-                          )
-                  : Image.network(
-                      story.mediaUrl,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
+                            gaplessPlayback: true,
+                          ),
+                        if (story.isVideo)
+                          if (_videoReady && _videoController != null)
+                            FittedBox(
+                              fit: BoxFit.cover,
+                              clipBehavior: Clip.hardEdge,
+                              child: SizedBox(
+                                width: _videoController!.value.size.width,
+                                height: _videoController!.value.size.height,
+                                child: VideoPlayer(_videoController!),
+                              ),
+                            )
+                          else if (story.thumbnailUrl == null ||
+                              story.thumbnailUrl!.isEmpty)
+                            // Poster yoksa düz siyah yerine ince bir yükleniyor
+                            // göstergesi — daha profesyonel.
+                            const Center(
+                              child: SizedBox(
+                                width: 26,
+                                height: 26,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            )
+                          else
+                            const SizedBox.shrink()
+                        else
+                          Image.network(
+                            story.mediaUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            // Yüklenene kadar thumbnail görünsün; gelince yumuşak fade.
+                            frameBuilder:
+                                (context, child, frame, wasSynchronouslyLoaded) {
+                              if (wasSynchronouslyLoaded) return child;
+                              return AnimatedOpacity(
+                                opacity: frame == null ? 0 : 1,
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeOut,
+                                child: child,
+                              );
+                            },
+                          ),
+                      ],
                     ),
             ),
+
+            // ── TEXT OVERLAY (medyaya eklenen yazı — client render) ────────
+            // Video için yazıyı yalnızca video HAZIR olunca göster; aksi halde
+            // buffer sırasında siyah zeminde yazı görünüp sonra video geliyordu.
+            // Video ve yazı birlikte belirsin (profesyonel his). Fotoğrafta
+            // medya zaten hızlı geldiği için beklenmez.
+            if (story.textOverlay != null &&
+                !story.isUploadingPlaceholder &&
+                (!story.isVideo || _videoReady))
+              Positioned.fill(
+                child: MediaTextOverlayView(overlay: story.textOverlay!),
+              ),
 
             // ── GRADIENT TOP ───────────────────────────────────────────────
             Positioned(
@@ -503,6 +624,24 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                 onTap: _advance,
               ),
             ),
+
+            // ── DELETE (sağ alt) — kendi story'ni sil ─────────────────────
+            if (_canDeleteCurrentStory)
+              Positioned(
+                right: 12,
+                bottom: MediaQuery.of(context).padding.bottom + 20,
+                child: Material(
+                  color: Colors.black38,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Colors.white,
+                    ),
+                    onPressed: _deleteCurrentStory,
+                  ),
+                ),
+              ),
 
             // ── VENUE STORY: viewers count bar (Instagram-style) ──────────
             if (widget.venueId != null &&
@@ -666,9 +805,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                         ),
                         onPressed: _deleteCurrentStory,
                       ),
-                    if (!story.isUploadingPlaceholder &&
-                        _currentUserId != null &&
-                        group.user.id != _currentUserId)
+                    if (_canReportStoryOwner(group, story))
                       IconButton(
                         icon: const Icon(Icons.more_vert, color: Colors.white),
                         onPressed: () => _openReportSheet(group.user.id),

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
@@ -9,6 +11,10 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/preview_video_screen.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
+import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 enum MediaType { photo, video }
@@ -18,7 +24,15 @@ class LocalMedia {
   final MediaType type;
   final String? thumbnailPath;
 
-  LocalMedia({required this.file, required this.type, this.thumbnailPath});
+  /// Video üzerine eklenen metin overlay'i (client-render; videoya gömülmez).
+  final MediaTextOverlay? textOverlay;
+
+  LocalMedia({
+    required this.file,
+    required this.type,
+    this.thumbnailPath,
+    this.textOverlay,
+  });
 }
 
 class CheckInPage extends StatefulWidget {
@@ -53,8 +67,17 @@ class _CheckInPageState extends State<CheckInPage> {
   final LocationPermissionService _locationPermissionService =
       LocationPermissionService();
   bool _isSubmitting = false;
-  static const int _maxVideoUploadBytes = 8 * 1024 * 1024;
+  // Senkron reentrancy kilidi — konum/GPS await'leri sürerken ikinci dokunuşun
+  // ikinci bir check-in oluşturmasını engeller (buton-disable tek başına yetmez,
+  // çünkü _isSubmitting create'ten hemen önce, await'lerden sonra set ediliyor).
+  bool _submitLock = false;
+  // Sıkıştırma SONRASI üst sınır. 60 sn'lik sıkıştırılmış video bunun altında
+  // kalır; backend limiti 80MB, bu yüzden güvenli bir tampon bırakıyoruz.
+  static const int _maxVideoUploadBytes = 50 * 1024 * 1024;
   static const int _vibeMaxLength = 150;
+  // Aynı anda en fazla kaç medya yüklensin (paralel upload). Cihazı/bağlantıyı
+  // boğmadan hız kazandıran denge değeri.
+  static const int _maxConcurrentUploads = 3;
 
   // Upload progress state
   int _uploadCurrent = 0;
@@ -309,7 +332,8 @@ class _CheckInPageState extends State<CheckInPage> {
     if (!hasPermission) return;
     if (!mounted) return;
 
-    final File? captured = await Navigator.push(
+    // Fotoğraf akışı File, video akışı CapturedMedia (dosya + text overlay) döner.
+    final dynamic result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) =>
@@ -317,7 +341,13 @@ class _CheckInPageState extends State<CheckInPage> {
       ),
     );
 
-    if (captured == null) return;
+    if (result == null) return;
+    final File captured = result is CapturedMedia
+        ? result.file
+        : result as File;
+    final MediaTextOverlay? capturedOverlay = result is CapturedMedia
+        ? result.overlay
+        : null;
 
     final selectedType = _resolveMediaType(captured);
     final hasExistingVideo = _media.any((m) => m.type == MediaType.video);
@@ -342,6 +372,7 @@ class _CheckInPageState extends State<CheckInPage> {
           file: File(captured.path),
           type: selectedType,
           thumbnailPath: thumbPath,
+          textOverlay: capturedOverlay,
         ),
       );
     });
@@ -357,15 +388,38 @@ class _CheckInPageState extends State<CheckInPage> {
     });
   }
 
-  /// Fotoğrafı öne çıkan olarak işaretleme
+  /// Fotoğrafı öne çıkan olarak işaretleme (yalnızca fotoğraf kartlarındaki
+  /// yıldız rozetinden çağrılır).
   void _setFeatured(int index) {
-    if (_media[index].type != MediaType.photo) {
-      showPremiumErrorDialog(context, message: 'Only photos can be featured.');
-      return;
-    }
+    if (_media[index].type != MediaType.photo) return;
     setState(() {
       _featuredIndex = index;
     });
+  }
+
+  /// Karta basınca eklenen medyayı büyük ekranda tekrar gösterir —
+  /// kullanıcı check-in için ne eklediğini görebilsin.
+  void _openMediaPreview(int index) {
+    final media = _media[index];
+    if (media.type == MediaType.video) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PreviewVideoScreen(
+            file: media.file,
+            viewOnly: true,
+            overlay: media.textOverlay,
+          ),
+        ),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _CheckinPhotoPreviewScreen(file: media.file),
+      ),
+    );
   }
 
   Future<void> _showPhotoRequiredDialog() async {
@@ -389,6 +443,7 @@ class _CheckInPageState extends State<CheckInPage> {
   }
 
   Future<void> _submitCheckin() async {
+    if (_submitLock) return;
     if (_media.isEmpty) return;
     final hasAtLeastOnePhoto = _media.any(
       (item) => item.type == MediaType.photo,
@@ -402,21 +457,50 @@ class _CheckInPageState extends State<CheckInPage> {
       return;
     }
 
+    // Kilidi ilk kritik await'ten (konum izni) hemen önce senkron olarak al —
+    // check ile set arasında await yok, yani ikinci dokunuş garanti bloklanır.
+    if (_submitLock) return;
+    _submitLock = true;
+    // Butona basılır basılmaz ANINDA feedback: buton inactive olur ve overlay
+    // "Getting your location..." ile açılır. (GPS high-accuracy 1-3 sn sürebilir;
+    // eskiden bu süre boyunca buton boş duruyordu.)
+    if (mounted) {
+      setState(() {
+        _isSubmitting = true;
+        _uploadCurrent = 0;
+        _uploadTotal = 1 + _media.length;
+        _uploadStepLabel = 'Getting your location...';
+      });
+    }
+
     final hasLocationPermission = await _ensureLocationPermissionForCheckin();
-    if (!hasLocationPermission) return;
+    if (!hasLocationPermission) {
+      _submitLock = false;
+      if (mounted) setState(() => _isSubmitting = false);
+      return;
+    }
 
     // Gerçek cihaz konumu — backend, gerçek (test dışı) venue'lerde bunu venue
     // koordinatlarıyla karşılaştırıp 200m mesafe sınırını uygular. Alpha/Beta
     // test venue'lerinde backend mesafe kontrolünü zaten atlıyor (is_test_venue).
+    //
+    // HIZ: venue detay sayfası saniyeler önce taze bir GPS okuması yaptı ve OS
+    // bunu cache'ledi. Burada önce getLastKnownPosition'ı (neredeyse anında)
+    // kullanıyoruz; yoksa taze okumaya düşüyoruz. Backend kesin kontrolü zaten
+    // yapıyor, o yüzden anlık koordinat yeterli.
     double latitude;
     double longitude;
     try {
-      final position = await Geolocator.getCurrentPosition(
+      Position? position = await Geolocator.getLastKnownPosition();
+      position ??= await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 8),
       );
       latitude = position.latitude;
       longitude = position.longitude;
     } catch (_) {
+      _submitLock = false;
+      if (mounted) setState(() => _isSubmitting = false);
       if (mounted) {
         await showPremiumErrorDialog(
           context,
@@ -426,15 +510,11 @@ class _CheckInPageState extends State<CheckInPage> {
       return;
     }
 
-    // Total progress steps: 1 (create check-in) + N (media uploads)
-    final totalSteps = 1 + _media.length;
-    setState(() {
-      _isSubmitting = true;
-      _uploadCurrent = 0;
-      _uploadTotal = totalSteps;
-      _uploadStepLabel = 'Creating check-in...';
-    });
+    if (mounted) {
+      setState(() => _uploadStepLabel = 'Creating check-in...');
+    }
 
+    String? createdCheckinId;
     try {
       // 1️⃣ Check-in oluştur
       final vibeText = _vibeController.text.trim();
@@ -445,6 +525,7 @@ class _CheckInPageState extends State<CheckInPage> {
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
       );
+      createdCheckinId = checkinId;
       ActiveCheckinService().setActiveCheckin(
         checkinId,
         venueId: widget.venueId,
@@ -456,57 +537,26 @@ class _CheckInPageState extends State<CheckInPage> {
         await AuthRepository().updateMe({'bio': vibeText});
       } catch (_) {}
 
-      // 2️⃣ Medyayı yükle
-      final featuredPhotoIndex = _featuredPhotoIndex;
-      for (int i = 0; i < _media.length; i++) {
-        final item = _media[i];
-        final isVideo = item.type == MediaType.video;
-
-        if (isVideo) {
-          final sizeBytes = await item.file.length();
-          if (sizeBytes > _maxVideoUploadBytes) {
-            if (!mounted) return;
-            await showPremiumErrorDialog(
-              context,
-              message:
-                  'Video dosyasi cok buyuk. Lutfen daha kisa bir video cekin.',
-            );
-            return;
-          }
-        }
-
-        // Update progress label before each upload
-        if (mounted) {
-          setState(() {
-            if (isVideo) {
-              _uploadStepLabel = "Uploading video... this may take a moment";
-            } else {
-              final photoNum = _media
-                  .take(i + 1)
-                  .where((m) => m.type == MediaType.photo)
-                  .length;
-              final totalPhotos = _media
-                  .where((m) => m.type == MediaType.photo)
-                  .length;
-              _uploadStepLabel = "Uploading photo $photoNum of $totalPhotos...";
-            }
-          });
-        }
-
-        await _repo.uploadCheckinMedia(
-          checkinId: checkinId,
-          file: item.file,
-          isFeatured: item.type == MediaType.photo && i == featuredPhotoIndex,
-        );
-
-        if (mounted) setState(() => _uploadCurrent = i + 2);
-      }
+      // 2️⃣ Medyaları paralel (en fazla 3 eş zamanlı) yükle.
+      await _uploadCheckinMediaParallel(
+        checkinId: checkinId,
+        featuredPhotoIndex: _featuredPhotoIndex,
+      );
 
       // ✅ Başarılı
+      unawaited(MediaCompressor.cleanup());
       if (!mounted) return;
       Navigator.pop(context);
     } catch (e) {
       debugPrint('❌ Check-in error: $e');
+      if (createdCheckinId != null) {
+        try {
+          await _repo.checkout(createdCheckinId);
+          ActiveCheckinService().clear();
+        } catch (cleanupError) {
+          debugPrint('⚠️ Check-in rollback failed: $cleanupError');
+        }
+      }
       if (!mounted) return;
       final raw = e.toString();
       if (raw.contains('Media upload failed (413)') ||
@@ -523,7 +573,96 @@ class _CheckInPageState extends State<CheckInPage> {
         );
       }
     } finally {
+      _submitLock = false;
       if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  /// Medyaları en fazla [_maxConcurrentUploads] eş zamanlı olacak şekilde
+  /// yükler — 6 fotoğraf tek tek beklemek yerine paralel gider, belirgin hızlı
+  /// ve smooth hissettirir. Herhangi biri başarısız olursa hata yukarı fırlar
+  /// ve dıştaki catch tüm check-in'i rollback eder (tutarlılık korunur).
+  Future<void> _uploadCheckinMediaParallel({
+    required String checkinId,
+    required int featuredPhotoIndex,
+  }) async {
+    const maxConcurrent = _maxConcurrentUploads;
+    var completed = 0;
+
+    for (var start = 0; start < _media.length; start += maxConcurrent) {
+      final end = (start + maxConcurrent).clamp(0, _media.length);
+      await Future.wait([
+        for (var i = start; i < end; i++)
+          _uploadSingleMedia(
+            checkinId: checkinId,
+            index: i,
+            isFeatured:
+                _media[i].type == MediaType.photo && i == featuredPhotoIndex,
+          ).then((_) {
+            completed += 1;
+            if (mounted) setState(() => _uploadCurrent = 1 + completed);
+          }),
+      ]);
+    }
+  }
+
+  Future<void> _uploadSingleMedia({
+    required String checkinId,
+    required int index,
+    required bool isFeatured,
+  }) async {
+    final item = _media[index];
+    final isVideo = item.type == MediaType.video;
+
+    // 1️⃣ Video ise yüklemeden önce sıkıştır — hem mobil veriyi hem yükleme
+    //    süresini ciddi azaltır. Fotoğraflar çekimde zaten 720px'e küçültülüyor.
+    File fileToUpload = item.file;
+    if (isVideo) {
+      if (mounted) {
+        setState(() => _uploadStepLabel = 'Compressing video...');
+      }
+      fileToUpload = await MediaCompressor.compressVideo(item.file);
+
+      final sizeBytes = await fileToUpload.length();
+      if (sizeBytes > _maxVideoUploadBytes) {
+        throw Exception('Video file is too large');
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _uploadStepLabel = isVideo
+            ? 'Uploading video... this may take a moment'
+            : 'Uploading photos...';
+      });
+    }
+
+    final overlayJson = item.textOverlay?.toJsonString();
+
+    // 2️⃣ Doğrudan Spaces'e (presigned URL) yükle — dosya backend'e uğramaz,
+    //    daha hızlı ve backend'i yormaz. Herhangi bir aşama başarısız olursa
+    //    stabil multipart yoluna düşerek yüklemeyi garanti altına alırız.
+    try {
+      final target = await _repo.createCheckinMediaUploadUrl(
+        checkinId: checkinId,
+        file: fileToUpload,
+      );
+      await _repo.uploadFileToSignedUrl(target: target, file: fileToUpload);
+      await _repo.confirmCheckinMediaUpload(
+        checkinId: checkinId,
+        target: target,
+        file: fileToUpload,
+        isFeatured: isFeatured,
+        textOverlayJson: overlayJson,
+      );
+    } catch (e) {
+      debugPrint('⚠️ Direct upload failed, falling back to multipart: $e');
+      await _repo.uploadCheckinMedia(
+        checkinId: checkinId,
+        file: fileToUpload,
+        isFeatured: isFeatured,
+        textOverlayJson: overlayJson,
+      );
     }
   }
 
@@ -907,10 +1046,12 @@ class _CheckInPageState extends State<CheckInPage> {
               ),
               const SizedBox(height: 10),
 
-              // File counter
+              // Sadece medya yüklenirken sade bir sayaç göster ("1 / 2 steps"
+              // gibi teknik ifade yerine kullanıcı dostu). Hazırlık/oluşturma
+              // aşamasında hiç sayı gösterme.
               Text(
-                _uploadCurrent > 0 && _uploadTotal > 0
-                    ? '$_uploadCurrent / $_uploadTotal steps'
+                _media.length > 1 && _uploadCurrent > 1
+                    ? 'Uploading ${(_uploadCurrent - 1).clamp(1, _media.length)} of ${_media.length}'
                     : 'Please wait...',
                 style: TextStyle(
                   fontSize: 12,
@@ -970,7 +1111,8 @@ class _CheckInPageState extends State<CheckInPage> {
       clipBehavior: Clip.none,
       children: [
         GestureDetector(
-          onTap: () => _setFeatured(index),
+          // Karta bas → medyayı büyük ekranda önizle.
+          onTap: () => _openMediaPreview(index),
           child: Container(
             width: size,
             height: size * 1.3,
@@ -1010,18 +1152,28 @@ class _CheckInPageState extends State<CheckInPage> {
           ),
         ),
 
-        // Featured star
-        if (isFeatured)
+        // Featured star — fotoğraf kartlarında her zaman görünür ve tıklanabilir:
+        // dolu altın yıldız = öne çıkan, soluk yıldız = basınca öne çıkar.
+        if (media.type == MediaType.photo)
           Positioned(
             left: 8,
             bottom: 8,
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: isDark ? colors.surface : const Color(0xFFF8FBFD),
-                borderRadius: BorderRadius.circular(6),
+            child: GestureDetector(
+              onTap: () => _setFeatured(index),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: isDark ? colors.surface : const Color(0xFFF8FBFD),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(
+                  isFeatured ? Icons.star : Icons.star_border,
+                  size: 14,
+                  color: isFeatured
+                      ? const Color(0xFFFFD700)
+                      : colors.onSurface.withValues(alpha: 0.45),
+                ),
               ),
-              child: const Icon(Icons.star, size: 14, color: Color(0xFFFFD700)),
             ),
           ),
       ],
@@ -1052,6 +1204,124 @@ class _CheckInPageState extends State<CheckInPage> {
           size: 30,
           color: colors.onSurface.withValues(alpha: 0.45),
         ),
+      ),
+    );
+  }
+}
+
+/// Check-in'e eklenen fotoğrafı büyük ekranda tekrar gösteren salt-izleme
+/// ekranı. Pinch-zoom destekler; boşluğa veya kapat butonuna basınca kapanır.
+/// İndir butonu fotoğrafı galeriye kaydeder.
+class _CheckinPhotoPreviewScreen extends StatefulWidget {
+  final File file;
+
+  const _CheckinPhotoPreviewScreen({required this.file});
+
+  @override
+  State<_CheckinPhotoPreviewScreen> createState() =>
+      _CheckinPhotoPreviewScreenState();
+}
+
+class _CheckinPhotoPreviewScreenState
+    extends State<_CheckinPhotoPreviewScreen> {
+  bool _saving = false;
+
+  Future<void> _download() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await Gal.putImage(widget.file.path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Saved to gallery'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } on GalException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.type == GalExceptionType.accessDenied
+                ? 'Photo library permission is required to save.'
+                : 'Could not save. Please try again.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).maybePop(),
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: Center(
+                  child: Image.file(
+                    widget.file,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => const Center(
+                      child: Icon(
+                        Icons.broken_image,
+                        size: 64,
+                        color: Colors.white54,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            right: 12,
+            child: Column(
+              children: [
+                Material(
+                  color: Colors.black38,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Material(
+                  color: Colors.black38,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.download_rounded,
+                            color: Colors.white,
+                          ),
+                    onPressed: _download,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

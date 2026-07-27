@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
@@ -25,7 +26,9 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
   Future<void> _openCamera() async {
     if (!mounted) return;
 
-    final File? captured = await Navigator.push<File>(
+    // Video akışı CapturedMedia (dosya + text overlay) dönebilir — dosyayı
+    // çıkar (venue story'de overlay şimdilik desteklenmiyor).
+    final dynamic captureResult = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => const CameraScreen(
@@ -36,6 +39,9 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
     );
 
     if (!mounted) return;
+    final File? captured = captureResult is CapturedMedia
+        ? captureResult.file
+        : captureResult as File?;
     if (captured == null) {
       Navigator.pop(context);
       return;

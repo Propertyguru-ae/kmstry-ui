@@ -17,6 +17,7 @@ class StoryRepository {
     required File file,
     required String mediaType, // 'photo' | 'video'
     int? durationSecs,
+    String? textOverlayJson,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final uri =
@@ -40,6 +41,9 @@ class StoryRepository {
     request.fields['media_type'] = mediaType;
     if (durationSecs != null) {
       request.fields['duration_secs'] = durationSecs.toString();
+    }
+    if (textOverlayJson != null && textOverlayJson.isNotEmpty) {
+      request.fields['textOverlay'] = textOverlayJson;
     }
 
     final streamed = await request.send();
@@ -81,6 +85,20 @@ class StoryRepository {
         .toList();
   }
 
+  /// Home feed story row: matched friends + followed venues' stories.
+  Future<List<StoryGroup>> getHomeStories() async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/stories/home',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    final list = data is List ? data : (data['data'] as List? ?? []);
+    return list
+        .map((e) => StoryGroup.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Returns story groups from matched friends (all venues).
   Future<List<StoryGroup>> getFriendsStories() async {
     final token = await SecureStorage.getAccessToken();
@@ -102,6 +120,15 @@ class StoryRepository {
       '/stories/$storyId/view',
       headers: {'Authorization': 'Bearer $token'},
       body: {},
+    );
+  }
+
+  /// Kullanıcının kendi story'sini siler (DB + Spaces dosyaları backend'de).
+  Future<void> deleteStory(String storyId) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/stories/$storyId',
+      headers: {'Authorization': 'Bearer $token'},
     );
   }
 }

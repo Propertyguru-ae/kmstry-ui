@@ -208,6 +208,7 @@ class AuthApi {
 
   Future<Map<String, dynamic>> loginWithApple({
     required String identityToken,
+    String? authorizationCode,
     String? fullName,
     bool? consentGiven,
     String? termsVersionId,
@@ -216,6 +217,8 @@ class AuthApi {
   }) async {
     final body = <String, dynamic>{
       'identityToken': identityToken,
+      if (authorizationCode != null && authorizationCode.isNotEmpty)
+        'authorizationCode': authorizationCode,
       if (fullName != null && fullName.isNotEmpty) 'fullName': fullName,
       if (consentGiven != null) 'consentGiven': consentGiven,
       if (termsVersionId != null) 'termsVersionId': termsVersionId,
