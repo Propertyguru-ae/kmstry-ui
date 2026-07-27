@@ -18,11 +18,7 @@ class VenuePeoplePage extends StatefulWidget {
   /// use [placeId] as [Venue.id]; pass the resolved id from active check-in / resolve.
   final String? listVenueId;
 
-  const VenuePeoplePage({
-    super.key,
-    required this.venue,
-    this.listVenueId,
-  });
+  const VenuePeoplePage({super.key, required this.venue, this.listVenueId});
 
   @override
   State<VenuePeoplePage> createState() => _VenuePeoplePageState();
@@ -43,8 +39,8 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
 
   String get _effectiveVenueIdForList =>
       (widget.listVenueId != null && widget.listVenueId!.isNotEmpty)
-          ? widget.listVenueId!
-          : widget.venue.id;
+      ? widget.listVenueId!
+      : widget.venue.id;
 
   void _loadCheckins() {
     setState(() {
@@ -52,8 +48,9 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
         _effectiveVenueIdForList,
         filter: _filter.isEmpty ? null : _filter,
       );
-      _statsFuture =
-          _venueContextRepo.getVenueCheckinStats(_effectiveVenueIdForList);
+      _statsFuture = _venueContextRepo.getVenueCheckinStats(
+        _effectiveVenueIdForList,
+      );
     });
   }
 
@@ -159,7 +156,9 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               Text(
                                 '${stats.checkinCountActive}',
                                 style: TextStyle(
-                                  color: colors.onSurface.withValues(alpha: 0.72),
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.72,
+                                  ),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -174,7 +173,9 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               Text(
                                 '${stats.male}',
                                 style: TextStyle(
-                                  color: colors.onSurface.withValues(alpha: 0.72),
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.72,
+                                  ),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -189,7 +190,9 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               Text(
                                 '${stats.female}',
                                 style: TextStyle(
-                                  color: colors.onSurface.withValues(alpha: 0.72),
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.72,
+                                  ),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -198,7 +201,6 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                           );
                         },
                       ),
-                   
                     ],
                   ),
                 ),
@@ -221,8 +223,11 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
               color: const Color(0xFFE020D8).withValues(alpha: 0.08),
               child: Row(
                 children: [
-                  const Icon(Icons.tune_rounded,
-                      size: 16, color: Color(0xFFE020D8)),
+                  const Icon(
+                    Icons.tune_rounded,
+                    size: 16,
+                    color: Color(0xFFE020D8),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -351,6 +356,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                             builder: (_) => ProfilePreviewPage(
                               checkinId: person.id,
                               venueId: _effectiveVenueIdForList,
+                              hideVenueInfo: true,
                             ),
                           ),
                         );
@@ -372,8 +378,8 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       return 'Authentication required. Please log in again.';
     } else if (errorString.contains('timeout')) {
       return 'Request timed out. Please check your connection.';
-    } else if (errorString.contains('SocketException') || 
-               errorString.contains('Failed host lookup')) {
+    } else if (errorString.contains('SocketException') ||
+        errorString.contains('Failed host lookup')) {
       return 'Network error. Please check your internet connection.';
     } else if (errorString.contains('statusCode')) {
       // Extract status code from error message
@@ -425,7 +431,10 @@ class _FilterButton extends StatelessWidget {
                     color: Color(0xFFE020D8),
                     shape: BoxShape.circle,
                   ),
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
                   child: Text(
                     '$count',
                     textAlign: TextAlign.center,

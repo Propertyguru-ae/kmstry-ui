@@ -1,22 +1,19 @@
+import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
+
 class StoryUser {
   final String id;
   final String? username;
   final String? fullName;
   final String? photo;
 
-  const StoryUser({
-    required this.id,
-    this.username,
-    this.fullName,
-    this.photo,
-  });
+  const StoryUser({required this.id, this.username, this.fullName, this.photo});
 
   factory StoryUser.fromJson(Map<String, dynamic> j) => StoryUser(
-        id: j['id'] as String,
-        username: j['username'] as String?,
-        fullName: j['full_name'] as String?,
-        photo: j['photo'] as String?,
-      );
+    id: j['id'] as String,
+    username: j['username'] as String?,
+    fullName: j['full_name'] as String?,
+    photo: j['photo'] as String?,
+  );
 
   String get displayName => fullName ?? username ?? 'User';
 }
@@ -46,6 +43,7 @@ class StoryItem {
     this.viewCount = 0,
     this.viewedByMe = false,
     this.isUploadingPlaceholder = false,
+    this.textOverlay,
   });
 
   final String? checkinFeaturedPhotoUrl;
@@ -54,6 +52,9 @@ class StoryItem {
   final int viewCount;
   final bool viewedByMe;
 
+  /// Medya üzerine eklenen metin overlay'i (client render eder).
+  final MediaTextOverlay? textOverlay;
+
   /// Henüz yüklenmekte olan story için viewer'da "Loading…" gösteren placeholder.
   final bool isUploadingPlaceholder;
 
@@ -61,15 +62,13 @@ class StoryItem {
 
   /// Yüklenmekte olan story için geçici placeholder öğesi.
   factory StoryItem.uploadingPlaceholder() => StoryItem(
-        id: '__uploading__',
-        mediaUrl: '',
-        mediaType: 'photo',
-        expiresAt: DateTime.now().add(const Duration(hours: 24)),
-        createdAt: DateTime.now(),
-        isUploadingPlaceholder: true,
-      );
-
-
+    id: '__uploading__',
+    mediaUrl: '',
+    mediaType: 'photo',
+    expiresAt: DateTime.now().add(const Duration(hours: 24)),
+    createdAt: DateTime.now(),
+    isUploadingPlaceholder: true,
+  );
 
   factory StoryItem.fromJson(Map<String, dynamic> j) {
     String? featuredPhotoUrl;
@@ -97,6 +96,7 @@ class StoryItem {
       venueId: venueMap?['id'] as String?,
       venueName: venueMap?['name'] as String?,
       viewedByMe: (j['viewed_by_me'] as bool?) ?? false,
+      textOverlay: MediaTextOverlay.fromJson(j['text_overlay']),
     );
   }
 }
@@ -106,11 +106,18 @@ class StoryGroup {
   final StoryUser user;
   final List<StoryItem> stories;
   final String? featuredPhotoUrl;
+  final bool isCurrentUserOwner;
+
+  /// When set, this bubble represents a followed venue's stories (rendered with
+  /// a venue badge + this label) instead of a person. Null for friend stories.
+  final String? venueLabel;
 
   const StoryGroup({
     required this.user,
     required this.stories,
     this.featuredPhotoUrl,
+    this.isCurrentUserOwner = false,
+    this.venueLabel,
   });
 
   /// Bubble'da gösterilecek URL: featured checkin fotosu → profil fotosu
@@ -126,10 +133,10 @@ class StoryGroup {
   }
 
   factory StoryGroup.fromJson(Map<String, dynamic> j) => StoryGroup(
-        user: StoryUser.fromJson(j['user'] as Map<String, dynamic>),
-        featuredPhotoUrl: j['featured_photo_url'] as String?,
-        stories: (j['stories'] as List)
-            .map((s) => StoryItem.fromJson(s as Map<String, dynamic>))
-            .toList(),
-      );
+    user: StoryUser.fromJson(j['user'] as Map<String, dynamic>),
+    featuredPhotoUrl: j['featured_photo_url'] as String?,
+    stories: (j['stories'] as List)
+        .map((s) => StoryItem.fromJson(s as Map<String, dynamic>))
+        .toList(),
+  );
 }

@@ -1,6 +1,7 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 
 class VenueContextRepository {
   final ApiClient _api = ApiClient();
@@ -60,6 +61,50 @@ class VenueContextRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
     return VenueCheckinStats.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<Map<String, dynamic>> followVenue(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final data = await _api.post(
+      '/venues/$venueId/follow',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<Map<String, dynamic>> unfollowVenue(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final data = await _api.delete(
+      '/venues/$venueId/follow',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<List<Venue>> getFollowedVenues() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final data = await _api.get(
+      '/venues/following',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final rawItems = data is Map
+        ? (data['items'] ?? data['data'] ?? data['venues'])
+        : data;
+    if (rawItems is! List) return const <Venue>[];
+    return rawItems
+        .whereType<Map>()
+        .map((item) {
+          final map = Map<String, dynamic>.from(item);
+          map['source'] ??= 'db';
+          map['isInDb'] ??= true;
+          map['canCheckin'] ??= true;
+          map['isFollowing'] ??= true;
+          return Venue.fromJson(map);
+        })
+        .toList(growable: false);
   }
 
   /// Kullanıcının konumunu backend'e ping'ler (fire-and-forget).

@@ -9,8 +9,8 @@ import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/home/presentation/personal_home_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
-import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
-import 'package:kmstry_frontend/features/people/presentation/who_is_nearby_page.dart';
+import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
+import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
@@ -761,10 +761,39 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           setState(() => _unreadNotificationCount = count);
         }
       },
-      child: Scaffold(
-        extendBody: true,
-        body: tabs[safeIndex].page,
-        bottomNavigationBar: _buildNavBar(tabs, safeIndex, isDark, theme),
+      child: AppShellNav(
+        selectTab: (index) => _onItemTapped(index),
+        child: Scaffold(
+          extendBody: true,
+          body: tabs[safeIndex].page,
+          bottomNavigationBar: _buildNavBar(tabs, safeIndex, isDark, theme),
+        ),
+      ),
+    );
+  }
+
+  /// Centre navbar check-in button — a filled accent circle so it reads as the
+  /// primary action, distinct from the flat destination icons around it.
+  Widget _buildCheckinNavButton(ThemeData theme) {
+    final colors = theme.colorScheme;
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: colors.primary,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: colors.primary.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Icon(
+        Icons.add_location_alt,
+        color: colors.onPrimary,
+        size: 22,
       ),
     );
   }
@@ -870,12 +899,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       ),
       _NavTab(
-        page: const WhoIsNearbyPage(),
-        icon: _navIconBuilder(
-          Icons.person_pin_circle,
-          Icons.person_pin_circle_outlined,
-          theme,
-        ),
+        // Centre action: opens the quick check-in flow. Never a destination.
+        page: const PersonalHomePage(),
+        icon: (_) => _buildCheckinNavButton(theme),
+        action: () => QuickCheckinLauncher().launch(context),
       ),
       _NavTab(
         page: DmListPage(key: _dmListKey),
@@ -887,10 +914,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         },
       ),
       _NavTab(
-        page: const PeoplePage(),
+        page: const FindFriendsPage(),
         icon: _navIconBuilder(
-          Icons.people_alt,
-          Icons.people_alt_outlined,
+          Icons.person_add_alt_1,
+          Icons.person_add_alt,
           theme,
         ),
       ),
@@ -945,7 +972,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       for (var i = 0; i < tabs.length; i++)
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => _onItemTapped(i, tabs[i].onSelected),
+          onTap: () {
+            final action = tabs[i].action;
+            if (action != null) {
+              action();
+            } else {
+              _onItemTapped(i, tabs[i].onSelected);
+            }
+          },
           child: SizedBox.expand(
             child: Center(child: tabs[i].icon(safeIndex == i)),
           ),
@@ -980,10 +1014,38 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 /// A single navbar destination: its page, its icon (given active state) and an
 /// optional side-effect to run when the tab is selected. Keeping all three
 /// together is what removes hardcoded index assumptions from the shell.
+/// Lets descendants (e.g. the Home tab's CTAs) switch the shell's active tab
+/// without pushing a new route, so the navbar stays visible.
+class AppShellNav extends InheritedWidget {
+  final void Function(int index) selectTab;
+
+  const AppShellNav({
+    super.key,
+    required this.selectTab,
+    required super.child,
+  });
+
+  static AppShellNav? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AppShellNav>();
+
+  @override
+  bool updateShouldNotify(AppShellNav oldWidget) => false;
+}
+
 class _NavTab {
   final Widget page;
   final Widget Function(bool active) icon;
   final VoidCallback? onSelected;
 
-  const _NavTab({required this.page, required this.icon, this.onSelected});
+  /// When set, tapping this item runs the action instead of switching tabs
+  /// (e.g. the centre check-in button, which opens the quick check-in flow and
+  /// never becomes a selected destination). [page] is only a safe fallback.
+  final VoidCallback? action;
+
+  const _NavTab({
+    required this.page,
+    required this.icon,
+    this.onSelected,
+    this.action,
+  });
 }

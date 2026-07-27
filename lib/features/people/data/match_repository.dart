@@ -1,6 +1,7 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
+import 'package:kmstry_frontend/features/people/data/suggested_person_item_model.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
@@ -160,6 +161,36 @@ class MatchRepository {
     return items
         .whereType<Map>()
         .map((e) => UsernameSearchItem.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.id.isNotEmpty && e.username.isNotEmpty)
+        .toList();
+  }
+
+  Future<List<SuggestedPersonItem>> getSuggestedForYou({int limit = 10}) async {
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    final safeLimit = limit.clamp(1, 20).toInt();
+
+    final data = await _api.get(
+      '/users/suggested-for-you?limit=$safeLimit',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    List<dynamic> items = const [];
+    if (data is List) {
+      items = data;
+    } else if (data is Map<String, dynamic>) {
+      final nested = data['items'];
+      if (nested is List) {
+        items = nested;
+      } else if (data['data'] is Map<String, dynamic>) {
+        final nestedData = (data['data'] as Map<String, dynamic>)['items'];
+        if (nestedData is List) items = nestedData;
+      }
+    }
+
+    return items
+        .whereType<Map>()
+        .map((e) => SuggestedPersonItem.fromJson(Map<String, dynamic>.from(e)))
         .where((e) => e.id.isNotEmpty && e.username.isNotEmpty)
         .toList();
   }

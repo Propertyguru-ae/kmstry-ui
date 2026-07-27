@@ -349,6 +349,13 @@ class AuthRepository {
   }) async {
     _log('🔥 Google login started');
 
+    // Önceki (başarısız olabilen) oturumu temizle → her seferinde taze idToken.
+    // signOut yoksa plugin cache'lediği hesabı sessizce döndürüp idToken=null
+    // verebiliyor ve "bir daha giriş yapılamıyor" durumu oluşuyor.
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+
     final googleUser = await _googleSignIn.signIn();
     _log('👤 googleUser = $googleUser');
 
@@ -409,6 +416,7 @@ class AuthRepository {
 
     final response = await _api.loginWithApple(
       identityToken: identityToken,
+      authorizationCode: credential.authorizationCode,
       fullName: nameParts.isEmpty ? null : nameParts,
       consentGiven: consentGiven,
       termsVersionId: termsVersionId,

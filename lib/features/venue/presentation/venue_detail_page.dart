@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -61,6 +62,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int? _checkinCountActive;
   int? _checkinCountMale;
   int? _checkinCountFemale;
+  bool _isFollowing = false;
+  int _followerCount = 0;
+  bool _followLoading = false;
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
 
   // Backend'deki 200m check-in mesafe sınırıyla aynı değer (checkins.service.ts).
@@ -77,11 +81,20 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _checkinCountActive = widget.venue.checkinCountActive;
     _checkinCountMale = widget.venue.checkinCountMale;
     _checkinCountFemale = widget.venue.checkinCountFemale;
+    _isFollowing = widget.venue.isFollowing;
+    _followerCount = widget.venue.followerCount;
+    _primeResolvedVenueId();
     _primeActiveCheckinFromMemory();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _startDeferredInitialLoads();
     });
+  }
+
+  void _primeResolvedVenueId() {
+    if (widget.venue.isInDb && widget.venue.id.isNotEmpty) {
+      _resolvedVenueIdForCurrentDetail = widget.venue.id;
+    }
   }
 
   void _primeActiveCheckinFromMemory() {
@@ -104,10 +117,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       unawaited(_refreshCheckinStats());
     }
 
-    Future.delayed(const Duration(milliseconds: 350), () {
-      if (!mounted) return;
-      unawaited(_loadHeaderStories());
-    });
+    unawaited(_loadHeaderStories());
     Future.delayed(const Duration(milliseconds: 650), () {
       if (!mounted) return;
       unawaited(_loadAnonymousStatus());
@@ -296,6 +306,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       if (!mounted) return;
       setState(() {
         _enrichedVenueData = data;
+        _isFollowing = (data['isFollowing'] ?? data['is_following']) == true;
+        _followerCount =
+            _parseOptionalInt(
+              data['followerCount'] ?? data['follower_count'],
+            ) ??
+            _followerCount;
         if (data['isTestVenue'] == true) {
           _isNearVenue = true;
           _checkingProximity = false;
@@ -324,6 +340,101 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     } catch (e) {
       debugPrint('❌ Error loading venue details: $e');
     }
+  }
+
+  int? _parseOptionalInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  Future<void> _toggleFollow() async {
+    if (_followLoading || !widget.venue.isInDb || widget.venue.id.isEmpty) {
+      return;
+    }
+    final previousFollowing = _isFollowing;
+    final previousCount = _followerCount;
+    final nextFollowing = !previousFollowing;
+
+    setState(() {
+      _followLoading = true;
+      _isFollowing = nextFollowing;
+      _followerCount = nextFollowing
+          ? previousCount + 1
+          : (previousCount > 0 ? previousCount - 1 : 0);
+    });
+
+    try {
+      final result = nextFollowing
+          ? await _venueContextRepo.followVenue(widget.venue.id)
+          : await _venueContextRepo.unfollowVenue(widget.venue.id);
+      final count = _parseOptionalInt(result['followerCount']);
+      if (mounted && count != null) {
+        setState(() => _followerCount = count);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFollowing = previousFollowing;
+        _followerCount = previousCount;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            nextFollowing
+                ? 'Could not follow this venue.'
+                : 'Could not unfollow this venue.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _followLoading = false);
+      }
+    }
+  }
+
+  Widget _buildFollowButton() {
+    if (!widget.venue.isInDb || widget.venue.id.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final label = _isFollowing ? 'Unfollow' : 'Follow';
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: _followLoading ? null : _toggleFollow,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _isFollowing ? AppTheme.brandPrimary : Colors.white,
+          backgroundColor: _isFollowing
+              ? Colors.transparent
+              : AppTheme.brandPrimary,
+          side: BorderSide(
+            color: AppTheme.brandPrimary.withValues(alpha: 0.72),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        ),
+        icon: _followLoading
+            ? SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _isFollowing ? AppTheme.brandPrimary : Colors.white,
+                ),
+              )
+            : Icon(
+                _isFollowing ? Icons.check_rounded : Icons.add_rounded,
+                size: 18,
+              ),
+        label: Text(label),
+      ),
+    );
   }
 
   Future<void> _loadActiveCheckin() async {
@@ -591,7 +702,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       }
     } catch (_) {}
 
-    final file = await Navigator.push<File>(
+    // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
+    final dynamic captureResult = await Navigator.push(
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -599,6 +711,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       ),
     );
 
+    final File? file = captureResult is CapturedMedia
+        ? captureResult.file
+        : captureResult as File?;
+    final storyOverlay = captureResult is CapturedMedia
+        ? captureResult.overlay
+        : null;
     if (file == null || !mounted) return;
 
     // Determine media type from extension.
@@ -620,6 +738,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         checkinId: checkinId,
         file: file,
         mediaType: mediaType,
+        textOverlayJson: storyOverlay?.toJsonString(),
       );
       // Sayfa hâlâ açıksa tray'i yenile.
       if (mounted) {
@@ -659,6 +778,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         _activeCheckinVenueId = null;
         _activeCheckinVenuePlaceId = null;
         _checkingOut = false;
+        // Checkout backend'de bu check-in'in story'sini de sildi; tray key'ini
+        // değiştirip yeniden yükleterek "Me" balonunu anında kaldır.
+        _storyTrayRefreshCount++;
       });
       await _refreshCheckinStats();
     } catch (e) {
@@ -1192,6 +1314,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       ],
                     ),
 
+                  const SizedBox(height: 8),
+                  _buildFollowButton(),
                   const SizedBox(height: 8),
 
                   // Get Directions + Check-in yan yana — kullanıcı check-in

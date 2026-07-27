@@ -9,7 +9,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboar
 import 'login_page.dart';
 import 'signup_page.dart';
 import 'forgot_password_page.dart';
-import 'package:kmstry_frontend/features/people/presentation/people_page.dart';
+import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notifications.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/app_intro_page.dart';
@@ -57,7 +57,7 @@ class AuthRoutes {
       final token = ModalRoute.of(context)!.settings.arguments as String;
       return VenueInvitePage(token: token);
     },
-    people: (_) => const PeoplePage(),
+    people: (_) => const FindFriendsPage(),
     onboardingPhoto: (context) => const PhotoOnboardingPage(),
     onboardingUsername: (context) => const UsernameOnboardingPage(),
     appShell: (context) => const AppShell(),

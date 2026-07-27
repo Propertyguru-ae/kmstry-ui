@@ -60,6 +60,11 @@
     <!-- Android 13+ notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Galeriye foto/video kaydetme (gal) — yalnızca API 28 ve altı gerektirir -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <!-- Push'un OEM battery optimization tarafından arka planda öldürülmesini
          önlemek için kullanıcıdan istisna istemeye izin verir (Xiaomi/Huawei/
          Samsung gibi agresif OEM'lerde push teslimatını korur). -->

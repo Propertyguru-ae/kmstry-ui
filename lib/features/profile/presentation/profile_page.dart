@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'dart:async';
 import 'dart:ui'; // Glassmorphism efekti için
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
@@ -9,6 +11,7 @@ import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/followed_venues_page.dart';
 import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
@@ -26,6 +29,10 @@ import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
+import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/stories/data/story_viewed_cache.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -46,9 +53,11 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   final VenueContextRepository _venueContextRepository =
       VenueContextRepository();
   final MatchRepository _matchRepo = MatchRepository();
+  final StoryRepository _storyRepo = StoryRepository();
 
   /// Friends (match) sayısı — null iken "—" gösterilir.
   int? _friendCount;
+  int? _followedVenueCount;
 
   /// Aktif check-in'in mekânı (header'daki lokasyon satırı için).
   Venue? _activeVenue;
@@ -64,7 +73,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   bool _areMomentsExpanded = false;
 
   bool _uploadingMoment = false;
+  bool _uploadingStory = false;
   bool _openingVenueDetail = false;
+  List<StoryItem> _myStories = [];
+  Set<String> _viewedStoryIds = {};
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
   String? _profileErrorMessage;
@@ -269,6 +281,19 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     }
   }
 
+  /// Aktif check-in'in "yıldızlanan" (featured) fotoğrafının URL'i — varsa
+  /// avatarda gösterilir. Aktif check-in yoksa veya featured fotoğraf yoksa
+  /// null döner (o zaman gerçek profil fotosu / boş kullanılır).
+  String? get _featuredCheckinPhotoUrl {
+    if (_activeCheckin == null) return null;
+    for (final m in _media) {
+      if (m.isFeatured && m.mediaType == MediaType.photo && m.url.isNotEmpty) {
+        return m.url;
+      }
+    }
+    return null;
+  }
+
   List<String> _extractWhatBrings(Map<String, dynamic>? activeCheckin) {
     if (activeCheckin == null) return const [];
     final raw =
@@ -420,11 +445,34 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         context,
         MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
       );
+      if (mounted) unawaited(_loadMyStories());
     } finally {
       if (mounted) {
         setState(() => _openingVenueDetail = false);
       }
     }
+  }
+
+  void _showAnonymousStoryBlockedDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.visibility_off_rounded, size: 28),
+        title: const Text("You're in Anonymous Mode"),
+        content: const Text(
+          "While Anonymous Mode is on, you're invisible — so you can't share "
+          "stories (no one would see them).\n\n"
+          "To share a story, turn it off from:\n"
+          "Settings › Account Center › Manage Accounts › your account.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _refreshNotificationWarningState() async {
@@ -480,13 +528,162 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _loadFollowedVenueCount() async {
+    try {
+      final venues = await _venueContextRepository.getFollowedVenues();
+      if (!mounted) return;
+      setState(() => _followedVenueCount = venues.length);
+    } catch (_) {
+      // Sessiz geç — istatistik "—" kalır.
+    }
+  }
+
+  Future<void> _loadMyStories() async {
+    try {
+      final stories = await _storyRepo.getMyStories();
+      // İzlenme durumu KALICI cache'ten yüklenir — aksi halde başka sayfaya
+      // geçip profile dönünce _viewedStoryIds sıfırlanıp halka tekrar renkli
+      // görünüyordu (izlenmiş olmasına rağmen).
+      final persistedViewed = await StoryViewedCache.loadAll();
+      if (!mounted) return;
+      setState(() {
+        _myStories = stories;
+        final activeIds = stories.map((s) => s.id).toSet();
+        _viewedStoryIds = {
+          ..._viewedStoryIds,
+          ...persistedViewed,
+        }.intersection(activeIds);
+      });
+    } catch (e) {
+      debugPrint('Profile stories fetch failed: $e');
+    }
+  }
+
+  int _firstUnseenStoryIndex() {
+    final index = _myStories.indexWhere(
+      (story) => !story.viewedByMe && !_viewedStoryIds.contains(story.id),
+    );
+    return index == -1 ? 0 : index;
+  }
+
+  bool get _hasUnseenProfileStories => _myStories.any(
+    (story) => !story.viewedByMe && !_viewedStoryIds.contains(story.id),
+  );
+
+  Future<void> _openMyStoryViewer(String photo) async {
+    final realStories = _myStories
+        .where((story) => !story.isUploadingPlaceholder)
+        .toList();
+    if (realStories.isEmpty) return;
+
+    final meGroup = StoryGroup(
+      user: StoryUser(id: 'me', fullName: 'Me', photo: photo),
+      stories: realStories,
+      isCurrentUserOwner: true,
+    );
+
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: [meGroup],
+          initialStoryIndex: _firstUnseenStoryIndex(),
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    if (result is StoryViewerResult && result.lastStoryIndex >= 0) {
+      final ids = result.allFinished
+          ? realStories.map((s) => s.id)
+          : [
+              for (
+                int i = 0;
+                i <= result.lastStoryIndex && i < realStories.length;
+                i++
+              )
+                realStories[i].id,
+            ];
+      setState(() => _viewedStoryIds = {..._viewedStoryIds, ...ids});
+    }
+    unawaited(_loadMyStories());
+  }
+
+  Future<void> _openAddStoryFromProfile() async {
+    final checkinId = _activeCheckinId();
+    if (checkinId == null || _uploadingStory) return;
+
+    try {
+      final me = await AuthRepository().getMe(forceRefresh: true);
+      if (!mounted) return;
+      if (me['isAnonymous'] == true) {
+        _showAnonymousStoryBlockedDialog();
+        return;
+      }
+    } catch (_) {}
+
+    final dynamic captureResult = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const CameraScreen(useFrontCamera: true),
+      ),
+    );
+
+    final File? file = captureResult is CapturedMedia
+        ? captureResult.file
+        : captureResult as File?;
+    final storyOverlay = captureResult is CapturedMedia
+        ? captureResult.overlay
+        : null;
+    if (file == null || !mounted) return;
+
+    final isVideo = _isVideoFile(file.path);
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+
+    setState(() => _uploadingStory = true);
+    try {
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: file,
+        mediaType: isVideo ? 'video' : 'photo',
+        textOverlayJson: storyOverlay?.toJsonString(),
+      );
+
+      if (mounted) {
+        await _loadMyStories();
+      }
+
+      final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
+          ? _activeVenue!.name
+          : 'your venue';
+      if (overlay != null) {
+        showStorySharedCard(
+          overlay,
+          mediaFile: file,
+          venueName: venueName,
+          isVideo: isVideo,
+        );
+      }
+    } catch (e, st) {
+      debugPrint('❌ Profile story upload error: $e\n$st');
+      if (!mounted) return;
+      await showPremiumErrorDialog(context, message: 'Upload failed: $e');
+    } finally {
+      if (mounted) setState(() => _uploadingStory = false);
+    }
+  }
+
   Future<void> _loadProfile() async {
     setState(() {
       _loading = true;
       _profileErrorMessage = null;
     });
-    // Friend (match) sayısını arka planda çek — profil yüklemesini bloklamasın.
+    // İstatistikleri arka planda çek — profil yüklemesini bloklamasın.
     unawaited(_loadFriendCount());
+    unawaited(_loadFollowedVenueCount());
+    unawaited(_loadMyStories());
 
     try {
       final me = await AuthRepository().getMe();
@@ -615,7 +812,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       if (!mounted) return;
       final navigator = Navigator.of(this.context);
       // 🔥 Kendi kamera ekranımızı açıyoruz
-      final File? capturedMedia = await navigator.push<File>(
+      // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
+      final dynamic captureResult = await navigator.push(
         MaterialPageRoute(
           builder: (_) => const CameraScreen(
             useFrontCamera: true, // selfie
@@ -625,6 +823,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
 
       if (!mounted) return;
+      final File? capturedMedia = captureResult is CapturedMedia
+          ? captureResult.file
+          : captureResult as File?;
+      final capturedOverlay = captureResult is CapturedMedia
+          ? captureResult.overlay
+          : null;
       if (capturedMedia == null) return;
 
       // Check-in aninda tek video kurali profile'a da uygulaniyor.
@@ -643,6 +847,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       await _checkinRepo.uploadCheckinMedia(
         checkinId: checkinId,
         file: capturedMedia,
+        textOverlayJson: capturedOverlay?.toJsonString(),
         isFeatured: false,
       );
 
@@ -1067,7 +1272,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
     }
 
-    final photo = (_user?['photo'] ?? '').toString();
+    // Aktif check-in varsa "yıldızlanan" (featured) check-in fotoğrafı avatara
+    // konur — kullanıcının o mekandaki temsili. Check-in expire olunca
+    // (_activeCheckin null, _media boş) otomatik gerçek profil fotosuna döner;
+    // profil fotosu yoksa boş kalır.
+    final photo = (_featuredCheckinPhotoUrl ?? _user?['photo'] ?? '')
+        .toString();
     final fullName = (_user?['fullName'] ?? _user?['full_name'] ?? '')
         .toString()
         .trim();
@@ -1106,42 +1316,66 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Avatar + istatistikler ──────────────────────────────────
+              // ── Ortalanmış avatar + altında istatistikler ───────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                child: Row(
+                child: Stack(
                   children: [
-                    _buildProfileAvatar(photo, isDark),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildStat(
-                            _friendCount?.toString() ?? '—',
-                            'Friends',
-                            onSurface,
-                            subColor,
-                            inactive: _friendCount == null,
-                            onTap: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const FriendsListPage(),
-                                ),
-                              );
-                              if (mounted) unawaited(_loadFriendCount());
-                            },
-                          ),
-                          _buildStat(
-                            '0',
-                            'Venues',
-                            onSurface,
-                            subColor,
-                            inactive: true,
-                          ),
-                        ],
+                    // Sağ üst köşede glass "Edit profile" butonu.
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: _GlassEditButton(
+                        onTap: _openEditProfile,
+                        isDark: isDark,
                       ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _buildProfileAvatar(photo, isDark),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildStat(
+                              _friendCount?.toString() ?? '—',
+                              'Friends',
+                              onSurface,
+                              subColor,
+                              inactive: _friendCount == null,
+                              onTap: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const FriendsListPage(),
+                                  ),
+                                );
+                                if (mounted) unawaited(_loadFriendCount());
+                              },
+                            ),
+                            const SizedBox(width: 56),
+                            _buildStat(
+                              _followedVenueCount?.toString() ?? '—',
+                              'Venues',
+                              onSurface,
+                              subColor,
+                              inactive: _followedVenueCount == null,
+                              onTap: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const FollowedVenuesPage(),
+                                  ),
+                                );
+                                if (mounted) {
+                                  unawaited(_loadFollowedVenueCount());
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1168,19 +1402,6 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
-                        const SizedBox(width: 6),
-                        InkWell(
-                          onTap: _openEditProfile,
-                          borderRadius: BorderRadius.circular(20),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: Icon(
-                              Icons.edit_outlined,
-                              size: 18,
-                              color: onSurface.withValues(alpha: 0.7),
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                     if (bio.isNotEmpty) ...[
@@ -1260,6 +1481,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 thickness: 1,
                 color: onSurface.withValues(alpha: 0.12),
               ),
+              const SizedBox(height: 14),
               // ── Moments grid ────────────────────────────────────────────
               _buildMomentsGrid(canAddMore, isDark, subColor),
               const SizedBox(height: 24),
@@ -1271,47 +1493,105 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   }
 
   Widget _buildProfileAvatar(String photo, bool isDark) {
+    const avatarSize = 128.0;
+    const ringWidth = 3.0;
+    const gap = 2.5;
+    const radius = 32.0;
+    final hasStories = _myStories.isNotEmpty;
+    final totalSize = hasStories
+        ? avatarSize + ((ringWidth + gap) * 2)
+        : avatarSize;
+    final ringColors = _hasUnseenProfileStories
+        ? _ProfileStoryRingPainter.logoColors
+        : [Colors.grey.shade400, Colors.grey.shade500];
+
+    final avatar = Container(
+      width: avatarSize,
+      height: avatarSize,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        border: hasStories
+            ? null
+            : Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.15)
+                    : Colors.grey[300]!,
+                width: 1,
+              ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: photo.isNotEmpty
+            ? Image.network(
+                photo,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => _avatarFallback(isDark),
+              )
+            : _avatarFallback(isDark),
+      ),
+    );
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Container(
-          width: 88,
-          height: 88,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.15)
-                  : Colors.grey[300]!,
-              width: 1,
+        GestureDetector(
+          onTap: hasStories ? () => _openMyStoryViewer(photo) : null,
+          child: SizedBox(
+            width: totalSize,
+            height: totalSize,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                avatar,
+                if (hasStories)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _ProfileStoryRingPainter(
+                        colors: ringColors,
+                        strokeWidth: ringWidth,
+                        radius: radius + gap,
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ),
-          child: ClipOval(
-            child: photo.isNotEmpty
-                ? Image.network(
-                    photo,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => _avatarFallback(isDark),
-                  )
-                : _avatarFallback(isDark),
           ),
         ),
         // Avatar'ın sağ altına "+" — fotoğraf ekleme (şimdilik yalnızca görsel).
         Positioned(
           right: -2,
           bottom: -2,
-          child: Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: AppTheme.brandPrimary,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                width: 2.5,
+          child: GestureDetector(
+            onTap: _activeCheckinId() == null || _uploadingStory
+                ? null
+                : _openAddStoryFromProfile,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: _activeCheckinId() == null
+                    ? (isDark ? Colors.white24 : Colors.black26)
+                    : AppTheme.brandPrimary,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  width: 2.5,
+                ),
               ),
+              child: _uploadingStory
+                  ? const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
             ),
-            child: const Icon(Icons.add_rounded, color: Colors.white, size: 18),
           ),
         ),
       ],
@@ -1382,8 +1662,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
-  /// Instagram tarzı istatistik sütunu. [inactive] ise gri ve tıklanamaz —
-  /// Friends (match) ve Venues (takip) sayıları henüz backend'de yok.
+  /// Instagram tarzı istatistik sütunu. [inactive] ise gri gösterilir.
   Widget _buildStat(
     String value,
     String label,
@@ -1392,7 +1671,8 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     bool inactive = false,
     VoidCallback? onTap,
   }) {
-    final valueColor = inactive ? sub : color;
+    final valueColor = inactive ? sub.withValues(alpha: 0.78) : color;
+    final labelColor = inactive ? sub.withValues(alpha: 0.72) : color;
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1400,12 +1680,19 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           value,
           style: TextStyle(
             color: valueColor,
-            fontSize: 18,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          style: TextStyle(
+            color: labelColor,
+            fontSize: 14,
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 2),
-        Text(label, style: TextStyle(color: sub, fontSize: 13)),
       ],
     );
     if (onTap == null) return content;
@@ -1449,48 +1736,66 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       );
     }
 
+    // Eski tasarım: yatay kaydırmalı dikdörtgen moment kartları + "+".
+    const cardWidth = 132.0;
+    const cardHeight = 176.0;
     final itemCount = _media.length + (canAddMore ? 1 : 0);
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: EdgeInsets.zero,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 2,
-        mainAxisSpacing: 2,
-      ),
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        if (canAddMore && index == _media.length) {
-          return _buildAddGridCell(isDark);
-        }
-        final media = _media[index];
-        return GestureDetector(
-          onTap: () async {
-            final reload = await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => MomentsViewerPage(
-                  media: _media,
-                  initialIndex: index,
-                  allowFeature: true,
+    return SizedBox(
+      height: cardHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: itemCount,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          if (canAddMore && index == _media.length) {
+            return _buildAddMomentCard(isDark, cardWidth, cardHeight);
+          }
+          final media = _media[index];
+          return GestureDetector(
+            onTap: () async {
+              final reload = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => MomentsViewerPage(
+                    media: _media,
+                    initialIndex: index,
+                    allowFeature: true,
+                  ),
                 ),
+              );
+              if (reload == true) await _loadProfile();
+            },
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                width: cardWidth,
+                height: cardHeight,
+                child: _buildMomentCard(media),
               ),
-            );
-            if (reload == true) await _loadProfile();
-          },
-          child: _buildGridCell(media),
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 
-  /// Grid'in ilk hücresindeki "+" — aktif check-in varken yeni moment ekler.
-  Widget _buildAddGridCell(bool isDark) {
+  /// Yeni moment ekleme kartı ("+") — aktif check-in varken çalışır.
+  Widget _buildAddMomentCard(bool isDark, double w, double h) {
     return GestureDetector(
       onTap: _uploadingMoment ? null : _addMomentPhoto,
       child: Container(
-        color: isDark ? const Color(0xFF161616) : const Color(0xFFF0F0F0),
+        width: w,
+        height: h,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF161616) : const Color(0xFFF0F0F0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.06),
+          ),
+        ),
         child: Center(
           child: _uploadingMoment
               ? const SizedBox(
@@ -1498,15 +1803,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Icon(Icons.add_rounded, size: 30, color: AppTheme.brandPrimary),
+              : Icon(Icons.add_rounded, size: 32, color: AppTheme.brandPrimary),
         ),
       ),
     );
   }
 
-  /// Instagram grid hücresi: kareyi tamamen doldurur (cover), video ise
-  /// poster + play ikonu gösterir.
-  Widget _buildGridCell(CheckinProfileMedia media) {
+  /// Dikdörtgen moment kartı: alanı doldurur (cover); video ise poster + play.
+  Widget _buildMomentCard(CheckinProfileMedia media) {
     if (media.mediaType == MediaType.video) {
       return Stack(
         fit: StackFit.expand,
@@ -1625,4 +1929,80 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+/// Frosted-glass "Edit profile" pill for the profile header's top-right.
+class _GlassEditButton extends StatelessWidget {
+  const _GlassEditButton({required this.onTap, required this.isDark});
+
+  final VoidCallback onTap;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = isDark ? Colors.white : Colors.black87;
+    return ClipOval(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Material(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.10)
+              : Colors.white.withValues(alpha: 0.45),
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: fg.withValues(alpha: 0.18)),
+              ),
+              child: Icon(Icons.edit_outlined, size: 17, color: fg),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileStoryRingPainter extends CustomPainter {
+  final List<Color> colors;
+  final double strokeWidth;
+  final double radius;
+
+  static const logoColors = [
+    AppColors.magenta,
+    AppColors.teal,
+    AppColors.blue,
+    AppColors.orange,
+    AppColors.brand,
+  ];
+
+  const _ProfileStoryRingPainter({
+    required this.colors,
+    required this.strokeWidth,
+    required this.radius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(
+      rect.deflate(strokeWidth / 2),
+      Radius.circular(radius),
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..shader = SweepGradient(
+        colors: [...colors, colors.first],
+      ).createShader(rect);
+    canvas.drawRRect(rrect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ProfileStoryRingPainter oldDelegate) =>
+      oldDelegate.colors != colors ||
+      oldDelegate.strokeWidth != strokeWidth ||
+      oldDelegate.radius != radius;
 }

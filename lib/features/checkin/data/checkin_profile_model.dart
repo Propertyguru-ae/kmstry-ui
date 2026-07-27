@@ -166,6 +166,7 @@ class CheckinProfileUser {
   final String id;
   final String? username;
   final String fullName;
+  final String? photo;
   final DateTime birthdate;
   final String gender;
   final bool isVerified;
@@ -175,6 +176,7 @@ class CheckinProfileUser {
     required this.id,
     this.username,
     required this.fullName,
+    this.photo,
     required this.birthdate,
     required this.gender,
     required this.isVerified,
@@ -187,6 +189,7 @@ class CheckinProfileUser {
       id: json['id']?.toString() ?? '',
       username: (json['username'] ?? json['user_name'])?.toString(),
       fullName: (json['full_name'] ?? json['fullName'])?.toString() ?? 'Guest',
+      photo: (json['photo'] ?? json['photo_url'])?.toString(),
       birthdate:
           DateTime.tryParse(birthdateRaw ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),

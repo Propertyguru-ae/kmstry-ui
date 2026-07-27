@@ -2,6 +2,7 @@ class UsernameSearchItem {
   final String id;
   final String username;
   final String? fullName;
+  final String? photo;
   final DateTime? birthdate;
   final UsernameSearchActiveCheckin? activeCheckin;
   final bool isMatched;
@@ -15,6 +16,7 @@ class UsernameSearchItem {
     required this.id,
     required this.username,
     this.fullName,
+    this.photo,
     this.birthdate,
     this.activeCheckin,
     this.isMatched = false,
@@ -89,12 +91,14 @@ class UsernameSearchItem {
       'actionState',
       'action_state',
     ]);
-    final chatId = readString(
-      relationMatch ?? relation,
-      const ['chatId', 'chat_id'],
-    );
+    final chatId = readString(relationMatch ?? relation, const [
+      'chatId',
+      'chat_id',
+    ]);
     final isMatchedRaw =
-        relation['isMatched'] ?? relation['is_matched'] ?? relationMatch != null;
+        relation['isMatched'] ??
+        relation['is_matched'] ??
+        relationMatch != null;
     final status = relationshipState?.toLowerCase();
     final isMatched =
         isMatchedRaw == true ||
@@ -105,6 +109,7 @@ class UsernameSearchItem {
       id: (json['id'] ?? '').toString(),
       username: (json['username'] ?? '').toString(),
       fullName: (json['fullName'] ?? json['full_name'])?.toString(),
+      photo: readString(json, const ['photo', 'photoUrl', 'photo_url']),
       birthdate: DateTime.tryParse((json['birthdate'] ?? '').toString()),
       activeCheckin: active,
       isMatched: isMatched,
@@ -112,12 +117,7 @@ class UsernameSearchItem {
       myAction: myAction?.toLowerCase(),
       theirAction: theirAction?.toLowerCase(),
       relationshipState: status,
-      bio: readString(json, const [
-        'bio',
-        'bio_text',
-        'about',
-        'aboutMe',
-      ]),
+      bio: readString(json, const ['bio', 'bio_text', 'about', 'aboutMe']),
     );
   }
 }
@@ -125,18 +125,32 @@ class UsernameSearchItem {
 class UsernameSearchActiveCheckin {
   final String id;
   final String? venueId;
+  final String? venueName;
+  final String? venueType;
+  final String? venuePhoto;
   final DateTime? expiresAt;
 
   UsernameSearchActiveCheckin({
     required this.id,
     this.venueId,
+    this.venueName,
+    this.venueType,
+    this.venuePhoto,
     this.expiresAt,
   });
 
   factory UsernameSearchActiveCheckin.fromJson(Map<String, dynamic> json) {
+    final venueRaw = json['venue'];
+    final venue = venueRaw is Map<String, dynamic> ? venueRaw : null;
     return UsernameSearchActiveCheckin(
       id: (json['id'] ?? '').toString(),
       venueId: (json['venueId'] ?? json['venue_id'])?.toString(),
+      venueName: (json['venueName'] ?? json['venue_name'] ?? venue?['name'])
+          ?.toString(),
+      venueType: (json['venueType'] ?? json['venue_type'] ?? venue?['type'])
+          ?.toString(),
+      venuePhoto: (json['venuePhoto'] ?? json['venue_photo'] ?? venue?['photo'])
+          ?.toString(),
       expiresAt: DateTime.tryParse(
         (json['expiresAt'] ?? json['expires_at'] ?? '').toString(),
       ),

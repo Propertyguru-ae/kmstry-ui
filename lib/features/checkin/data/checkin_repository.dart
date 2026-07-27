@@ -9,6 +9,31 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
 
+class CheckinMediaUploadTarget {
+  final String uploadUrl;
+  final String publicUrl;
+  final Map<String, String> headers;
+
+  const CheckinMediaUploadTarget({
+    required this.uploadUrl,
+    required this.publicUrl,
+    required this.headers,
+  });
+
+  factory CheckinMediaUploadTarget.fromJson(Map<String, dynamic> json) {
+    final rawHeaders = json['headers'];
+    return CheckinMediaUploadTarget(
+      uploadUrl: json['uploadUrl']?.toString() ?? '',
+      publicUrl: json['publicUrl']?.toString() ?? '',
+      headers: rawHeaders is Map
+          ? rawHeaders.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
+          : const <String, String>{},
+    );
+  }
+}
+
 class CheckinRepository {
   final ApiClient _api = ApiClient();
 
@@ -39,7 +64,7 @@ class CheckinRepository {
       if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
     };
 
-    Map<String, dynamic> data;
+    dynamic data;
     try {
       data = await _api.post(
         '/checkins',
@@ -59,7 +84,46 @@ class CheckinRepository {
       }
     }
 
-    return data['id'] as String;
+    final checkinId = data is Map ? data['id']?.toString() : null;
+    if (checkinId == null || checkinId.isEmpty) {
+      throw Exception('Check-in could not be created: missing id');
+    }
+    return checkinId;
+  }
+
+  Future<String> createPendingCheckin({
+    required String venueId,
+    required double latitude,
+    required double longitude,
+    required String vibe,
+    List<String>? whatBringsYou,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final selectedReasons = (whatBringsYou ?? [])
+        .where((item) => item.trim().isNotEmpty)
+        .map((item) => item.trim())
+        .toList();
+
+    final body = <String, dynamic>{
+      'venue_id': venueId,
+      'checkin_method': 'gps',
+      'latitude': latitude,
+      'longitude': longitude,
+      'vibe': vibe,
+      if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
+    };
+
+    final data = await _api.post(
+      '/checkins/pending',
+      headers: {'Authorization': 'Bearer $token'},
+      body: body,
+    );
+
+    final checkinId = data is Map ? data['id']?.toString() : null;
+    if (checkinId == null || checkinId.isEmpty) {
+      throw Exception('Check-in could not be created: missing id');
+    }
+    return checkinId;
   }
 
   bool _isUnknownWhatBringsFieldError(ApiException error) {
@@ -117,6 +181,7 @@ class CheckinRepository {
     required String checkinId,
     required File file,
     required bool isFeatured,
+    String? textOverlayJson,
   }) async {
     final token = await SecureStorage.getAccessToken();
 
@@ -139,6 +204,9 @@ class CheckinRepository {
     );
 
     request.fields['isFeatured'] = isFeatured.toString();
+    if (textOverlayJson != null && textOverlayJson.isNotEmpty) {
+      request.fields['textOverlay'] = textOverlayJson;
+    }
 
     final response = await request.send();
     final responseBody = await response.stream.bytesToString();
@@ -148,6 +216,78 @@ class CheckinRepository {
         'Media upload failed (${response.statusCode}): $responseBody',
       );
     }
+  }
+
+  Future<CheckinMediaUploadTarget> createCheckinMediaUploadUrl({
+    required String checkinId,
+    required File file,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final sizeBytes = await file.length();
+
+    final data = await _api.post(
+      '/checkins/$checkinId/media/upload-url',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'mimeType': mimeType,
+        'fileName': file.uri.pathSegments.isNotEmpty
+            ? file.uri.pathSegments.last
+            : 'media',
+        'sizeBytes': sizeBytes,
+      },
+    );
+
+    return CheckinMediaUploadTarget.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<void> uploadFileToSignedUrl({
+    required CheckinMediaUploadTarget target,
+    required File file,
+  }) async {
+    // NOT: Önceden StreamedRequest kullanılıyordu ama send()'den önce
+    // sink.addStream çağrıldığı için büyük dosyalarda deadlock oluyordu
+    // (tüketici başlamadan iç buffer doluyordu). Dosyayı belleğe okuyup tek
+    // seferde PUT ediyoruz — sıkıştırılmış video/720px foto için boyut güvenli.
+    final bytes = await file.readAsBytes();
+    final response = await http
+        .put(
+          Uri.parse(target.uploadUrl),
+          headers: target.headers,
+          body: bytes,
+        )
+        .timeout(const Duration(minutes: 2));
+
+    if (response.statusCode >= 400) {
+      throw Exception(
+        'Direct media upload failed (${response.statusCode}): ${response.body}',
+      );
+    }
+  }
+
+  Future<void> confirmCheckinMediaUpload({
+    required String checkinId,
+    required CheckinMediaUploadTarget target,
+    required File file,
+    required bool isFeatured,
+    String? textOverlayJson,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final sizeBytes = await file.length();
+
+    await _api.post(
+      '/checkins/$checkinId/media/confirm',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'url': target.publicUrl,
+        'mimeType': mimeType,
+        'sizeBytes': sizeBytes,
+        'isFeatured': isFeatured,
+        if (textOverlayJson != null && textOverlayJson.isNotEmpty)
+          'textOverlay': textOverlayJson,
+      },
+    );
   }
 
   Future<List<dynamic>> getMyCheckinMedia() async {
@@ -256,9 +396,11 @@ class CheckinRepository {
     );
   }
 
-  /// Undo a previous "pass" toward [targetUserId] (removes the pass so the
-  /// profile becomes actionable again). Backend only clears `pass` actions.
-  Future<void> undoPass(String targetUserId) async {
+  /// Rewind/undo the current user's last action (pass OR interested) toward
+  /// [targetUserId] so the profile becomes actionable again. Backend enforces
+  /// the daily rewind quota (403 REWIND_LIMIT_REACHED) and blocks undoing an
+  /// interested once matched (409 MATCH_EXISTS).
+  Future<void> undoAction(String targetUserId) async {
     final token = await SecureStorage.getAccessToken();
     await _api.delete(
       '/feed/actions/$targetUserId',

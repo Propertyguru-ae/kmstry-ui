@@ -39,10 +39,13 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   bool _pastExpanded = false;
 
   bool get _isOwner => widget.callerRole == VenueMemberRole.owner;
-  bool get _canManage => _isOwner || VenueSession.instance.can(VenuePermission.memberManage);
-  bool get _canManageRoles => _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
+  bool get _canManage =>
+      _isOwner || VenueSession.instance.can(VenuePermission.memberManage);
+  bool get _canManageRoles =>
+      _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
   bool get _canSeePending => _canManage;
-  bool get _canAccessPermissions => _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
+  bool get _canAccessPermissions =>
+      _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
 
   @override
   void initState() {
@@ -80,9 +83,14 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Past invites temizlensin mi?'),
-        content: const Text('Reddedilen, iptal edilen ve süresi dolan davetler listeden kaldırılacak.'),
+        content: const Text(
+          'Reddedilen, iptal edilen ve süresi dolan davetler listeden kaldırılacak.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('İptal')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('İptal'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Temizle', style: TextStyle(color: Colors.red)),
@@ -96,9 +104,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Temizlenemedi: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Temizlenemedi: $e')));
     }
   }
 
@@ -106,7 +114,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     final added = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => VenueAddMemberPage(venueId: widget.venueId, repo: _repo),
+        builder: (_) =>
+            VenueAddMemberPage(venueId: widget.venueId, repo: _repo),
       ),
     );
     if (added == true) _load();
@@ -150,8 +159,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     final enumRole = picked.id == 'ADMIN'
         ? VenueMemberRole.admin
         : VenueMemberRole.staff;
-    final customId =
-        (picked.id != 'ADMIN' && picked.id != 'STAFF') ? picked.id : null;
+    final customId = (picked.id != 'ADMIN' && picked.id != 'STAFF')
+        ? picked.id
+        : null;
 
     // Aynı rol seçildiyse işlem yapma
     if (enumRole == member.role && customId == member.venueRoleId) return;
@@ -180,11 +190,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _EditStaffSheet(
-        venueId: widget.venueId,
-        member: member,
-        repo: _repo,
-      ),
+      builder: (_) =>
+          _EditStaffSheet(venueId: widget.venueId, member: member, repo: _repo),
     );
     if (edited == true) _load();
   }
@@ -195,7 +202,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Invite'),
         content: Text(
-            'Cancel the pending invite for ${member.user.displayName}?'),
+          'Cancel the pending invite for ${member.user.displayName}?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -203,8 +211,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style:
-                TextButton.styleFrom(foregroundColor: Colors.orange),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
             child: const Text('Cancel Invite'),
           ),
         ],
@@ -216,9 +223,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to cancel invite: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to cancel invite: $e')));
     }
   }
 
@@ -239,7 +246,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: colors.onSurface.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(2),
@@ -247,23 +255,35 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
               ),
               const SizedBox(height: 20),
               Container(
-                width: 56, height: 56,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   color: _TeamColors.mavi.withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.send_outlined, color: _TeamColors.mavi, size: 26),
+                child: const Icon(
+                  Icons.send_outlined,
+                  color: _TeamColors.mavi,
+                  size: 26,
+                ),
               ),
               const SizedBox(height: 16),
               Text(
                 'Daveti Yeniden Gönder',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: colors.onSurface,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 '${member.user.displayName} adlı kullanıcıya davet yeniden gönderilecek.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: colors.onSurface.withValues(alpha: 0.6)),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colors.onSurface.withValues(alpha: 0.6),
+                ),
               ),
               const SizedBox(height: 24),
               SizedBox(
@@ -273,9 +293,14 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                   style: FilledButton.styleFrom(
                     backgroundColor: _TeamColors.mavi,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                  child: const Text('Gönder', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    'Gönder',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -283,7 +308,12 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 width: double.infinity,
                 child: TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: Text('İptal', style: TextStyle(color: colors.onSurface.withValues(alpha: 0.5))),
+                  child: Text(
+                    'İptal',
+                    style: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.5),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -305,14 +335,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
           return Container(
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
             ),
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 40, height: 4,
+                  width: 40,
+                  height: 4,
                   decoration: BoxDecoration(
                     color: colors.onSurface.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(2),
@@ -320,23 +353,35 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 ),
                 const SizedBox(height: 20),
                 Container(
-                  width: 56, height: 56,
+                  width: 56,
+                  height: 56,
                   decoration: BoxDecoration(
                     color: _TeamColors.turkuaz.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.check_circle_outline_rounded, color: _TeamColors.turkuaz, size: 28),
+                  child: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: _TeamColors.turkuaz,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   'Davet Gönderildi',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   '${member.user.displayName} adlı kullanıcıya davet başarıyla yeniden gönderildi.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: colors.onSurface.withValues(alpha: 0.6)),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colors.onSurface.withValues(alpha: 0.6),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 SizedBox(
@@ -346,9 +391,18 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     style: FilledButton.styleFrom(
                       backgroundColor: _TeamColors.turkuaz,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
-                    child: const Text('Tamam', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+                    child: const Text(
+                      'Tamam',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -359,9 +413,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Davet gönderilemedi: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Davet gönderilemedi: $e')));
     }
   }
 
@@ -439,14 +493,20 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         ),
         title: Text(
           _canManage || _canManageRoles ? 'Team Management' : 'Team',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.onSurface),
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
         ),
         centerTitle: true,
         actions: const [],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(
-            color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200],
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.grey[200],
             height: 1,
           ),
         ),
@@ -454,8 +514,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? _buildError(colors)
-              : _buildList(colors, isDark),
+          ? _buildError(colors)
+          : _buildList(colors, isDark),
     );
   }
 
@@ -464,12 +524,16 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.error_outline,
-              size: 48, color: colors.onSurface.withValues(alpha: 0.4)),
+          Icon(
+            Icons.error_outline,
+            size: 48,
+            color: colors.onSurface.withValues(alpha: 0.4),
+          ),
           const SizedBox(height: 12),
-          Text(_error!,
-              style:
-                  TextStyle(color: colors.onSurface.withValues(alpha: 0.6))),
+          Text(
+            _error!,
+            style: TextStyle(color: colors.onSurface.withValues(alpha: 0.6)),
+          ),
           const SizedBox(height: 16),
           ElevatedButton(onPressed: _load, child: const Text('Retry')),
         ],
@@ -478,11 +542,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   }
 
   Widget _buildList(ColorScheme colors, bool isDark) {
-    final activeMembers  = _members.where((m) => m.status == VenueMemberStatus.active).toList();
-    final pendingMembers = _members.where((m) => m.status == VenueMemberStatus.pending).toList();
+    final activeMembers = _members
+        .where((m) => m.status == VenueMemberStatus.active)
+        .toList();
+    final pendingMembers = _members
+        .where((m) => m.status == VenueMemberStatus.pending)
+        .toList();
     final terminalMembers = _members.where((m) => m.status.isTerminal).toList();
     // Free plan tek operatörlü — rol hiyerarşisi yok, sadece owner sayılır.
-    final roleCount = VenueSession.instance.hasFeature(VenueFeature.roleLevels) ? _roleCount : 1;
+    final roleCount = VenueSession.instance.hasFeature(VenueFeature.roleLevels)
+        ? _roleCount
+        : 1;
 
     if (_members.isEmpty) {
       return Column(
@@ -494,15 +564,29 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.group_outlined, size: 52, color: colors.onSurface.withValues(alpha: 0.3)),
+                    Icon(
+                      Icons.group_outlined,
+                      size: 52,
+                      color: colors.onSurface.withValues(alpha: 0.3),
+                    ),
                     const SizedBox(height: 16),
-                    Text('No team members yet.',
-                        style: TextStyle(fontSize: 16, color: colors.onSurface.withValues(alpha: 0.5))),
+                    Text(
+                      'No team members yet.',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: colors.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
                     if (_canManage) ...[
                       const SizedBox(height: 12),
-                      Text('Use "Add Member" to invite staff.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 13, color: colors.onSurface.withValues(alpha: 0.4))),
+                      Text(
+                        'Use "Add Member" to invite staff.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colors.onSurface.withValues(alpha: 0.4),
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -542,10 +626,12 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     colors: colors,
                   ),
                   const SizedBox(height: 10),
-                  ...activeMembers.map((m) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _buildMemberCard(m, colors, isDark),
-                      )),
+                  ...activeMembers.map(
+                    (m) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildMemberCard(m, colors, isDark),
+                    ),
+                  ),
                 ],
 
                 // ── Pending invites (collapsible) ────────────────────────
@@ -558,12 +644,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     expanded: _pendingExpanded,
                     colors: colors,
                     isDark: isDark,
-                    onToggle: () => setState(() => _pendingExpanded = !_pendingExpanded),
+                    onToggle: () =>
+                        setState(() => _pendingExpanded = !_pendingExpanded),
                     emptyText: 'No pending invites',
-                    children: pendingMembers.map((m) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _buildPendingCard(m, colors, isDark),
-                    )).toList(),
+                    children: pendingMembers
+                        .map(
+                          (m) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _buildPendingCard(m, colors, isDark),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
 
@@ -577,24 +668,34 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     expanded: _pastExpanded,
                     colors: colors,
                     isDark: isDark,
-                    onToggle: () => setState(() => _pastExpanded = !_pastExpanded),
+                    onToggle: () =>
+                        setState(() => _pastExpanded = !_pastExpanded),
                     emptyText: 'No past invites',
                     trailing: terminalMembers.isNotEmpty
                         ? TextButton.icon(
                             onPressed: _cleanPastInvites,
-                            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                            icon: const Icon(
+                              Icons.delete_sweep_outlined,
+                              size: 16,
+                            ),
                             label: const Text('Clean'),
                             style: TextButton.styleFrom(
                               foregroundColor: colors.error,
                               visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                             ),
                           )
                         : null,
-                    children: terminalMembers.map((m) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _buildTerminalCard(m, colors, isDark),
-                    )).toList(),
+                    children: terminalMembers
+                        .map(
+                          (m) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _buildTerminalCard(m, colors, isDark),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
               ],
@@ -611,7 +712,13 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     final plan = VenueSession.instance.plan;
     final limit = plan.staffLimit; // null = sınırsız
     // Koltuğu dolduranlar: aktif + bekleyen üyeler (owner dahil).
-    final used = _members.where((m) => m.status == VenueMemberStatus.active || m.status == VenueMemberStatus.pending).length;
+    final used = _members
+        .where(
+          (m) =>
+              m.status == VenueMemberStatus.active ||
+              m.status == VenueMemberStatus.pending,
+        )
+        .length;
     final atLimit = limit != null && used >= limit;
 
     return Container(
@@ -626,13 +733,20 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.groups_outlined, size: 15, color: colors.onSurface.withValues(alpha: 0.5)),
+                Icon(
+                  Icons.groups_outlined,
+                  size: 15,
+                  color: colors.onSurface.withValues(alpha: 0.5),
+                ),
                 const SizedBox(width: 6),
                 Text(
                   limit == null
                       ? '$used staff · ${plan.label} plan (unlimited)'
                       : '$used / $limit ${limit == 1 ? 'seat' : 'seats'} used · ${plan.label} plan',
-                  style: TextStyle(fontSize: 12.5, color: colors.onSurface.withValues(alpha: 0.6)),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: colors.onSurface.withValues(alpha: 0.6),
+                  ),
                 ),
               ],
             ),
@@ -643,13 +757,18 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
               icon: const Icon(Icons.lock_outline, size: 18),
               label: Text(
                 limit == 1 ? 'Upgrade to add staff' : 'Upgrade for more seats',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: plan.color,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             )
           else
@@ -664,7 +783,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 backgroundColor: _TeamColors.turkuaz,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             ),
         ],
@@ -675,7 +796,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   Widget _buildMemberCard(VenueMember member, ColorScheme colors, bool isDark) {
     final isCurrentOwner = member.role == VenueMemberRole.owner;
     final canManage = _canManage && !isCurrentOwner;
-    final isStaffAccount = member.user.isStaff && member.user.staffVenueId == widget.venueId;
+    final isStaffAccount =
+        member.user.isStaff && member.user.staffVenueId == widget.venueId;
     final roleLabel = (member.venueRoleName ?? member.role.label).toUpperCase();
     final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
 
@@ -683,54 +805,103 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF0B1322) : colors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.outline.withValues(alpha: isDark ? 0.10 : 0.12)),
+        border: Border.all(
+          color: colors.outline.withValues(alpha: isDark ? 0.10 : 0.12),
+        ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
-          _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+          _TeamAvatar(
+            displayName: member.user.displayName,
+            photo: member.user.photo,
+            color: roleColor,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(roleLabel,
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
-                        color: roleColor, letterSpacing: 0.8)),
+                Text(
+                  roleLabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: roleColor,
+                    letterSpacing: 0.8,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(member.user.displayName,
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                        color: colors.onSurface)),
+                Text(
+                  member.user.displayName,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
+                ),
                 if (member.user.username != null)
-                  Text('@${member.user.username}',
-                      style: TextStyle(fontSize: 12,
-                          color: colors.onSurface.withValues(alpha: 0.45))),
+                  Text(
+                    '@${member.user.username}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ),
               ],
             ),
           ),
           if (canManage)
             PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, size: 20,
-                  color: colors.onSurface.withValues(alpha: 0.45)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              icon: Icon(
+                Icons.more_vert,
+                size: 20,
+                color: colors.onSurface.withValues(alpha: 0.45),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
               itemBuilder: (_) => [
                 if (isStaffAccount && _isOwner)
-                  const PopupMenuItem(value: 'edit',
-                      child: Row(children: [
-                        Icon(Icons.edit_outlined, size: 18), SizedBox(width: 10), Text('Edit'),
-                      ])),
-                const PopupMenuItem(value: 'role',
-                    child: Row(children: [
-                      Icon(Icons.manage_accounts_outlined, size: 18), SizedBox(width: 10), Text('Change Role'),
-                    ])),
-                PopupMenuItem(value: 'remove',
-                    child: Row(children: [
-                      Icon(isStaffAccount ? Icons.delete_outline : Icons.person_remove_outlined,
-                          size: 18, color: Colors.red),
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Edit'),
+                      ],
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'role',
+                  child: Row(
+                    children: [
+                      Icon(Icons.manage_accounts_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Change Role'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'remove',
+                  child: Row(
+                    children: [
+                      Icon(
+                        isStaffAccount
+                            ? Icons.delete_outline
+                            : Icons.person_remove_outlined,
+                        size: 18,
+                        color: Colors.red,
+                      ),
                       const SizedBox(width: 10),
-                      Text(isStaffAccount ? 'Delete' : 'Remove',
-                          style: const TextStyle(color: Colors.red)),
-                    ])),
+                      Text(
+                        isStaffAccount ? 'Delete' : 'Remove',
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               onSelected: (action) {
                 if (action == 'edit') _editStaff(member);
@@ -743,7 +914,11 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     );
   }
 
-  Widget _buildPendingCard(VenueMember member, ColorScheme colors, bool isDark) {
+  Widget _buildPendingCard(
+    VenueMember member,
+    ColorScheme colors,
+    bool isDark,
+  ) {
     final roleLabel = (member.venueRoleName ?? member.role.label).toUpperCase();
     final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
 
@@ -756,23 +931,42 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
-          _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+          _TeamAvatar(
+            displayName: member.user.displayName,
+            photo: member.user.photo,
+            color: roleColor,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(roleLabel,
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
-                        color: roleColor, letterSpacing: 0.8)),
+                Text(
+                  roleLabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: roleColor,
+                    letterSpacing: 0.8,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(member.user.displayName,
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                        color: colors.onSurface)),
+                Text(
+                  member.user.displayName,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
+                ),
                 if (member.user.username != null)
-                  Text('@${member.user.username}',
-                      style: TextStyle(fontSize: 12,
-                          color: colors.onSurface.withValues(alpha: 0.45))),
+                  Text(
+                    '@${member.user.username}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -788,29 +982,54 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(width: 6, height: 6,
-                        decoration: const BoxDecoration(
-                            color: _TeamColors.turuncu, shape: BoxShape.circle)),
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: _TeamColors.turuncu,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                     const SizedBox(width: 5),
-                    const Text('Awaiting',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                            color: _TeamColors.turuncu)),
+                    const Text(
+                      'Awaiting',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _TeamColors.turuncu,
+                      ),
+                    ),
                   ],
                 ),
               ),
               if (_canManage)
                 PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert, size: 20,
-                      color: colors.onSurface.withValues(alpha: 0.45)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  icon: Icon(
+                    Icons.more_vert,
+                    size: 20,
+                    color: colors.onSurface.withValues(alpha: 0.45),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                   itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'cancel',
-                        child: Row(children: [
-                          Icon(Icons.cancel_outlined, size: 18, color: _TeamColors.turuncu),
+                    const PopupMenuItem(
+                      value: 'cancel',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.cancel_outlined,
+                            size: 18,
+                            color: _TeamColors.turuncu,
+                          ),
                           SizedBox(width: 10),
-                          Text('Cancel Invite',
-                              style: TextStyle(color: _TeamColors.turuncu)),
-                        ])),
+                          Text(
+                            'Cancel Invite',
+                            style: TextStyle(color: _TeamColors.turuncu),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                   onSelected: (action) {
                     if (action == 'cancel') _cancelInvite(member);
@@ -823,13 +1042,21 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     );
   }
 
-  Widget _buildTerminalCard(VenueMember member, ColorScheme colors, bool isDark) {
+  Widget _buildTerminalCard(
+    VenueMember member,
+    ColorScheme colors,
+    bool isDark,
+  ) {
     Color statusColor;
     switch (member.status) {
-      case VenueMemberStatus.rejected: statusColor = Colors.red;
-      case VenueMemberStatus.expired: statusColor = colors.onSurface.withValues(alpha: 0.4);
-      case VenueMemberStatus.cancelled: statusColor = _TeamColors.turuncu;
-      default: statusColor = colors.onSurface.withValues(alpha: 0.4);
+      case VenueMemberStatus.rejected:
+        statusColor = Colors.red;
+      case VenueMemberStatus.expired:
+        statusColor = colors.onSurface.withValues(alpha: 0.4);
+      case VenueMemberStatus.cancelled:
+        statusColor = _TeamColors.turuncu;
+      default:
+        statusColor = colors.onSurface.withValues(alpha: 0.4);
     }
     final roleColor = _TeamColors.forRole(member.role, member.venueRoleName);
 
@@ -844,17 +1071,32 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
-            _TeamAvatar(displayName: member.user.displayName, photo: member.user.photo, color: roleColor),
+            _TeamAvatar(
+              displayName: member.user.displayName,
+              photo: member.user.photo,
+              color: roleColor,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(member.user.displayName,
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.onSurface)),
+                  Text(
+                    member.user.displayName,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: colors.onSurface,
+                    ),
+                  ),
                   if (member.user.username != null)
-                    Text('@${member.user.username}',
-                        style: TextStyle(fontSize: 12, color: colors.onSurface.withValues(alpha: 0.45))),
+                    Text(
+                      '@${member.user.username}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -862,27 +1104,47 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: statusColor.withValues(alpha: 0.25)),
+                    border: Border.all(
+                      color: statusColor.withValues(alpha: 0.25),
+                    ),
                   ),
-                  child: Text(member.status.label,
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusColor)),
+                  child: Text(
+                    member.status.label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: statusColor,
+                    ),
+                  ),
                 ),
                 if (_canManage)
                   PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert, size: 20,
-                        color: colors.onSurface.withValues(alpha: 0.4)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 20,
+                      color: colors.onSurface.withValues(alpha: 0.4),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                     itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'resend',
-                          child: Row(children: [
+                      const PopupMenuItem(
+                        value: 'resend',
+                        child: Row(
+                          children: [
                             Icon(Icons.send_outlined, size: 18),
                             SizedBox(width: 10),
                             Text('Re-invite'),
-                          ])),
+                          ],
+                        ),
+                      ),
                     ],
                     onSelected: (action) {
                       if (action == 'resend') _resendInvite(member);
@@ -902,7 +1164,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 class _TeamColors {
   static const magenta = Color(0xFFE020D8);
   static const turkuaz = Color(0xFF1FD9A8);
-  static const mavi    = Color(0xFF1A9FE8);
+  static const mavi = Color(0xFF1A9FE8);
   static const turuncu = Color(0xFFF08838);
   static const koruMor = Color(0xFF3D1F8C);
 
@@ -938,11 +1200,27 @@ class _StatsStrip extends StatelessWidget {
     final bg = isDark ? const Color(0xFF0B1322) : const Color(0xFFF5F7FA);
     return Row(
       children: [
-        _StatCard(value: '$active',  label: 'Active',  color: _TeamColors.turkuaz, bg: bg),
+        _StatCard(
+          value: '$active',
+          label: 'Active',
+          color: _TeamColors.turkuaz,
+          bg: bg,
+        ),
         const SizedBox(width: 10),
-        _StatCard(value: '$pending', label: 'Pending', color: _TeamColors.turuncu, bg: bg),
+        _StatCard(
+          value: '$pending',
+          label: 'Pending',
+          color: _TeamColors.turuncu,
+          bg: bg,
+        ),
         const SizedBox(width: 10),
-        _StatCard(value: '$roles',   label: 'Roles',   color: _TeamColors.magenta, bg: bg, onTap: onRolesTap),
+        _StatCard(
+          value: '$roles',
+          label: 'Roles',
+          color: _TeamColors.magenta,
+          bg: bg,
+          onTap: onRolesTap,
+        ),
       ],
     );
   }
@@ -955,7 +1233,13 @@ class _StatCard extends StatelessWidget {
   final Color bg;
   final VoidCallback? onTap;
 
-  const _StatCard({required this.value, required this.label, required this.color, required this.bg, this.onTap});
+  const _StatCard({
+    required this.value,
+    required this.label,
+    required this.color,
+    required this.bg,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -974,19 +1258,33 @@ class _StatCard extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Text(value,
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: color)),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
               const SizedBox(height: 3),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(label,
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500,
-                          color: colors.onSurface.withValues(alpha: 0.45))),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: colors.onSurface.withValues(alpha: 0.45),
+                    ),
+                  ),
                   if (onTap != null) ...[
                     const SizedBox(width: 3),
-                    Icon(Icons.chevron_right_rounded, size: 13,
-                        color: colors.onSurface.withValues(alpha: 0.35)),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 13,
+                      color: colors.onSurface.withValues(alpha: 0.35),
+                    ),
                   ],
                 ],
               ),
@@ -1021,15 +1319,22 @@ class _SectionLabel extends StatelessWidget {
       children: [
         Text(
           label.toUpperCase(),
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-              letterSpacing: 1.1, color: colors.onSurface.withValues(alpha: 0.45)),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+            color: colors.onSurface.withValues(alpha: 0.45),
+          ),
         ),
         const Spacer(),
         if (badge != null && badgeLabel != null)
           Text(
             badgeLabel!,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                color: badgeColor ?? colors.onSurface.withValues(alpha: 0.5)),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: badgeColor ?? colors.onSurface.withValues(alpha: 0.5),
+            ),
           ),
       ],
     );
@@ -1077,20 +1382,31 @@ class _CollapsibleSection extends StatelessWidget {
               children: [
                 Text(
                   label.toUpperCase(),
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-                      letterSpacing: 1.1, color: colors.onSurface.withValues(alpha: 0.45)),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.1,
+                    color: colors.onSurface.withValues(alpha: 0.45),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 if (count > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: badgeColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       '$count',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: badgeColor),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: badgeColor,
+                      ),
                     ),
                   ),
                 const Spacer(),
@@ -1098,8 +1414,11 @@ class _CollapsibleSection extends StatelessWidget {
                 AnimatedRotation(
                   turns: expanded ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
-                  child: Icon(Icons.keyboard_arrow_down_rounded,
-                      size: 20, color: colors.onSurface.withValues(alpha: 0.4)),
+                  child: Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 20,
+                    color: colors.onSurface.withValues(alpha: 0.4),
+                  ),
                 ),
               ],
             ),
@@ -1107,16 +1426,22 @@ class _CollapsibleSection extends StatelessWidget {
         ),
         AnimatedCrossFade(
           duration: const Duration(milliseconds: 220),
-          crossFadeState: expanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+          crossFadeState: expanded
+              ? CrossFadeState.showFirst
+              : CrossFadeState.showSecond,
           firstChild: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: count == 0
                 ? [
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text(emptyText,
-                          style: TextStyle(fontSize: 13,
-                              color: colors.onSurface.withValues(alpha: 0.35))),
+                      child: Text(
+                        emptyText,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colors.onSurface.withValues(alpha: 0.35),
+                        ),
+                      ),
                     ),
                   ]
                 : [const SizedBox(height: 10), ...children],
@@ -1135,7 +1460,11 @@ class _TeamAvatar extends StatelessWidget {
   final String? photo;
   final Color color;
 
-  const _TeamAvatar({required this.displayName, required this.photo, required this.color});
+  const _TeamAvatar({
+    required this.displayName,
+    required this.photo,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1145,8 +1474,14 @@ class _TeamAvatar extends StatelessWidget {
     if (photo != null && photo!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.network(photo!, width: 46, height: 46, fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _InitialAvatar(initial: initial, color: color, isDark: isDark)),
+        child: Image.network(
+          photo!,
+          width: 46,
+          height: 46,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) =>
+              _InitialAvatar(initial: initial, color: color, isDark: isDark),
+        ),
       );
     }
     return _InitialAvatar(initial: initial, color: color, isDark: isDark);
@@ -1158,7 +1493,11 @@ class _InitialAvatar extends StatelessWidget {
   final Color color;
   final bool isDark;
 
-  const _InitialAvatar({required this.initial, required this.color, required this.isDark});
+  const _InitialAvatar({
+    required this.initial,
+    required this.color,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1170,8 +1509,14 @@ class _InitialAvatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Center(
-        child: Text(initial,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
       ),
     );
   }
@@ -1184,12 +1529,18 @@ class _NavBtn extends StatelessWidget {
   final VoidCallback onTap;
   final bool isDark;
 
-  const _NavBtn({required this.icon, required this.onTap, required this.isDark});
+  const _NavBtn({
+    required this.icon,
+    required this.onTap,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
     final bg = isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8);
-    final fg = isDark ? Colors.white.withValues(alpha: 0.85) : const Color(0xFF0B1322);
+    final fg = isDark
+        ? Colors.white.withValues(alpha: 0.85)
+        : const Color(0xFF0B1322);
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -1211,7 +1562,11 @@ class VenueAddMemberPage extends StatefulWidget {
   final String venueId;
   final VenueMemberRepository repo;
 
-  const VenueAddMemberPage({super.key, required this.venueId, required this.repo});
+  const VenueAddMemberPage({
+    super.key,
+    required this.venueId,
+    required this.repo,
+  });
 
   @override
   State<VenueAddMemberPage> createState() => _VenueAddMemberPageState();
@@ -1238,8 +1593,10 @@ class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
           onTap: () => Navigator.pop(context),
           isDark: isDark,
         ),
-        title: const Text('Add Member',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        title: const Text(
+          'Add Member',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
         centerTitle: true,
       ),
       body: Column(
@@ -1257,7 +1614,10 @@ class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
           Expanded(
             child: _showInviteLink
                 ? _InviteLinkTab(venueId: widget.venueId, venueRoles: const [])
-                : _UsernameSearchTab(venueId: widget.venueId, repo: widget.repo),
+                : _UsernameSearchTab(
+                    venueId: widget.venueId,
+                    repo: widget.repo,
+                  ),
           ),
         ],
       ),
@@ -1286,7 +1646,10 @@ class _ModeToggle extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         children: [
           _ToggleTab(
@@ -1344,13 +1707,23 @@ class _ToggleTab extends StatelessWidget {
             color: isActive ? activeBg : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
             boxShadow: isActive
-                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.07), blurRadius: 6, offset: const Offset(0, 2))]
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.07),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
                 : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: isActive ? activeColor : inactiveColor),
+              Icon(
+                icon,
+                size: 16,
+                color: isActive ? activeColor : inactiveColor,
+              ),
               const SizedBox(width: 6),
               Text(
                 label,
@@ -1417,7 +1790,10 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
       setState(() {
         _roles = filtered;
         _selectedRole = filtered.isNotEmpty
-            ? filtered.firstWhere((r) => r.id == 'ADMIN', orElse: () => filtered.first)
+            ? filtered.firstWhere(
+                (r) => r.id == 'ADMIN',
+                orElse: () => filtered.first,
+              )
             : null;
         _loadingRoles = false;
       });
@@ -1441,7 +1817,10 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
     try {
       final r = await widget.repo.searchUsers(widget.venueId, q);
       if (!mounted) return;
-      setState(() { _results = r; _searching = false; });
+      setState(() {
+        _results = r;
+        _searching = false;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() => _searching = false);
@@ -1454,16 +1833,28 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
     if (user == null || role == null || _adding) return;
     setState(() => _adding = true);
     try {
-      final enumRole = role.id == 'ADMIN' ? VenueMemberRole.admin : VenueMemberRole.staff;
-      final customId = (role.id != 'ADMIN' && role.id != 'STAFF') ? role.id : null;
-      await widget.repo.addMember(widget.venueId, user.id, enumRole, venueRoleId: customId);
+      final enumRole = role.id == 'ADMIN'
+          ? VenueMemberRole.admin
+          : VenueMemberRole.staff;
+      final customId = (role.id != 'ADMIN' && role.id != 'STAFF')
+          ? role.id
+          : null;
+      await widget.repo.addMember(
+        widget.venueId,
+        user.id,
+        enumRole,
+        venueRoleId: customId,
+      );
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _adding = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add: $e'), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text('Failed to add: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     }
   }
@@ -1475,7 +1866,9 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
     final isDark = theme.brightness == Brightness.dark;
 
     if (_loadingRoles) {
-      return const Center(child: CircularProgressIndicator(color: _TeamColors.turkuaz));
+      return const Center(
+        child: CircularProgressIndicator(color: _TeamColors.turkuaz),
+      );
     }
 
     return Column(
@@ -1499,28 +1892,40 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                     suffixIcon: _searching
                         ? const Padding(
                             padding: EdgeInsets.all(12),
-                            child: SizedBox(width: 16, height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: _TeamColors.turkuaz)),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _TeamColors.turkuaz,
+                              ),
+                            ),
                           )
                         : (_searchCtrl.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () => setState(() {
-                                  _searchCtrl.clear();
-                                  _results = [];
-                                  _selected = null;
-                                }),
-                              )
-                            : null),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              ? IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  onPressed: () => setState(() {
+                                    _searchCtrl.clear();
+                                    _results = [];
+                                    _selected = null;
+                                  }),
+                                )
+                              : null),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: colors.outline.withValues(alpha: 0.3)),
+                      borderSide: BorderSide(
+                        color: colors.outline.withValues(alpha: 0.3),
+                      ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: _TeamColors.turkuaz, width: 1.5),
+                      borderSide: const BorderSide(
+                        color: _TeamColors.turkuaz,
+                        width: 1.5,
+                      ),
                     ),
                   ),
                 ),
@@ -1531,7 +1936,9 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                   Container(
                     decoration: BoxDecoration(
                       color: isDark ? const Color(0xFF0F1520) : colors.surface,
-                      border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
+                      border: Border.all(
+                        color: colors.outline.withValues(alpha: 0.18),
+                      ),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: ListView.separated(
@@ -1539,32 +1946,57 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                       physics: const NeverScrollableScrollPhysics(),
                       padding: EdgeInsets.zero,
                       itemCount: _results.length,
-                      separatorBuilder: (_, __) =>
-                          Divider(height: 1, color: colors.outline.withValues(alpha: 0.12)),
+                      separatorBuilder: (_, __) => Divider(
+                        height: 1,
+                        color: colors.outline.withValues(alpha: 0.12),
+                      ),
                       itemBuilder: (_, i) {
                         final u = _results[i];
                         return ListTile(
                           dense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
                           leading: CircleAvatar(
                             radius: 18,
-                            backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.14),
-                            backgroundImage: u.photo != null && u.photo!.isNotEmpty
-                                ? NetworkImage(u.photo!) : null,
+                            backgroundColor: _TeamColors.turkuaz.withValues(
+                              alpha: 0.14,
+                            ),
+                            backgroundImage:
+                                u.photo != null && u.photo!.isNotEmpty
+                                ? NetworkImage(u.photo!)
+                                : null,
                             child: u.photo == null || u.photo!.isEmpty
                                 ? Text(
-                                    u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
-                                    style: const TextStyle(color: _TeamColors.turkuaz,
-                                        fontSize: 13, fontWeight: FontWeight.w700),
+                                    u.displayName.isNotEmpty
+                                        ? u.displayName[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                      color: _TeamColors.turkuaz,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   )
                                 : null,
                           ),
-                          title: Text(u.displayName,
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          title: Text(
+                            u.displayName,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           subtitle: u.username != null
-                              ? Text('@${u.username}',
-                                  style: TextStyle(fontSize: 12,
-                                      color: colors.onSurface.withValues(alpha: 0.5)))
+                              ? Text(
+                                  '@${u.username}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.onSurface.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                )
                               : null,
                           onTap: () {
                             _searchFocus.unfocus();
@@ -1583,30 +2015,51 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                 // ── Selected user card ──────────────────────────
                 if (_selected != null && _results.isEmpty) ...[
                   const SizedBox(height: 20),
-                  Text('Selected User',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                          color: colors.onSurface.withValues(alpha: 0.5))),
+                  Text(
+                    'Selected User',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface.withValues(alpha: 0.5),
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
                       color: _TeamColors.turkuaz.withValues(alpha: 0.08),
-                      border: Border.all(color: _TeamColors.turkuaz.withValues(alpha: 0.28)),
+                      border: Border.all(
+                        color: _TeamColors.turkuaz.withValues(alpha: 0.28),
+                      ),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Row(
                       children: [
                         CircleAvatar(
                           radius: 20,
-                          backgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.2),
-                          backgroundImage: _selected!.photo != null && _selected!.photo!.isNotEmpty
-                              ? NetworkImage(_selected!.photo!) : null,
-                          child: _selected!.photo == null || _selected!.photo!.isEmpty
+                          backgroundColor: _TeamColors.turkuaz.withValues(
+                            alpha: 0.2,
+                          ),
+                          backgroundImage:
+                              _selected!.photo != null &&
+                                  _selected!.photo!.isNotEmpty
+                              ? NetworkImage(_selected!.photo!)
+                              : null,
+                          child:
+                              _selected!.photo == null ||
+                                  _selected!.photo!.isEmpty
                               ? Text(
                                   _selected!.displayName.isNotEmpty
-                                      ? _selected!.displayName[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: _TeamColors.turkuaz,
-                                      fontSize: 15, fontWeight: FontWeight.w800),
+                                      ? _selected!.displayName[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    color: _TeamColors.turkuaz,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 )
                               : null,
                         ),
@@ -1615,20 +2068,34 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(_selected!.displayName,
-                                  style: const TextStyle(fontSize: 14,
-                                      fontWeight: FontWeight.w700, color: _TeamColors.turkuaz)),
+                              Text(
+                                _selected!.displayName,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: _TeamColors.turkuaz,
+                                ),
+                              ),
                               if (_selected!.username != null)
-                                Text('@${_selected!.username}',
-                                    style: TextStyle(fontSize: 12,
-                                        color: _TeamColors.turkuaz.withValues(alpha: 0.65))),
+                                Text(
+                                  '@${_selected!.username}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: _TeamColors.turkuaz.withValues(
+                                      alpha: 0.65,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
                         GestureDetector(
                           onTap: () => setState(() => _selected = null),
-                          child: Icon(Icons.close_rounded, size: 18,
-                              color: _TeamColors.turkuaz.withValues(alpha: 0.6)),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: _TeamColors.turkuaz.withValues(alpha: 0.6),
+                          ),
                         ),
                       ],
                     ),
@@ -1638,16 +2105,27 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                 // ── Role selector ───────────────────────────────
                 if (_roles.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  Text('Role',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                          color: colors.onSurface.withValues(alpha: 0.5))),
+                  Text(
+                    'Role',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface.withValues(alpha: 0.5),
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   GestureDetector(
-                    onTap: () => setState(() => _roleDropdownOpen = !_roleDropdownOpen),
+                    onTap: () =>
+                        setState(() => _roleDropdownOpen = !_roleDropdownOpen),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 15,
+                      ),
                       decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                        color: isDark
+                            ? const Color(0xFF0F1520)
+                            : colors.surface,
                         border: Border.all(
                           color: _roleDropdownOpen
                               ? _TeamColors.mavi
@@ -1657,8 +2135,12 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                         borderRadius: BorderRadius.only(
                           topLeft: const Radius.circular(12),
                           topRight: const Radius.circular(12),
-                          bottomLeft: Radius.circular(_roleDropdownOpen ? 0 : 12),
-                          bottomRight: Radius.circular(_roleDropdownOpen ? 0 : 12),
+                          bottomLeft: Radius.circular(
+                            _roleDropdownOpen ? 0 : 12,
+                          ),
+                          bottomRight: Radius.circular(
+                            _roleDropdownOpen ? 0 : 12,
+                          ),
                         ),
                       ),
                       child: Row(
@@ -1678,8 +2160,11 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                           AnimatedRotation(
                             turns: _roleDropdownOpen ? 0.5 : 0,
                             duration: const Duration(milliseconds: 200),
-                            child: Icon(Icons.keyboard_arrow_down_rounded,
-                                color: _TeamColors.mavi.withValues(alpha: 0.8), size: 22),
+                            child: Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              color: _TeamColors.mavi.withValues(alpha: 0.8),
+                              size: 22,
+                            ),
                           ),
                         ],
                       ),
@@ -1688,11 +2173,19 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                   if (_roleDropdownOpen)
                     Container(
                       decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF0F1520) : colors.surface,
+                        color: isDark
+                            ? const Color(0xFF0F1520)
+                            : colors.surface,
                         border: Border(
                           left: BorderSide(color: _TeamColors.mavi, width: 1.5),
-                          right: BorderSide(color: _TeamColors.mavi, width: 1.5),
-                          bottom: BorderSide(color: _TeamColors.mavi, width: 1.5),
+                          right: BorderSide(
+                            color: _TeamColors.mavi,
+                            width: 1.5,
+                          ),
+                          bottom: BorderSide(
+                            color: _TeamColors.mavi,
+                            width: 1.5,
+                          ),
                         ),
                         borderRadius: const BorderRadius.only(
                           bottomLeft: Radius.circular(12),
@@ -1715,14 +2208,22 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                 : null,
                             child: Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
                               decoration: BoxDecoration(
                                 color: isSelected
                                     ? _TeamColors.mavi.withValues(alpha: 0.12)
                                     : Colors.transparent,
                                 border: role != _roles.last
-                                    ? Border(bottom: BorderSide(
-                                        color: _TeamColors.mavi.withValues(alpha: 0.15)))
+                                    ? Border(
+                                        bottom: BorderSide(
+                                          color: _TeamColors.mavi.withValues(
+                                            alpha: 0.15,
+                                          ),
+                                        ),
+                                      )
                                     : null,
                               ),
                               child: Row(
@@ -1732,16 +2233,23 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                       role.name,
                                       style: TextStyle(
                                         fontSize: 14,
-                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                         color: isSelected
                                             ? _TeamColors.mavi
-                                            : colors.onSurface.withValues(alpha: 0.85),
+                                            : colors.onSurface.withValues(
+                                                alpha: 0.85,
+                                              ),
                                       ),
                                     ),
                                   ),
                                   if (isSelected)
-                                    const Icon(Icons.check_rounded,
-                                        color: _TeamColors.mavi, size: 18),
+                                    const Icon(
+                                      Icons.check_rounded,
+                                      color: _TeamColors.mavi,
+                                      size: 18,
+                                    ),
                                 ],
                               ),
                             ),
@@ -1767,18 +2275,31 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                 style: FilledButton.styleFrom(
                   backgroundColor: _TeamColors.turkuaz,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor: _TeamColors.turkuaz.withValues(alpha: 0.3),
+                  disabledBackgroundColor: _TeamColors.turkuaz.withValues(
+                    alpha: 0.3,
+                  ),
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
                 child: _adding
-                    ? const SizedBox(width: 22, height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
                     : Text(
                         _selected == null
                             ? 'Select a user first'
                             : 'Add as ${_selectedRole?.name ?? 'Member'}',
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
               ),
             ),
@@ -1806,11 +2327,14 @@ class _InviteLinkSheetLoaderState extends State<_InviteLinkSheetLoader> {
   @override
   void initState() {
     super.initState();
-    widget.repo.getRoles(widget.venueId).then((roles) {
-      if (mounted) setState(() => _roles = roles);
-    }).catchError((_) {
-      if (mounted) setState(() => _roles = []);
-    });
+    widget.repo
+        .getRoles(widget.venueId)
+        .then((roles) {
+          if (mounted) setState(() => _roles = roles);
+        })
+        .catchError((_) {
+          if (mounted) setState(() => _roles = []);
+        });
   }
 
   @override
@@ -1829,7 +2353,8 @@ class _InviteLinkSheetLoaderState extends State<_InviteLinkSheetLoader> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.only(bottom: 24),
               decoration: BoxDecoration(
                 color: colors.onSurface.withValues(alpha: 0.15),
@@ -1856,7 +2381,8 @@ class _InviteLinkSheetLoaderState extends State<_InviteLinkSheetLoader> {
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: colors.onSurface.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(2),
@@ -1954,10 +2480,12 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
 
     setState(() => _generating = true);
     try {
-      final enumRole =
-          role.id == 'ADMIN' ? VenueMemberRole.admin : VenueMemberRole.staff;
-      final customId =
-          (role.id != 'ADMIN' && role.id != 'STAFF') ? role.id : null;
+      final enumRole = role.id == 'ADMIN'
+          ? VenueMemberRole.admin
+          : VenueMemberRole.staff;
+      final customId = (role.id != 'ADMIN' && role.id != 'STAFF')
+          ? role.id
+          : null;
 
       final result = await _inviteRepo.createInvite(
         venueId: widget.venueId,
@@ -2000,7 +2528,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
     final colors = Theme.of(context).colorScheme;
 
     if (_loadingRoles) {
-      return const Center(child: CircularProgressIndicator(color: _TeamColors.mavi));
+      return const Center(
+        child: CircularProgressIndicator(color: _TeamColors.mavi),
+      );
     }
 
     return SingleChildScrollView(
@@ -2082,18 +2612,23 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Icon(Icons.send_rounded, size: 18),
                 label: Text(
                   _generating ? 'Sending...' : 'Send Invite',
                   style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
               ),
             ),
@@ -2103,29 +2638,29 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
             switch (_result!.type) {
               InviteResultType.linkCreated => _buildLinkResult(colors),
               InviteResultType.existingUserRequestSent => _buildInfoResult(
-                  colors,
-                  icon: Icons.mark_email_read_outlined,
-                  title: 'Request sent',
-                  message:
-                      '${_result!.email} already has a KMSTRY account. A join request '
-                      'was sent — they\'ll get a notification and appear in the team '
-                      'list once they accept.',
-                ),
+                colors,
+                icon: Icons.mark_email_read_outlined,
+                title: 'Request sent',
+                message:
+                    '${_result!.email} already has a KMSTRY account. A join request '
+                    'was sent — they\'ll get a notification and appear in the team '
+                    'list once they accept.',
+              ),
               InviteResultType.alreadyMember => _buildInfoResult(
-                  colors,
-                  icon: Icons.group_rounded,
-                  title: 'Already a member',
-                  message:
-                      '${_result!.email} is already an active member of this venue.',
-                ),
+                colors,
+                icon: Icons.group_rounded,
+                title: 'Already a member',
+                message:
+                    '${_result!.email} is already an active member of this venue.',
+              ),
               InviteResultType.alreadyInvited => _buildInfoResult(
-                  colors,
-                  icon: Icons.hourglass_top_rounded,
-                  title: 'Invite pending',
-                  message:
-                      '${_result!.email} already has a pending invite for this venue. '
-                      'They just need to accept it.',
-                ),
+                colors,
+                icon: Icons.hourglass_top_rounded,
+                title: 'Invite pending',
+                message:
+                    '${_result!.email} already has a pending invite for this venue. '
+                    'They just need to accept it.',
+              ),
             },
           ],
         ],
@@ -2142,7 +2677,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         color: colors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: colors.primary.withValues(alpha: 0.3), width: 1.5),
+          color: colors.primary.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2189,7 +2726,8 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
               ),
@@ -2203,7 +2741,8 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   child: const Text('New'),
                 ),
@@ -2228,7 +2767,9 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         color: colors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: colors.primary.withValues(alpha: 0.3), width: 1.5),
+          color: colors.primary.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2269,7 +2810,8 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
               child: const Text('Send another'),
             ),
@@ -2308,10 +2850,10 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
   @override
   void initState() {
     super.initState();
-    _nameCtrl =
-        TextEditingController(text: widget.member.user.fullName ?? '');
-    _usernameCtrl =
-        TextEditingController(text: widget.member.user.username ?? '');
+    _nameCtrl = TextEditingController(text: widget.member.user.fullName ?? '');
+    _usernameCtrl = TextEditingController(
+      text: widget.member.user.username ?? '',
+    );
   }
 
   @override
@@ -2336,9 +2878,7 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
         username: _usernameCtrl.text.trim().isNotEmpty
             ? _usernameCtrl.text.trim().toLowerCase()
             : null,
-        newPassword: _passwordCtrl.text.isNotEmpty
-            ? _passwordCtrl.text
-            : null,
+        newPassword: _passwordCtrl.text.isNotEmpty ? _passwordCtrl.text : null,
       );
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -2383,8 +2923,7 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
             const SizedBox(height: 18),
             Text(
               '${widget.member.user.displayName} — Edit',
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 16),
             Form(
@@ -2398,7 +2937,8 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                       labelText: 'Full Name',
                       prefixIcon: const Icon(Icons.badge_outlined),
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     validator: (v) {
                       if ((v ?? '').trim().length < 2) {
@@ -2415,7 +2955,8 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                       labelText: 'Username',
                       prefixIcon: const Icon(Icons.alternate_email),
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     validator: (v) {
                       final x = (v ?? '').trim();
@@ -2423,8 +2964,8 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                         return 'At least 3 characters';
                       }
                       if (x.isNotEmpty &&
-                          !RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(x)) {
-                        return 'Only letters, numbers and underscores';
+                          !RegExp(r'^[a-zA-Z0-9._]+$').hasMatch(x)) {
+                        return 'Only letters, numbers, dots and underscores';
                       }
                       return null;
                     },
@@ -2438,19 +2979,17 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                       hintText: 'Leave blank to keep current',
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
-                        onPressed: () =>
-                            setState(() => _obscure = !_obscure),
-                        icon: Icon(_obscure
-                            ? Icons.visibility_off
-                            : Icons.visibility),
+                        onPressed: () => setState(() => _obscure = !_obscure),
+                        icon: Icon(
+                          _obscure ? Icons.visibility_off : Icons.visibility,
+                        ),
                       ),
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     validator: (v) {
-                      if (v != null &&
-                          v.isNotEmpty &&
-                          v.length < 6) {
+                      if (v != null && v.isNotEmpty && v.length < 6) {
                         return 'At least 6 characters';
                       }
                       return null;
@@ -2467,19 +3006,24 @@ class _EditStaffSheetState extends State<_EditStaffSheet> {
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
                 child: _saving
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Text(
                         'Save',
                         style: TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w700),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
               ),
             ),
@@ -2513,15 +3057,25 @@ class _RoleSelectSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 12),
-          Container(width: 36, height: 4,
-              decoration: BoxDecoration(color: colors.outline.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: colors.outline.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Text('Select Role',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700,
-                    color: colors.onSurface)),
+            child: Text(
+              'Select Role',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurface,
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           ListView.separated(
@@ -2529,21 +3083,32 @@ class _RoleSelectSheet extends StatelessWidget {
             physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: roles.length,
-            separatorBuilder: (_, __) =>
-                Divider(height: 1, color: colors.outline.withValues(alpha: 0.1)),
+            separatorBuilder: (_, __) => Divider(
+              height: 1,
+              color: colors.outline.withValues(alpha: 0.1),
+            ),
             itemBuilder: (_, i) {
               final role = roles[i];
               final isSelected = selected?.id == role.id;
               return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                title: Text(role.name,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                      color: isSelected ? _TeamColors.mavi : colors.onSurface,
-                    )),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 2,
+                ),
+                title: Text(
+                  role.name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? _TeamColors.mavi : colors.onSurface,
+                  ),
+                ),
                 trailing: isSelected
-                    ? const Icon(Icons.check_rounded, color: _TeamColors.mavi, size: 20)
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: _TeamColors.mavi,
+                        size: 20,
+                      )
                     : null,
                 onTap: () => Navigator.pop(context, role),
               );
@@ -2593,13 +3158,18 @@ class _VenueRolePicker extends StatelessWidget {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: _TeamColors.mavi.withValues(alpha: 0.4)),
+          borderSide: BorderSide(
+            color: _TeamColors.mavi.withValues(alpha: 0.4),
+          ),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: _TeamColors.mavi, width: 1.5),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
       ),
       dropdownColor: null,
       iconEnabledColor: _TeamColors.mavi,
@@ -2610,8 +3180,13 @@ class _VenueRolePicker extends StatelessWidget {
             children: [
               Icon(_iconFor(role), size: 18, color: _TeamColors.mavi),
               const SizedBox(width: 10),
-              Text(role.name,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              Text(
+                role.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         );
@@ -2637,8 +3212,10 @@ class _RolePickerSheet extends StatelessWidget {
   });
 
   bool _isCurrent(VenueRole role) {
-    if (role.id == 'ADMIN') return current == VenueMemberRole.admin && currentVenueRoleId == null;
-    if (role.id == 'STAFF') return current == VenueMemberRole.staff && currentVenueRoleId == null;
+    if (role.id == 'ADMIN')
+      return current == VenueMemberRole.admin && currentVenueRoleId == null;
+    if (role.id == 'STAFF')
+      return current == VenueMemberRole.staff && currentVenueRoleId == null;
     return currentVenueRoleId == role.id;
   }
 
@@ -2679,7 +3256,8 @@ class _RolePickerSheet extends StatelessWidget {
                 child: Text(
                   'No roles available.',
                   style: TextStyle(
-                      color: colors.onSurface.withValues(alpha: 0.5)),
+                    color: colors.onSurface.withValues(alpha: 0.5),
+                  ),
                 ),
               ),
             )
@@ -2712,8 +3290,8 @@ class _RolePickerSheet extends StatelessWidget {
                 subtitle: Text(
                   isSystem
                       ? (role.id == 'ADMIN'
-                          ? 'System role · Full access'
-                          : 'System role · Limited access')
+                            ? 'System role · Full access'
+                            : 'System role · Limited access')
                       : 'Custom role',
                   style: TextStyle(
                     fontSize: 12,
@@ -2721,7 +3299,11 @@ class _RolePickerSheet extends StatelessWidget {
                   ),
                 ),
                 trailing: isCurrent
-                    ? const Icon(Icons.check_circle, color: _TeamColors.mavi, size: 20)
+                    ? const Icon(
+                        Icons.check_circle,
+                        color: _TeamColors.mavi,
+                        size: 20,
+                      )
                     : null,
                 onTap: () => Navigator.pop(context, role),
               );

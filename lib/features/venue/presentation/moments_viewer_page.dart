@@ -1,5 +1,7 @@
 import 'dart:developer';
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
@@ -25,7 +27,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   late PageController _controller;
   late int _currentIndex;
   final CheckinRepository _repo = CheckinRepository();
-  bool _loading = false;
+  bool _loading = false; // sadece "featured yap" işlemi (yıldız spinner'ı)
+  bool _deleting = false;
   late List<CheckinProfileMedia> _media;
   bool _hasChanged = false;
   VideoPlayerController? _videoController;
@@ -123,19 +126,42 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     if (!shouldDelete) return;
     if (!mounted) return;
 
-    setState(() => _loading = true);
+    setState(() => _deleting = true);
 
     try {
       await _repo.deletePhoto(media.id);
 
       if (!mounted) return;
-      Navigator.pop(context, true);
+
+      // Story mantığı: silinince listeden çıkar. Başka post varsa bir sonrakini
+      // göster; hiç kalmadıysa kapanıp profile dön.
+      _media.removeWhere((m) => m.id == media.id);
+      _hasChanged = true;
+
+      if (_media.isEmpty) {
+        Navigator.pop(context, true);
+        return;
+      }
+
+      // Silinen item mevcut index'teydi; liste kaydığı için aynı index artık
+      // bir sonraki postu gösterir. Son item silindiyse bir geri git.
+      final newIndex = _currentIndex >= _media.length
+          ? _media.length - 1
+          : _currentIndex;
+
+      setState(() {
+        _currentIndex = newIndex;
+        _deleting = false;
+      });
+      _controller.jumpToPage(newIndex);
+      await _setupVideoIfNeeded(newIndex);
+      return;
     } catch (e) {
       log("Delete error: $e");
       await showPremiumErrorDialog(context, message: 'Failed to delete media');
     }
 
-    if (mounted) setState(() => _loading = false);
+    if (mounted) setState(() => _deleting = false);
   }
 
   Future<bool> _confirmDelete(CheckinProfileMedia media) async {
@@ -269,51 +295,91 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
                 mainAxisAlignment:
                     MainAxisAlignment.spaceBetween,
                 children: [
-                  // FEATURE
-                  GestureDetector(
-                    onTap: !canFeaturePhoto || _loading
+                  // FEATURE — glass buton, featured'da teal accent.
+                  _GlassCircleButton(
+                    onTap: !canFeaturePhoto || _loading || _deleting
                         ? null
                         : _setFeatured,
-                    child: CircleAvatar(
-                      backgroundColor:
-                          Colors.black.withValues(alpha: 0.6),
-                      radius: 28,
-                      child: _loading
-                          ? const CircularProgressIndicator(
-                              color: Colors.white,
-                            )
-                          : Icon(
-                              Icons.star,
-                              color: currentMedia.isFeatured
-                                  ? Colors.amber
-                                  : canFeaturePhoto
-                                  ? Colors.white
-                                  : Colors.white38,
-                              size: 26,
-                            ),
-                    ),
+                    busy: _loading,
+                    icon: currentMedia.isFeatured
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    iconColor: currentMedia.isFeatured
+                        ? AppColors.tealDark
+                        : canFeaturePhoto
+                            ? Colors.white
+                            : Colors.white38,
+                    spinnerColor: AppColors.tealDark,
                   ),
 
-                  // DELETE
-                  GestureDetector(
-                    onTap: _loading
+                  // DELETE — glass buton, magenta accent.
+                  _GlassCircleButton(
+                    onTap: _loading || _deleting
                         ? null
                         : () => _deleteMedia(currentMedia),
-                    child: CircleAvatar(
-                      backgroundColor:
-                          Colors.black.withValues(alpha: 0.6),
-                      radius: 28,
-                      child: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.redAccent,
-                        size: 26,
-                      ),
-                    ),
+                    busy: _deleting,
+                    icon: Icons.delete_outline_rounded,
+                    iconColor: AppColors.magentaDark,
+                    spinnerColor: AppColors.magentaDark,
                   ),
                 ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Uygulama geneli glassmorphism buton — buzlu cam daire, ince kenarlık.
+/// Moments viewer'daki featured/delete aksiyonları için kullanılır.
+class _GlassCircleButton extends StatelessWidget {
+  const _GlassCircleButton({
+    required this.onTap,
+    required this.icon,
+    required this.iconColor,
+    this.busy = false,
+    this.spinnerColor = Colors.white,
+  });
+
+  final VoidCallback? onTap;
+  final IconData icon;
+  final Color iconColor;
+  final bool busy;
+  final Color spinnerColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipOval(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.12),
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              width: 52,
+              height: 52,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.20),
+                ),
+              ),
+              child: busy
+                  ? SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: spinnerColor,
+                      ),
+                    )
+                  : Icon(icon, color: iconColor, size: 24),
+            ),
+          ),
+        ),
       ),
     );
   }

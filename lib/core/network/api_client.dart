@@ -23,8 +23,9 @@ class ApiClient {
 
   Future<String?> _tryRefresh() {
     if (onRefreshToken == null) return Future.value(null);
-    _activeRefresh ??=
-        onRefreshToken!().whenComplete(() => _activeRefresh = null);
+    _activeRefresh ??= onRefreshToken!().whenComplete(
+      () => _activeRefresh = null,
+    );
     return _activeRefresh!;
   }
 
@@ -77,7 +78,8 @@ class ApiClient {
   ) async {
     // No Authorization header → this is a credential error (wrong password,
     // invalid OTP, etc.), not a session expiry. Let it propagate normally.
-    final hasAuthHeader = originalHeaders?.containsKey('Authorization') ?? false;
+    final hasAuthHeader =
+        originalHeaders?.containsKey('Authorization') ?? false;
     if (!hasAuthHeader) {
       throw ApiException(
         statusCode: first.statusCode,
@@ -150,7 +152,7 @@ class ApiClient {
         );
       }
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
         throw ApiException(statusCode: response.statusCode, data: data);
       }
@@ -167,10 +169,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> get(
-    String path, {
-    Map<String, String>? headers,
-  }) async {
+  Future<dynamic> get(String path, {Map<String, String>? headers}) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {'Content-Type': 'application/json', ...?headers};
 
@@ -190,11 +189,12 @@ class ApiClient {
           response,
           path,
           headers,
-          (h) => _client.get(url, headers: h).timeout(const Duration(seconds: 10)),
+          (h) =>
+              _client.get(url, headers: h).timeout(const Duration(seconds: 10)),
         );
       }
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
         throw ApiException(statusCode: response.statusCode, data: data);
       }
@@ -236,7 +236,7 @@ class ApiClient {
         );
       }
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
         throw ApiException(statusCode: response.statusCode, data: data);
       }
@@ -300,10 +300,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> delete(
-    String path, {
-    Map<String, String>? headers,
-  }) async {
+  Future<dynamic> delete(String path, {Map<String, String>? headers}) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {'Content-Type': 'application/json', ...?headers};
 
@@ -322,13 +319,13 @@ class ApiClient {
           response,
           path,
           headers,
-          (h) =>
-              _client.delete(url, headers: h).timeout(const Duration(seconds: 10)),
+          (h) => _client
+              .delete(url, headers: h)
+              .timeout(const Duration(seconds: 10)),
         );
       }
 
-      if (response.body.isEmpty) return null;
-      final data = jsonDecode(response.body);
+      final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
         throw ApiException(statusCode: response.statusCode, data: data);
       }

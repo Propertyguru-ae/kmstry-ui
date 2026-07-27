@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
-import 'package:kmstry_frontend/core/ui/app_logo.dart';
 
 /// Navbar destination: lists people currently checked in at surrounding venues.
 class WhoIsNearbyPage extends StatefulWidget {
@@ -59,6 +58,7 @@ class _WhoIsNearbyPageState extends State<WhoIsNearbyPage> {
           hintVenueName: item.venueName,
           hintVenueType: item.venueType,
           hintVenuePhoto: item.venuePhoto,
+          hideVenueInfo: true,
           fallbackBio: null,
         ),
       ),
@@ -86,7 +86,10 @@ class _WhoIsNearbyPageState extends State<WhoIsNearbyPage> {
         backgroundColor: bgBottom,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
-        leading: const AppLogo(),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         title: Text(
           "Who's Nearby",
           style: TextStyle(
@@ -184,8 +187,7 @@ class _WhoIsNearbyPageState extends State<WhoIsNearbyPage> {
                         child: ListView(
                           children: [
                             SizedBox(
-                              height:
-                                  MediaQuery.of(context).size.height * 0.5,
+                              height: MediaQuery.of(context).size.height * 0.5,
                               child: const Center(
                                 child: Text('No one nearby right now'),
                               ),

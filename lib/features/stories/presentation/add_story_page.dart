@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
@@ -51,7 +53,8 @@ class _AddStoryPageState extends State<AddStoryPage> {
   Future<void> _openCamera() async {
     if (!mounted) return;
 
-    final File? captured = await Navigator.push<File>(
+    // Fotoğraf akışı File, video akışı CapturedMedia (dosya + text overlay) döner.
+    final dynamic result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => const CameraScreen(
@@ -63,15 +66,19 @@ class _AddStoryPageState extends State<AddStoryPage> {
     );
 
     if (!mounted) return;
-    if (captured == null) {
+    if (result == null) {
       Navigator.pop(context);
       return;
     }
+    final File captured =
+        result is CapturedMedia ? result.file : result as File;
+    final MediaTextOverlay? overlay =
+        result is CapturedMedia ? result.overlay : null;
 
-    await _upload(captured);
+    await _upload(captured, overlay);
   }
 
-  Future<void> _upload(File file) async {
+  Future<void> _upload(File file, MediaTextOverlay? overlay) async {
     if (!mounted) return;
 
     final ext = file.path.toLowerCase();
@@ -85,6 +92,7 @@ class _AddStoryPageState extends State<AddStoryPage> {
         checkinId: widget.checkinId,
         file: file,
         mediaType: isVideo ? 'video' : 'photo',
+        textOverlayJson: overlay?.toJsonString(),
       );
       success = true;
     } catch (e) {

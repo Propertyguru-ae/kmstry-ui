@@ -4,8 +4,12 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/user/premium_feature.dart';
+import 'package:kmstry_frontend/core/user/premium_gate.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -45,6 +49,7 @@ class ProfilePreviewPage extends StatefulWidget {
   final String? userId;
   final String? userName;
   final String? userUsername;
+  final String? userPhoto;
   final bool isMatchedHint;
   final String? chatIdHint;
   final ProfileActionState? actionStateHint;
@@ -53,6 +58,7 @@ class ProfilePreviewPage extends StatefulWidget {
   final String? hintVenueName;
   final String? hintVenueType;
   final String? hintVenuePhoto;
+  final bool hideVenueInfo;
 
   const ProfilePreviewPage({
     super.key,
@@ -61,6 +67,7 @@ class ProfilePreviewPage extends StatefulWidget {
     this.userId,
     this.userName,
     this.userUsername,
+    this.userPhoto,
     this.isMatchedHint = false,
     this.chatIdHint,
     this.actionStateHint,
@@ -69,6 +76,7 @@ class ProfilePreviewPage extends StatefulWidget {
     this.hintVenueName,
     this.hintVenueType,
     this.hintVenuePhoto,
+    this.hideVenueInfo = false,
   }) : assert(
          checkinId != null || userId != null,
          'Either checkinId or userId must be provided.',
@@ -86,10 +94,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   static const Color _darkBg = Color(0xFF0B0F17);
   static const Color _darkSurface = Color(0xFF161C28);
   static const Color _darkBorder = Color(0xFF252D3D);
-  static const Color _darkPrimary = AppTheme.brandPrimary;
-  static const Color _darkPrimary2 = AppTheme.brandPrimary;
-  bool _areMomentsExpanded = false;
-  bool _areWhatBringsExpanded = false;
 
   CheckinProfile? _profile;
   bool _loading = true;
@@ -98,11 +102,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   /// When false: viewer is not at this venue (no active check-in here) -> hide posts & vibe.
   bool _showPostsAndVibe = false;
+  bool _showSuggestedForYou = false;
   bool _isBlocked = false;
   bool _isBlocking = false;
   bool _isReporting = false;
   bool _isSendingAction = false;
-  String? _sendingActionType;
   final Map<String, String?> _videoPosterPathByUrl = {};
   final Map<String, Future<String?>> _videoPosterFutureByUrl = {};
 
@@ -219,16 +223,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     _loadProfile();
   }
 
-  bool _checkTextOverflow(String text, double maxWidth, TextStyle style) {
-    final textPainter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      maxLines: 2,
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: maxWidth);
-
-    return textPainter.didExceedMaxLines;
-  }
-
   String _formatWhatBringsLabel(String raw) {
     final normalized = raw.trim();
     if (normalized.isEmpty) return normalized;
@@ -243,97 +237,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
         )
         .join(' ');
-  }
-
-  String _whatBringsQuestionByGender(String? gender) {
-    final normalized = (gender ?? '').trim().toLowerCase();
-    if (normalized == 'male') {
-      return 'What brings him to Kmstry?';
-    }
-    if (normalized == 'female') {
-      return 'What brings her to Kmstry?';
-    }
-    return 'What brings them to Kmstry?';
-  }
-
-  double _momentCardHeight(BuildContext context) {
-    final h = MediaQuery.of(context).size.height;
-    if (_areMomentsExpanded && _areWhatBringsExpanded) return h * 0.16;
-    return h * 0.18;
-  }
-
-  Future<void> _openBioVibeSheet(String text, bool isDark) async {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Container(
-              decoration: BoxDecoration(
-                color: isDark
-                    ? _darkSurface.withValues(alpha: 0.95)
-                    : colors.surface,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isDark
-                      ? _darkBorder.withValues(alpha: 0.92)
-                      : colors.outline.withValues(alpha: 0.22),
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: colors.onSurface.withValues(alpha: 0.25),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'About',
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: MediaQuery.of(ctx).size.height * 0.45,
-                      ),
-                      child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        child: Text(
-                          text,
-                          style: TextStyle(
-                            color: colors.onSurface.withValues(alpha: 0.9),
-                            fontSize: 16,
-                            height: 1.5,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _loadProfile() async {
@@ -394,6 +297,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             );
             _isBlocked = blockedIds.contains(profile.user.id);
             _showPostsAndVibe = showPostsAndVibe;
+            _showSuggestedForYou = false;
             _loading = false;
           });
           _rememberActionState(profile.user.id, _actionState!);
@@ -420,6 +324,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   ProfileActionState.showActions);
         _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
         _showPostsAndVibe = false;
+        _showSuggestedForYou =
+            _actionState != ProfileActionState.matched &&
+            widget.checkinId == null &&
+            (resolvedVenueId == null || resolvedVenueId.isEmpty);
         _loading = false;
       });
     } catch (e) {
@@ -488,23 +396,58 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return ProfileActionState.showActions;
   }
 
-  Future<void> _undoPass() async {
+  Future<void> _undoAction() async {
     if (_isSendingAction) return;
     final targetUserId = _profile?.user.id ?? widget.userId;
     if (targetUserId == null || targetUserId.isEmpty) return;
+
+    // ── OPTIMISTIC: anında aksiyon alınabilir duruma dön, network arka planda ──
+    final previousState = _actionState;
+    setState(() => _actionState = ProfileActionState.showActions);
+    _rememberActionState(targetUserId, ProfileActionState.showActions);
+    unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
+
     try {
-      setState(() => _isSendingAction = true);
-      await _repo.undoPass(targetUserId);
+      await _repo.undoAction(targetUserId);
+    } on ApiException catch (e) {
+      // Hata: optimistic durumu geri al ve uygun mesajı göster.
+      if (mounted) {
+        setState(() => _actionState = previousState);
+        _rememberActionState(
+          targetUserId,
+          previousState ?? ProfileActionState.showActions,
+        );
+      }
       if (!mounted) return;
-      // Optimistic settle — undo has no server-side side effects to reconcile.
-      setState(() {
-        _actionState = ProfileActionState.showActions;
-        _isSendingAction = false;
-      });
-      _rememberActionState(targetUserId, ProfileActionState.showActions);
+      final code = e.data['error']?.toString();
+      if (e.statusCode == 403 && code == 'REWIND_LIMIT_REACHED') {
+        await PremiumGate.ensure(
+          context,
+          PremiumFeature.unlimitedRewinds,
+          title: 'Out of rewinds today',
+          message:
+              'You\'ve used all your free rewinds today. Upgrade to KMSTRY+ for unlimited rewinds.',
+        );
+      } else if (e.statusCode == 409 && code == 'MATCH_EXISTS') {
+        await showPremiumErrorDialog(
+          context,
+          message: 'You have already matched. Use unmatch instead.',
+        );
+      } else {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Could not undo. Please try again.',
+        );
+      }
     } catch (e) {
-      debugPrint('❌ undo pass error: $e');
-      if (mounted) setState(() => _isSendingAction = false);
+      debugPrint('❌ undo action error: $e');
+      if (mounted) {
+        setState(() => _actionState = previousState);
+        _rememberActionState(
+          targetUserId,
+          previousState ?? ProfileActionState.showActions,
+        );
+      }
     }
   }
 
@@ -512,10 +455,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (_isBlocked) {
       return;
     }
-
     if (_isSendingAction) return;
-
-    debugPrint("🔥 ACTION SENT: $action");
 
     final targetUserId = _profile?.user.id ?? widget.userId;
     final venueIdForAction = _resolvedVenueId ?? _profile?.checkin.venueId;
@@ -530,64 +470,62 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       return;
     }
 
-    try {
-      setState(() {
-        _isSendingAction = true;
-        _sendingActionType = action;
-      });
-      bool isVenueContext = false;
-      try {
-        final me = await AuthRepository().getMe();
-        final contextRaw =
-            (me['lastActiveContext'] ?? me['last_active_context'])?.toString();
-        isVenueContext = contextRaw?.toUpperCase() == 'VENUE';
-      } catch (_) {
-        // Context okunamazsa güvenli varsayım: PERSONAL gibi davran.
-        isVenueContext = false;
-      }
+    // ── OPTIMISTIC: UI anında yeni duruma geçer, network arka planda döner ──
+    // Böylece butona basınca uzun spinner beklemek yok; hata olursa geri alınır.
+    final previousState = _actionState;
+    final nextState = action == 'interested'
+        ? (isAcceptFlow
+              ? ProfileActionState.matched
+              : ProfileActionState.waitingResponse)
+        : ProfileActionState.proactivePass;
 
-      await _repo.sendFeedAction(
-        targetUserId: targetUserId,
-        venueId: isVenueContext ? venueIdForAction : null,
-        //checkinId: widget.checkinId,
-        action: action,
-      );
-      if (!mounted) return;
-
-      // Optimistic state update to immediately disable action buttons.
-      final nextState = action == 'interested'
-          ? (isAcceptFlow
-                ? ProfileActionState.matched
-                : ProfileActionState.waitingResponse)
-          : ProfileActionState.proactivePass;
-      // Settle the UI immediately from the optimistic state — no full reload,
-      // so the buttons don't flash through a loading state.
-      setState(() {
-        _actionState = nextState;
-        _isSendingAction = false;
-        _sendingActionType = null;
-      });
-      _rememberActionState(targetUserId, nextState);
-      if (action == 'interested' && !isAcceptFlow) {
-        await SecureStorage.addPendingInterestedUserId(targetUserId);
-      } else {
-        await SecureStorage.removePendingInterestedUserId(targetUserId);
-      }
-
-      // Only "interested" can create a mutual match server-side; sync that in
-      // the background without blocking the (already correct) UI. Pass is final.
-      if (action == 'interested') {
-        unawaited(_loadProfile());
-      }
-    } catch (e) {
-      debugPrint('❌ feed action error: $e');
-      if (mounted) {
-        setState(() {
-          _isSendingAction = false;
-          _sendingActionType = null;
-        });
-      }
+    setState(() {
+      _actionState = nextState;
+      _isSendingAction = false;
+    });
+    _rememberActionState(targetUserId, nextState);
+    if (action == 'interested' && !isAcceptFlow) {
+      unawaited(SecureStorage.addPendingInterestedUserId(targetUserId));
+    } else {
+      unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
     }
+
+    // Network'ü arka planda çalıştır; UI'ı bloke etme.
+    unawaited(() async {
+      try {
+        bool isVenueContext = false;
+        try {
+          final me = await AuthRepository().getMe();
+          final contextRaw =
+              (me['lastActiveContext'] ?? me['last_active_context'])
+                  ?.toString();
+          isVenueContext = contextRaw?.toUpperCase() == 'VENUE';
+        } catch (_) {
+          isVenueContext = false;
+        }
+
+        await _repo.sendFeedAction(
+          targetUserId: targetUserId,
+          venueId: isVenueContext ? venueIdForAction : null,
+          action: action,
+        );
+
+        // Only "interested" can create a mutual match server-side; sync in bg.
+        if (action == 'interested' && mounted) {
+          unawaited(_loadProfile());
+        }
+      } catch (e) {
+        debugPrint('❌ feed action error: $e');
+        // Hata: optimistic durumu geri al.
+        if (mounted) {
+          setState(() => _actionState = previousState);
+          _rememberActionState(
+            targetUserId,
+            previousState ?? ProfileActionState.showActions,
+          );
+        }
+      }
+    }());
   }
 
   Future<void> _openChat() async {
@@ -1432,12 +1370,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _buildVideoPosterLayer(
-          media,
-          fit: fit,
-          width: width,
-          height: height,
-        ),
+        _buildVideoPosterLayer(media, fit: fit, width: width, height: height),
         Center(
           child: Icon(
             Icons.play_circle_fill,
@@ -1446,52 +1379,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildEmptyGradientBackground(bool isDark) {
-    if (!isDark) {
-      // Light mode must stay clean white.
-      return Container(color: Colors.white);
-    }
-
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF111827), Color(0xFF0B0F17)],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -120,
-            left: -80,
-            child: Container(
-              width: 320,
-              height: 320,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _darkPrimary.withValues(alpha: 0.22),
-              ),
-            ),
-          ),
-
-          Positioned(
-            bottom: -120,
-            right: -80,
-            child: Container(
-              width: 350,
-              height: 350,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _darkPrimary2.withValues(alpha: 0.18),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1525,18 +1412,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
-    final hasMedia = _profile != null && _profile!.media.isNotEmpty;
-    final shouldShowCenteredLogo = !hasMedia;
-    final canShowHeroMedia = hasMedia;
-    final canShowMoments = _showPostsAndVibe && hasMedia;
-    final featuredMedia = canShowHeroMedia
-        ? _profile!.media.firstWhere(
-            (m) => m.isFeatured,
-            orElse: () => _profile!.media.first,
-          )
-        : null;
-
-    final moments = canShowMoments ? _mediaForViewer() : <CheckinProfileMedia>[];
     final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
     final displayUsername = (_profile?.user.username ?? widget.userUsername)
         ?.trim();
@@ -1549,588 +1424,316 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         (widget.hintVenueId != null && widget.hintVenueId!.trim().isNotEmpty) ||
         (_resolvedVenueId != null && _resolvedVenueId!.trim().isNotEmpty);
 
+    // Uygulama geneli tek profil tasarımı — personal profil ile aynı düzen:
+    // ortalanmış avatar, altında @username, friends/venues yerine
+    // interested/pass action bar, yatay kayan moment'lar. Geri tuşu + üç nokta
+    // yerleri korunur.
+    final onSurface = isDark ? Colors.white : Colors.black;
+    final subColor = isDark ? Colors.white60 : Colors.black54;
+    final avatarUrl = _previewAvatarUrl();
+    final moments =
+        (_showPostsAndVibe && _profile != null && _profile!.media.isNotEmpty)
+        ? _mediaForViewer()
+        : <CheckinProfileMedia>[];
+
     return Scaffold(
       backgroundColor: isDark ? _darkBg : Colors.white,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          /// HERO MEDIA (FEATURED)
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: canShowMoments ? () => _openMediaViewerAt(0) : null,
-              child: !canShowHeroMedia
-                  ? Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        _buildEmptyGradientBackground(isDark),
-                        ClipRect(
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                            child: Container(
-                              color: isDark
-                                  ? Colors.black.withValues(alpha: 0.18)
-                                  : Colors.black.withOpacity(0.16),
-                            ),
-                          ),
-                        ),
-                        Align(
-                          alignment: const Alignment(0, -0.22),
-                          child: shouldShowCenteredLogo
-                              ? SizedBox(
-                                  width: 138,
-                                  height: 138,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Image.asset(
-                                      'assets/images/kmstrylogo.png',
-                                      fit: BoxFit.contain,
-                                    ),
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.person,
-                                  color: isDark
-                                      ? Colors.white70
-                                      : Colors.black45,
-                                  size: 48,
-                                ),
-                        ),
-                      ],
-                    )
-                  : featuredMedia!.mediaType == MediaType.photo
-                  ? Image.network(
-                      featuredMedia.url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: theme.colorScheme.surface,
-                        child: Center(
-                          child: Icon(
-                            Icons.person,
-                            color: isDark ? Colors.white70 : Colors.black45,
-                            size: 48,
-                          ),
-                        ),
-                      ),
-                    )
-                  : _buildVideoCover(
-                      media: featuredMedia,
-                      fit: BoxFit.cover,
-                      iconSize: 60,
-                    ),
-            ),
-          ),
-
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    isDark ? _darkBg : Colors.black.withOpacity(0.92),
-                    isDark
-                        ? Colors.black.withValues(alpha: 0.48)
-                        : Colors.black.withOpacity(0.5),
-                    Colors.transparent,
-                  ],
-                  stops: const [0.0, 0.4, 0.8],
-                ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ── TOP BAR: geri (sol) + üç nokta (sağ) — yerleri değişmez ──────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.arrow_back, color: onSurface),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  IconButton(
+                    onPressed: (_isReporting || _isBlocking)
+                        ? null
+                        : _openTopActionsSheet,
+                    icon: Icon(Icons.more_horiz_rounded, color: onSurface),
+                  ),
+                ],
               ),
             ),
-          ),
 
-          /// CONTENT
-          SafeArea(
-            child: Column(
-              children: [
-                /// TOP BAR
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      ClipOval(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            color: isDark
-                                ? _darkSurface.withValues(alpha: 0.72)
-                                : Colors.black.withOpacity(0.3),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.arrow_back,
-                                color: Colors.white,
-                              ),
-                              onPressed: () => Navigator.pop(context),
-                            ),
-                          ),
-                        ),
-                      ),
-                      ClipOval(
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            color: isDark
-                                ? _darkSurface.withValues(alpha: 0.72)
-                                : Colors.black.withOpacity(0.3),
-                            child: IconButton(
-                              onPressed: (_isReporting || _isBlocking)
-                                  ? null
-                                  : _openTopActionsSheet,
-                              icon: const Icon(
-                                Icons.more_horiz_rounded,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                      // ── Ortalanmış avatar ─────────────────────────────────
+                      _buildPreviewAvatar(avatarUrl, isDark),
+                      const SizedBox(height: 14),
 
-                /// MAIN CONTENT — fills remaining space, content pinned to bottom,
-                /// scrollable when expanded sections grow.
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: constraints.maxHeight,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                          if (canOpenVenue || _isMatchedActionState) ...[
+                      if (!_isMatchedActionState) ...[
+                        // ── İsim + verified ─────────────────────────────────
                         Row(
                           mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            if (canOpenVenue)
-                              Flexible(
-                                child: OutlinedButton.icon(
-                                  onPressed: _openHintVenueDetail,
-                                  icon: const Icon(
-                                    Icons.place_outlined,
-                                    size: 15,
-                                  ),
-                                  label: const Text('Here now'),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    side: BorderSide(
-                                      color: Colors.white.withValues(alpha: 0.4),
-                                    ),
-                                    backgroundColor: Colors.black.withValues(
-                                      alpha: 0.22,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 7,
-                                    ),
-                                    minimumSize: const Size(0, 34),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    visualDensity: const VisualDensity(
-                                      horizontal: -1,
-                                      vertical: -1,
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
+                            Flexible(
+                              child: Text(
+                                displayName,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: onSurface,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
-                            if (canOpenVenue && _isMatchedActionState)
-                              const SizedBox(width: 8),
-                            if (_isMatchedActionState)
-                              Flexible(
-                                child: OutlinedButton.icon(
-                                  onPressed: _openChat,
-                                  icon: const Icon(
-                                    Icons.chat_bubble_outline,
-                                    size: 15,
-                                  ),
-                                  label: const Text('Message'),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    side: BorderSide(
-                                      color: Colors.white.withValues(alpha: 0.4),
-                                    ),
-                                    backgroundColor: Colors.black.withValues(
-                                      alpha: 0.22,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 7,
-                                    ),
-                                    minimumSize: const Size(0, 34),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    visualDensity: const VisualDensity(
-                                      horizontal: -1,
-                                      vertical: -1,
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      /// NAME
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              displayName,
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.white,
-                                letterSpacing: -1,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                          if (_profile?.user.isVerified == true)
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 8, left: 4),
-                              child: Icon(
+                            if (_profile?.user.isVerified == true) ...[
+                              const SizedBox(width: 4),
+                              const Icon(
                                 Icons.verified,
                                 color: AppTheme.brandPrimary,
-                                size: 24,
+                                size: 20,
                               ),
+                            ],
+                          ],
+                        ),
+
+                        // ── Username (avatar altı) ──────────────────────────
+                        if (displayUsername != null &&
+                            displayUsername.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '@$displayUsername',
+                            style: TextStyle(
+                              color: subColor,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
                             ),
+                          ),
                         ],
-                      ),
+                      ],
 
-                      /// USERNAME
-                      if (displayUsername != null && displayUsername.isNotEmpty)
+                      // ── Action area: matched profilde stats yerine Message ─
+                      if (_isMatchedActionState) ...[
+                        const SizedBox(height: 18),
+                        _buildMatchedMessageButton(),
+                      ] else if (_actionState != null) ...[
+                        const SizedBox(height: 18),
+                        _buildActionBar(),
+                      ],
+
+                      // ── Arkadaş profili: kendi profile benzer isim/bio bloğu
+                      if (_isMatchedActionState) ...[
+                        const SizedBox(height: 18),
+                        _buildMatchedProfileInfo(
+                          displayName: displayName,
+                          displayUsername: displayUsername,
+                          bio: inlineBio,
+                          onSurface: onSurface,
+                          subColor: subColor,
+                        ),
+                      ] else if (inlineBio.isNotEmpty) ...[
+                        const SizedBox(height: 18),
                         Text(
-                          '@$displayUsername',
+                          inlineBio,
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.white.withOpacity(0.7),
-                            fontWeight: FontWeight.w500,
+                            color: onSurface,
+                            fontSize: 15,
+                            height: 1.4,
                           ),
                         ),
+                      ],
 
-                      const SizedBox(height: 10),
-
-                      /// ACTIONS (Kmstry, Not Kmstry, etc.)
-                      if (_actionState != null) _buildActionBar(),
-
-                      const SizedBox(height: 10),
-
-                      /// ABOUT CARD (vibe > bio): check-in olsa da olmasa da aynı premium görünüm.
-                      if (inlineBio.isNotEmpty)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Colors.white.withValues(
-                                      alpha: hasMedia ? 0.14 : 0.10,
-                                    ),
-                                    Colors.white.withValues(
-                                      alpha: hasMedia ? 0.06 : 0.03,
-                                    ),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.18),
-                                ),
-                              ),
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final vibeText = inlineBio;
-                                  final style = TextStyle(
-                                    color: Colors.white.withOpacity(0.9),
-                                    fontSize: 15,
-                                    height: 1.4,
-                                  );
-
-                                  final isVibeOverflowing = _checkTextOverflow(
-                                    vibeText,
-                                    constraints.maxWidth,
-                                    style,
-                                  );
-
-                                  return Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        vibeText,
-                                        style: style,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (isVibeOverflowing)
-                                        GestureDetector(
-                                          onTap: () {
-                                            _openBioVibeSheet(vibeText, isDark);
-                                          },
-                                          child: const Padding(
-                                            padding: EdgeInsets.only(top: 12),
-                                            child: Text(
-                                              'See more',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
+                      // ── Active check-in lokasyonu ─────────────────────────
+                      if (!widget.hideVenueInfo && _isMatchedActionState) ...[
+                        const SizedBox(height: 12),
+                        _buildFriendActiveCheckinRow(
+                          canOpenVenue: canOpenVenue,
+                          onSurface: onSurface,
+                          subColor: subColor,
                         ),
+                      ] else if (!widget.hideVenueInfo && canOpenVenue) ...[
+                        const SizedBox(height: 12),
+                        _buildFriendActiveCheckinRow(
+                          canOpenVenue: true,
+                          onSurface: onSurface,
+                          subColor: subColor,
+                        ),
+                      ],
 
-                      if (_showPostsAndVibe && checkinWhatBrings.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: InkWell(
-                            onTap: () {
-                              setState(() {
-                                _areWhatBringsExpanded =
-                                    !_areWhatBringsExpanded;
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(12),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _whatBringsQuestionByGender(
-                                      _profile?.user.gender,
-                                    ),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
+                      // ── What brings (etiketler) ───────────────────────────
+                      if (_showPostsAndVibe &&
+                          checkinWhatBrings.isNotEmpty) ...[
+                        const SizedBox(height: 18),
+                        SizedBox(
+                          height: 62,
+                          child: OverflowBox(
+                            maxWidth: MediaQuery.sizeOf(context).width,
+                            maxHeight: 62,
+                            child: SizedBox(
+                              width: MediaQuery.sizeOf(context).width,
+                              height: 62,
+                              child: Container(
+                                width: double.infinity,
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    top: BorderSide(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.08)
+                                          : Colors.grey[200]!,
                                     ),
                                   ),
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    _areWhatBringsExpanded
-                                        ? Icons.keyboard_arrow_up_rounded
-                                        : Icons.keyboard_arrow_down_rounded,
-                                    color: Colors.white,
-                                    size: 20,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeInOut,
-                          child: _areWhatBringsExpanded
-                              ? Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Wrap(
-                                    spacing: 6,
-                                    runSpacing: 6,
+                                  physics: const BouncingScrollPhysics(),
+                                  child: Row(
                                     children: checkinWhatBrings.map((item) {
                                       return Container(
+                                        margin: const EdgeInsets.only(right: 8),
                                         padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
+                                          horizontal: 12,
+                                          vertical: 7,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: isDark
-                                              ? AppTheme.brandPrimary
-                                                    .withValues(alpha: 0.22)
-                                              : const Color(0xFFEAF1FF),
+                                          color: AppTheme.brandPrimary
+                                              .withValues(alpha: 0.12),
                                           borderRadius: BorderRadius.circular(
-                                            999,
+                                            20,
                                           ),
                                           border: Border.all(
                                             color: AppTheme.brandPrimary
-                                                .withValues(alpha: 0.45),
+                                                .withValues(alpha: 0.3),
                                           ),
                                         ),
                                         child: Text(
                                           _formatWhatBringsLabel(item),
                                           style: TextStyle(
-                                            color: isDark
-                                                ? Colors.white
-                                                : AppTheme.brandPrimary,
-                                            fontSize: 11,
+                                            color: onSurface,
+                                            fontSize: 13,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
                                       );
                                     }).toList(),
                                   ),
-                                )
-                              : const SizedBox.shrink(),
-                        ),
-                      ],
-
-                      const SizedBox(height: 6),
-
-                      /// RECENT MOMENTS (toggle)
-                      if (_showPostsAndVibe && moments.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: InkWell(
-                            onTap: () {
-                              setState(() {
-                                _areMomentsExpanded = !_areMomentsExpanded;
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(12),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _areMomentsExpanded
-                                        ? 'Close moments'
-                                        : 'See moments',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Icon(
-                                    _areMomentsExpanded
-                                        ? Icons.keyboard_arrow_up_rounded
-                                        : Icons.keyboard_arrow_down_rounded,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
                           ),
                         ),
+                      ],
 
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeInOut,
-                          child: _areMomentsExpanded
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const SizedBox(height: 4),
-                                    SizedBox(
-                                      height: _momentCardHeight(context),
-                                      child: ListView.separated(
-                                        scrollDirection: Axis.horizontal,
-                                        physics: const BouncingScrollPhysics(),
-                                        itemCount: moments.length,
-                                        separatorBuilder: (context, index) =>
-                                            const SizedBox(width: 12),
-                                        itemBuilder: (_, index) {
-                                          return Container(
-                                            width: 130,
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: Colors.black
-                                                      .withOpacity(0.2),
-                                                  blurRadius: 10,
-                                                  offset: const Offset(0, 4),
-                                                ),
-                                              ],
-                                            ),
-                                            child: _buildMomentImage(
-                                              moments[index],
-                                              height: _momentCardHeight(context),
-                                              initialIndex: index + 1,
-                                            ),
-                                          );
-                                        },
-                                      ),
+                      // ── Moments (yatay kayan) ─────────────────────────────
+                      if ((_showPostsAndVibe && moments.isNotEmpty) ||
+                          (_isMatchedActionState &&
+                              (!canOpenVenue || _showPostsAndVibe)) ||
+                          (_isMatchedActionState && canOpenVenue)) ...[
+                        SizedBox(
+                          height:
+                              (_showPostsAndVibe &&
+                                  checkinWhatBrings.isNotEmpty)
+                              ? 0
+                              : 20,
+                        ),
+                        SizedBox(
+                          height: 1,
+                          child: OverflowBox(
+                            maxWidth: MediaQuery.sizeOf(context).width,
+                            maxHeight: 1,
+                            child: SizedBox(
+                              width: MediaQuery.sizeOf(context).width,
+                              height: 1,
+                              child: ColoredBox(
+                                color: onSurface.withValues(alpha: 0.12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                      if (_showPostsAndVibe && moments.isNotEmpty) ...[
+                        SizedBox(
+                          height: 176,
+                          child: OverflowBox(
+                            maxWidth: MediaQuery.sizeOf(context).width,
+                            maxHeight: 176,
+                            child: SizedBox(
+                              width: MediaQuery.sizeOf(context).width,
+                              height: 176,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                physics: const BouncingScrollPhysics(),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                itemCount: moments.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(width: 10),
+                                itemBuilder: (_, index) {
+                                  return SizedBox(
+                                    width: 132,
+                                    height: 176,
+                                    child: _buildMomentImage(
+                                      moments[index],
+                                      height: 176,
+                                      initialIndex: index,
+                                      borderRadius: 14,
                                     ),
-                                  ],
-                                )
-                              : const SizedBox.shrink(),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ] else if (_isMatchedActionState &&
+                          (!canOpenVenue || _showPostsAndVibe)) ...[
+                        _buildFriendNoMomentsState(isDark, subColor),
+                      ] else if (_isMatchedActionState && canOpenVenue) ...[
+                        _buildFriendDifferentVenueMomentsState(
+                          isDark: isDark,
+                          subColor: subColor,
+                          onSurface: onSurface,
                         ),
                       ],
+
+                      // ── Suggested for you (persona önerileri) ─────────────
+                      // Yalnızca match OLMAYAN ve aktif check-in'i (moment'i)
+                      // olmayan profillerde alttaki boşluğu Instagram tarzı
+                      // büyük, yatay kayan öneri kartlarıyla doldurur.
+                      if (_showSuggestedForYou && moments.isEmpty)
+                        _buildSuggestedForYou(onSurface, subColor, isDark),
                     ],
                   ),
                 ),
-            ],
-          ),
-        ),
-                      );
-                    },
-                  ),
-                ),
+              ),
+            ),
           ],
         ),
       ),
-    ],
-  ),
-);
-}
-
-  /// A button's inner content: a spinner when THIS action is in flight,
-  /// otherwise its label. Keeps both buttons at full size so nothing jumps.
-  Widget _actionButtonChild(String label, String forAction, Color spinnerColor) {
-    final loading = _isSendingAction && _sendingActionType == forAction;
-    if (loading) {
-      return SizedBox(
-        width: 18,
-        height: 18,
-        child: CircularProgressIndicator(strokeWidth: 2.1, color: spinnerColor),
-      );
-    }
-    return Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
+    );
   }
 
   Widget _buildActionBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final onSurface = isDark ? Colors.white : Colors.black;
+    final subColor = isDark ? Colors.white70 : Colors.black54;
     if (_isBlocked) {
       return Text(
         'User blocked',
-        style: const TextStyle(color: Colors.white70, fontSize: 16),
+        style: TextStyle(color: subColor, fontSize: 16),
       );
     }
 
@@ -2141,12 +1744,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_actionState == ProfileActionState.incomingInterested)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
                   'You caught their attention.',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: onSurface,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
@@ -2154,68 +1757,22 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               ),
             Row(
               children: [
+                // PASS — nötr buzlu cam (ikincil, kibar).
                 Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: OutlinedButton(
-                      onPressed: _isSendingAction
-                          ? null
-                          : () => _handleAction('interested'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 52),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: const VisualDensity(
-                          horizontal: VisualDensity.minimumDensity,
-                          vertical: VisualDensity.minimumDensity,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 0.5,
-                        foregroundColor: AppTheme.brandPrimary,
-                        // Keep the label readable (dimmed) while the other action runs.
-                        disabledForegroundColor:
-                            AppTheme.brandPrimary.withValues(alpha: 0.45),
-                      ),
-                      child: _actionButtonChild(
-                        'Interested',
-                        'interested',
-                        AppTheme.brandPrimary,
-                      ),
-                    ),
+                  child: _GlassActionButton(
+                    label: 'Pass',
+                    icon: Icons.close_rounded,
+                    onTap: () => _handleAction('pass'),
+                    isDark: isDark,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
+                // INTERESTED — marka gradyanlı, öne çıkan birincil aksiyon.
                 Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _isSendingAction
-                          ? null
-                          : () => _handleAction('pass'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 52),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: const VisualDensity(
-                          horizontal: VisualDensity.minimumDensity,
-                          vertical: VisualDensity.minimumDensity,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 0,
-                        // Stay filled (slightly dimmed) while sending, so the
-                        // in-button spinner reads as loading — not disabled.
-                        disabledBackgroundColor:
-                            Theme.of(context).colorScheme.primary.withValues(
-                                  alpha: 0.6,
-                                ),
-                        disabledForegroundColor: Colors.white,
-                      ),
-                      child: _actionButtonChild('Pass', 'pass', Colors.white),
-                    ),
+                  child: _BrandActionButton(
+                    label: 'Interested',
+                    icon: Icons.favorite_rounded,
+                    onTap: () => _handleAction('interested'),
                   ),
                 ),
               ],
@@ -2225,48 +1782,63 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       case ProfileActionState.proactivePass:
       case ProfileActionState.reactivePass:
-        // Show Undo whenever the pass is MINE — proactive or reactive alike.
-        // (If they passed me, my action isn't "pass", so no Undo is shown.)
-        final iPassed = _profile?.myActionAtThisVenue == 'pass';
+        // Bu iki state zaten "pass benim" demek (proactive: ben pass attım;
+        // reactive: onlar interested attıktan sonra ben pass attım). Bu yüzden
+        // Undo her zaman gösterilir — optimistic pass'te _profile henüz
+        // reload edilmediğinden myActionAtThisVenue'ye güvenmiyoruz.
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'You passed.',
-              style: TextStyle(color: Colors.white70, fontSize: 16),
+              style: TextStyle(color: subColor, fontSize: 16),
             ),
-            if (iPassed) ...[
-              const SizedBox(width: 10),
-              TextButton.icon(
-                onPressed: _isSendingAction ? null : _undoPass,
-                icon: const Icon(Icons.undo_rounded, size: 18),
-                label: const Text('Undo'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            const SizedBox(width: 10),
+            TextButton.icon(
+              onPressed: _isSendingAction ? null : _undoAction,
+              icon: const Icon(Icons.undo_rounded, size: 18),
+              label: const Text('Undo'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.brandPrimary,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
                 ),
               ),
-            ],
+            ),
           ],
         );
 
       case ProfileActionState.waitingResponse:
-        return const Row(
+        return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
+            const Icon(
               Icons.check_circle_rounded,
               size: 18,
               color: Color(0xFF22C55E),
             ),
-            SizedBox(width: 6),
-            Text(
+            const SizedBox(width: 6),
+            const Text(
               'Interest sent',
               style: TextStyle(
                 color: Color(0xFF22C55E),
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Rewind: henüz match olmadan gönderilen interested geri alınabilir.
+            TextButton.icon(
+              onPressed: _isSendingAction ? null : _undoAction,
+              icon: const Icon(Icons.undo_rounded, size: 18),
+              label: const Text('Undo'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.brandPrimary,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
               ),
             ),
           ],
@@ -2277,11 +1849,302 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
   }
 
+  Widget _buildMatchedMessageButton() {
+    return SizedBox(
+      width: 184,
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: _openChat,
+        icon: const Icon(Icons.chat_bubble_outline_rounded, size: 17),
+        label: const Text('Message'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 44),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          foregroundColor: AppTheme.brandPrimary,
+          side: BorderSide(
+            color: AppTheme.brandPrimary.withValues(alpha: 0.62),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMatchedProfileInfo({
+    required String displayName,
+    required String? displayUsername,
+    required String bio,
+    required Color onSurface,
+    required Color subColor,
+  }) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: onSurface,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (_profile?.user.isVerified == true) ...[
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.verified,
+                  color: AppTheme.brandPrimary,
+                  size: 16,
+                ),
+              ],
+            ],
+          ),
+          if (displayUsername != null && displayUsername.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              '@$displayUsername',
+              style: TextStyle(
+                color: subColor,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          if (bio.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              bio,
+              style: TextStyle(color: onSurface, fontSize: 14, height: 1.3),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFriendActiveCheckinRow({
+    required bool canOpenVenue,
+    required Color onSurface,
+    required Color subColor,
+  }) {
+    if (!canOpenVenue) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            Icon(Icons.location_off_outlined, size: 18, color: subColor),
+            const SizedBox(width: 6),
+            Text(
+              'No active check-in',
+              style: TextStyle(color: subColor, fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final venueName = _previewVenueName();
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: InkWell(
+        onTap: _openHintVenueDetail,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(
+                Icons.location_on_rounded,
+                size: 18,
+                color: AppTheme.brandPrimary,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  venueName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: onSurface,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(Icons.chevron_right_rounded, size: 18, color: subColor),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _previewVenueName() {
+    final hintName = widget.hintVenueName?.trim();
+    if (hintName != null && hintName.isNotEmpty) return hintName;
+    return 'Venue';
+  }
+
+  Widget _buildFriendNoMomentsState(bool isDark, Color subColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.camera_alt_outlined, size: 48, color: subColor),
+            const SizedBox(height: 12),
+            Text(
+              'No moments yet',
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Moments will appear here when you are at the same venue.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: subColor, fontSize: 13.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFriendDifferentVenueMomentsState({
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 18),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.lock_outline_rounded, size: 44, color: subColor),
+            const SizedBox(height: 12),
+            Text(
+              'They are at ${_previewVenueName()}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'To catch the live vibe and see their moments, join them at the same venue.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                onPressed: _openHintVenueDetail,
+                icon: const Icon(Icons.location_on_rounded, size: 18),
+                label: const Text('View venue'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(140, 42),
+                  backgroundColor: AppTheme.brandPrimary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Preview avatar için fotoğraf URL'i: yıldızlanan (featured) check-in
+  /// fotoğrafı → yoksa ilk check-in fotoğrafı → yoksa kullanıcının gerçek
+  /// profil fotoğrafı → yoksa null (person icon).
+  String? _previewAvatarUrl() {
+    final photos =
+        _profile?.media
+            .where((m) => m.mediaType == MediaType.photo && m.url.isNotEmpty)
+            .toList() ??
+        const <CheckinProfileMedia>[];
+    if (photos.isNotEmpty) {
+      final featured = photos.firstWhere(
+        (m) => m.isFeatured,
+        orElse: () => photos.first,
+      );
+      return featured.url;
+    }
+    final profilePhoto = _profile?.user.photo?.trim();
+    if (profilePhoto != null && profilePhoto.isNotEmpty) {
+      return profilePhoto;
+    }
+    // Fallback modu (aktif check-in yok, _profile null): açan ekranın geçtiği
+    // profil fotoğrafını kullan (ör. username aramasından).
+    final hintPhoto = widget.userPhoto?.trim();
+    if (hintPhoto != null && hintPhoto.isNotEmpty) {
+      return hintPhoto;
+    }
+    return null;
+  }
+
+  /// Ortalanmış, karemsi (radius 32) avatar — personal profil ile aynı dil.
+  Widget _buildPreviewAvatar(String? url, bool isDark) {
+    const size = 128.0;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: url != null
+            ? Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _previewAvatarFallback(isDark),
+              )
+            : _previewAvatarFallback(isDark),
+      ),
+    );
+  }
+
+  Widget _previewAvatarFallback(bool isDark) {
+    return Container(
+      color: isDark ? _darkSurface : const Color(0xFFEDEFF3),
+      child: Icon(
+        Icons.person,
+        size: 56,
+        color: isDark ? Colors.white38 : Colors.black26,
+      ),
+    );
+  }
+
   Widget _buildMomentImage(
     CheckinProfileMedia media, {
     double? width,
     required double height,
     required int initialIndex,
+    double borderRadius = 20,
   }) {
     final constrainedChild = SizedBox(
       width: width,
@@ -2296,8 +2159,356 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         _openMediaViewerAt(initialIndex);
       },
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(borderRadius),
         child: constrainedChild,
+      ),
+    );
+  }
+
+  /// Instagram tarzı "Suggested for you" — içeriği olmayan profillerde alttaki
+  /// boşluğu dolduran, yatay kayan büyük persona öneri kartları (mock).
+  Widget _buildSuggestedForYou(Color onSurface, Color subColor, bool isDark) {
+    const personas = _kSuggestedPersonas;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Suggested for you',
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Text(
+              'See all',
+              style: TextStyle(
+                color: AppColors.blue,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          height: 250,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: EdgeInsets.zero,
+            itemCount: personas.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (_, index) {
+              final p = personas[index];
+              return _SuggestedPersonaCard(
+                persona: p,
+                isDark: isDark,
+                onTap: () => _openPersonaProfile(p),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  void _openPersonaProfile(_SuggestedPersona persona) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfilePreviewPage(
+          userId: persona.id,
+          userName: persona.fullName,
+          userUsername: persona.username,
+          userPhoto: persona.photo,
+        ),
+      ),
+    );
+  }
+}
+
+/// Suggested for you için mock persona verisi.
+class _SuggestedPersona {
+  const _SuggestedPersona({
+    required this.id,
+    required this.fullName,
+    required this.username,
+    required this.photo,
+  });
+
+  final String id;
+  final String fullName;
+  final String username;
+  final String photo;
+}
+
+const List<_SuggestedPersona> _kSuggestedPersonas = [
+  _SuggestedPersona(
+    id: 'persona_ayla',
+    fullName: 'Ayla Toprak',
+    username: 'ayla_tprk',
+    photo: 'https://i.pravatar.cc/300?img=47',
+  ),
+  _SuggestedPersona(
+    id: 'persona_nurtac',
+    fullName: 'Nurtaç Kaya',
+    username: 'tcnurtackaya',
+    photo: 'https://i.pravatar.cc/300?img=32',
+  ),
+  _SuggestedPersona(
+    id: 'persona_deniz',
+    fullName: 'Deniz Mutlu',
+    username: 'denizdekibalik',
+    photo: 'https://i.pravatar.cc/300?img=12',
+  ),
+  _SuggestedPersona(
+    id: 'persona_selin',
+    fullName: 'Selin Aydın',
+    username: 'selin.ayd',
+    photo: 'https://i.pravatar.cc/300?img=45',
+  ),
+  _SuggestedPersona(
+    id: 'persona_mert',
+    fullName: 'Mert Yıldırım',
+    username: 'mrt.yldrm',
+    photo: 'https://i.pravatar.cc/300?img=15',
+  ),
+];
+
+/// Büyük, kibar persona öneri kartı — foto + full name + username; basınca
+/// o profile gider.
+class _SuggestedPersonaCard extends StatelessWidget {
+  const _SuggestedPersonaCard({
+    required this.persona,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  final _SuggestedPersona persona;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardColor = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : Colors.black.withValues(alpha: 0.03);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.10)
+        : Colors.black.withValues(alpha: 0.08);
+    final onSurface = isDark ? Colors.white : Colors.black;
+    final subColor = isDark ? Colors.white60 : Colors.black54;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 168,
+        padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: borderColor),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: AppColors.magenta.withValues(alpha: 0.5),
+                  width: 2,
+                ),
+              ),
+              child: ClipOval(
+                child: Image.network(
+                  persona.photo,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    color: isDark ? Colors.white12 : const Color(0xFFEDEFF3),
+                    child: Icon(
+                      Icons.person,
+                      size: 44,
+                      color: isDark ? Colors.white38 : Colors.black26,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              persona.fullName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '@${persona.username}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: subColor, fontSize: 13),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: 140,
+              height: 34,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: const LinearGradient(
+                    colors: [AppColors.magenta, AppColors.blue],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: const Center(
+                  child: Text(
+                    'View profile',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Marka gradyanlı, öne çıkan birincil aksiyon butonu (Interested).
+/// Uygulama geneli gradient (magenta→blue) + yumuşak gölge — kibar ve belirgin.
+class _BrandActionButton extends StatelessWidget {
+  const _BrandActionButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          height: 54,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: const LinearGradient(
+              colors: [AppColors.magenta, AppColors.blue],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.magenta.withValues(alpha: 0.32),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: Colors.white, size: 19),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Nötr buzlu cam ikincil buton (Pass). Şeffaf yüzey + blur + ince kenarlık —
+/// uygulama geneli glassmorphism dili.
+class _GlassActionButton extends StatelessWidget {
+  const _GlassActionButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    required this.isDark,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = isDark ? Colors.white : Colors.black87;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Material(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.04),
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              height: 54,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: fg.withValues(alpha: 0.16)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: fg.withValues(alpha: 0.85), size: 19),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: fg,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

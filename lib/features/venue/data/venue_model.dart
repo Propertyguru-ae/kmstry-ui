@@ -33,6 +33,9 @@ class Venue {
   final List<String> photos;
   final Map<String, dynamic>? openingHours;
   final List<VenueUpcomingEvent> upcomingEvents;
+  final bool isFollowing;
+  final int followerCount;
+  final String? recommendationReason;
 
   /// Aktif external partnership platformları (THE_ENTERTAINER, FAZAA, ...).
   /// Harita partnership filtresi için kullanılır.
@@ -67,6 +70,9 @@ class Venue {
     this.photos = const [],
     this.openingHours,
     this.upcomingEvents = const [],
+    this.isFollowing = false,
+    this.followerCount = 0,
+    this.recommendationReason,
     this.partnershipPlatforms = const [],
   });
 
@@ -165,6 +171,13 @@ class Venue {
                 )
                 .toList()
           : const <VenueUpcomingEvent>[],
+      isFollowing: (json['isFollowing'] ?? json['is_following']) == true,
+      followerCount:
+          _parseOptionalInt(json['followerCount'] ?? json['follower_count']) ??
+          0,
+      recommendationReason:
+          (json['recommendationReason'] ?? json['recommendation_reason'])
+              ?.toString(),
       partnershipPlatforms:
           (json['partnershipPlatforms'] ?? json['partnership_platforms'])
               is List
