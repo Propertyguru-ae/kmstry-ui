@@ -1,22 +1,29 @@
 import 'dart:developer';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 class MomentsViewerPage extends StatefulWidget {
   final List<CheckinProfileMedia> media;
   final int initialIndex;
   final bool allowFeature;
+  final String? checkinId;
 
   const MomentsViewerPage({
     super.key,
     required this.media,
     required this.initialIndex,
     this.allowFeature = false,
+    this.checkinId,
   });
 
   @override
@@ -97,11 +104,9 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       return;
     }
 
-    setState(() => _loading = true);
-
     try {
+      setState(() => _loading = true);
       await _repo.setFeaturedPhoto(selected.id);
-
       if (!mounted) return;
 
       setState(() {
@@ -112,13 +117,128 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       });
     } catch (e) {
       log("Feature error: $e");
+      if (!mounted) return;
       await showPremiumErrorDialog(
         context,
         message: 'Failed to set featured media',
       );
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      if (mounted) {
+        await _showFeaturedCropPrompt(selected);
+      }
+    } catch (e) {
+      log("Featured avatar crop/upload error: $e");
+      if (mounted) {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Featured updated, but avatar crop could not be saved.',
+        );
+      }
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _showFeaturedCropPrompt(CheckinProfileMedia selected) async {
+    final checkinId = widget.checkinId;
+    if (checkinId == null || checkinId.isEmpty) return;
+
+    final colors = Theme.of(context).colorScheme;
+    final shouldCrop = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Use as your check-in avatar?',
+                  style: TextStyle(
+                    color: colors.onSurface,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Adjust how this featured photo appears on your profile while this check-in is active.',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.62),
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.crop_rounded),
+                  title: const Text('Adjust crop'),
+                  onTap: () => Navigator.pop(ctx, true),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.check_circle_outline_rounded),
+                  title: const Text('Use as is'),
+                  onTap: () => Navigator.pop(ctx, false),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (shouldCrop != true || !mounted) return;
+
+    final localFile = await _downloadMediaToTemp(selected.url);
+    if (!mounted) return;
+    if (localFile == null) {
+      throw Exception('Could not download selected featured photo for crop');
+    }
+
+    final cropped = await cropSquareAvatar(context, localFile);
+    if (!mounted || cropped == null) return;
+
+    await _repo.uploadCheckinAvatar(checkinId: checkinId, file: cropped);
+    _hasChanged = true;
+  }
+
+  Future<File?> _downloadMediaToTemp(String url) async {
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode >= 400) return null;
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        '${dir.path}/kmstry-featured-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      return file;
+    } catch (e) {
+      log('Featured avatar download error: $e');
+      return null;
+    }
   }
 
   Future<void> _deleteMedia(CheckinProfileMedia media) async {
@@ -158,6 +278,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       return;
     } catch (e) {
       log("Delete error: $e");
+      if (!mounted) return;
       await showPremiumErrorDialog(context, message: 'Failed to delete media');
     }
 
@@ -244,10 +365,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
               // 🖼 PHOTO
               if (item.mediaType == MediaType.photo) {
                 return SizedBox.expand(
-                  child: Image.network(
-                    item.url,
-                    fit: BoxFit.cover,
-                  ),
+                  child: CachedImage(item.url, fit: BoxFit.cover),
                 );
               }
 
@@ -278,10 +396,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
             top: 40,
             right: 16,
             child: IconButton(
-              icon: const Icon(Icons.close,
-                  color: Colors.white, size: 28),
-              onPressed: () =>
-                  Navigator.pop(context, _hasChanged),
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.pop(context, _hasChanged),
             ),
           ),
 
@@ -292,8 +408,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
               left: 20,
               right: 20,
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   // FEATURE — glass buton, featured'da teal accent.
                   _GlassCircleButton(
@@ -307,8 +422,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
                     iconColor: currentMedia.isFeatured
                         ? AppColors.tealDark
                         : canFeaturePhoto
-                            ? Colors.white
-                            : Colors.white38,
+                        ? Colors.white
+                        : Colors.white38,
                     spinnerColor: AppColors.tealDark,
                   ),
 
@@ -363,9 +478,7 @@ class _GlassCircleButton extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.20),
-                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
               ),
               child: busy
                   ? SizedBox(

@@ -297,20 +297,26 @@ class _FriendsListPageState extends State<FriendsListPage> {
         final match = items[index];
         final name = match.fullName;
         final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+        // Yalnızca galeriden yüklenen profil avatarı; yoksa baş harf gösterilir.
+        final avatarUrl = match.userPhotoUrl;
+        final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
         return ListTile(
           contentPadding: const EdgeInsets.symmetric(vertical: 4),
           onTap: () => _openProfile(match),
           leading: CircleAvatar(
             radius: 24,
             backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.12),
-            child: Text(
-              initial,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
-                color: theme.colorScheme.primary,
-              ),
-            ),
+            foregroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+            child: hasAvatar
+                ? null
+                : Text(
+                    initial,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
           ),
           title: Text(
             name,

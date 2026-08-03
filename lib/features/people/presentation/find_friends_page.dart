@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
-import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
@@ -270,7 +269,13 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
     return Scaffold(
       backgroundColor: bgBottom,
       appBar: AppBar(
-        leading: const AppLogo(),
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: theme.colorScheme.onSurface,
+          ),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         title: Text(
           'Find Friends',
           style: TextStyle(

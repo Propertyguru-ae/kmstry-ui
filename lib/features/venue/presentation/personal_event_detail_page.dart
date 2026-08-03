@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -588,7 +589,7 @@ class _Gallery extends StatelessWidget {
     if (photos.length == 1) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: Image.network(
+        child: CachedImage(
           photos.first,
           width: double.infinity,
           height: 220,
@@ -604,7 +605,7 @@ class _Gallery extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) => ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Image.network(
+          child: CachedImage(
             photos[i],
             width: 280,
             height: 180,

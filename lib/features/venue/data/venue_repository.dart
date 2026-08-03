@@ -132,6 +132,47 @@ class VenueRepository {
     return _parseVenueList(data);
   }
 
+  /// Trending Now — son 7 günde en çok aranan venue'ler (recommended ile aynı şekil).
+  Future<List<Venue>> getTrendingVenues({
+    double? latitude,
+    double? longitude,
+    int limit = 10,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final params = <String>[
+      'limit=${limit.clamp(1, 20)}',
+      if (latitude != null) 'latitude=$latitude',
+      if (longitude != null) 'longitude=$longitude',
+    ].join('&');
+
+    final data = await _api.get(
+      '/venues/trending?$params',
+      headers: headers,
+    );
+
+    return _parseVenueList(data);
+  }
+
+  /// Kullanıcı aramadan bir venue açınca çağrılır — trending sinyalini besler.
+  /// Fire-and-forget: hata sessizce yutulur.
+  Future<void> recordSearchHit(String venueId) async {
+    try {
+      final token = await SecureStorage.getAccessToken();
+      if (token == null) return;
+      await _api.post(
+        '/venues/$venueId/search-hit',
+        body: const <String, dynamic>{},
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // trending sinyali; başarısızlık kullanıcı akışını etkilememeli
+    }
+  }
+
   Future<List<Venue>> getMapMarkers({
     required double latitude,
     required double longitude,

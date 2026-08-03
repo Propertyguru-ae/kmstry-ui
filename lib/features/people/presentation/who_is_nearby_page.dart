@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
@@ -240,10 +241,10 @@ class _NearbyUserCard extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (imageUrl.isNotEmpty)
-            Image.network(
+            CachedImage(
               imageUrl,
               fit: BoxFit.cover,
-              errorBuilder: (context, error, stack) => _placeholder(),
+              errorWidget: (context) => _placeholder(),
             )
           else
             _placeholder(),

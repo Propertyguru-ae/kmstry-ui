@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -3213,7 +3214,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               borderRadius: BorderRadius.circular(12),
               // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
               child: imageUrl.startsWith('http')
-                  ? Image.network(
+                  ? CachedImage(
                       imageUrl,
                       width: min(MediaQuery.of(context).size.width * 0.62, 238),
                       height: min(
@@ -3221,7 +3222,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                         238,
                       ),
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
+                      errorWidget: (context) =>
                           const Icon(Icons.broken_image, size: 48),
                     )
                   : Stack(
@@ -3465,7 +3466,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                               fontWeight: FontWeight.w500,
                             ),
                             decoration: InputDecoration(
-                              hintText: 'Mesaj yaz...',
+                              hintText: '',
                               hintStyle: TextStyle(color: _mutedTextColor),
                               border: InputBorder.none,
                               enabledBorder: InputBorder.none,
@@ -4501,16 +4502,13 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
   Widget _buildImage() {
     final url = widget.imageUrl;
     if (url.startsWith('http')) {
-      return Image.network(
+      return CachedImage(
         url,
         fit: BoxFit.contain,
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return const Center(
-            child: CircularProgressIndicator(color: Colors.white),
-          );
-        },
-        errorBuilder: (context, error, stackTrace) => _errorIcon(),
+        placeholder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+        errorWidget: (context) => _errorIcon(),
       );
     }
     // Optimistic lokal dosya (henüz yüklenmekte olan).

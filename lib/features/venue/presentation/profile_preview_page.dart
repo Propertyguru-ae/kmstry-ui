@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
@@ -96,6 +97,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   static const Color _darkBorder = Color(0xFF252D3D);
 
   CheckinProfile? _profile;
+  PublicUserProfile? _publicProfile;
   bool _loading = true;
   ProfileActionState? _actionState;
   String? _resolvedVenueId;
@@ -107,6 +109,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _isBlocking = false;
   bool _isReporting = false;
   bool _isSendingAction = false;
+  int _selectedProfileTab = 0;
   final Map<String, String?> _videoPosterPathByUrl = {};
   final Map<String, Future<String?>> _videoPosterFutureByUrl = {};
 
@@ -147,13 +150,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final thumb = media.thumbnailUrl;
     final hasThumb = thumb != null && thumb.isNotEmpty;
     if (hasThumb) {
-      return Image.network(
+      return CachedImage(
         thumb,
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (context, error, stackTrace) =>
-            Container(color: Colors.black87),
+        errorWidget: (context) => Container(color: Colors.black87),
       );
     }
 
@@ -290,6 +292,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 widget.actionStateHint ??
                 _actionState;
             _profile = profile;
+            _publicProfile = null;
             _resolvedVenueId = resolvedVenueId;
             _actionState = _mergeServerAndLocalActionState(
               serverState: determined,
@@ -311,10 +314,21 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
       if (!mounted) return;
       final targetUserId = widget.userId;
+      PublicUserProfile? publicProfile;
+      if (targetUserId != null && targetUserId.isNotEmpty) {
+        try {
+          publicProfile = await _repo.getPublicUserProfile(targetUserId);
+          resolvedVenueId =
+              publicProfile.activeCheckin?.venueId ?? resolvedVenueId;
+        } catch (e) {
+          debugPrint('⚠️ public profile fallback unavailable: $e');
+        }
+      }
       final blockedIds = await _repo.getBlockedUserIds();
       if (!mounted) return;
       setState(() {
         _profile = null;
+        _publicProfile = publicProfile;
         _resolvedVenueId = resolvedVenueId;
         _actionState = widget.isMatchedHint
             ? ProfileActionState.matched
@@ -629,16 +643,18 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         venue ??
         Venue(
           id: venueId,
-          name: ((widget.hintVenueName ?? '').trim().isNotEmpty)
-              ? widget.hintVenueName!.trim()
-              : 'Venue',
-          type: ((widget.hintVenueType ?? '').trim().isNotEmpty)
-              ? widget.hintVenueType!.trim()
-              : 'venue',
+          name: _previewVenueName(),
+          type:
+              _publicProfile?.activeCheckin?.venueType ??
+              (((widget.hintVenueType ?? '').trim().isNotEmpty)
+                  ? widget.hintVenueType!.trim()
+                  : 'venue'),
           status: 'Open',
           address: '',
           city: '',
-          photoUrl: (widget.hintVenuePhoto ?? '').trim(),
+          photoUrl:
+              _publicProfile?.activeCheckin?.venuePhoto ??
+              (widget.hintVenuePhoto ?? '').trim(),
           latitude: 0.0,
           longitude: 0.0,
           tag: '#NearbyNow',
@@ -652,6 +668,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   bool get _isMatchedActionState => _actionState == ProfileActionState.matched;
+
+  List<CheckinVisitedPlace> get _visitedPlaces =>
+      _profile?.visitedPlaces ?? _publicProfile?.visitedPlaces ?? const [];
 
   Future<void> _toggleBlock() async {
     final targetUserId = _profile?.user.id ?? widget.userId;
@@ -1412,16 +1431,31 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
-    final displayName = _profile?.user.fullName ?? widget.userName ?? 'User';
-    final displayUsername = (_profile?.user.username ?? widget.userUsername)
-        ?.trim();
+    final displayName =
+        _profile?.user.fullName ??
+        _publicProfile?.fullName ??
+        widget.userName ??
+        'User';
+    final displayUsername =
+        (_profile?.user.username ??
+                _publicProfile?.username ??
+                widget.userUsername)
+            ?.trim();
+    final topBarTitle = displayUsername != null && displayUsername.isNotEmpty
+        ? '@${displayUsername.replaceFirst(RegExp(r'^@+'), '')}'
+        : displayName;
     final fallbackBio = (widget.fallbackBio ?? '').trim();
     final profileVibe = (_profile?.checkin.vibe ?? '').trim();
-    final inlineBio = profileVibe.isNotEmpty ? profileVibe : fallbackBio;
+    final publicBio = (_publicProfile?.bio ?? '').trim();
+    final inlineBio = profileVibe.isNotEmpty
+        ? profileVibe
+        : (publicBio.isNotEmpty ? publicBio : fallbackBio);
     final checkinWhatBrings = _profile?.checkin.whatBringsToKmstry ?? const [];
 
     final canOpenVenue =
         (widget.hintVenueId != null && widget.hintVenueId!.trim().isNotEmpty) ||
+        (_publicProfile?.activeCheckin?.venueId != null &&
+            _publicProfile!.activeCheckin!.venueId!.trim().isNotEmpty) ||
         (_resolvedVenueId != null && _resolvedVenueId!.trim().isNotEmpty);
 
     // Uygulama geneli tek profil tasarımı — personal profil ile aynı düzen:
@@ -1435,21 +1469,221 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         (_showPostsAndVibe && _profile != null && _profile!.media.isNotEmpty)
         ? _mediaForViewer()
         : <CheckinProfileMedia>[];
+    final visitedPlaces = _visitedPlaces;
+    final profileContent = <Widget>[
+      _buildPreviewAvatar(avatarUrl, isDark),
+      const SizedBox(height: 14),
+      if (_hasPreviewStats) ...[
+        _buildPreviewStats(onSurface, subColor),
+        const SizedBox(height: 14),
+      ],
+      if (!_isMatchedActionState)
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                displayName,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: onSurface,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            if (_isPreviewVerified) ...[
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.verified,
+                color: AppTheme.brandPrimary,
+                size: 20,
+              ),
+            ],
+          ],
+        ),
+      if (_isMatchedActionState) ...[
+        const SizedBox(height: 18),
+        _buildMatchedMessageButton(),
+      ] else if (_actionState != null) ...[
+        const SizedBox(height: 18),
+        _buildActionBar(),
+      ],
+      if (_isMatchedActionState) ...[
+        const SizedBox(height: 18),
+        _buildMatchedProfileInfo(
+          displayName: displayName,
+          bio: inlineBio,
+          onSurface: onSurface,
+          subColor: subColor,
+        ),
+      ] else if (inlineBio.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        Text(
+          inlineBio,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: onSurface, fontSize: 15, height: 1.4),
+        ),
+      ],
+      if (!widget.hideVenueInfo && _isMatchedActionState) ...[
+        const SizedBox(height: 12),
+        _buildFriendActiveCheckinRow(
+          canOpenVenue: canOpenVenue,
+          onSurface: onSurface,
+          subColor: subColor,
+        ),
+      ] else if (!widget.hideVenueInfo && canOpenVenue) ...[
+        const SizedBox(height: 12),
+        _buildFriendActiveCheckinRow(
+          canOpenVenue: true,
+          onSurface: onSurface,
+          subColor: subColor,
+        ),
+      ],
+      if (_showPostsAndVibe && checkinWhatBrings.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        SizedBox(
+          height: 76,
+          child: OverflowBox(
+            maxWidth: MediaQuery.sizeOf(context).width,
+            maxHeight: 76,
+            child: SizedBox(
+              width: MediaQuery.sizeOf(context).width,
+              height: 76,
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.grey[200]!,
+                    ),
+                  ),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Text(
+                        'What brings you to KMSTRY?',
+                        style: TextStyle(
+                          color: onSurface.withValues(alpha: 0.76),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      physics: const BouncingScrollPhysics(),
+                      child: Row(
+                        children: checkinWhatBrings.map((item) {
+                          return Container(
+                            margin: const EdgeInsets.only(right: 7),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.brandPrimary.withValues(
+                                alpha: 0.12,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: AppTheme.brandPrimary.withValues(
+                                  alpha: 0.28,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              _formatWhatBringsLabel(item),
+                              style: TextStyle(
+                                color: onSurface,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+      SizedBox(
+        height: (_showPostsAndVibe && checkinWhatBrings.isNotEmpty) ? 0 : 20,
+      ),
+      SizedBox(
+        height: 1,
+        child: OverflowBox(
+          maxWidth: MediaQuery.sizeOf(context).width,
+          maxHeight: 1,
+          child: SizedBox(
+            width: MediaQuery.sizeOf(context).width,
+            height: 1,
+            child: ColoredBox(color: onSurface.withValues(alpha: 0.12)),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      _buildProfileContentTabs(onSurface, subColor, isDark),
+      const SizedBox(height: 16),
+      if (_selectedProfileTab == 0) ...[
+        _buildMomentsTabContent(
+          moments: moments,
+          canOpenVenue: canOpenVenue,
+          isDark: isDark,
+          subColor: subColor,
+          onSurface: onSurface,
+        ),
+        if (_showSuggestedForYou && moments.isEmpty)
+          _buildSuggestedForYou(onSurface, subColor, isDark),
+      ] else if (visitedPlaces.isEmpty)
+        _buildVisitedPlacesEmptyState(
+          isDark: isDark,
+          subColor: subColor,
+          onSurface: onSurface,
+        ),
+    ];
 
     return Scaffold(
       backgroundColor: isDark ? _darkBg : Colors.white,
       body: SafeArea(
         child: Column(
           children: [
-            // ── TOP BAR: geri (sol) + üç nokta (sağ) — yerleri değişmez ──────
+            // ── TOP BAR: geri (sol) + isim (orta) + üç nokta (sağ) ───────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
                     icon: Icon(Icons.arrow_back, color: onSurface),
                     onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Text(
+                      topBarTitle,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: onSurface,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                   IconButton(
                     onPressed: (_isReporting || _isBlocking)
@@ -1462,262 +1696,28 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
 
             Expanded(
-              child: SingleChildScrollView(
+              child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      // ── Ortalanmış avatar ─────────────────────────────────
-                      _buildPreviewAvatar(avatarUrl, isDark),
-                      const SizedBox(height: 14),
-
-                      if (!_isMatchedActionState) ...[
-                        // ── İsim + verified ─────────────────────────────────
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                displayName,
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: onSurface,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            if (_profile?.user.isVerified == true) ...[
-                              const SizedBox(width: 4),
-                              const Icon(
-                                Icons.verified,
-                                color: AppTheme.brandPrimary,
-                                size: 20,
-                              ),
-                            ],
-                          ],
-                        ),
-
-                        // ── Username (avatar altı) ──────────────────────────
-                        if (displayUsername != null &&
-                            displayUsername.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '@$displayUsername',
-                            style: TextStyle(
-                              color: subColor,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
-
-                      // ── Action area: matched profilde stats yerine Message ─
-                      if (_isMatchedActionState) ...[
-                        const SizedBox(height: 18),
-                        _buildMatchedMessageButton(),
-                      ] else if (_actionState != null) ...[
-                        const SizedBox(height: 18),
-                        _buildActionBar(),
-                      ],
-
-                      // ── Arkadaş profili: kendi profile benzer isim/bio bloğu
-                      if (_isMatchedActionState) ...[
-                        const SizedBox(height: 18),
-                        _buildMatchedProfileInfo(
-                          displayName: displayName,
-                          displayUsername: displayUsername,
-                          bio: inlineBio,
-                          onSurface: onSurface,
-                          subColor: subColor,
-                        ),
-                      ] else if (inlineBio.isNotEmpty) ...[
-                        const SizedBox(height: 18),
-                        Text(
-                          inlineBio,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: onSurface,
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-
-                      // ── Active check-in lokasyonu ─────────────────────────
-                      if (!widget.hideVenueInfo && _isMatchedActionState) ...[
-                        const SizedBox(height: 12),
-                        _buildFriendActiveCheckinRow(
-                          canOpenVenue: canOpenVenue,
-                          onSurface: onSurface,
-                          subColor: subColor,
-                        ),
-                      ] else if (!widget.hideVenueInfo && canOpenVenue) ...[
-                        const SizedBox(height: 12),
-                        _buildFriendActiveCheckinRow(
-                          canOpenVenue: true,
-                          onSurface: onSurface,
-                          subColor: subColor,
-                        ),
-                      ],
-
-                      // ── What brings (etiketler) ───────────────────────────
-                      if (_showPostsAndVibe &&
-                          checkinWhatBrings.isNotEmpty) ...[
-                        const SizedBox(height: 18),
-                        SizedBox(
-                          height: 62,
-                          child: OverflowBox(
-                            maxWidth: MediaQuery.sizeOf(context).width,
-                            maxHeight: 62,
-                            child: SizedBox(
-                              width: MediaQuery.sizeOf(context).width,
-                              height: 62,
-                              child: Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  border: Border(
-                                    top: BorderSide(
-                                      color: isDark
-                                          ? Colors.white.withValues(alpha: 0.08)
-                                          : Colors.grey[200]!,
-                                    ),
-                                  ),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                ),
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                  ),
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Row(
-                                    children: checkinWhatBrings.map((item) {
-                                      return Container(
-                                        margin: const EdgeInsets.only(right: 8),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 7,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: AppTheme.brandPrimary
-                                              .withValues(alpha: 0.12),
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          border: Border.all(
-                                            color: AppTheme.brandPrimary
-                                                .withValues(alpha: 0.3),
-                                          ),
-                                        ),
-                                        child: Text(
-                                          _formatWhatBringsLabel(item),
-                                          style: TextStyle(
-                                            color: onSurface,
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      );
-                                    }).toList(),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-
-                      // ── Moments (yatay kayan) ─────────────────────────────
-                      if ((_showPostsAndVibe && moments.isNotEmpty) ||
-                          (_isMatchedActionState &&
-                              (!canOpenVenue || _showPostsAndVibe)) ||
-                          (_isMatchedActionState && canOpenVenue)) ...[
-                        SizedBox(
-                          height:
-                              (_showPostsAndVibe &&
-                                  checkinWhatBrings.isNotEmpty)
-                              ? 0
-                              : 20,
-                        ),
-                        SizedBox(
-                          height: 1,
-                          child: OverflowBox(
-                            maxWidth: MediaQuery.sizeOf(context).width,
-                            maxHeight: 1,
-                            child: SizedBox(
-                              width: MediaQuery.sizeOf(context).width,
-                              height: 1,
-                              child: ColoredBox(
-                                color: onSurface.withValues(alpha: 0.12),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                      ],
-                      if (_showPostsAndVibe && moments.isNotEmpty) ...[
-                        SizedBox(
-                          height: 176,
-                          child: OverflowBox(
-                            maxWidth: MediaQuery.sizeOf(context).width,
-                            maxHeight: 176,
-                            child: SizedBox(
-                              width: MediaQuery.sizeOf(context).width,
-                              height: 176,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                physics: const BouncingScrollPhysics(),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                itemCount: moments.length,
-                                separatorBuilder: (_, _) =>
-                                    const SizedBox(width: 10),
-                                itemBuilder: (_, index) {
-                                  return SizedBox(
-                                    width: 132,
-                                    height: 176,
-                                    child: _buildMomentImage(
-                                      moments[index],
-                                      height: 176,
-                                      initialIndex: index,
-                                      borderRadius: 14,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                      ] else if (_isMatchedActionState &&
-                          (!canOpenVenue || _showPostsAndVibe)) ...[
-                        _buildFriendNoMomentsState(isDark, subColor),
-                      ] else if (_isMatchedActionState && canOpenVenue) ...[
-                        _buildFriendDifferentVenueMomentsState(
-                          isDark: isDark,
-                          subColor: subColor,
-                          onSurface: onSurface,
-                        ),
-                      ],
-
-                      // ── Suggested for you (persona önerileri) ─────────────
-                      // Yalnızca match OLMAYAN ve aktif check-in'i (moment'i)
-                      // olmayan profillerde alttaki boşluğu Instagram tarzı
-                      // büyük, yatay kayan öneri kartlarıyla doldurur.
-                      if (_showSuggestedForYou && moments.isEmpty)
-                        _buildSuggestedForYou(onSurface, subColor, isDark),
-                    ],
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      8,
+                      20,
+                      _selectedProfileTab == 1 && visitedPlaces.isNotEmpty
+                          ? 0
+                          : 28,
+                    ),
+                    sliver: SliverList.list(children: profileContent),
                   ),
-                ),
+                  if (_selectedProfileTab == 1 && visitedPlaces.isNotEmpty)
+                    _buildVisitedPlacesSliver(
+                      places: visitedPlaces,
+                      isDark: isDark,
+                      subColor: subColor,
+                      onSurface: onSurface,
+                    ),
+                ],
               ),
             ),
           ],
@@ -1875,7 +1875,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Widget _buildMatchedProfileInfo({
     required String displayName,
-    required String? displayUsername,
     required String bio,
     required Color onSurface,
     required Color subColor,
@@ -1900,7 +1899,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   ),
                 ),
               ),
-              if (_profile?.user.isVerified == true) ...[
+              if (_isPreviewVerified) ...[
                 const SizedBox(width: 4),
                 const Icon(
                   Icons.verified,
@@ -1910,17 +1909,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               ],
             ],
           ),
-          if (displayUsername != null && displayUsername.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              '@$displayUsername',
-              style: TextStyle(
-                color: subColor,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
           if (bio.isNotEmpty) ...[
             const SizedBox(height: 5),
             Text(
@@ -1930,6 +1918,48 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           ],
         ],
       ),
+    );
+  }
+
+  /// Public sosyal istatistikler: arkadaş (match) ve takip edilen venue sayısı.
+  /// Sadece rakam gösterilir — başkasının listesine gidilmez.
+  Widget _buildPreviewStats(Color onSurface, Color subColor) {
+    final friendCount =
+        _profile?.user.friendCount ?? _publicProfile?.friendCount;
+    final followedVenueCount =
+        _profile?.user.followedVenueCount ?? _publicProfile?.followedVenueCount;
+    Widget stat(int value, String label) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              color: onSurface,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: TextStyle(
+              color: subColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        stat(friendCount ?? 0, 'Friends'),
+        const SizedBox(width: 56),
+        stat(followedVenueCount ?? 0, 'Venues'),
+      ],
     );
   }
 
@@ -1991,10 +2021,365 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     );
   }
 
+  /// Kişinin ilk adı (yoksa tam ad, o da yoksa "They"). "Mehmet şurada" gibi
+  /// cümlelerde kullanılır.
+  String _previewFirstName() {
+    final full =
+        (_profile?.user.fullName ?? _publicProfile?.fullName ?? widget.userName)
+            ?.trim();
+    if (full == null || full.isEmpty) return 'They';
+    return full.split(RegExp(r'\s+')).first;
+  }
+
   String _previewVenueName() {
     final hintName = widget.hintVenueName?.trim();
     if (hintName != null && hintName.isNotEmpty) return hintName;
+    final publicVenueName = _publicProfile?.activeCheckin?.venueName?.trim();
+    if (publicVenueName != null && publicVenueName.isNotEmpty) {
+      return publicVenueName;
+    }
     return 'Venue';
+  }
+
+  Widget _buildProfileContentTabs(
+    Color onSurface,
+    Color subColor,
+    bool isDark,
+  ) {
+    Widget tab({
+      required int index,
+      required IconData icon,
+      required String label,
+    }) {
+      final selected = _selectedProfileTab == index;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => _selectedProfileTab = index),
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected
+                  ? AppTheme.brandPrimary.withValues(
+                      alpha: isDark ? 0.22 : 0.14,
+                    )
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected
+                    ? AppTheme.brandPrimary.withValues(alpha: 0.48)
+                    : onSurface.withValues(alpha: 0.10),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? AppTheme.brandPrimary : subColor,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? onSurface : subColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        tab(index: 0, icon: Icons.auto_awesome_rounded, label: 'Moments'),
+        const SizedBox(width: 8),
+        tab(index: 1, icon: Icons.place_rounded, label: 'Visited Places'),
+      ],
+    );
+  }
+
+  Widget _buildMomentsTabContent({
+    required List<CheckinProfileMedia> moments,
+    required bool canOpenVenue,
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    if (_showPostsAndVibe && moments.isNotEmpty) {
+      return SizedBox(
+        height: 176,
+        child: OverflowBox(
+          maxWidth: MediaQuery.sizeOf(context).width,
+          maxHeight: 176,
+          child: SizedBox(
+            width: MediaQuery.sizeOf(context).width,
+            height: 176,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: moments.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (_, index) {
+                return SizedBox(
+                  width: 132,
+                  height: 176,
+                  child: _buildMomentImage(
+                    moments[index],
+                    height: 176,
+                    initialIndex: index,
+                    borderRadius: 14,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!_showPostsAndVibe && canOpenVenue) {
+      return _buildFriendDifferentVenueMomentsState(
+        isDark: isDark,
+        subColor: subColor,
+        onSurface: onSurface,
+      );
+    }
+
+    return _buildFriendNoMomentsState(isDark, subColor);
+  }
+
+  Widget _buildVisitedPlacesEmptyState({
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.visibility_off_outlined, size: 46, color: subColor),
+            const SizedBox(height: 12),
+            Text(
+              'Visited places are not shared.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'When they share check-ins on their profile, the latest places will appear here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVisitedPlacesSliver({
+    required List<CheckinVisitedPlace> places,
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    const tileHeight = 104.0;
+    const separatorHeight = 10.0;
+    final childCount = places.length * 2 - 1;
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate((context, index) {
+          if (index.isOdd) return const SizedBox(height: separatorHeight);
+          final place = places[index ~/ 2];
+          return SizedBox(
+            height: tileHeight,
+            child: _buildVisitedPlaceTile(
+              place: place,
+              isDark: isDark,
+              subColor: subColor,
+              onSurface: onSurface,
+            ),
+          );
+        }, childCount: childCount),
+      ),
+    );
+  }
+
+  Widget _buildVisitedPlaceTile({
+    required CheckinVisitedPlace place,
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    final hasPhoto = (place.venuePhoto ?? '').trim().isNotEmpty;
+    return InkWell(
+      onTap: () => _openVisitedVenueDetail(place),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: isDark ? _darkSurface : const Color(0xFFF7F9FC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: onSurface.withValues(alpha: 0.10)),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 58,
+                height: 58,
+                child: hasPhoto
+                    ? CachedImage(
+                        place.venuePhoto!.trim(),
+                        fit: BoxFit.cover,
+                        errorWidget: (_) =>
+                            _buildVisitedPlacePlaceholder(isDark, subColor),
+                      )
+                    : _buildVisitedPlacePlaceholder(isDark, subColor),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    place.venueName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: onSurface,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _visitedPlaceSubtitle(place),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: subColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _formatVisitedDate(place.checkedInAt),
+                    style: TextStyle(color: subColor, fontSize: 12.5),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: subColor, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVisitedPlacePlaceholder(bool isDark, Color subColor) {
+    return Container(
+      color: isDark ? _darkBorder : const Color(0xFFE9EEF5),
+      child: Icon(Icons.place_rounded, color: subColor, size: 28),
+    );
+  }
+
+  String _visitedPlaceSubtitle(CheckinVisitedPlace place) {
+    final type = (place.venueType ?? '').trim();
+    if (type.isEmpty) return 'Venue';
+    return _formatWhatBringsLabel(type);
+  }
+
+  String _formatVisitedDate(DateTime date) {
+    final local = date.toLocal();
+    if (local.millisecondsSinceEpoch == 0) return '';
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    return '${months[local.month - 1]} ${local.day} · $hour:$minute $period';
+  }
+
+  Future<void> _openVisitedVenueDetail(CheckinVisitedPlace place) async {
+    final venueId = (place.venueId ?? '').trim();
+    if (venueId.isEmpty) return;
+    Venue? venue;
+    try {
+      final venueData = await _venueContextRepository.getVenueById(venueId);
+      final map = Map<String, dynamic>.from(venueData);
+      if ((map['id'] == null || map['id'].toString().isEmpty)) {
+        map['id'] = venueId;
+      }
+      if ((map['source'] == null || map['source'].toString().isEmpty)) {
+        map['source'] = 'db';
+      }
+      if ((map['isInDb'] == null) && (map['is_in_db'] == null)) {
+        map['isInDb'] = true;
+      }
+      if ((map['canCheckin'] == null) && (map['can_checkin'] == null)) {
+        map['canCheckin'] = true;
+      }
+      venue = Venue.fromJson(map);
+      if (venue.id.isEmpty) venue = null;
+    } catch (_) {
+      venue = null;
+    }
+    final resolvedVenue =
+        venue ??
+        Venue(
+          id: venueId,
+          name: place.venueName,
+          type: place.venueType ?? 'venue',
+          status: 'Open',
+          address: '',
+          city: '',
+          photoUrl: (place.venuePhoto ?? '').trim(),
+          latitude: 0.0,
+          longitude: 0.0,
+          tag: '#Visited',
+          source: 'db',
+          isInDb: true,
+          canCheckin: true,
+        );
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
+    );
   }
 
   Widget _buildFriendNoMomentsState(bool isDark, Color subColor) {
@@ -2038,7 +2423,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             Icon(Icons.lock_outline_rounded, size: 44, color: subColor),
             const SizedBox(height: 12),
             Text(
-              'They are at ${_previewVenueName()}',
+              '${_previewFirstName()} is at ${_previewVenueName()}',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: onSurface,
@@ -2080,10 +2465,30 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     );
   }
 
-  /// Preview avatar için fotoğraf URL'i: yıldızlanan (featured) check-in
-  /// fotoğrafı → yoksa ilk check-in fotoğrafı → yoksa kullanıcının gerçek
-  /// profil fotoğrafı → yoksa null (person icon).
+  /// Preview avatar için fotoğraf URL'i. Kullanıcının gerçek profil fotoğrafı
+  /// varsa o kalıcı olarak kullanılır (featured/check-in avatarı ezmez). Profil
+  /// fotoğrafı yoksa: featured check-in fotoğrafı → ilk check-in fotoğrafı →
+  /// hint → null (person icon).
   String? _previewAvatarUrl() {
+    // Önce gerçek profil fotoğrafı — varsa featured/check-in avatarına bakma.
+    final profilePhotoFirst = _profile?.user.photo?.trim();
+    if (profilePhotoFirst != null && profilePhotoFirst.isNotEmpty) {
+      return profilePhotoFirst;
+    }
+    final publicProfilePhotoFirst = _publicProfile?.photo?.trim();
+    if (publicProfilePhotoFirst != null && publicProfilePhotoFirst.isNotEmpty) {
+      return publicProfilePhotoFirst;
+    }
+
+    final checkinAvatar = _profile?.checkin.avatarPhoto?.trim();
+    if (checkinAvatar != null && checkinAvatar.isNotEmpty) {
+      return checkinAvatar;
+    }
+    final publicCheckinAvatar = _publicProfile?.activeCheckin?.avatarPhoto
+        ?.trim();
+    if (publicCheckinAvatar != null && publicCheckinAvatar.isNotEmpty) {
+      return publicCheckinAvatar;
+    }
     final photos =
         _profile?.media
             .where((m) => m.mediaType == MediaType.photo && m.url.isNotEmpty)
@@ -2100,6 +2505,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (profilePhoto != null && profilePhoto.isNotEmpty) {
       return profilePhoto;
     }
+    final publicProfilePhoto = _publicProfile?.photo?.trim();
+    if (publicProfilePhoto != null && publicProfilePhoto.isNotEmpty) {
+      return publicProfilePhoto;
+    }
     // Fallback modu (aktif check-in yok, _profile null): açan ekranın geçtiği
     // profil fotoğrafını kullan (ör. username aramasından).
     final hintPhoto = widget.userPhoto?.trim();
@@ -2109,21 +2518,28 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return null;
   }
 
+  bool get _hasPreviewStats => _profile != null || _publicProfile != null;
+
+  bool get _isPreviewVerified =>
+      _profile?.user.isVerified == true || _publicProfile?.isVerified == true;
+
   /// Ortalanmış, karemsi (radius 32) avatar — personal profil ile aynı dil.
   Widget _buildPreviewAvatar(String? url, bool isDark) {
     const size = 128.0;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(32),
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: url != null
-            ? Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _previewAvatarFallback(isDark),
-              )
-            : _previewAvatarFallback(isDark),
+    return Center(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(32),
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: url != null
+              ? CachedImage(
+                  url,
+                  fit: BoxFit.cover,
+                  errorWidget: (_) => _previewAvatarFallback(isDark),
+                )
+              : _previewAvatarFallback(isDark),
+        ),
       ),
     );
   }
@@ -2150,7 +2566,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       width: width,
       height: height,
       child: media.mediaType == MediaType.photo
-          ? Image.network(media.url, fit: BoxFit.cover)
+          ? CachedImage(media.url, fit: BoxFit.cover)
           : _buildVideoCover(media: media, fit: BoxFit.cover, iconSize: 30),
     );
 
@@ -2329,10 +2745,10 @@ class _SuggestedPersonaCard extends StatelessWidget {
                 ),
               ),
               child: ClipOval(
-                child: Image.network(
+                child: CachedImage(
                   persona.photo,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorWidget: (_) => Container(
                     color: isDark ? Colors.white12 : const Color(0xFFEDEFF3),
                     child: Icon(
                       Icons.person,

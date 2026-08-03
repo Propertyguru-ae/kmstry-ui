@@ -14,7 +14,6 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 
 enum _Step { search, contact, documents, review }
@@ -391,6 +390,11 @@ class _VenueContextOnboardingPageState
         tradeLicenceUrl: _tradeLicenceUrl,
         ownerVideoUrl: _ownerVideoUrl,
         hasDocuments: hasDocuments,
+      );
+      AuthRepository.invalidateMeCache();
+      await AuthRepository().switchContext(
+        lastActiveContext: 'VENUE',
+        activeVenueId: dbVenueId,
       );
       await _repo.deleteClaimDraft();
       if (!mounted) return;

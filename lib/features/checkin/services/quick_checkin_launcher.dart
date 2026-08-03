@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/features/checkin/presentation/nearby_venue_sheet
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 
 /// Quick check-in entry point shared by the Personal home CTA and the navbar
 /// centre icon. It decides between two paths (see [_shouldAutoSelect]):
@@ -33,6 +34,7 @@ class QuickCheckinLauncher {
   final VenueRepository _venues;
   final VenueContextRepository _venueContext;
   final LocationPermissionService _permission;
+  final VenueCheckinRepository _checkinRepo = VenueCheckinRepository();
 
   // ── UX decision thresholds (not security — the backend 200 m guard is) ──
   /// Closest venue must be within this to auto-open without the sheet.
@@ -52,16 +54,46 @@ class QuickCheckinLauncher {
   static const int _searchRadiusMeters = 300;
 
   /// Entry point. Acquires location, fetches nearby venues, then either opens
+  /// Her tap yeni bir [QuickCheckinLauncher] örneği oluşturuyor; bu yüzden
+  /// yeniden girişi örnek düzeyinde değil, statik bir bayrakla engelliyoruz —
+  /// navbar iconuna üst üste basılınca üst üste sheet açılmasın.
+  static bool _inFlight = false;
+
   /// the check-in page directly or the selection sheet.
   Future<void> launch(BuildContext context) async {
+    if (_inFlight) return;
+    _inFlight = true;
+    try {
+      await _launch(context);
+    } finally {
+      _inFlight = false;
+    }
+  }
+
+  Future<void> _launch(BuildContext context) async {
     final hasPermission = await _ensurePermission(context);
     if (!hasPermission || !context.mounted) return;
 
+    // Sheet için yaklaşık konum yeterli — check-in sayfası zaten yüksek
+    // doğrulukla yeniden ölçüp 200m guard'ını uyguluyor. Son bilinen konumu
+    // hemen kullan; yoksa orta doğrulukla ve 6 sn timeout ile al (high accuracy
+    // fix bazen 5-8 sn sürüp sheet'i geç açıyordu).
     Position? position = await Geolocator.getLastKnownPosition();
-    position ??= await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
+    if (position == null) {
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 6),
+        );
+      } catch (_) {
+        position = await Geolocator.getLastKnownPosition();
+      }
+    }
     if (!context.mounted) return;
+    if (position == null) {
+      _showSnack(context, 'Could not get your location. Try again.');
+      return;
+    }
 
     List<Venue> markers;
     try {
@@ -104,10 +136,19 @@ class QuickCheckinLauncher {
     }
 
     if (!context.mounted) return;
+    String? activeCheckinVenueId;
+    try {
+      final active = await _checkinRepo.getActiveCheckin();
+      activeCheckinVenueId = active?.venueId;
+    } catch (_) {
+      // Sessiz geç — rozet gösterilmez.
+    }
+    if (!context.mounted) return;
     final chosen = await showNearbyVenueSheet(
       context,
       venues: eligible,
       checkinMaxDistanceMeters: _checkinMaxDistanceMeters.toInt(),
+      activeCheckinVenueId: activeCheckinVenueId,
     );
     if (chosen == null || !context.mounted) return;
     await _openCheckin(context, chosen);

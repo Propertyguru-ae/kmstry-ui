@@ -11,19 +11,27 @@ Future<Venue?> showNearbyVenueSheet(
   BuildContext context, {
   required List<Venue> venues,
   required int checkinMaxDistanceMeters,
+  String? activeCheckinVenueId,
 }) {
   return showModalBottomSheet<Venue>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => _NearbyVenueSheet(venues: venues),
+    builder: (_) => _NearbyVenueSheet(
+      venues: venues,
+      activeCheckinVenueId: activeCheckinVenueId,
+    ),
   );
 }
 
 class _NearbyVenueSheet extends StatelessWidget {
-  const _NearbyVenueSheet({required this.venues});
+  const _NearbyVenueSheet({
+    required this.venues,
+    this.activeCheckinVenueId,
+  });
 
   final List<Venue> venues;
+  final String? activeCheckinVenueId;
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +109,9 @@ class _NearbyVenueSheet extends StatelessWidget {
                     return VenueListItem(
                       key: ValueKey(stableKey),
                       venue: venue,
+                      isActiveCheckin:
+                          activeCheckinVenueId != null &&
+                          venue.id == activeCheckinVenueId,
                       onTap: (v) => Navigator.pop(context, v),
                     );
                   },

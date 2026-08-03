@@ -1,26 +1,32 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
-import 'package:kmstry_frontend/features/people/data/suggested_person_item_model.dart';
-import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
 import 'package:kmstry_frontend/features/people/presentation/who_is_nearby_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
-import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/discover_events_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/my_events_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 
@@ -42,23 +48,33 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   final VenueRepository _venueRepo = VenueRepository();
   final StoryRepository _storyRepo = StoryRepository();
   final VenueEventRepository _eventRepo = VenueEventRepository();
-  final MatchRepository _matchRepo = MatchRepository();
+  final VenueContextRepository _venueContextRepo = VenueContextRepository();
   final LocationPermissionService _locationPermissionService =
       LocationPermissionService();
 
   ActiveCheckin? _activeCheckin;
   Venue? _activeVenue;
-  List<Venue> _recommendedVenues = const [];
+  // Story yüklenirken balon çemberi döner (venue detay ile aynı davranış).
+  bool _storyUploading = false;
+  List<TodayEvent> _followedEvents = const [];
+  // Boş-durum mesajını ayırt etmek için: kullanıcı hiç mekan takip ediyor mu?
+  bool _followsAnyVenue = false;
   List<StoryGroup> _stories = const [];
   List<TodayEvent> _events = const [];
-  List<SuggestedPersonItem> _suggestedPeople = const [];
+  List<Venue> _trendingVenues = const [];
+  List<TodayEvent> _discoverEvents = const [];
+  List<StoryItem> _myStories = const [];
   final Set<String> _viewedGroupIds = {};
 
   bool _loading = true;
 
-  /// TEMP: preview the home feed with fake stories/events on a real device.
-  /// Flip to false to go back to the live endpoints.
-  static const bool _useDummyData = true;
+  /// Home feed'i sahte stories/events ile önizleme. Env ile kontrol edilir:
+  ///   flutter run --dart-define=USE_DUMMY_HOME=true   → mock data görünür
+  ///   (varsayılan false)                              → gerçek endpoint'ler
+  static const bool _useDummyData = bool.fromEnvironment(
+    'USE_DUMMY_HOME',
+    defaultValue: false,
+  );
 
   @override
   void initState() {
@@ -89,7 +105,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
           if (mounted) setState(() => _activeVenue = venue);
         } catch (_) {}
       }
-      await Future.wait([_loadRecommendedVenues(), _loadSuggestedPeople()]);
+      await Future.wait([_loadFollowedEvents(), _loadTrendingVenues(), _loadMyStories(), _loadDiscoverEvents()]);
       return;
     }
 
@@ -115,39 +131,69 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
         // Non-fatal: banner still works with a minimal stub.
       }
     }
-    await Future.wait([_loadRecommendedVenues(), _loadSuggestedPeople()]);
+    await Future.wait([_loadFollowedEvents(), _loadTrendingVenues(), _loadMyStories(), _loadDiscoverEvents()]);
   }
 
-  Future<void> _loadSuggestedPeople() async {
-    try {
-      final people = await _matchRepo.getSuggestedForYou(limit: 10);
-      if (!mounted) return;
-      setState(() => _suggestedPeople = people);
-    } catch (_) {
-      if (mounted) setState(() => _suggestedPeople = const []);
-    }
-  }
-
-  Future<void> _loadRecommendedVenues() async {
+  Future<void> _loadTrendingVenues() async {
     try {
       final anchor = _activeVenue;
       Position? position;
       if (anchor == null && await _locationPermissionService.isGranted()) {
         position = await Geolocator.getLastKnownPosition();
-        position ??= await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.low,
-          timeLimit: const Duration(seconds: 4),
-        );
       }
-      final venues = await _venueRepo.getRecommendedVenuesForMe(
+      final venues = await _venueRepo.getTrendingVenues(
         latitude: anchor?.latitude ?? position?.latitude,
         longitude: anchor?.longitude ?? position?.longitude,
-        pageSize: 10,
+        limit: 10,
       );
       if (!mounted) return;
-      setState(() => _recommendedVenues = venues);
+      setState(() => _trendingVenues = venues);
     } catch (_) {
-      if (mounted) setState(() => _recommendedVenues = const []);
+      if (mounted) setState(() => _trendingVenues = const []);
+    }
+  }
+
+  // "Happening Nearby" → takip edilmeyen mekanların yakın event'leri (ilk 5).
+  Future<void> _loadDiscoverEvents() async {
+    try {
+      final anchor = _activeVenue;
+      Position? position;
+      if (anchor == null && await _locationPermissionService.isGranted()) {
+        position = await Geolocator.getLastKnownPosition();
+      }
+      final events = await _eventRepo.getDiscoverEvents(
+        latitude: anchor?.latitude ?? position?.latitude,
+        longitude: anchor?.longitude ?? position?.longitude,
+        limit: 5,
+      );
+      if (!mounted) return;
+      setState(() => _discoverEvents = events);
+    } catch (_) {
+      if (mounted) setState(() => _discoverEvents = const []);
+    }
+  }
+
+  // "Places you might like" → takip edilen venue'lerin yaklaşan event'leri.
+  Future<void> _loadFollowedEvents() async {
+    try {
+      final events = await _eventRepo.getFollowedVenuesEvents(limit: 12);
+      if (!mounted) return;
+      setState(() {
+        _followedEvents = events;
+        // Event varsa zaten mekan takip ediliyor demektir.
+        if (events.isNotEmpty) _followsAnyVenue = true;
+      });
+      // Event yoksa: hiç mi takip etmiyor, yoksa takip ettiklerinde event mi yok?
+      if (events.isEmpty) {
+        try {
+          final follows = await _venueContextRepo.getFollowedVenues();
+          if (mounted) {
+            setState(() => _followsAnyVenue = follows.isNotEmpty);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {
+      if (mounted) setState(() => _followedEvents = const []);
     }
   }
 
@@ -268,29 +314,6 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     );
   }
 
-  void _openSuggestedPerson(SuggestedPersonItem item) {
-    final active = item.activeCheckin;
-    final shared = item.sharedVenue;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ProfilePreviewPage(
-          checkinId: active?.id,
-          venueId: active?.venueId,
-          hintVenueId: active?.venueId ?? shared?.id,
-          hintVenueName: active?.venueName ?? shared?.name,
-          hintVenueType: active?.venueType ?? shared?.type,
-          hintVenuePhoto: active?.venuePhoto ?? shared?.photo,
-          userId: item.id,
-          userName: item.displayName,
-          userUsername: item.username,
-          userPhoto: item.photo,
-          fallbackBio: item.bio,
-        ),
-      ),
-    );
-  }
-
   void _openWhoIsHere(ActiveCheckin active) {
     Navigator.push(
       context,
@@ -352,6 +375,164 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     } catch (_) {}
   }
 
+  // ── "Your story" balonu ─────────────────────────────────────────────────
+  Future<void> _loadMyStories() async {
+    try {
+      final stories = await _storyRepo.getMyStories();
+      if (mounted) setState(() => _myStories = stories);
+    } catch (_) {}
+  }
+
+  List<StoryItem> get _myRealStories =>
+      _myStories.where((s) => !s.isUploadingPlaceholder).toList();
+
+  // Balona basınca: story varsa direkt izle; yoksa (check-in varsa) ekle;
+  // check-in yoksa bilgilendirme dialog'u. (Popup/seçenek menüsü yok.)
+  void _onMeStoryTap() {
+    if (_myRealStories.isNotEmpty) {
+      _viewMyStory();
+      return;
+    }
+    if (_activeCheckin == null) {
+      _showCheckinToShareDialog();
+      return;
+    }
+    _openAddStoryForActiveCheckin();
+  }
+
+  // "+" rozetine basınca: her zaman story ekle (check-in yoksa bilgilendir).
+  void _onMeAddStoryTap() {
+    if (_activeCheckin == null) {
+      _showCheckinToShareDialog();
+      return;
+    }
+    _openAddStoryForActiveCheckin();
+  }
+
+  /// Kendi mevcut story'sini izle (venue detaydaki mantıkla aynı).
+  void _viewMyStory() {
+    final mine = _myRealStories;
+    if (mine.isEmpty) return;
+    final meGroup = StoryGroup(
+      user: StoryUser(id: 'me', fullName: 'You'),
+      stories: _myStories,
+      isCurrentUserOwner: true,
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: [meGroup],
+          initialGroupIndex: 0,
+        ),
+      ),
+    ).then((_) {
+      if (mounted) _loadMyStories();
+    });
+  }
+
+  /// Check-in yokken: story paylaşmak için önce check-in gerektiğini anlatan
+  /// etkileyici bilgilendirme + "yakındaki mekanlar" CTA'sı. (App-geneli dialog
+  /// stili: ikon-başlıklı AlertDialog, tema şekli.)
+  void _showCheckinToShareDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.auto_awesome_rounded, size: 28),
+        title: const Text('Share your moment'),
+        content: const Text(
+          "Check in to a venue first — that's where your story comes alive for "
+          'everyone there. Find a spot near you and start sharing!',
+        ),
+        // Her ikisi de text buton → yanyana sığar.
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Not now'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              QuickCheckinLauncher().launch(context);
+            },
+            child: const Text('Browse nearby spots'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Aktif check-in varken: kamera aç → çekilen medyayı story olarak paylaş.
+  Future<void> _openAddStoryForActiveCheckin() async {
+    final checkinId = _activeCheckin?.id;
+    if (checkinId == null || checkinId.isEmpty) return;
+
+    final dynamic captureResult = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const CameraScreen(useFrontCamera: true),
+      ),
+    );
+    if (!mounted) return;
+
+    final File? file = captureResult is CapturedMedia
+        ? captureResult.file
+        : captureResult as File?;
+    final overlay = captureResult is CapturedMedia
+        ? captureResult.overlay
+        : null;
+    if (file == null) return;
+
+    final path = file.path.toLowerCase();
+    final isVideo =
+        path.endsWith('.mp4') ||
+        path.endsWith('.mov') ||
+        path.endsWith('.avi') ||
+        path.endsWith('.m4v');
+
+    // Kutlama kartı için overlay'i async gap'ten önce yakala.
+    final rootOverlay = Overlay.maybeOf(context, rootOverlay: true);
+
+    setState(() => _storyUploading = true);
+
+    try {
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: file,
+        mediaType: isVideo ? 'video' : 'photo',
+        textOverlayJson: overlay?.toJsonString(),
+      );
+      if (mounted) {
+        setState(() => _storyUploading = false);
+        _loadHomeStories();
+        _loadMyStories();
+      }
+      // "Story shared" kutlama kartı — venue detay ile aynı bileşen.
+      if (rootOverlay != null) {
+        final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
+            ? _activeVenue!.name
+            : (_activeCheckin?.venueName ?? 'your venue');
+        showStorySharedCard(
+          rootOverlay,
+          mediaFile: file,
+          venueName: venueName,
+          isVideo: isVideo,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _storyUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Story paylaşılamadı. Tekrar dene.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   void _openEvent(TodayEvent item) {
     Navigator.push(
       context,
@@ -367,6 +548,36 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       context,
       MaterialPageRoute(
         builder: (_) => const MyEventsPage(initialFilter: 'today'),
+      ),
+    );
+  }
+
+  void _openDiscoverEvents() {
+    final anchor = _activeVenue;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DiscoverEventsPage(
+          latitude: anchor?.latitude,
+          longitude: anchor?.longitude,
+        ),
+      ),
+    );
+  }
+
+  // "Up Next at Your Spots" → See more: takip edilen mekanların tüm event'leri
+  // (Happening Nearby ile aynı takvim/filtre tasarımı, scope='followed').
+  void _openFollowedEvents() {
+    final anchor = _activeVenue;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DiscoverEventsPage(
+          latitude: anchor?.latitude,
+          longitude: anchor?.longitude,
+          scope: 'followed',
+          title: 'Up Next at Your Spots',
+        ),
       ),
     );
   }
@@ -389,15 +600,16 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     final active = _activeCheckin;
     final hasStories = _stories.isNotEmpty;
     final hasEvents = _events.isNotEmpty;
-    final hasRecommendations = _recommendedVenues.isNotEmpty;
-    final hasSuggestedPeople = _suggestedPeople.isNotEmpty;
+    final hasFollowedEvents = _followedEvents.isNotEmpty;
+    final hasTrending = _trendingVenues.isNotEmpty;
+    final hasDiscover = _discoverEvents.isNotEmpty;
     final nothingYet =
         !_loading &&
         active == null &&
         !hasStories &&
         !hasEvents &&
-        !hasRecommendations &&
-        !hasSuggestedPeople;
+        !hasFollowedEvents &&
+        !hasTrending;
 
     return Scaffold(
       backgroundColor: bg,
@@ -414,7 +626,22 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
             color: colors.onSurface,
           ),
         ),
-        actions: const [NotificationBell(), SizedBox(width: 4)],
+        actions: [
+          IconButton(
+            tooltip: 'Find friends',
+            icon: Icon(
+              Icons.person_add_alt_1_outlined,
+              color: colors.onSurface,
+            ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const FindFriendsPage()),
+              );
+            },
+          ),
+          const NotificationBell(),
+          const SizedBox(width: 4),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(color: borderColor, height: 1),
@@ -467,19 +694,30 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
               ),
             ],
 
-            // ── Personalized venue recommendations ───────────────────────
-            if (hasRecommendations) ...[
+            // ── Up Next at Your Spots — takip edilen venue'lerin event'leri.
+            //    Veri yoksa (ve yükleme bittiyse) etkileyici boş-durum mesajı.
+            if (hasFollowedEvents) ...[
               const SizedBox(height: 24),
-              _SectionTitle(title: 'Places you might like'),
-              const SizedBox(height: 12),
-              _RecommendedVenuesRow(
-                venues: _recommendedVenues,
-                onTap: _openRecommendedVenue,
+              _SectionTitle(
+                title: 'Up Next at Your Spots',
+                actionLabel: 'See more',
+                onAction: _openFollowedEvents,
               ),
+              const SizedBox(height: 12),
+              _FollowedEventsRow(
+                events: _followedEvents,
+                onTap: _openEvent,
+              ),
+            ] else if (!_loading) ...[
+              const SizedBox(height: 24),
+              _SectionTitle(title: 'Up Next at Your Spots'),
+              const SizedBox(height: 12),
+              _FollowedEventsEmpty(followsAnyVenue: _followsAnyVenue),
             ],
 
-            // ── Stories row ────────────────────────────────────────────────
-            if (hasStories) ...[
+            // ── Stories row — her zaman "Your story" balonu + varsa
+            //    arkadaş/venue story'leri. Check-in yoksa balon inactive olur.
+            if (!_loading) ...[
               const SizedBox(height: 22),
               _SectionTitle(title: 'Stories'),
               const SizedBox(height: 12),
@@ -487,10 +725,23 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                 stories: _stories,
                 isViewed: _isGroupViewed,
                 onTap: _openStories,
+                hasActiveCheckin: _activeCheckin != null,
+                hasMyStory: _myRealStories.isNotEmpty,
+                // Öncelik: gerçek story → kullanıcının avatarı → check-in'de
+                // seçilen featured foto (avatar yoksa).
+                myBubbleImageUrl: _myRealStories.isNotEmpty
+                    ? (_myRealStories.first.thumbnailUrl ??
+                          _myRealStories.first.mediaUrl)
+                    : ((_activeCheckin?.userPhoto?.isNotEmpty ?? false)
+                          ? _activeCheckin!.userPhoto
+                          : _activeCheckin?.featuredPhoto),
+                onMeTap: _onMeStoryTap,
+                onMeAddTap: _onMeAddStoryTap,
+                isUploading: _storyUploading,
               ),
             ],
 
-            // ── Today's events ─────────────────────────────────────────────
+            // ── Today's events — veri yoksa boş-durum mesajı + See more ──────
             if (hasEvents) ...[
               const SizedBox(height: 20),
               _SectionTitle(
@@ -505,16 +756,41 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                   child: _EventCard(item: e, onTap: () => _openEvent(e)),
                 ),
               ),
+            ] else if (!_loading) ...[
+              const SizedBox(height: 20),
+              _SectionTitle(
+                title: "Today's events",
+                actionLabel: 'See more',
+                onAction: _openMyEvents,
+              ),
+              const SizedBox(height: 10),
+              const _TodaysEventsEmpty(),
             ],
 
-            // ── People suggestions from shared venue taste ─────────────────
-            if (hasSuggestedPeople) ...[
+            // ── Trending Now — most-searched venues (same design as
+            //    "Places you might like") ────────────────────────────────────
+            if (hasTrending) ...[
               const SizedBox(height: 20),
-              _SectionTitle(title: 'Suggested for you'),
+              _SectionTitle(title: 'Trending Now'),
               const SizedBox(height: 12),
-              _SuggestedPeopleRow(
-                people: _suggestedPeople,
-                onTap: _openSuggestedPerson,
+              _RecommendedVenuesRow(
+                venues: _trendingVenues,
+                onTap: _openRecommendedVenue,
+              ),
+            ],
+
+            // ── Happening Nearby — takip edilmeyen mekanların yakın event'leri.
+            if (hasDiscover) ...[
+              const SizedBox(height: 20),
+              _SectionTitle(
+                title: 'Happening Nearby',
+                actionLabel: 'See more',
+                onAction: _openDiscoverEvents,
+              ),
+              const SizedBox(height: 12),
+              _DiscoverEventsList(
+                events: _discoverEvents,
+                onTap: _openEvent,
               ),
             ],
 
@@ -594,26 +870,240 @@ class _StoriesRow extends StatelessWidget {
     required this.stories,
     required this.isViewed,
     required this.onTap,
+    required this.hasActiveCheckin,
+    required this.hasMyStory,
+    required this.onMeTap,
+    required this.onMeAddTap,
+    this.myBubbleImageUrl,
+    this.isUploading = false,
   });
 
   final List<StoryGroup> stories;
   final bool Function(StoryGroup) isViewed;
   final void Function(int index) onTap;
 
+  /// "Your story" balonu: check-in varsa aktif (story ekle/izle), yoksa inactive
+  /// (basınca bilgilendirme + "yakındaki mekanlar" CTA'sı).
+  final bool hasActiveCheckin;
+  final bool hasMyStory;
+  final VoidCallback onMeTap;
+  final VoidCallback onMeAddTap;
+  final String? myBubbleImageUrl;
+  final bool isUploading;
+
   @override
   Widget build(BuildContext context) {
+    // İlk item her zaman "Your story" balonu.
+    final itemCount = stories.length + 1;
     return SizedBox(
       height: 96,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: stories.length,
+        itemCount: itemCount,
         separatorBuilder: (context, index) => const SizedBox(width: 14),
-        itemBuilder: (context, i) => _StoryBubble(
-          group: stories[i],
-          viewed: isViewed(stories[i]),
-          onTap: () => onTap(i),
-        ),
+        itemBuilder: (context, i) {
+          if (i == 0) {
+            return _MeStoryBubble(
+              active: hasActiveCheckin,
+              hasStory: hasMyStory,
+              imageUrl: myBubbleImageUrl,
+              onTap: onMeTap,
+              onAddTap: onMeAddTap,
+              uploading: isUploading,
+            );
+          }
+          final s = stories[i - 1];
+          return _StoryBubble(
+            group: s,
+            viewed: isViewed(s),
+            onTap: () => onTap(i - 1),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Kullanıcının kendi "Your story" balonu (karemsi). Aktifken (+ ile) story
+/// eklenir; inactive iken gri görünür ve basınca check-in bilgilendirmesi çıkar.
+class _MeStoryBubble extends StatefulWidget {
+  const _MeStoryBubble({
+    required this.active,
+    required this.hasStory,
+    required this.onTap,
+    required this.onAddTap,
+    this.imageUrl,
+    this.uploading = false,
+  });
+
+  final bool active;
+  final bool hasStory;
+  final VoidCallback onTap;
+  final VoidCallback onAddTap;
+  final String? imageUrl;
+  final bool uploading;
+
+  @override
+  State<_MeStoryBubble> createState() => _MeStoryBubbleState();
+}
+
+class _MeStoryBubbleState extends State<_MeStoryBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin;
+
+  @override
+  void initState() {
+    super.initState();
+    _spin = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    if (widget.uploading) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MeStoryBubble old) {
+    super.didUpdateWidget(old);
+    if (widget.uploading && !_spin.isAnimating) {
+      _spin.repeat();
+    } else if (!widget.uploading && _spin.isAnimating) {
+      _spin.stop();
+      _spin.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final uploading = widget.uploading;
+
+    const avatarSize = 58.0;
+    const ringPad = 3.0;
+    const ringStroke = 2.4;
+    const avatarRadius = 12.0;
+    final totalSize = avatarSize + (ringPad + ringStroke) * 2;
+
+    // Story varsa marka-gradyan halka (izlenebilir); check-in var ama story yok
+    // → düz primary; check-in yok → gri (inactive).
+    const brandColors = [
+      AppColors.magenta,
+      AppColors.teal,
+      AppColors.blue,
+      AppColors.orange,
+      AppColors.brand,
+    ];
+    final List<Color> ringColors = (widget.hasStory || uploading)
+        ? brandColors
+        : (widget.active
+              ? [colors.primary, colors.primary]
+              : [
+                  colors.onSurface.withValues(alpha: 0.2),
+                  colors.onSurface.withValues(alpha: 0.2),
+                ]);
+
+    Widget base = ClipRRect(
+      borderRadius: BorderRadius.circular(avatarRadius),
+      child: (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
+          ? CachedImage(widget.imageUrl!,
+              width: avatarSize, height: avatarSize, fit: BoxFit.cover)
+          : Container(
+              width: avatarSize,
+              height: avatarSize,
+              color: colors.onSurface.withValues(alpha: 0.06),
+              child: Icon(
+                Icons.person_rounded,
+                color: colors.onSurface.withValues(alpha: 0.35),
+                size: 30,
+              ),
+            ),
+    );
+    if (!widget.active && !uploading) {
+      base = Opacity(opacity: 0.55, child: base);
+    }
+
+    final ring = CustomPaint(
+      size: Size(totalSize, totalSize),
+      painter: _HomeSquareRingPainter(
+        colors: ringColors,
+        strokeWidth: ringStroke,
+        radius: avatarRadius + ringPad + ringStroke,
+      ),
+    );
+
+    return GestureDetector(
+      onTap: uploading ? null : widget.onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Dış Stack: "+" rozeti balonun dış köşesine taşabilsin (kolay basılır).
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              SizedBox(
+                width: totalSize,
+                height: totalSize,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Yükleme sırasında halka döner (venue detay ile aynı efekt).
+                    uploading
+                        ? RotationTransition(turns: _spin, child: ring)
+                        : ring,
+                    base,
+                  ],
+                ),
+              ),
+              // Yüklenmiyorsa "+" ekle rozeti (ayrı tıklanır); check-in yok → kilit.
+              if (!uploading)
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: GestureDetector(
+                    onTap: widget.onAddTap,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: widget.active
+                            ? colors.primary
+                            : colors.onSurface.withValues(alpha: 0.45),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: theme.scaffoldBackgroundColor,
+                          width: 2.5,
+                        ),
+                      ),
+                      child: Icon(
+                        widget.active ? Icons.add_rounded : Icons.lock_rounded,
+                        size: 15,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Your story',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w400,
+              color: colors.onSurface.withValues(alpha: 0.8),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -649,12 +1139,12 @@ class _StoryBubble extends StatelessWidget {
     Widget avatar = ClipRRect(
       borderRadius: BorderRadius.circular(avatarRadius),
       child: (image != null && image.isNotEmpty)
-          ? Image.network(
+          ? CachedImage(
               image,
               width: avatarSize,
               height: avatarSize,
               fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) =>
+              errorWidget: (context) =>
                   _avatarFallback(colors, isVenue, label, avatarSize),
             )
           : _avatarFallback(colors, isVenue, label, avatarSize),
@@ -777,7 +1267,7 @@ class _RecommendedVenuesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 214,
+      height: 282,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -817,7 +1307,7 @@ class _RecommendedVenueCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Ink(
-          width: 212,
+          width: 272,
           decoration: BoxDecoration(
             color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
             borderRadius: BorderRadius.circular(18),
@@ -842,12 +1332,12 @@ class _RecommendedVenueCard extends StatelessWidget {
                 ),
                 child: SizedBox(
                   width: double.infinity,
-                  height: 116,
+                  height: 164,
                   child: photo.isNotEmpty
-                      ? Image.network(
+                      ? CachedImage(
                           photo,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
+                          errorWidget: (context) =>
                               _venuePhotoFallback(colors),
                         )
                       : _venuePhotoFallback(colors),
@@ -954,50 +1444,159 @@ class _RecommendedVenueCard extends StatelessWidget {
   }
 }
 
-class _SuggestedPeopleRow extends StatelessWidget {
-  const _SuggestedPeopleRow({required this.people, required this.onTap});
+/// "Places you might like" — horizontal carousel of upcoming events from the
+/// venues the user follows. Cover photo + title + description + a CTA that
+/// opens the event detail.
+/// "Up Next at Your Spots" boş-durumu: kullanıcı henüz mekan takip etmiyorsa ya
+/// da takip ettiklerinin yaklaşan event'i yoksa gösterilen etkileyici mesaj.
+class _FollowedEventsEmpty extends StatelessWidget {
+  const _FollowedEventsEmpty({required this.followsAnyVenue});
 
-  final List<SuggestedPersonItem> people;
-  final ValueChanged<SuggestedPersonItem> onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 206,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: people.length,
-        separatorBuilder: (context, index) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final person = people[index];
-          return _SuggestedPersonCard(
-            person: person,
-            onTap: () => onTap(person),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _SuggestedPersonCard extends StatelessWidget {
-  const _SuggestedPersonCard({required this.person, required this.onTap});
-
-  final SuggestedPersonItem person;
-  final VoidCallback onTap;
+  /// Kullanıcı en az bir mekan takip ediyor mu? Mesaj buna göre değişir.
+  final bool followsAnyVenue;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final photo = person.photo?.trim() ?? '';
-    final shared = person.sharedVenue;
-    final reason = person.suggestionReason.trim().isNotEmpty
-        ? person.suggestionReason.trim()
-        : 'You both visited similar places';
+
+    // Mekan takip ediyor ama etkinlik yok → farklı mesaj.
+    final title = followsAnyVenue
+        ? 'No upcoming events at the venues you follow.'
+        : "Follow your favorite spots and never miss what's next.";
+    final subtitle = followsAnyVenue
+        ? 'Check back soon — new events will show up here.'
+        : 'Follow venues to stay in the loop on their upcoming events.';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06),
+          ),
+          boxShadow: [
+            if (!isDark)
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                Icons.event_available_rounded,
+                color: colors.primary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: colors.onSurface,
+                      fontSize: 14.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.6),
+                      fontSize: 12.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FollowedEventsRow extends StatelessWidget {
+  const _FollowedEventsRow({required this.events, required this.onTap});
+
+  final List<TodayEvent> events;
+  final ValueChanged<TodayEvent> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 288,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: events.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final item = events[index];
+          return _FollowedEventCard(item: item, onTap: () => onTap(item));
+        },
+      ),
+    );
+  }
+}
+
+class _FollowedEventCard extends StatelessWidget {
+  const _FollowedEventCard({required this.item, required this.onTap});
+
+  final TodayEvent item;
+  final VoidCallback onTap;
+
+  static const List<String> _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  static const List<String> _weekdays = [
+    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+  ];
+
+  String _dateLabel(DateTime dt) {
+    final l = dt.toLocal();
+    final time =
+        '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+    return '${_weekdays[l.weekday - 1]}, ${l.day} ${_months[l.month - 1]} · $time';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final event = item.event;
+    // Kapak: event'in ilk fotoğrafı, yoksa venue fotoğrafı.
+    final photo = (event.photo != null && event.photo!.isNotEmpty)
+        ? event.photo!
+        : (event.photos.isNotEmpty
+              ? event.photos.first
+              : (item.venuePhoto ?? ''));
+    final description = (event.description ?? '').trim();
 
     return Material(
       color: Colors.transparent,
@@ -1005,8 +1604,7 @@ class _SuggestedPersonCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Ink(
-          width: 218,
-          padding: const EdgeInsets.all(12),
+          width: 230,
           decoration: BoxDecoration(
             color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
             borderRadius: BorderRadius.circular(18),
@@ -1025,76 +1623,201 @@ class _SuggestedPersonCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SuggestedPersonAvatar(photo: photo, label: person.displayName),
-              const SizedBox(height: 8),
-              Text(
-                person.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colors.onSurface,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                person.username.isNotEmpty
-                    ? '@${person.username}'
-                    : 'New person',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colors.onSurface.withValues(alpha: 0.58),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: colors.primary.withValues(alpha: isDark ? 0.14 : 0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  reason,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.primary,
-                    fontSize: 11.5,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              if (shared != null && shared.name.trim().isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.place_rounded,
-                      size: 13,
-                      color: colors.onSurface.withValues(alpha: 0.48),
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(18),
                     ),
-                    const SizedBox(width: 4),
-                    Expanded(
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 120,
+                      child: photo.isNotEmpty
+                          ? CachedImage(
+                              photo,
+                              fit: BoxFit.cover,
+                              errorWidget: (context) => _cover(colors),
+                            )
+                          : _cover(colors),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.62),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
                       child: Text(
-                        shared.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.58),
-                          fontSize: 11.5,
+                        _dateLabel(event.startAt),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                  ],
+                  ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.venueName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.55),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        event.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.onSurface,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: Text(
+                          description.isNotEmpty
+                              ? description
+                              : 'Tap to see what this event is about.',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.62),
+                            fontSize: 12.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 36,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'View details',
+                                style: TextStyle(
+                                  color: colors.onPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.arrow_forward_rounded,
+                                size: 15,
+                                color: colors.onPrimary,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cover(ColorScheme colors) {
+    return Container(
+      color: colors.primary.withValues(alpha: 0.12),
+      child: Icon(
+        Icons.event,
+        color: colors.primary.withValues(alpha: 0.75),
+        size: 32,
+      ),
+    );
+  }
+}
+
+/// Happening Nearby → yatay (manzara) kartların alt alta listesi.
+/// Solda kapak fotoğrafı, sağda mekan adı / başlık / tarih / açıklama.
+class _DiscoverEventsList extends StatelessWidget {
+  const _DiscoverEventsList({required this.events, required this.onTap});
+
+  final List<TodayEvent> events;
+  final ValueChanged<TodayEvent> onTap;
+
+  // Kart yüksekliği + kartlar arası boşluk (scroll yüksekliğini hesaplamak için).
+  static const double _cardHeight = 122;
+  static const double _gap = 12;
+  static const int _maxVisible = 3;
+
+  @override
+  Widget build(BuildContext context) {
+    // 3 veya daha az kart → düz liste. Fazlası → 3 kart yüksekliğinde kayan liste.
+    if (events.length <= _maxVisible) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          children: [
+            for (int i = 0; i < events.length; i++) ...[
+              if (i > 0) const SizedBox(height: _gap),
+              _DiscoverEventCard(
+                item: events[i],
+                onTap: () => onTap(events[i]),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    // 3 tam kart + sonraki kartın bir kısmını (peek) göster → "devamı var" sinyali.
+    const double peek = 30;
+    final scrollHeight =
+        _cardHeight * _maxVisible + _gap * _maxVisible + peek;
+    return SizedBox(
+      height: scrollHeight,
+      // Alt kenarda solma (fade) efekti: peek eden kart aşağı doğru silinir,
+      // böylece kaydırılabilir olduğu belli olur.
+      child: ShaderMask(
+        shaderCallback: (rect) => const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black, Colors.black, Colors.transparent],
+          stops: [0.0, 0.86, 1.0],
+        ).createShader(rect),
+        blendMode: BlendMode.dstIn,
+        child: ListView.separated(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, peek),
+          physics: const BouncingScrollPhysics(),
+          itemCount: events.length,
+          separatorBuilder: (context, index) => const SizedBox(height: _gap),
+          itemBuilder: (context, index) => _DiscoverEventCard(
+            item: events[index],
+            onTap: () => onTap(events[index]),
           ),
         ),
       ),
@@ -1102,44 +1825,242 @@ class _SuggestedPersonCard extends StatelessWidget {
   }
 }
 
-class _SuggestedPersonAvatar extends StatelessWidget {
-  const _SuggestedPersonAvatar({required this.photo, required this.label});
+class _DiscoverEventCard extends StatelessWidget {
+  const _DiscoverEventCard({required this.item, required this.onTap});
 
-  final String photo;
-  final String label;
+  final TodayEvent item;
+  final VoidCallback onTap;
+
+  static const List<String> _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  static const List<String> _weekdays = [
+    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+  ];
+
+  String _dateLabel(DateTime dt) {
+    final l = dt.toLocal();
+    final time =
+        '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+    return '${_weekdays[l.weekday - 1]}, ${l.day} ${_months[l.month - 1]} · $time';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        width: 68,
-        height: 68,
-        child: photo.isNotEmpty
-            ? Image.network(
-                photo,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => _fallback(colors),
-              )
-            : _fallback(colors),
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final event = item.event;
+    final photo = (event.photo != null && event.photo!.isNotEmpty)
+        ? event.photo!
+        : (event.photos.isNotEmpty
+              ? event.photos.first
+              : (item.venuePhoto ?? ''));
+    final description = (event.description ?? '').trim();
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06),
+            ),
+            boxShadow: [
+              if (!isDark)
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+            ],
+          ),
+          child: SizedBox(
+            height: 122,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(16),
+                  ),
+                  child: SizedBox(
+                    width: 112,
+                    height: 122,
+                    child: photo.isNotEmpty
+                        ? CachedImage(
+                            photo,
+                            fit: BoxFit.cover,
+                            width: 112,
+                            height: 122,
+                            errorWidget: (context) => _cover(colors),
+                          )
+                        : _cover(colors),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 11, 6, 11),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          item.venueName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          event.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.onSurface,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.schedule,
+                              size: 13,
+                              color: colors.primary.withValues(alpha: 0.8),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _dateLabel(event.startAt),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colors.onSurface.withValues(alpha: 0.6),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (description.isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Flexible(
+                            child: Text(
+                              description,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.onSurface.withValues(alpha: 0.62),
+                                fontSize: 12.5,
+                                height: 1.3,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Center(
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: colors.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _fallback(ColorScheme colors) {
-    final initial = label.trim().isNotEmpty
-        ? label.trim()[0].toUpperCase()
-        : '?';
+  Widget _cover(ColorScheme colors) {
     return Container(
-      color: colors.primary.withValues(alpha: 0.13),
-      alignment: Alignment.center,
-      child: Text(
-        initial,
-        style: TextStyle(
-          color: colors.primary,
-          fontSize: 26,
-          fontWeight: FontWeight.w900,
+      color: colors.primary.withValues(alpha: 0.12),
+      child: Icon(
+        Icons.event,
+        color: colors.primary.withValues(alpha: 0.75),
+        size: 30,
+      ),
+    );
+  }
+}
+
+/// "Today's events" boş-durumu: bugün için katılınan bir event yok.
+class _TodaysEventsEmpty extends StatelessWidget {
+  const _TodaysEventsEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06),
+          ),
+          boxShadow: [
+            if (!isDark)
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                Icons.celebration_outlined,
+                color: colors.primary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                "You haven't joined any events for today.",
+                style: TextStyle(
+                  color: colors.onSurface.withValues(alpha: 0.8),
+                  fontSize: 13.5,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1185,11 +2106,10 @@ class _EventCard extends StatelessWidget {
                   width: 72,
                   height: 72,
                   child: photo.isNotEmpty
-                      ? Image.network(
+                      ? CachedImage(
                           photo,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              _photoFallback(colors),
+                          errorWidget: (context) => _photoFallback(colors),
                         )
                       : _photoFallback(colors),
                 ),
@@ -1389,13 +2309,14 @@ class _ActiveCheckinLine extends StatelessWidget {
         text: TextSpan(
           style: baseStyle,
           children: [
-            const TextSpan(text: 'You have an active check-in at '),
+            const TextSpan(text: 'You are at '),
             TextSpan(
               text: venueName,
               style: TextStyle(
                 color: colors.primary,
-                fontWeight: FontWeight.w800,
-                decoration: TextDecoration.underline,
+                fontWeight: FontWeight.w900,
+                fontSize: 17,
+                letterSpacing: 0.2,
                 decorationColor: colors.primary,
               ),
             ),
@@ -1618,7 +2539,7 @@ class _CheckinCta extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Share your moments. Catch the vibe.',
+                        'Share your moments. Check in now.',
                         style: TextStyle(
                           fontSize: 13,
                           color: colors.onPrimary.withValues(alpha: 0.85),

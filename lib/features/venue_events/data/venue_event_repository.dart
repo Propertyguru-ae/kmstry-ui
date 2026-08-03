@@ -15,11 +15,15 @@ class TodayEvent {
   final String venueName;
   final String? venuePhoto;
 
+  /// "Happening Nearby" / Discover için mekana uzaklık (metre). Yoksa null.
+  final int? distanceMeters;
+
   const TodayEvent({
     required this.event,
     required this.venueId,
     required this.venueName,
     this.venuePhoto,
+    this.distanceMeters,
   });
 
   factory TodayEvent.fromJson(Map<String, dynamic> j) => TodayEvent(
@@ -27,6 +31,9 @@ class TodayEvent {
     venueId: (j['venueId'] ?? j['venue_id'] ?? '').toString(),
     venueName: (j['venueName'] ?? j['venue_name'] ?? '').toString(),
     venuePhoto: (j['venuePhoto'] ?? j['venue_photo'])?.toString(),
+    distanceMeters: (j['distanceMeters'] ?? j['distance_meters']) is num
+        ? ((j['distanceMeters'] ?? j['distance_meters']) as num).toInt()
+        : null,
   );
 }
 
@@ -57,6 +64,85 @@ class VenueEventRepository {
         .whereType<Map>()
         .map((e) => TodayEvent.fromJson(Map<String, dynamic>.from(e)))
         .toList();
+  }
+
+  /// Home feed "Places you might like": takip edilen venue'lerin yaklaşan
+  /// event'leri. Boş liste → bölüm gizlenir.
+  Future<List<TodayEvent>> getFollowedVenuesEvents({int limit = 20}) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/me/following/events?limit=$limit',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return (data as List)
+        .whereType<Map>()
+        .map((e) => TodayEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// "Happening Nearby" / Discover Events: takip edilmeyen mekanların yaklaşan
+  /// event'leri. Konum verilirse mesafeye göre sıralı. Opsiyonel filtreler:
+  /// [platform] (partnership) ve [when] ('today'|'week'|'month'|'all').
+  Future<List<TodayEvent>> getDiscoverEvents({
+    double? latitude,
+    double? longitude,
+    int limit = 20,
+    int offset = 0,
+    String? platform,
+    String? when,
+    DateTime? from,
+    DateTime? to,
+    String? scope,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final params = <String, String>{
+      'limit': '$limit',
+      'offset': '$offset',
+      if (latitude != null) 'latitude': '$latitude',
+      if (longitude != null) 'longitude': '$longitude',
+      if (platform != null && platform.isNotEmpty) 'platform': platform,
+      if (when != null && when.isNotEmpty && when != 'all') 'when': when,
+      if (from != null) 'from': from.toIso8601String(),
+      if (to != null) 'to': to.toIso8601String(),
+      if (scope != null && scope.isNotEmpty) 'scope': scope,
+    };
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    final data = await _api.get(
+      '/venues/events/discover?$query',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return (data as List)
+        .whereType<Map>()
+        .map((e) => TodayEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<Set<String>> getDiscoverEventsCalendarDays({
+    required int year,
+    required int month,
+    String? platform,
+    String? scope,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final params = <String, String>{
+      'year': '$year',
+      'month': '$month',
+      if (platform != null && platform.isNotEmpty) 'platform': platform,
+      if (scope != null && scope.isNotEmpty) 'scope': scope,
+    };
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    final data = await _api.get(
+      '/venues/events/discover/calendar?$query',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (data is! Map) return <String>{};
+    final days = data['days'];
+    if (days is! List) return <String>{};
+    return days.map((e) => e.toString()).toSet();
   }
 
   /// Hafif event listesi — owner-stats'ın ağır sorgusunu çalıştırmaz.

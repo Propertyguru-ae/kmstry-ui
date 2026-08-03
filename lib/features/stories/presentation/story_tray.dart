@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
@@ -397,7 +398,7 @@ Widget _squareAvatar({
     child: ClipRRect(
       borderRadius: BorderRadius.circular(_kAvatarRadius),
       child: imageUrl != null && imageUrl.isNotEmpty
-          ? Image.network(imageUrl, fit: BoxFit.cover)
+          ? CachedImage(imageUrl, fit: BoxFit.cover)
           : placeholder,
     ),
   );

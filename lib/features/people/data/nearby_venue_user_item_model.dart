@@ -25,6 +25,8 @@ class NearbyVenueUserItem {
     this.isFeaturedVideo = false,
   });
 
+  // Attendee kartı: kişinin o mekandaki temsili olan featured foto öncelikli;
+  // yoksa profil fotoğrafı.
   String get displayPhoto =>
       (featuredMediaUrl != null && featuredMediaUrl!.trim().isNotEmpty)
       ? featuredMediaUrl!.trim()
