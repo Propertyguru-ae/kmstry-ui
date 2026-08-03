@@ -176,6 +176,11 @@ class _LoginPageState extends State<LoginPage> {
       final code = error.data['errorCode']?.toString();
       final message = _extractBackendMessage(error.data);
 
+      if (code == 'ACCOUNT_BANNED') {
+        return message.isNotEmpty
+            ? message
+            : 'Your account has been suspended. Please contact support if you believe this is a mistake.';
+      }
       if (code == 'INVALID_CREDENTIALS' || code == 'AUTH_INVALID_CREDENTIALS') {
         return 'The email or password you entered is incorrect.';
       }

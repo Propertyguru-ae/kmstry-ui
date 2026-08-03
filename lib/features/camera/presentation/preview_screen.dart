@@ -613,7 +613,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                           color: Colors.black,
                         ),
                       )
-                    : const Text("Use Photo"),
+                    : const Text("Use"),
               ),
             ),
           ],

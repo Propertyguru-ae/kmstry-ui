@@ -14,6 +14,8 @@ import '../../venue/presentation/profile_preview_page.dart';
 import '../../venue_stories/data/venue_story_viewed_cache.dart';
 import '../../stories/data/story_viewed_cache.dart';
 import '../../../core/push/push_manager.dart';
+import '../../../core/checkin/checkin_ping_manager.dart';
+import '../../checkin/services/active_checkin_service.dart';
 
 class AuthRepository {
   // ── One-time app bootstrap ────────────────────────────────────────────────
@@ -25,6 +27,8 @@ class AuthRepository {
     };
 
     ApiClient.onSessionExpired = () async {
+      CheckinPingManager.I.stop();
+      ActiveCheckinService().clear();
       await SecureStorage.clearSession();
       invalidateMeCache();
       ProfilePreviewPage.clearActionStateCache();
@@ -187,6 +191,19 @@ class AuthRepository {
     );
   }
 
+  Future<void> acceptActiveLegalVersions() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) throw Exception('Not authenticated');
+
+    final response = await _api.acceptActiveLegalVersions(accessToken: token);
+    if (response['success'] == true) {
+      invalidateMeCache();
+      return;
+    }
+
+    throw Exception(response['message'] ?? 'Failed to accept legal documents');
+  }
+
   Future<List<String>> getUsernameSuggestions(String base) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
@@ -302,7 +319,10 @@ class AuthRepository {
   Future<bool> login(String identifier, String password) async {
     _log('🔥 Password login started');
 
-    final response = await _api.login(identifier: identifier, password: password);
+    final response = await _api.login(
+      identifier: identifier,
+      password: password,
+    );
     _log('📡 backend password response = $response');
 
     if (response['success'] == true) {
@@ -410,9 +430,10 @@ class AuthRepository {
 
     // Apple only sends the name on the FIRST authorization — forward it so the
     // backend can seed the account. Subsequent logins have null name parts.
-    final nameParts = [credential.givenName, credential.familyName]
-        .where((p) => p != null && p.isNotEmpty)
-        .join(' ');
+    final nameParts = [
+      credential.givenName,
+      credential.familyName,
+    ].where((p) => p != null && p.isNotEmpty).join(' ');
 
     final response = await _api.loginWithApple(
       identityToken: identityToken,
@@ -437,6 +458,8 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     final refreshToken = await SecureStorage.getRefreshToken();
     if (refreshToken != null) {
       try {
@@ -464,6 +487,8 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
     await _googleSignIn.signOut();
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     PushManager.instance.onSessionEnded();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
@@ -493,6 +518,8 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
     await _api.deactivateAccount(accessToken: token);
     await _googleSignIn.signOut();
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
   }
@@ -699,7 +726,8 @@ class AuthRepository {
     if (mirror.isNotEmpty) {
       // Fire-and-forget: mirror is a legacy sync for old clients.
       // Never block navigation on this call — personal-profile endpoint is the source of truth.
-      _api.updateMe(accessToken: token, data: mirror)
+      _api
+          .updateMe(accessToken: token, data: mirror)
           .catchError((_) => <String, dynamic>{});
     }
   }
@@ -747,6 +775,18 @@ class AuthRepository {
       final body = await response.stream.bytesToString();
       throw Exception('Upload failed: ${response.statusCode} $body');
     }
+    invalidateMeCache();
+  }
+
+  Future<void> removeProfilePhoto() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _http.delete(
+      '/users/me/photo',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    invalidateMeCache();
   }
 
   /// Anonymous Mode (KMSTRY+) aç/kapa. Premium değilse backend PREMIUM_REQUIRED döner.

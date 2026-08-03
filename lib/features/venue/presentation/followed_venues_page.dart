@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_list_item.dart';
 
-enum _VenueSort { recent, name, followers }
+enum _VenueSort { latest, earliest }
 
 class FollowedVenuesPage extends StatefulWidget {
   const FollowedVenuesPage({super.key});
@@ -22,7 +21,7 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
   bool _loading = true;
   String? _error;
   String _query = '';
-  _VenueSort _sort = _VenueSort.recent;
+  _VenueSort _sort = _VenueSort.latest;
 
   @override
   void initState() {
@@ -72,65 +71,150 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
           }).toList();
 
     switch (_sort) {
-      case _VenueSort.recent:
+      case _VenueSort.latest:
         return filtered;
-      case _VenueSort.name:
-        filtered.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        );
-        return filtered;
-      case _VenueSort.followers:
-        filtered.sort((a, b) => b.followerCount.compareTo(a.followerCount));
-        return filtered;
+      case _VenueSort.earliest:
+        return filtered.reversed.toList();
     }
   }
 
   String get _sortLabel {
     switch (_sort) {
-      case _VenueSort.recent:
-        return 'Recently followed';
-      case _VenueSort.name:
-        return 'Name A-Z';
-      case _VenueSort.followers:
-        return 'Most followers';
+      case _VenueSort.latest:
+        return 'Latest';
+      case _VenueSort.earliest:
+        return 'Earliest';
     }
+  }
+
+  Future<void> _openSortSheet() async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: isDark
+          ? const Color(0xFF161C28)
+          : theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        Widget option(_VenueSort key, String label) {
+          final selected = _sort == key;
+          return ListTile(
+            title: Text(label),
+            trailing: selected
+                ? Icon(Icons.check_rounded, color: theme.colorScheme.primary)
+                : null,
+            onTap: () {
+              setState(() => _sort = key);
+              Navigator.pop(ctx);
+            },
+          );
+        }
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Sort by',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+              option(_VenueSort.latest, 'Latest'),
+              option(_VenueSort.earliest, 'Earliest'),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final surface = isDark ? const Color(0xFF10141B) : Colors.white;
-    final border = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : const Color(0xFFE4EAF0);
+    final onSurface = isDark ? Colors.white : Colors.black;
     final visibleVenues = _visibleVenues;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Venues')),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: theme.appBarTheme.backgroundColor,
+        elevation: 0,
+        title: Text(
+          'Venues',
+          style: TextStyle(
+            color: onSurface,
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+          ),
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: _loadVenues,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          padding: EdgeInsets.zero,
           children: [
-            Row(
-              children: [
-                Expanded(child: _buildSearchField(isDark, surface, border)),
-                const SizedBox(width: 10),
-                _buildSortButton(isDark, surface, border),
-              ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: _buildSearchField(isDark, onSurface),
             ),
-            const SizedBox(height: 12),
-            Text(
-              '${visibleVenues.length} ${visibleVenues.length == 1 ? 'venue' : 'venues'}',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: isDark ? Colors.white54 : const Color(0xFF64748B),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Sort by: ',
+                    style: TextStyle(
+                      color: onSurface.withValues(alpha: 0.6),
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  Text(
+                    _sortLabel,
+                    style: TextStyle(
+                      color: onSurface,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Sort',
+                    icon: Icon(Icons.swap_vert_rounded, color: onSurface),
+                    onPressed: _openSortSheet,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Text(
+                '${visibleVenues.length} ${visibleVenues.length == 1 ? 'venue' : 'venues'}',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
             if (_loading)
               const Padding(
                 padding: EdgeInsets.only(top: 90),
@@ -159,17 +243,20 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
               )
             else
               for (final venue in visibleVenues)
-                VenueListItem(
-                  venue: venue,
-                  onTap: (selectedVenue) async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => VenueDetailPage(venue: selectedVenue),
-                      ),
-                    );
-                    if (mounted) await _loadVenues();
-                  },
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: VenueListItem(
+                    venue: venue,
+                    onTap: (selectedVenue) async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => VenueDetailPage(venue: selectedVenue),
+                        ),
+                      );
+                      if (mounted) await _loadVenues();
+                    },
+                  ),
                 ),
           ],
         ),
@@ -177,11 +264,12 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
     );
   }
 
-  Widget _buildSearchField(bool isDark, Color surface, Color border) {
+  Widget _buildSearchField(bool isDark, Color onSurface) {
     return TextField(
       controller: _searchController,
       onChanged: (value) => setState(() => _query = value),
       textInputAction: TextInputAction.search,
+      style: TextStyle(color: onSurface),
       decoration: InputDecoration(
         hintText: 'Search by name',
         prefixIcon: const Icon(Icons.search_rounded),
@@ -195,70 +283,14 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
                 },
               ),
         filled: true,
-        fillColor: surface,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+        fillColor: isDark
+            ? Colors.white.withValues(alpha: 0.06)
+            : const Color(0xFFF1F3F5),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide(color: border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide(color: border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide(color: AppTheme.brandPrimary, width: 1.2),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSortButton(bool isDark, Color surface, Color border) {
-    return PopupMenuButton<_VenueSort>(
-      initialValue: _sort,
-      onSelected: (value) => setState(() => _sort = value),
-      itemBuilder: (context) => const [
-        PopupMenuItem(
-          value: _VenueSort.recent,
-          child: Text('Recently followed'),
-        ),
-        PopupMenuItem(value: _VenueSort.name, child: Text('Name A-Z')),
-        PopupMenuItem(
-          value: _VenueSort.followers,
-          child: Text('Most followers'),
-        ),
-      ],
-      child: Container(
-        height: 54,
-        padding: const EdgeInsets.symmetric(horizontal: 13),
-        decoration: BoxDecoration(
-          color: surface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.sort_rounded,
-              size: 20,
-              color: isDark ? Colors.white70 : const Color(0xFF334155),
-            ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 92),
-              child: Text(
-                _sortLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: isDark ? Colors.white70 : const Color(0xFF334155),
-                ),
-              ),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
         ),
       ),
     );

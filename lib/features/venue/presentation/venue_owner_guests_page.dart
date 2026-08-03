@@ -39,7 +39,11 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    if (widget.isPendingClaim || widget.isRejectedClaim) {
+      _loading = false;
+    } else {
+      _load();
+    }
   }
 
   Future<void> _load() async {

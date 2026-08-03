@@ -9,7 +9,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/home/presentation/personal_home_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
-import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
@@ -23,6 +23,7 @@ import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
 import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
@@ -33,7 +34,6 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_p
 import 'package:kmstry_frontend/features/venue/presentation/venue_manage_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
-import 'package:kmstry_frontend/features/venue/presentation/venue_pending_page.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
@@ -73,6 +73,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<dynamic>? _foregroundPushSub;
   Timer? _dmRefreshDebounce;
   Timer? _notificationRefreshDebounce;
+  // Cold start yenileme popup'ı aynı check-in için tek sefer gösterilsin.
+  final Set<String> _promptedRenewalCheckinIds = <String>{};
 
   final GlobalKey<DmListPageState> _dmListKey =
       GlobalKey<
@@ -120,20 +122,144 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         );
         return (lat: pos.latitude, lng: pos.longitude);
       },
+      getCurrentUserId: () async {
+        try {
+          final me = await AuthRepository().getMe();
+          return me['id']?.toString();
+        } catch (_) {
+          return null;
+        }
+      },
       onCheckinExpired: () {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Check-in süren sona erdi. Tekrar check-in yapabilirsin.',
-            ),
-            duration: const Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        // Check-in bitince (uzaklaştı / süre doldu-uzakta) sessiz sıfırlama:
+        // snackbar gösterme. Avatar otomatik kullanıcının kalıcı fotosuna dönsün
+        // diye stale `me` cache'ini geçersiz kıl ve shell verisini tazele.
+        AuthRepository.invalidateMeCache();
+        _loadUserInitial();
+      },
+      onCheckinRenewable: (info) {
+        if (!mounted) return;
+        // Süre doldu ama kullanıcı hâlâ mekanda → yenileme popup'ı.
+        AuthRepository.invalidateMeCache();
+        _loadUserInitial();
+        _showCheckinRenewalDialog(info);
       },
     );
     CheckinPingManager.I.ensureRunning();
+    // Cold start: aktif check-in yoksa, yakın zamanda süre dolan bir check-in
+    // varsa ve kullanıcı hâlâ o mekandaysa yenileme popup'ı göster.
+    unawaited(_maybePromptColdStartRenewal());
+  }
+
+  /// Aktif check-in olmadığında: backend'e "yenilenebilir son check-in" sor;
+  /// varsa ve mevcut konum ≤200m ise yenileme dialog'unu göster. Konum yoksa
+  /// (izin/GPS) sessizce atlar — açılışta zorla GPS istemez.
+  Future<void> _maybePromptColdStartRenewal() async {
+    try {
+      if (ActiveCheckinService().hasActiveCheckin) return;
+      final r = await VenueCheckinRepository().getRenewableCheckin();
+      if (r == null || !mounted) return;
+      if (_promptedRenewalCheckinIds.contains(r.checkinId)) return;
+
+      final pos = await Geolocator.getLastKnownPosition();
+      if (pos == null) return; // Zorla GPS isteme; son bilinen yoksa atla.
+      final distance = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        r.venueLatitude,
+        r.venueLongitude,
+      );
+      if (distance > 200 || !mounted) return;
+
+      await _showCheckinRenewalDialog(
+        CheckinRenewalInfo(
+          checkinId: r.checkinId,
+          venueId: r.venueId,
+          venueName: r.venueName,
+        ),
+      );
+    } catch (_) {
+      // Sessiz geç — açılışı bozma.
+    }
+  }
+
+  /// Süre dolduğunda kullanıcı hâlâ mekandaysa: "yenile" popup'ı.
+  Future<void> _showCheckinRenewalDialog(CheckinRenewalInfo info) async {
+    // Ping-tetikli ve cold-start yolları aynı check-in için ikinci kez
+    // göstermesin.
+    if (_promptedRenewalCheckinIds.contains(info.checkinId)) return;
+    _promptedRenewalCheckinIds.add(info.checkinId);
+
+    final venueLabel = (info.venueName ?? '').trim().isNotEmpty
+        ? info.venueName!.trim()
+        : 'this venue';
+    final renew = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        title: const Text('Check-in süren doldu'),
+        content: Text(
+          'Hâlâ $venueLabel\'dasın gibi görünüyor. Check-in\'ini 3 saat daha '
+          'uzatmak ister misin?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Şimdi değil'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yenile'),
+          ),
+        ],
+      ),
+    );
+    if (renew != true || !mounted) return;
+    await _renewCheckin(info);
+  }
+
+  Future<void> _renewCheckin(CheckinRenewalInfo info) async {
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      final result = await VenueCheckinRepository().renewCheckin(
+        checkinId: info.checkinId,
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+      );
+      if (!mounted) return;
+      final newId = (result['checkinId'] ?? result['id'])?.toString();
+      if (newId != null && newId.isNotEmpty) {
+        final me = await AuthRepository().getMe();
+        ActiveCheckinService().setActiveCheckin(
+          newId,
+          venueId: info.venueId,
+          userId: me['id']?.toString(),
+        );
+        CheckinPingManager.I.ensureRunning();
+        AuthRepository.invalidateMeCache();
+        _loadUserInitial();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Check-in\'in yenilendi.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Yenilenemedi. Mekana yakın olduğundan emin ol.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -160,6 +286,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
       CheckinPingManager.I.ensureRunning();
+      unawaited(_maybePromptColdStartRenewal());
       // Venue onay/red durumu arka plandan dönerken güncellensin.
       AuthRepository.invalidateMeCache();
       _loadUserInitial();
@@ -368,6 +495,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       // Keep KMSTRY+ entitlement fresh for the CURRENT account (fixes stale
       // premium leaking across account switches).
       UserSession.instance.applyFromMe(me);
+      _syncActiveCheckinFromMe(me);
       final context = MeContextModel.fromMe(me);
       if (!mounted) return;
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
@@ -416,6 +544,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       } else if (isVenueCtx && allKnownVenues.isNotEmpty) {
         activeLabel = allKnownVenues.first.name;
       }
+      final resolvedVenue = resolvedVenueId == null
+          ? null
+          : allKnownVenues
+              .where((venue) => venue.id == resolvedVenueId)
+              .firstOrNull;
       final email = me['email']?.toString().trim();
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
@@ -426,9 +559,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _userInitial = email[0].toUpperCase();
         }
         _isVenueContext = isVenueCtx;
-        _isPendingClaim = hasPendingClaim && activeVenues.isEmpty;
-        _isRejectedClaim =
-            hasRejectedClaim && !hasPendingClaim && activeVenues.isEmpty;
+        _isPendingClaim = resolvedVenue?.isPendingOwnerClaim ?? false;
+        _isRejectedClaim = resolvedVenue?.isRejectedOwnerClaim ?? false;
         _hasPersonalProfile = context.hasPersonalProfile;
         _personalAccountLabel = username != null && username.isNotEmpty
             ? '@$username'
@@ -460,8 +592,41 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  void _syncActiveCheckinFromMe(Map<String, dynamic> me) {
+    final raw = me['activeCheckin'] ?? me['active_checkin'];
+    if (raw is! Map) {
+      ActiveCheckinService().clear();
+      CheckinPingManager.I.stop();
+      return;
+    }
+
+    final activeCheckin = Map<String, dynamic>.from(raw);
+    final userId = me['id']?.toString();
+    final checkinId = activeCheckin['id']?.toString();
+    String? venueId = (activeCheckin['venueId'] ?? activeCheckin['venue_id'])
+        ?.toString();
+    final nestedVenue = activeCheckin['venue'];
+    if ((venueId == null || venueId.trim().isEmpty) && nestedVenue is Map) {
+      venueId = nestedVenue['id']?.toString();
+    }
+
+    ActiveCheckinService().syncForUser(
+      userId: userId,
+      checkinId: checkinId,
+      venueId: venueId,
+    );
+
+    if (ActiveCheckinService().hasActiveCheckin) {
+      CheckinPingManager.I.ensureRunning();
+    } else {
+      CheckinPingManager.I.stop();
+    }
+  }
+
   Future<void> _logout(BuildContext context) async {
     try {
+      CheckinPingManager.I.stop();
+      ActiveCheckinService().clear();
       UserSession.instance.clear();
       await AuthRepository().logout();
       if (!context.mounted) return;
@@ -625,13 +790,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
-                          onTap: () {
+                          onTap: () async {
                             Navigator.pop(context);
-                            Navigator.of(this.context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const VenuePendingPage(),
-                              ),
-                            );
+                            final rootContext = this.context;
+                            try {
+                              await _switchToVenue(venue);
+                              if (!rootContext.mounted) return;
+                              Navigator.of(rootContext).pushNamedAndRemoveUntil(
+                                AuthRoutes.authGate,
+                                (r) => false,
+                              );
+                            } catch (_) {
+                              if (!rootContext.mounted) return;
+                              await showPremiumErrorDialog(
+                                rootContext,
+                                message: 'Could not switch to venue account.',
+                              );
+                            }
                           },
                         ),
                       ),
@@ -790,11 +965,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
         ],
       ),
-      child: Icon(
-        Icons.add_location_alt,
-        color: colors.onPrimary,
-        size: 22,
-      ),
+      child: Icon(Icons.add_location_alt, color: colors.onPrimary, size: 22),
     );
   }
 
@@ -893,8 +1064,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _NavTab(
         page: const VenueHomePage(),
         icon: _navIconBuilder(
-          Icons.location_on,
-          Icons.location_on_outlined,
+          Icons.search,
+          Icons.search,
           theme,
         ),
       ),
@@ -912,14 +1083,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _dmListKey.currentState?.loadChats();
           _scheduleDmRefresh();
         },
-      ),
-      _NavTab(
-        page: const FindFriendsPage(),
-        icon: _navIconBuilder(
-          Icons.person_add_alt_1,
-          Icons.person_add_alt,
-          theme,
-        ),
       ),
       _NavTab(
         page: const ProfilePage(),
@@ -1019,11 +1182,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 class AppShellNav extends InheritedWidget {
   final void Function(int index) selectTab;
 
-  const AppShellNav({
-    super.key,
-    required this.selectTab,
-    required super.child,
-  });
+  const AppShellNav({super.key, required this.selectTab, required super.child});
 
   static AppShellNav? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<AppShellNav>();

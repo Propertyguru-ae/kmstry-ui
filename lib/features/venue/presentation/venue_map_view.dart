@@ -9,6 +9,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -65,6 +68,11 @@ class _VenueMapViewState extends State<VenueMapView> {
   final VenueRepository _venueRepository = VenueRepository();
   final VenueContextRepository _venueContextRepository =
       VenueContextRepository();
+  final VenueCheckinRepository _checkinRepository = VenueCheckinRepository();
+
+  /// Kullanıcının şu an aktif check-in yaptığı venue id — sheet kartında
+  /// "You're checked in" rozetiyle işaretlenir.
+  String? _activeCheckinVenueId;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final DraggableScrollableController _resultsSheetController =
@@ -763,6 +771,46 @@ class _VenueMapViewState extends State<VenueMapView> {
       _notifySearchActivity();
     });
     _loadLocation();
+    _loadActiveCheckin();
+  }
+
+  /// "You're checked in" turkuaz rozeti — marker popup ve hızlı check-in
+  /// sheet'inde aynı görünüm için ortak.
+  Widget _buildCheckedInBadge(bool isDark) {
+    const color = Color(0xFF1FD9A8); // logo turkuazı (AppColors.teal)
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.18 : 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.36)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle_rounded, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(
+            "You're checked in",
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: isDark ? Colors.white.withValues(alpha: 0.9) : color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadActiveCheckin() async {
+    try {
+      final ActiveCheckin? active = await _checkinRepository.getActiveCheckin();
+      if (!mounted) return;
+      setState(() => _activeCheckinVenueId = active?.venueId);
+    } catch (_) {
+      // Sessiz geç — rozet gösterilmez.
+    }
   }
 
   @override
@@ -793,6 +841,9 @@ class _VenueMapViewState extends State<VenueMapView> {
       // ki checkinCountActive değişen venue'lar yeni heat rengiyle yeniden çizilsin.
       _photoMarkerIconCache.clear();
       _photoMarkerIconLoadingKeys.clear();
+      // Venue listesi yenilendiyse (ör. check-in sonrası) aktif check-in'i de
+      // tazele ki rozet doğru mekanda görünsün.
+      _loadActiveCheckin();
     }
     if (venuesChanged || selectionChanged) {
       _recomputeClusters(force: true);
@@ -1991,6 +2042,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     Venue venue, {
     bool reopenMarkerPopup = false,
   }) async {
+    // Aramadan (search sonuç listesinden) açıldıysa Trending Now sinyalini besle.
+    if (_showSearchResults && venue.id.isNotEmpty) {
+      unawaited(_venueRepository.recordSearchHit(venue.id));
+    }
     widget.onVenueTap?.call(venue);
     await Navigator.push(
       context,
@@ -2066,6 +2121,9 @@ class _VenueMapViewState extends State<VenueMapView> {
         ? Colors.white.withValues(alpha: 0.14)
         : Colors.black.withValues(alpha: 0.08);
     final subtitleColor = colors.onSurface.withValues(alpha: 0.72);
+    final isActiveCheckin =
+        _activeCheckinVenueId != null &&
+        liveVenue.id == _activeCheckinVenueId;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -2159,6 +2217,10 @@ class _VenueMapViewState extends State<VenueMapView> {
                                   letterSpacing: -0.2,
                                 ),
                               ),
+                              if (isActiveCheckin) ...[
+                                const SizedBox(height: 6),
+                                _buildCheckedInBadge(isDark),
+                              ],
                               if (liveVenue.address.isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 Text(
@@ -2648,12 +2710,12 @@ class _VenueMapViewState extends State<VenueMapView> {
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
+                        child: CachedImage(
                           'https://www.gstatic.com/images/branding/product/1x/maps_32dp.png',
                           width: 24,
                           height: 24,
                           fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) => Icon(
+                          errorWidget: (context) => Icon(
                             Icons.map_rounded,
                             size: 18,
                             color: colors.primary,
@@ -2886,6 +2948,9 @@ class _VenueMapViewState extends State<VenueMapView> {
                               return VenueListItem(
                                 venue: venue,
                                 isSelected: _matchesSelectedVenue(venue),
+                                isActiveCheckin:
+                                    _activeCheckinVenueId != null &&
+                                    venue.id == _activeCheckinVenueId,
                                 onTap: (v) => _openVenueDetailFromMap(v),
                               );
                             },
@@ -3095,8 +3160,9 @@ class _VenueMapViewState extends State<VenueMapView> {
           markers: _markers,
         ),
 
-        /// 🔍 SEARCH BAR
-        if (!widget.hideSearch && !_showSearchResults)
+        /// 🔍 SEARCH BAR — arama aktifken de görünür kalmalı (aksi halde
+        /// odaklanınca kendini gizler ve sadece harita/pinler kalırdı).
+        if (!widget.hideSearch)
           Positioned(
             top: 14,
             left: 16,

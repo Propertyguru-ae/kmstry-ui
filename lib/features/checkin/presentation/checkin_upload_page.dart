@@ -9,6 +9,7 @@ import 'package:kmstry_frontend/core/permissions/location_permission_service.dar
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
+import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/camera/presentation/preview_video_screen.dart';
@@ -54,7 +55,6 @@ class CheckInPage extends StatefulWidget {
 
 class _CheckInPageState extends State<CheckInPage> {
   final TextEditingController _vibeController = TextEditingController();
-  static const int _maxWhatBringsSelections = 3;
   List<String> _whatBringsOptions = [];
   bool _isLoadingOptions = true;
   final Set<String> _selectedWhatBrings = <String>{};
@@ -67,6 +67,7 @@ class _CheckInPageState extends State<CheckInPage> {
   final LocationPermissionService _locationPermissionService =
       LocationPermissionService();
   bool _isSubmitting = false;
+  bool _showOnProfile = false;
   // Senkron reentrancy kilidi — konum/GPS await'leri sürerken ikinci dokunuşun
   // ikinci bir check-in oluşturmasını engeller (buton-disable tek başına yetmez,
   // çünkü _isSubmitting create'ten hemen önce, await'lerden sonra set ediliyor).
@@ -86,6 +87,13 @@ class _CheckInPageState extends State<CheckInPage> {
 
   // Öne çıkarılan fotoğrafın indeksi (varsayılan olarak ilk fotoğraf)
   int _featuredIndex = 0;
+
+  // Kullanıcı featured foto'yu avatar için kare kırptıysa, sonuç burada tutulur
+  // ve check-in başarıyla oluşunca `POST /users/me/photo`'ya yüklenir. Null ise
+  // avatar mevcut davranışla değişmez.
+  File? _avatarCropFile;
+  bool _croppingAvatar = false;
+  bool? _hasProfilePhoto;
   String _formatOptionLabel(String key) {
     return key
         .toLowerCase()
@@ -104,6 +112,80 @@ class _CheckInPageState extends State<CheckInPage> {
       return _featuredIndex;
     }
     return _media.indexWhere((m) => m.type == MediaType.photo);
+  }
+
+  bool get _hasFeaturedPhoto => _featuredPhotoIndex >= 0;
+
+  bool get _shouldOfferCheckinAvatar => _hasProfilePhoto == false;
+
+  /// Avatar kırpma satırı: önizleme (kırpılmışsa daire) + "Adjust" butonu.
+  Widget _buildAvatarAdjustRow(ColorScheme colors) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final index = _featuredPhotoIndex;
+    final previewFile = _avatarCropFile ?? _media[index].file;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? colors.surface : const Color(0xFFF8FBFD),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark
+              ? colors.onSurface.withValues(alpha: 0.1)
+              : const Color(0xFFE6EEF4),
+        ),
+      ),
+      child: Row(
+        children: [
+          ClipOval(
+            child: Image.file(
+              previewFile,
+              width: 52,
+              height: 52,
+              fit: BoxFit.cover,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your avatar',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _avatarCropFile != null
+                      ? 'Cropped — tap Adjust to change'
+                      : 'Crop how your featured photo appears',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton.icon(
+            onPressed: _croppingAvatar ? null : _adjustAvatarCrop,
+            icon: _croppingAvatar
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.crop_rounded, size: 18),
+            label: const Text('Adjust'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _openWhatBringsSelector() {
@@ -154,10 +236,6 @@ class _CheckInPageState extends State<CheckInPage> {
                               if (selected) {
                                 _selectedWhatBrings.remove(option);
                               } else {
-                                if (_selectedWhatBrings.length >=
-                                    _maxWhatBringsSelections) {
-                                  return;
-                                }
                                 _selectedWhatBrings.add(option);
                               }
                             });
@@ -267,6 +345,7 @@ class _CheckInPageState extends State<CheckInPage> {
     super.initState();
     _loadWhatBringsOptions();
     _prefillVibeFromProfileBio();
+    _loadProfilePhotoState();
   }
 
   /// Kalıcı profil bio'su varsa vibe alanına varsayılan olarak yüklenir.
@@ -278,6 +357,31 @@ class _CheckInPageState extends State<CheckInPage> {
       if (_vibeController.text.trim().isNotEmpty) return;
       setState(() => _vibeController.text = raw);
     } catch (_) {}
+  }
+
+  Future<void> _loadProfilePhotoState() async {
+    try {
+      final me = await AuthRepository().getMe();
+      final photo = _readProfilePhoto(me);
+      if (!mounted) return;
+      setState(() {
+        _hasProfilePhoto = photo != null && photo.isNotEmpty;
+        if (_hasProfilePhoto == true) _avatarCropFile = null;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _hasProfilePhoto = false);
+    }
+  }
+
+  String? _readProfilePhoto(Map<String, dynamic> me) {
+    final raw =
+        me['photo'] ??
+        me['photoUrl'] ??
+        me['photo_url'] ??
+        me['profilePhoto'] ??
+        me['profile_photo'];
+    final value = raw?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
   }
 
   Future<void> _loadWhatBringsOptions() async {
@@ -390,11 +494,105 @@ class _CheckInPageState extends State<CheckInPage> {
 
   /// Fotoğrafı öne çıkan olarak işaretleme (yalnızca fotoğraf kartlarındaki
   /// yıldız rozetinden çağrılır).
-  void _setFeatured(int index) {
+  Future<void> _setFeatured(int index) async {
     if (_media[index].type != MediaType.photo) return;
     setState(() {
       _featuredIndex = index;
+      // Featured foto değişti → önceki kırpma artık geçerli değil.
+      _avatarCropFile = null;
     });
+    await _showFeaturedCropPrompt();
+  }
+
+  Future<void> _showFeaturedCropPrompt() async {
+    if (!_shouldOfferCheckinAvatar || !_hasFeaturedPhoto || !mounted) return;
+    final colors = Theme.of(context).colorScheme;
+    final shouldCrop = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Use as your check-in avatar?',
+                  style: TextStyle(
+                    color: colors.onSurface,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Adjust how this featured photo appears on your profile while this check-in is active.',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.62),
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.crop_rounded),
+                  title: const Text('Adjust crop'),
+                  onTap: () => Navigator.pop(ctx, true),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.check_circle_outline_rounded),
+                  title: const Text('Use as is'),
+                  onTap: () => Navigator.pop(ctx, false),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (shouldCrop == true) {
+      await _adjustAvatarCrop();
+    }
+  }
+
+  /// Featured foto'yu avatar için kare kırpma ekranını açar. Sonuç
+  /// [_avatarCropFile]'a yazılır ve check-in oluşunca avatar olarak yüklenir.
+  Future<void> _adjustAvatarCrop() async {
+    if (!_shouldOfferCheckinAvatar) return;
+    final index = _featuredPhotoIndex;
+    if (index < 0 || index >= _media.length) return;
+    final media = _media[index];
+    if (media.type != MediaType.photo) return;
+
+    setState(() => _croppingAvatar = true);
+    try {
+      final cropped = await cropSquareAvatar(context, media.file);
+      if (!mounted) return;
+      if (cropped != null) {
+        setState(() => _avatarCropFile = cropped);
+      }
+    } finally {
+      if (mounted) setState(() => _croppingAvatar = false);
+    }
   }
 
   /// Karta basınca eklenen medyayı büyük ekranda tekrar gösterir —
@@ -524,6 +722,7 @@ class _CheckInPageState extends State<CheckInPage> {
         longitude: longitude,
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
+        showOnProfile: _showOnProfile,
       );
       createdCheckinId = checkinId;
       ActiveCheckinService().setActiveCheckin(
@@ -542,6 +741,20 @@ class _CheckInPageState extends State<CheckInPage> {
         checkinId: checkinId,
         featuredPhotoIndex: _featuredPhotoIndex,
       );
+
+      // Kullanıcı featured foto'yu avatar için kırptıysa bunu kalıcı profil
+      // fotoğrafına değil, bu aktif check-in'e özel avatar alanına yaz.
+      // Başarısız olsa bile check-in tamamlanmış sayılır (best-effort).
+      if (_shouldOfferCheckinAvatar && _avatarCropFile != null) {
+        try {
+          await _repo.uploadCheckinAvatar(
+            checkinId: checkinId,
+            file: _avatarCropFile!,
+          );
+        } catch (avatarError) {
+          debugPrint('⚠️ Avatar upload failed: $avatarError');
+        }
+      }
 
       // ✅ Başarılı
       unawaited(MediaCompressor.cleanup());
@@ -770,6 +983,12 @@ class _CheckInPageState extends State<CheckInPage> {
                   ],
                 ),
 
+                // ── Avatar crop — featured foto varsa göster ─────────────────
+                if (_shouldOfferCheckinAvatar && _hasFeaturedPhoto) ...[
+                  const SizedBox(height: 16),
+                  _buildAvatarAdjustRow(colors),
+                ],
+
                 const SizedBox(height: 30),
 
                 /// VIBE SECTION
@@ -926,7 +1145,60 @@ class _CheckInPageState extends State<CheckInPage> {
                     ),
                   ),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: 18),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? colors.surface : const Color(0xFFF8FBFD),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: colors.onSurface.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Show on my profile',
+                              style: TextStyle(
+                                color: colors.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Adds this venue to your Visited Places.',
+                              style: TextStyle(
+                                color: colors.onSurface.withValues(alpha: 0.62),
+                                fontSize: 12,
+                                height: 1.25,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: _showOnProfile,
+                        activeColor: AppTheme.brandPrimary,
+                        onChanged: _isSubmitting
+                            ? null
+                            : (value) {
+                                setState(() => _showOnProfile = value);
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 28),
 
                 /// CHECK IN BUTTON
                 SizedBox(
@@ -1159,7 +1431,7 @@ class _CheckInPageState extends State<CheckInPage> {
             left: 8,
             bottom: 8,
             child: GestureDetector(
-              onTap: () => _setFeatured(index),
+              onTap: () => unawaited(_setFeatured(index)),
               child: Container(
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(

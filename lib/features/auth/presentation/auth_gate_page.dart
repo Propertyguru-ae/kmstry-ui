@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/login_page.dart';
+import 'package:kmstry_frontend/features/auth/presentation/legal_update_required_page.dart';
 import 'package:kmstry_frontend/features/auth/presentation/context_choice_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/gender_interest_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/bio_onboarding_page.dart';
@@ -40,7 +41,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
         return;
       }
 
-      final me = await AuthRepository().getMe();
+      final me = await AuthRepository().getMe(forceRefresh: true);
+      if (_legalConsentRequired(me)) {
+        _logDecision('legal_consent_required');
+        _go(const LegalUpdateRequiredPage());
+        return;
+      }
       final meContext = MeContextModel.fromMe(me);
       final homeRoute = meContext.homeRoute?.toUpperCase();
       final nextAction = meContext.nextAction?.toUpperCase();
@@ -411,6 +417,17 @@ class _AuthGatePageState extends State<AuthGatePage> {
     final raw = (me['bio'] ?? me['bio_text'])?.toString().trim();
     if (raw == null || raw.isEmpty) return null;
     return raw;
+  }
+
+  bool _legalConsentRequired(Map<String, dynamic> me) {
+    final direct = me['legalConsentRequired'] ?? me['legal_consent_required'];
+    if (direct is bool) return direct;
+    final legal = me['legalConsent'] ?? me['legal_consent'];
+    if (legal is Map) {
+      final required = legal['required'] ?? legal['isRequired'] ?? legal['is_required'];
+      if (required is bool) return required;
+    }
+    return false;
   }
 
   void _logDecision(String branch) {

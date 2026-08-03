@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
 import '../data/venue_model.dart';
@@ -7,12 +8,17 @@ import '../data/venue_model.dart';
 class VenueListItem extends StatelessWidget {
   final Venue venue;
   final bool isSelected;
+  final bool isActiveCheckin;
   final ValueChanged<Venue>? onTap;
+
+  /// "You're checked in" vurgusu — logo turkuazı (AppColors.teal).
+  static const Color _checkedInColor = Color(0xFF1FD9A8);
 
   const VenueListItem({
     super.key,
     required this.venue,
     this.isSelected = false,
+    this.isActiveCheckin = false,
     this.onTap,
   });
 
@@ -50,14 +56,18 @@ class VenueListItem extends StatelessWidget {
                       ? theme.colorScheme.surface
                       : const Color(0xFFF8FBFD)),
             borderRadius: BorderRadius.circular(20),
-            border: isSelected
-                ? Border.all(
-                    color: AppTheme.brandPrimary.withValues(alpha: 0.14),
-                    width: 1.0,
-                  )
-                : (isDark
-                      ? Border.all(color: Colors.white.withValues(alpha: 0.05))
-                      : Border.all(color: const Color(0xFFE6EEF4))),
+            border: isActiveCheckin
+                ? Border.all(color: _checkedInColor, width: 1.0)
+                : (isSelected
+                      ? Border.all(
+                          color: AppTheme.brandPrimary.withValues(alpha: 0.14),
+                          width: 1.0,
+                        )
+                      : (isDark
+                            ? Border.all(
+                                color: Colors.white.withValues(alpha: 0.05),
+                              )
+                            : Border.all(color: const Color(0xFFE6EEF4)))),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,6 +109,13 @@ class VenueListItem extends StatelessWidget {
                 runSpacing: 6,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
+                  if (isActiveCheckin)
+                    _MiniBadge(
+                      icon: Icons.check_circle_rounded,
+                      label: "You're checked in",
+                      color: _checkedInColor,
+                      isDark: isDark,
+                    ),
                   if (venue.openNow == true)
                     _MiniBadge(
                       icon: Icons.schedule_rounded,
@@ -343,10 +360,10 @@ class _VenuePhotoStrip extends StatelessWidget {
                   color: isDark
                       ? Colors.white.withValues(alpha: 0.06)
                       : const Color(0xFFEAF1F4),
-                  child: Image.network(
+                  child: CachedImage(
                     visible[i],
                     fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Icon(
+                    errorWidget: (context) => Icon(
                       Icons.image_not_supported_outlined,
                       color: isDark ? Colors.white38 : Colors.black26,
                     ),

@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:ui'; // Glassmorphism efekti için
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/services/active_checkin_service.dart';
@@ -23,6 +24,8 @@ import 'package:kmstry_frontend/features/people/presentation/friends_list_page.d
 import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
+import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
@@ -42,12 +45,16 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
+class _ProfilePageState extends State<ProfilePage>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
+  // Story yüklenirken avatar halkası döner (venue detay/home ile aynı efekt).
+  late final AnimationController _storySpin;
   Map<String, dynamic>? _user;
   MeContextModel? _meContext;
   bool _loading = true;
   Map<String, dynamic>? _activeCheckin;
   List<CheckinProfileMedia> _media = [];
+  List<CheckinVisitedPlace> _visitedPlaces = [];
 
   final CheckinRepository _checkinRepo = CheckinRepository();
   final VenueContextRepository _venueContextRepository =
@@ -69,12 +76,18 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   String? _activeCheckinVenueIdFromProfile;
   List<String> _checkinWhatBrings = [];
 
+  /// "What brings you to Kmstry" seçenekleri (edit sheet için) — lazy yüklenir.
+  List<String> _whatBringsOptions = [];
+  bool _savingWhatBrings = false;
+
   bool _isExpanded = false;
   bool _areMomentsExpanded = false;
+  int _selectedProfileTab = 0;
 
   bool _uploadingMoment = false;
   bool _uploadingStory = false;
   bool _openingVenueDetail = false;
+  final Set<String> _updatingProfileVisibilityIds = {};
   List<StoryItem> _myStories = [];
   Set<String> _viewedStoryIds = {};
   final TextEditingController _vibeController = TextEditingController();
@@ -131,13 +144,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final thumbnail = media.thumbnailUrl;
     final hasThumbnail = thumbnail != null && thumbnail.isNotEmpty;
     if (hasThumbnail) {
-      return Image.network(
+      return CachedImage(
         thumbnail,
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (context, error, stackTrace) =>
-            Container(color: Colors.black87),
+        errorWidget: (context) => Container(color: Colors.black87),
       );
     }
 
@@ -230,7 +242,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       return SizedBox(
         width: thumbWidth,
         height: thumbHeight,
-        child: Image.network(media.url, fit: BoxFit.cover),
+        child: CachedImage(media.url, fit: BoxFit.cover),
       );
     }
 
@@ -263,13 +275,20 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadProfile();
+    _storySpin = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    // AuthGate/AppShell may have just fetched /me during login/account switch.
+    // Profile should still render from the latest account snapshot on first open.
+    _loadProfile(forceRefresh: true);
     _refreshNotificationWarningState();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _storySpin.dispose();
     _vibeController.dispose();
     super.dispose();
   }
@@ -292,6 +311,16 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       }
     }
     return null;
+  }
+
+  String? get _activeCheckinAvatarPhotoUrl {
+    final raw =
+        (_activeCheckin?['avatarPhoto'] ?? _activeCheckin?['avatar_photo'])
+            ?.toString()
+            .trim();
+    return raw != null && raw.isNotEmpty && raw.toLowerCase() != 'null'
+        ? raw
+        : null;
   }
 
   List<String> _extractWhatBrings(Map<String, dynamic>? activeCheckin) {
@@ -643,6 +672,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
 
     setState(() => _uploadingStory = true);
+    _storySpin.repeat();
     try {
       await _storyRepo.createStory(
         checkinId: checkinId,
@@ -671,11 +701,13 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       if (!mounted) return;
       await showPremiumErrorDialog(context, message: 'Upload failed: $e');
     } finally {
+      _storySpin.stop();
+      _storySpin.value = 0;
       if (mounted) setState(() => _uploadingStory = false);
     }
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile({bool forceRefresh = false}) async {
     setState(() {
       _loading = true;
       _profileErrorMessage = null;
@@ -686,10 +718,11 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     unawaited(_loadMyStories());
 
     try {
-      final me = await AuthRepository().getMe();
+      final me = await AuthRepository().getMe(forceRefresh: forceRefresh);
       print('ME :  $me');
 
       List<CheckinProfileMedia> media = [];
+      List<CheckinVisitedPlace> visitedPlaces = [];
 
       String? checkinVibe;
       String? activeCheckinVenueId;
@@ -718,10 +751,23 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
           if (profile.media.isNotEmpty) {
             media = profile.media;
           }
+          visitedPlaces = profile.visitedPlaces;
         } catch (e) {
           debugPrint('Profile checkin fetch failed: $e');
           _profileErrorMessage =
               'Moments could not be loaded. Pull to refresh or try again.';
+        }
+      }
+
+      final currentUserId = me['id']?.toString();
+      if (currentUserId != null && currentUserId.isNotEmpty) {
+        try {
+          final myHistory = await _checkinRepo.getMyProfileHistory();
+          if (myHistory.isNotEmpty || visitedPlaces.isEmpty) {
+            visitedPlaces = myHistory;
+          }
+        } catch (e) {
+          debugPrint('Profile visited places fetch failed: $e');
         }
       }
 
@@ -736,6 +782,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         _checkinWhatBrings = _extractWhatBrings(activeCheckin);
         _checkinVibe = checkinVibe;
         _media = media;
+        _visitedPlaces = visitedPlaces;
         _activeVenue = _venueFromActiveCheckin(activeCheckin);
         _loading = false;
       });
@@ -749,6 +796,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ActiveCheckinService().setActiveCheckin(
           activeCheckinId,
           venueId: activeCheckinVenueId,
+          userId: currentUserId,
         );
       } else {
         ActiveCheckinService().clear();
@@ -1028,6 +1076,181 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (mounted) setState(() => _savingVibe = false);
   }
 
+  /// Profilden "What brings you to Kmstry" seçimlerini düzenleme sheet'i.
+  /// Aktif check-in'in tag'lerini yeniden seçip kaydeder (max 3).
+  Future<void> _openEditWhatBrings() async {
+    final checkinId = _activeCheckinId();
+    if (checkinId == null) return;
+
+    // Seçenekleri lazy yükle.
+    if (_whatBringsOptions.isEmpty) {
+      try {
+        final options = await _checkinRepo.getWhatBringsOptions();
+        if (mounted) setState(() => _whatBringsOptions = options);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+
+    final selected = <String>{..._checkinWhatBrings};
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final colors = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        const lightCardFill = Color(0xFFF8FBFD);
+        const lightCardBorder = Color(0xFFE6EEF4);
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 10,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "What brings you to Kmstry?",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: _whatBringsOptions.map((option) {
+                        final isSel = selected.contains(option);
+                        return GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              if (isSel) {
+                                selected.remove(option);
+                              } else {
+                                selected.add(option);
+                              }
+                            });
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isSel
+                                  ? AppTheme.brandPrimary.withValues(
+                                      alpha: 0.12,
+                                    )
+                                  : (isDark ? colors.surface : lightCardFill),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: isSel
+                                    ? AppTheme.brandPrimary
+                                    : (isDark
+                                          ? colors.onSurface.withValues(
+                                              alpha: 0.1,
+                                            )
+                                          : lightCardBorder),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  _formatWhatBringsLabel(option),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: colors.onSurface,
+                                  ),
+                                ),
+                                if (isSel)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    color: AppTheme.brandPrimary,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _savingWhatBrings
+                          ? null
+                          : () async {
+                              await _saveWhatBrings(
+                                checkinId,
+                                selected.toList(),
+                                sheetContext,
+                              );
+                            },
+                      child: _savingWhatBrings
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _saveWhatBrings(
+    String checkinId,
+    List<String> values,
+    BuildContext sheetContext,
+  ) async {
+    setState(() => _savingWhatBrings = true);
+    try {
+      final saved = await _checkinRepo.updateWhatBrings(
+        checkinId: checkinId,
+        values: values,
+      );
+      if (!mounted) return;
+      setState(() => _checkinWhatBrings = saved);
+      if (sheetContext.mounted) Navigator.pop(sheetContext);
+    } catch (_) {
+      if (mounted) {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Failed to update your selections',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingWhatBrings = false);
+    }
+  }
+
   String get _usernameLabel {
     final username =
         (_user?['username'] ?? _user?['user_name'])?.toString().trim() ?? '';
@@ -1051,8 +1274,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         children: [
           Text(
             _usernameLabel,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(width: 4),
@@ -1071,7 +1296,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     if (meCtx == null) return;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final activeVenues = meCtx.memberVenues.where((v) => v.isActive).toList();
+    final accountVenues = meCtx.memberVenues
+        .where((v) => v.isActive || v.isPendingOwnerClaim)
+        .toList();
     final isPersonalActive =
         !(meCtx.lastActiveContext?.toUpperCase().contains('VENUE') ?? false);
 
@@ -1147,13 +1374,23 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                             },
                     ),
                   // Venue accounts
-                  ...activeVenues.map((venue) {
+                  ...accountVenues.map((venue) {
                     final isActive =
                         !isPersonalActive && (meCtx.activeVenueId == venue.id);
+                    final isPending = venue.isPendingOwnerClaim;
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: colors.primary.withValues(alpha: 0.12),
-                        child: Icon(Icons.storefront, color: colors.primary),
+                        backgroundColor: isPending
+                            ? colors.onSurface.withValues(alpha: 0.08)
+                            : colors.primary.withValues(alpha: 0.12),
+                        child: Icon(
+                          isPending
+                              ? Icons.hourglass_top_rounded
+                              : Icons.storefront,
+                          color: isPending
+                              ? colors.onSurface.withValues(alpha: 0.45)
+                              : colors.primary,
+                        ),
                       ),
                       title: Text(
                         venue.name,
@@ -1163,13 +1400,32 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                         ),
                       ),
                       subtitle: Text(
-                        venue.role ?? 'Venue',
+                        isPending ? 'Pending review' : (venue.role ?? 'Venue'),
                         style: TextStyle(
                           color: colors.onSurface.withValues(alpha: 0.55),
                           fontSize: 12,
                         ),
                       ),
-                      trailing: isActive
+                      trailing: isPending
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Text(
+                                'Pending',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.orange,
+                                ),
+                              ),
+                            )
+                          : isActive
                           ? Icon(Icons.check_circle, color: colors.primary)
                           : null,
                       onTap: isActive
@@ -1243,6 +1499,21 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 );
               },
             ),
+            ListTile(
+              leading: Icon(Icons.logout, color: colors.error),
+              title: Text(
+                'Log out',
+                style: TextStyle(
+                  color: colors.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () async {
+                final rootContext = context;
+                Navigator.pop(sheetCtx);
+                await _logout(rootContext);
+              },
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1256,6 +1527,20 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => const SettingsActivityPage()),
     );
     if (mounted) await _loadProfile();
+  }
+
+  Future<void> _logout(BuildContext context) async {
+    try {
+      CheckinPingManager.I.stop();
+      ActiveCheckinService().clear();
+      UserSession.instance.clear();
+      await AuthRepository().logout();
+      if (!context.mounted) return;
+
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
+    } catch (_) {}
   }
 
   @override
@@ -1276,7 +1561,14 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     // konur — kullanıcının o mekandaki temsili. Check-in expire olunca
     // (_activeCheckin null, _media boş) otomatik gerçek profil fotosuna döner;
     // profil fotosu yoksa boş kalır.
-    final photo = (_featuredCheckinPhotoUrl ?? _user?['photo'] ?? '')
+    // Aktif check-in'e özel cropped avatar/featured foto öncelikli. Böylece
+    // check-in temsili profil fotoğrafını kalıcı olarak ezmez.
+    // Profil fotoğrafı olan kullanıcıda o kalıcı kalır; featured/check-in
+    // avatarı yalnızca profil fotoğrafı olmayan kullanıcıda avatara düşer.
+    final userPhoto = (_user?['photo'] ?? '').toString().trim();
+    final activeAvatar =
+        _activeCheckinAvatarPhotoUrl ?? _featuredCheckinPhotoUrl;
+    final photo = (userPhoto.isNotEmpty ? userPhoto : (activeAvatar ?? ''))
         .toString();
     final fullName = (_user?['fullName'] ?? _user?['full_name'] ?? '')
         .toString()
@@ -1310,7 +1602,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: _loadProfile,
+        onRefresh: () => _loadProfile(forceRefresh: true),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
@@ -1426,7 +1718,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 18),
               // ── Check-in tag'leri (varsa) — grid'in üstünde ─────────────
-              if (_checkinWhatBrings.isNotEmpty) ...[
+              if (_activeCheckinId() != null) ...[
                 Container(
                   width: double.infinity,
                   decoration: BoxDecoration(
@@ -1438,41 +1730,104 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
-                      children: _checkinWhatBrings.map((raw) {
-                        return Container(
-                          margin: const EdgeInsets.only(right: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 7,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          'What brings you to KMSTRY?',
+                          style: TextStyle(
+                            color: onSurface.withValues(alpha: 0.76),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
                           ),
-                          decoration: BoxDecoration(
-                            color: AppTheme.brandPrimary.withValues(
-                              alpha: 0.12,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: AppTheme.brandPrimary.withValues(
-                                alpha: 0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        physics: const BouncingScrollPhysics(),
+                        child: Row(
+                          children: [
+                            // "more +" — check-in tag'lerini profilden düzenle.
+                            // En başta ki kullanıcı kolayca görüp düzenleyebilsin.
+                            GestureDetector(
+                              onTap: _openEditWhatBrings,
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 7),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.06)
+                                      : Colors.grey.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: onSurface.withValues(alpha: 0.18),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _checkinWhatBrings.isEmpty
+                                          ? 'Add'
+                                          : 'more',
+                                      style: TextStyle(
+                                        color: onSurface.withValues(
+                                          alpha: 0.78,
+                                        ),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Icon(
+                                      Icons.add_rounded,
+                                      size: 15,
+                                      color: onSurface.withValues(alpha: 0.78),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                          child: Text(
-                            _formatWhatBringsLabel(raw),
-                            style: TextStyle(
-                              color: onSurface,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                            ..._checkinWhatBrings.map((raw) {
+                              return Container(
+                                margin: const EdgeInsets.only(right: 7),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.brandPrimary.withValues(
+                                    alpha: 0.12,
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: AppTheme.brandPrimary.withValues(
+                                      alpha: 0.28,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  _formatWhatBringsLabel(raw),
+                                  style: TextStyle(
+                                    color: onSurface,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1482,9 +1837,24 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                 color: onSurface.withValues(alpha: 0.12),
               ),
               const SizedBox(height: 14),
-              // ── Moments grid ────────────────────────────────────────────
-              _buildMomentsGrid(canAddMore, isDark, subColor),
-              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: _buildProfileContentTabs(onSurface, subColor, isDark),
+              ),
+              const SizedBox(height: 16),
+              if (_selectedProfileTab == 0)
+                _buildMomentsGrid(canAddMore, isDark, subColor)
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: _buildVisitedPlacesSection(
+                    places: _visitedPlaces,
+                    isDark: isDark,
+                    subColor: subColor,
+                    onSurface: onSurface,
+                  ),
+                ),
+              SizedBox(height: MediaQuery.paddingOf(context).bottom + 92),
             ],
           ),
         ),
@@ -1498,10 +1868,12 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     const gap = 2.5;
     const radius = 32.0;
     final hasStories = _myStories.isNotEmpty;
-    final totalSize = hasStories
+    // Yükleme sırasında da halka görünür (döner).
+    final showRing = hasStories || _uploadingStory;
+    final totalSize = showRing
         ? avatarSize + ((ringWidth + gap) * 2)
         : avatarSize;
-    final ringColors = _hasUnseenProfileStories
+    final ringColors = (_uploadingStory || _hasUnseenProfileStories)
         ? _ProfileStoryRingPainter.logoColors
         : [Colors.grey.shade400, Colors.grey.shade500];
 
@@ -1510,7 +1882,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       height: avatarSize,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
-        border: hasStories
+        border: showRing
             ? null
             : Border.all(
                 color: isDark
@@ -1522,10 +1894,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: photo.isNotEmpty
-            ? Image.network(
+            ? CachedImage(
                 photo,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _avatarFallback(isDark),
+                errorWidget: (_) => _avatarFallback(isDark),
               )
             : _avatarFallback(isDark),
       ),
@@ -1535,7 +1907,9 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       clipBehavior: Clip.none,
       children: [
         GestureDetector(
-          onTap: hasStories ? () => _openMyStoryViewer(photo) : null,
+          onTap: (hasStories && !_uploadingStory)
+              ? () => _openMyStoryViewer(photo)
+              : null,
           child: SizedBox(
             width: totalSize,
             height: totalSize,
@@ -1543,15 +1917,27 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
               alignment: Alignment.center,
               children: [
                 avatar,
-                if (hasStories)
+                if (showRing)
                   Positioned.fill(
-                    child: CustomPaint(
-                      painter: _ProfileStoryRingPainter(
-                        colors: ringColors,
-                        strokeWidth: ringWidth,
-                        radius: radius + gap,
-                      ),
-                    ),
+                    child: _uploadingStory
+                        // Yükleme sırasında halka döner (venue/home ile aynı).
+                        ? RotationTransition(
+                            turns: _storySpin,
+                            child: CustomPaint(
+                              painter: _ProfileStoryRingPainter(
+                                colors: ringColors,
+                                strokeWidth: ringWidth,
+                                radius: radius + gap,
+                              ),
+                            ),
+                          )
+                        : CustomPaint(
+                            painter: _ProfileStoryRingPainter(
+                              colors: ringColors,
+                              strokeWidth: ringWidth,
+                              radius: radius + gap,
+                            ),
+                          ),
                   ),
               ],
             ),
@@ -1706,6 +2092,382 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildProfileContentTabs(
+    Color onSurface,
+    Color subColor,
+    bool isDark,
+  ) {
+    Widget tab({
+      required int index,
+      required IconData icon,
+      required String label,
+    }) {
+      final selected = _selectedProfileTab == index;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => _selectedProfileTab = index),
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected
+                  ? AppTheme.brandPrimary.withValues(
+                      alpha: isDark ? 0.22 : 0.14,
+                    )
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected
+                    ? AppTheme.brandPrimary.withValues(alpha: 0.48)
+                    : onSurface.withValues(alpha: 0.10),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? AppTheme.brandPrimary : subColor,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? onSurface : subColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        tab(index: 0, icon: Icons.auto_awesome_rounded, label: 'Moments'),
+        const SizedBox(width: 8),
+        tab(index: 1, icon: Icons.place_rounded, label: 'Visited Places'),
+      ],
+    );
+  }
+
+  Widget _buildVisitedPlacesSection({
+    required List<CheckinVisitedPlace> places,
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    if (places.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 4),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.place_outlined, size: 46, color: subColor),
+              const SizedBox(height: 12),
+              Text(
+                'No visited places shared yet',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: onSurface,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Turn on "Show on my profile" when you check in to publish a place here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Kartlara sabit yükseklik ver → içerik farkı (ör. "Hidden from others")
+    // kartları kesmez. Liste iç-scroll DEĞİL: shrinkWrap ile satır içi açılır,
+    // sayfa tek parça kayar (altında boşluk/çift-scroll oluşmaz).
+    const tileHeight = 104.0;
+    const separatorHeight = 10.0;
+
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: places.length,
+      separatorBuilder: (_, _) => const SizedBox(height: separatorHeight),
+      itemBuilder: (_, index) => SizedBox(
+        height: tileHeight,
+        child: _buildVisitedPlaceTile(
+          place: places[index],
+          isDark: isDark,
+          subColor: subColor,
+          onSurface: onSurface,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVisitedPlaceTile({
+    required CheckinVisitedPlace place,
+    required bool isDark,
+    required Color subColor,
+    required Color onSurface,
+  }) {
+    final photo = (place.venuePhoto ?? '').trim();
+    final isVisible = place.showOnProfile;
+    final isUpdating = _updatingProfileVisibilityIds.contains(place.id);
+    return InkWell(
+      onTap: () => _openVisitedVenueDetail(place),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF161C28) : const Color(0xFFF7F9FC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isVisible
+                ? onSurface.withValues(alpha: 0.10)
+                : subColor.withValues(alpha: 0.18),
+          ),
+        ),
+        child: Row(
+          children: [
+            Opacity(
+              opacity: isVisible ? 1 : 0.48,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 58,
+                  height: 58,
+                  child: photo.isNotEmpty
+                      ? CachedImage(
+                          photo,
+                          fit: BoxFit.cover,
+                          errorWidget: (_) =>
+                              _buildVisitedPlacePlaceholder(isDark, subColor),
+                        )
+                      : _buildVisitedPlacePlaceholder(isDark, subColor),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    place.venueName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: onSurface,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _visitedPlaceSubtitle(place),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: subColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _formatVisitedDate(place.checkedInAt),
+                    style: TextStyle(color: subColor, fontSize: 12.5),
+                  ),
+                  if (!isVisible) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.visibility_off_outlined,
+                          size: 14,
+                          color: subColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Hidden from others',
+                          style: TextStyle(
+                            color: subColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: isVisible ? 'Hide from profile' : 'Show on my profile',
+              onPressed: isUpdating
+                  ? null
+                  : () => _toggleVisitedPlaceVisibility(place),
+              icon: isUpdating
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppTheme.brandPrimary,
+                      ),
+                    )
+                  : Icon(
+                      isVisible
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_outlined,
+                      color: isVisible ? AppTheme.brandPrimary : subColor,
+                      size: 22,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleVisitedPlaceVisibility(CheckinVisitedPlace place) async {
+    if (_updatingProfileVisibilityIds.contains(place.id)) return;
+    final next = !place.showOnProfile;
+    final previousPlaces = List<CheckinVisitedPlace>.from(_visitedPlaces);
+
+    setState(() {
+      _updatingProfileVisibilityIds.add(place.id);
+      _visitedPlaces = _visitedPlaces
+          .map(
+            (item) =>
+                item.id == place.id ? item.copyWith(showOnProfile: next) : item,
+          )
+          .toList();
+    });
+
+    try {
+      await _checkinRepo.updateProfileVisibility(
+        checkinId: place.id,
+        showOnProfile: next,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _visitedPlaces = previousPlaces;
+      });
+      await showPremiumErrorDialog(
+        context,
+        message: 'Profile visibility could not be updated. Please try again.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _updatingProfileVisibilityIds.remove(place.id));
+      }
+    }
+  }
+
+  Widget _buildVisitedPlacePlaceholder(bool isDark, Color subColor) {
+    return Container(
+      color: isDark ? const Color(0xFF252D3D) : const Color(0xFFE9EEF5),
+      child: Icon(Icons.place_rounded, color: subColor, size: 28),
+    );
+  }
+
+  String _visitedPlaceSubtitle(CheckinVisitedPlace place) {
+    final type = (place.venueType ?? '').trim();
+    if (type.isEmpty) return 'Venue';
+    return _formatWhatBringsLabel(type);
+  }
+
+  String _formatVisitedDate(DateTime date) {
+    final local = date.toLocal();
+    if (local.millisecondsSinceEpoch == 0) return '';
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    return '${months[local.month - 1]} ${local.day} · $hour:$minute $period';
+  }
+
+  Future<void> _openVisitedVenueDetail(CheckinVisitedPlace place) async {
+    final venueId = (place.venueId ?? '').trim();
+    if (venueId.isEmpty) return;
+    Venue? venue;
+    try {
+      final venueData = await _venueContextRepository.getVenueById(venueId);
+      final map = Map<String, dynamic>.from(venueData);
+      if ((map['id'] == null || map['id'].toString().isEmpty)) {
+        map['id'] = venueId;
+      }
+      if ((map['source'] == null || map['source'].toString().isEmpty)) {
+        map['source'] = 'db';
+      }
+      if ((map['isInDb'] == null) && (map['is_in_db'] == null)) {
+        map['isInDb'] = true;
+      }
+      if ((map['canCheckin'] == null) && (map['can_checkin'] == null)) {
+        map['canCheckin'] = true;
+      }
+      venue = Venue.fromJson(map);
+      if (venue.id.isEmpty) venue = null;
+    } catch (_) {
+      venue = null;
+    }
+    final resolvedVenue =
+        venue ??
+        Venue(
+          id: venueId,
+          name: place.venueName,
+          type: place.venueType ?? 'venue',
+          status: 'Open',
+          address: '',
+          city: '',
+          photoUrl: (place.venuePhoto ?? '').trim(),
+          latitude: 0.0,
+          longitude: 0.0,
+          tag: '#Visited',
+          source: 'db',
+          isInDb: true,
+          canCheckin: true,
+        );
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
+    );
+    if (mounted) unawaited(_loadMyStories());
+  }
+
   Widget _buildMomentsGrid(bool canAddMore, bool isDark, Color sub) {
     final hasAny = _media.isNotEmpty || canAddMore;
     if (!hasAny) {
@@ -1761,6 +2523,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
                     media: _media,
                     initialIndex: index,
                     allowFeature: true,
+                    checkinId: _activeCheckinId(),
                   ),
                 ),
               );
@@ -1822,10 +2585,10 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
         ],
       );
     }
-    return Image.network(
+    return CachedImage(
       media.url,
       fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => Container(color: const Color(0xFF1E1E1E)),
+      errorWidget: (_) => Container(color: const Color(0xFF1E1E1E)),
     );
   }
 
@@ -1837,7 +2600,7 @@ class _ProfilePageState extends State<ProfilePage> with WidgetsBindingObserver {
       ),
     );
     if (updated == true && mounted) {
-      await _loadProfile();
+      await _loadProfile(forceRefresh: true);
     }
   }
 

@@ -9,6 +9,33 @@ import 'package:kmstry_frontend/features/venue/data/ping_response.dart';
 import 'venue_checkin_model.dart';
 import 'attendee_filter.dart';
 
+/// Cold start yenileme adayı: yakın zamanda süre dolan son check-in.
+class RenewableCheckin {
+  final String checkinId;
+  final String venueId;
+  final String? venueName;
+  final double venueLatitude;
+  final double venueLongitude;
+
+  RenewableCheckin({
+    required this.checkinId,
+    required this.venueId,
+    this.venueName,
+    required this.venueLatitude,
+    required this.venueLongitude,
+  });
+
+  factory RenewableCheckin.fromJson(Map<String, dynamic> json) {
+    return RenewableCheckin(
+      checkinId: (json['checkinId'] ?? json['id'] ?? '').toString(),
+      venueId: (json['venueId'] ?? json['venue_id'] ?? '').toString(),
+      venueName: json['venueName']?.toString(),
+      venueLatitude: (json['venueLatitude'] as num?)?.toDouble() ?? 0,
+      venueLongitude: (json['venueLongitude'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
 class VenueCheckinRepository {
   final ApiClient _api = ApiClient();
 
@@ -85,6 +112,38 @@ class VenueCheckinRepository {
     );
 
     return PingResponse.fromJson(data as Map<String, dynamic>);
+  }
+
+  /// Cold start yenileme: aktif check-in yoksa, yakın zamanda süre dolan son
+  /// check-in'i (venue koordinatlarıyla) döner. Yoksa null.
+  Future<RenewableCheckin?> getRenewableCheckin() async {
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) return null;
+    final data = await _api.get(
+      '/checkins/me/renewable',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    if (data == null) return null;
+    return RenewableCheckin.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Süresi dolan check-in'i kullanıcı hâlâ mekandaysa yeniden aktifleştirir.
+  /// Dönen map: { checkinId, venueId, expiresAt }.
+  Future<Map<String, dynamic>> renewCheckin({
+    required String checkinId,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) {
+      throw Exception('UnAuth: No access token available');
+    }
+    final data = await _api.post(
+      '/checkins/$checkinId/renew',
+      headers: {'Authorization': 'Bearer $accessToken'},
+      body: {'latitude': latitude, 'longitude': longitude},
+    );
+    return Map<String, dynamic>.from(data as Map);
   }
 
   /// Gets the current user's active check-in via the real backend endpoint

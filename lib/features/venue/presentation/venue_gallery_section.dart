@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -294,7 +295,7 @@ class GalleryTile extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (item.thumbnailUrl != null && item.thumbnailUrl!.isNotEmpty)
-            Image.network(item.thumbnailUrl!, fit: BoxFit.cover, errorBuilder: (_, _, _) => Container(color: Colors.black))
+            CachedImage(item.thumbnailUrl!, fit: BoxFit.cover, errorWidget: (_) => Container(color: Colors.black))
           else
             Container(color: Colors.black87),
           const Center(
@@ -303,11 +304,11 @@ class GalleryTile extends StatelessWidget {
         ],
       );
     }
-    return Image.network(
+    return CachedImage(
       item.url,
       fit: BoxFit.cover,
-      loadingBuilder: (ctx, child, progress) => progress == null ? child : placeholder,
-      errorBuilder: (_, _, _) => placeholder,
+      placeholder: (_) => placeholder,
+      errorWidget: (_) => placeholder,
     );
   }
 }
@@ -402,7 +403,7 @@ class _GalleryViewerState extends State<GalleryViewer> {
               if (item.isVideo) return _VideoPage(url: item.url);
               return InteractiveViewer(
                 minScale: 1, maxScale: 4,
-                child: Center(child: Image.network(item.url, fit: BoxFit.contain)),
+                child: Center(child: CachedImage(item.url, fit: BoxFit.contain)),
               );
             },
           ),

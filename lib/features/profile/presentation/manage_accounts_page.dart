@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
+import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_detail_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
@@ -25,7 +26,8 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
 
   Future<void> _load() async {
     try {
-      final me = await AuthRepository().getMe();
+      // Taze çek: yeni eklenen/onaylanan venue anında görünsün (stale cache olmasın).
+      final me = await AuthRepository().getMe(forceRefresh: true);
       if (!mounted) return;
       setState(() {
         _context = MeContextModel.fromMe(me);
@@ -156,18 +158,44 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                       },
                     ),
 
-                  // Venue accounts
+                  // Venue accounts — aktif + onay bekleyen/reddedilen sahiplik
+                  // claim'leri (böylece yeni eklenen venue onaydan önce de görünür).
                   ...ctx.memberVenues
-                      .where((v) => v.isActive)
+                      .where(
+                        (v) =>
+                            v.isActive ||
+                            v.isPendingOwnerClaim ||
+                            v.isRejectedOwnerClaim,
+                      )
                       .map(
                         (venue) => Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: _AccountCard(
                             name: venue.name,
-                            subtitle: venue.role ?? 'Venue',
+                            subtitle: venue.isActive
+                                ? (venue.role ?? 'Venue')
+                                : venue.isRejectedOwnerClaim
+                                ? 'Claim rejected — tap to review'
+                                : 'Pending approval',
                             icon: Icons.business_outlined,
                             colors: colors,
                             onManage: () async {
+                              // Onay bekleyen/reddedilen: venue context'ine geç →
+                              // AuthGate pending/rejected sayfasına yönlendirir.
+                              if (!venue.isActive) {
+                                try {
+                                  await AuthRepository().switchContext(
+                                    lastActiveContext: 'VENUE',
+                                    activeVenueId: venue.id,
+                                  );
+                                } catch (_) {}
+                                if (!mounted) return;
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  AuthRoutes.authGate,
+                                  (route) => false,
+                                );
+                                return;
+                              }
                               await Navigator.push(
                                 context,
                                 MaterialPageRoute(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_model.dart';
 
 class UserCard extends StatelessWidget {
@@ -17,38 +18,30 @@ class UserCard extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           /// USER IMAGE
-          Image.network(
+          CachedImage(
             imageUrl,
             fit: BoxFit.cover,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) {
-                return child;
-              }
-
-              return Container(
-                color: Colors.grey.shade200,
-                child: const Center(
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.black54,
-                    ),
+            placeholder: (context) => Container(
+              color: Colors.grey.shade200,
+              child: const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.black54,
                   ),
                 ),
-              );
-            },
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
-                color: Colors.grey.shade300,
-                child: const Icon(
-                  Icons.person,
-                  color: Colors.white70,
-                  size: 32,
-                ),
-              );
-            },
+              ),
+            ),
+            errorWidget: (context) => Container(
+              color: Colors.grey.shade300,
+              child: const Icon(
+                Icons.person,
+                color: Colors.white70,
+                size: 32,
+              ),
+            ),
           ),
 
           if (user.isFeaturedVideo)

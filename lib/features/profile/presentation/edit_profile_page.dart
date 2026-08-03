@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 
 /// Instagram tarzı "Edit Profile" ekranı — çalışır.
@@ -34,8 +36,19 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   File? _pickedPhoto; // yeni seçilen (önizleme için)
   String _photoUrl = '';
+  // Aktif check-in'in avatarı (featured foto'dan kırpılmış) — varsa profil
+  // fotosunun yerine bu gösterilir ve "Change photo" gizlenir; çünkü aktif
+  // check-in boyunca avatar check-in'den yönetilir.
+  String _checkinAvatarUrl = '';
+  // Aktif check-in'in id'si ve featured (orijinal) foto URL'i — avatar'ı
+  // yeniden kırpmak için gerekir.
+  String _checkinId = '';
+  String _checkinFeaturedUrl = '';
+  bool _croppingAvatar = false;
   bool _uploadingPhoto = false;
+  bool _removingPhoto = false;
   bool _saving = false;
+  bool _photoChanged = false;
   String? _saveError;
 
   // Username canlı kontrol durumu
@@ -59,6 +72,67 @@ class _EditProfilePageState extends State<EditProfilePage> {
       text: (widget.user['bio'] ?? '').toString(),
     );
     _photoUrl = (widget.user['photo'] ?? '').toString();
+
+    final active = widget.user['activeCheckin'] ?? widget.user['active_checkin'];
+    if (active is Map) {
+      _checkinAvatarUrl =
+          (active['avatarPhoto'] ?? active['avatar_photo'] ?? '')
+              .toString()
+              .trim();
+      _checkinId = (active['id'] ?? '').toString().trim();
+      _checkinFeaturedUrl =
+          (active['featuredPhoto'] ?? active['featured_photo'] ?? '')
+              .toString()
+              .trim();
+    }
+  }
+
+  bool get _hasCheckinAvatar => _checkinAvatarUrl.isNotEmpty;
+
+  /// Aktif check-in var mı — avatar check-in'den yönetiliyor demektir.
+  bool get _hasActiveCheckin => _checkinId.isNotEmpty;
+
+  bool get _hasPersistentProfilePhoto =>
+      _photoUrl.isNotEmpty || _pickedPhoto != null;
+
+  bool get _shouldManageCheckinAvatar =>
+      _hasActiveCheckin && !_hasPersistentProfilePhoto;
+
+  bool get _hasCheckinAvatarSource =>
+      _checkinAvatarUrl.isNotEmpty || _checkinFeaturedUrl.isNotEmpty;
+
+  /// Aktif check-in avatarını yeniden kırpma: orijinal featured foto (yoksa
+  /// mevcut avatar) indirilip kare crop ekranı açılır, sonuç yüklenir.
+  Future<void> _adjustCheckinAvatar() async {
+    if (!_shouldManageCheckinAvatar || _checkinId.isEmpty) return;
+    final source = _checkinFeaturedUrl.isNotEmpty
+        ? _checkinFeaturedUrl
+        : _checkinAvatarUrl;
+    if (source.isEmpty) return;
+
+    setState(() => _croppingAvatar = true);
+    try {
+      final newUrl = await recropCheckinAvatarFromUrl(
+        context,
+        checkinId: _checkinId,
+        featuredUrl: source,
+      );
+      if (!mounted) return;
+      if (newUrl != null && newUrl.isNotEmpty) {
+        setState(() {
+          _checkinAvatarUrl = newUrl;
+          _pickedPhoto = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _saveError = 'Avatar could not be updated. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _croppingAvatar = false);
+    }
   }
 
   @override
@@ -78,14 +152,23 @@ class _EditProfilePageState extends State<EditProfilePage> {
         maxWidth: 1080,
         imageQuality: 85,
       );
-      if (picked == null) return;
-      final file = File(picked.path);
+      if (picked == null || !mounted) return;
+      // Seçilen foto'yu kare avatar olarak kırp; iptal edilirse yükleme yapma.
+      final cropped = await cropSquareAvatar(context, File(picked.path));
+      if (cropped == null || !mounted) return;
       setState(() {
-        _pickedPhoto = file;
+        _pickedPhoto = cropped;
         _uploadingPhoto = true;
       });
-      await _auth.uploadProfilePhoto(file);
-      if (mounted) setState(() => _uploadingPhoto = false);
+      await _auth.uploadProfilePhoto(cropped);
+      if (mounted) {
+        setState(() {
+          _photoUrl = '';
+          _checkinAvatarUrl = '';
+          _uploadingPhoto = false;
+          _photoChanged = true;
+        });
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -94,6 +177,57 @@ class _EditProfilePageState extends State<EditProfilePage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not upload photo. Try again.')),
+      );
+    }
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    if (_photoUrl.isEmpty && _pickedPhoto == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove profile photo?'),
+        content: const Text(
+          'Your active check-in avatar will not be affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              'Remove',
+              style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _removingPhoto = true;
+      _saveError = null;
+    });
+    try {
+      await _auth.removeProfilePhoto();
+      if (!mounted) return;
+      setState(() {
+        _photoUrl = '';
+        _pickedPhoto = null;
+        _removingPhoto = false;
+        _photoChanged = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile photo removed.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _removingPhoto = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not remove photo. Try again.')),
       );
     }
   }
@@ -242,7 +376,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.close_rounded, color: onSurface),
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          onPressed: _saving
+              ? null
+              : () => Navigator.pop(context, _photoChanged),
         ),
         title: Text(
           'Edit profile',
@@ -323,15 +459,69 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                TextButton(
-                  onPressed: _uploadingPhoto ? null : _changePhoto,
-                  child: Text(
-                    'Change photo',
-                    style: TextStyle(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w600,
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 0,
+                  children: [
+                    TextButton(
+                      onPressed:
+                          (_uploadingPhoto || _removingPhoto || _croppingAvatar)
+                          ? null
+                          : _changePhoto,
+                      child: Text(
+                        _hasPersistentProfilePhoto
+                            ? 'Change photo'
+                            : 'Add profile photo',
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_shouldManageCheckinAvatar && _hasCheckinAvatarSource)
+                      TextButton.icon(
+                        onPressed:
+                            (_uploadingPhoto || _removingPhoto || _croppingAvatar)
+                            ? null
+                            : _adjustCheckinAvatar,
+                        icon: _croppingAvatar
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.crop_rounded, size: 18),
+                        label: const Text('Adjust avatar'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: theme.colorScheme.primary,
+                        ),
+                      ),
+                    if (_hasPersistentProfilePhoto)
+                      TextButton(
+                        onPressed:
+                            (_uploadingPhoto || _removingPhoto || _croppingAvatar)
+                            ? null
+                            : _removeProfilePhoto,
+                        child: _removingPhoto
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                'Remove',
+                                style: TextStyle(
+                                  color: theme.colorScheme.error,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -367,11 +557,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
     if (_pickedPhoto != null) {
       return Image.file(_pickedPhoto!, fit: BoxFit.cover);
     }
-    if (_photoUrl.isNotEmpty) {
-      return Image.network(
-        _photoUrl,
+    // Profil sayfasıyla aynı öncelik: kalıcı profil fotoğrafı varsa üstün,
+    // yoksa check-in avatarı, o da yoksa featured check-in fotoğrafı.
+    final displayUrl = _photoUrl.isNotEmpty
+        ? _photoUrl
+        : (_hasCheckinAvatar ? _checkinAvatarUrl : _checkinFeaturedUrl);
+    if (displayUrl.isNotEmpty) {
+      return CachedImage(
+        displayUrl,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => _avatarFallback(isDark),
+        errorWidget: (_) => _avatarFallback(isDark),
       );
     }
     return _avatarFallback(isDark);

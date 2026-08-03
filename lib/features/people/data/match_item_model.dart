@@ -13,6 +13,9 @@ class MatchItem {
   final String? venuePhoto;
   final String? bio;
 
+  /// Yalnızca galeriden yüklenen profil avatarı (check-in featured fotosu değil).
+  final String? userPhotoUrl;
+
   MatchItem({
     required this.matchId,
     this.chatId,
@@ -25,6 +28,7 @@ class MatchItem {
     this.venueType,
     this.venuePhoto,
     this.bio,
+    this.userPhotoUrl,
   });
 
   factory MatchItem.fromJson(Map<String, dynamic> json) {
@@ -70,6 +74,13 @@ class MatchItem {
         json['venue_photo'] as String? ??
         json['venuePhoto'] as String? ??
         venue?['photo'] as String?;
+    final userPhoto =
+        json['photo'] as String? ??
+        json['photoUrl'] as String? ??
+        json['photo_url'] as String? ??
+        user?['photo'] as String? ??
+        user?['photoUrl'] as String? ??
+        user?['photo_url'] as String?;
     final bio =
         (json['bio'] ??
                 json['bio_text'] ??
@@ -100,6 +111,9 @@ class MatchItem {
           ? venuePhoto.trim()
           : null,
       bio: (bio != null && bio.isNotEmpty) ? bio : null,
+      userPhotoUrl: (userPhoto != null && userPhoto.trim().isNotEmpty)
+          ? userPhoto.trim()
+          : null,
     );
   }
 }

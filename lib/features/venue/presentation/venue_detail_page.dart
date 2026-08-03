@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
@@ -909,12 +910,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       return imgUrl != null && imgUrl.isNotEmpty
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.network(
+                              child: CachedImage(
                                 imgUrl,
                                 width: 48,
                                 height: 48,
                                 fit: BoxFit.cover,
-                                errorBuilder: (ctx, err, st) =>
+                                errorWidget: (ctx) =>
                                     _eventIconPlaceholder(colors),
                               ),
                             )
@@ -1494,7 +1495,7 @@ class _VenueDetailAvatarRing extends StatelessWidget {
 
     final avatar = ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: Image.network(
+      child: CachedImage(
         photo,
         width: avatarSize,
         height: avatarSize,

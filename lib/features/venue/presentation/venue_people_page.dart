@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
@@ -107,7 +108,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
+                  child: CachedImage(
                     'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
                     width: 40,
                     height: 40,

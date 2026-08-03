@@ -42,6 +42,17 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> acceptActiveLegalVersions({
+    required String accessToken,
+  }) async {
+    final res = await _client.post(
+      '/legal/consents/accept-active',
+      body: {'consentSource': 'MOBILE'},
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return res as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> getUsernameSuggestions({
     required String accessToken,
     required String base,

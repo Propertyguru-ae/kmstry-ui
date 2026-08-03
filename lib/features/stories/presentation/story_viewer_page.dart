@@ -66,12 +66,18 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   bool _videoReady = false;
   bool _advancing = false;
   bool _loadingStory = false;
+  DateTime? _storyPressStartedAt;
+  double _storyVerticalDragOffset = 0;
+  bool _closingStory = false;
   int _progressKey =
       0; // her story yüklenince artar → progress bar sıfırdan oluşturulur
   final Map<int, int> _liveViewCounts =
       {}; // storyIndex → fresh count from sheet
 
   static const Duration _photoDuration = Duration(seconds: 5);
+  static const Duration _tapNavigationThreshold = Duration(milliseconds: 260);
+  static const double _dismissDragDistance = 90;
+  static const double _dismissDragVelocity = 650;
 
   StoryGroup get _currentGroup => _groups[_groupIndex];
   StoryItem get _currentStory => _currentGroup.stories[_storyIndex];
@@ -435,6 +441,61 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _videoController?.play();
   }
 
+  void _handleStoryPressStart(TapDownDetails _) {
+    _storyPressStartedAt = DateTime.now();
+    _pauseProgress();
+  }
+
+  void _handleStoryPressEnd(VoidCallback onShortTap) {
+    final startedAt = _storyPressStartedAt;
+    _storyPressStartedAt = null;
+    _resumeProgress();
+
+    if (startedAt == null) return;
+    final elapsed = DateTime.now().difference(startedAt);
+    if (elapsed <= _tapNavigationThreshold) {
+      onShortTap();
+    }
+  }
+
+  void _handleStoryPressCancel() {
+    _storyPressStartedAt = null;
+    _resumeProgress();
+  }
+
+  void _closeStory({bool allFinished = false}) {
+    if (!mounted || _closingStory) return;
+    _closingStory = true;
+    widget.onClose?.call(_storyIndex, allFinished);
+    Navigator.pop(
+      context,
+      StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: allFinished),
+    );
+  }
+
+  void _handleStoryVerticalDragStart(DragStartDetails _) {
+    _storyPressStartedAt = null;
+    _storyVerticalDragOffset = 0;
+    _pauseProgress();
+  }
+
+  void _handleStoryVerticalDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity > _dismissDragVelocity) {
+      _closeStory();
+      return;
+    }
+    _storyVerticalDragOffset = 0;
+    _resumeProgress();
+  }
+
+  void _handleStoryVerticalDragUpdate(DragUpdateDetails details) {
+    _storyVerticalDragOffset += details.primaryDelta ?? 0;
+    if (_storyVerticalDragOffset > _dismissDragDistance) {
+      _closeStory();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final group = _currentGroup;
@@ -518,15 +579,20 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                             height: double.infinity,
                             // Yüklenene kadar thumbnail görünsün; gelince yumuşak fade.
                             frameBuilder:
-                                (context, child, frame, wasSynchronouslyLoaded) {
-                              if (wasSynchronouslyLoaded) return child;
-                              return AnimatedOpacity(
-                                opacity: frame == null ? 0 : 1,
-                                duration: const Duration(milliseconds: 200),
-                                curve: Curves.easeOut,
-                                child: child,
-                              );
-                            },
+                                (
+                                  context,
+                                  child,
+                                  frame,
+                                  wasSynchronouslyLoaded,
+                                ) {
+                                  if (wasSynchronouslyLoaded) return child;
+                                  return AnimatedOpacity(
+                                    opacity: frame == null ? 0 : 1,
+                                    duration: const Duration(milliseconds: 200),
+                                    curve: Curves.easeOut,
+                                    child: child,
+                                  );
+                                },
                           ),
                       ],
                     ),
@@ -594,14 +660,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
             ),
 
             // ── TAP ZONES (left: back, right: advance) ────────────────────
-            // Long press on full screen → pause/resume
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onLongPressStart: (_) => _pauseProgress(),
-                onLongPressEnd: (_) => _resumeProgress(),
-              ),
-            ),
+            // Press-and-hold pauses immediately; a quick tap still navigates.
             // Left 35% → go back
             Positioned(
               top: 0,
@@ -610,7 +669,12 @@ class _StoryViewerPageState extends State<StoryViewerPage>
               width: screenSize.width * 0.35,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _goBack,
+                onTapDown: _handleStoryPressStart,
+                onTapUp: (_) => _handleStoryPressEnd(_goBack),
+                onTapCancel: _handleStoryPressCancel,
+                onVerticalDragStart: _handleStoryVerticalDragStart,
+                onVerticalDragUpdate: _handleStoryVerticalDragUpdate,
+                onVerticalDragEnd: _handleStoryVerticalDragEnd,
               ),
             ),
             // Right 65% → advance
@@ -621,7 +685,12 @@ class _StoryViewerPageState extends State<StoryViewerPage>
               width: screenSize.width * 0.65,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _advance,
+                onTapDown: _handleStoryPressStart,
+                onTapUp: (_) => _handleStoryPressEnd(_advance),
+                onTapCancel: _handleStoryPressCancel,
+                onVerticalDragStart: _handleStoryVerticalDragStart,
+                onVerticalDragUpdate: _handleStoryVerticalDragUpdate,
+                onVerticalDragEnd: _handleStoryVerticalDragEnd,
               ),
             ),
 
@@ -634,10 +703,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                   color: Colors.black38,
                   shape: const CircleBorder(),
                   child: IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.white,
-                    ),
+                    icon: const Icon(Icons.delete_outline, color: Colors.white),
                     onPressed: _deleteCurrentStory,
                   ),
                 ),
@@ -812,16 +878,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                       ),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () {
-                        widget.onClose?.call(_storyIndex, false);
-                        Navigator.pop(
-                          context,
-                          StoryViewerResult(
-                            lastStoryIndex: _storyIndex,
-                            allFinished: false,
-                          ),
-                        );
-                      },
+                      onPressed: _closeStory,
                     ),
                   ],
                 ),
