@@ -1,0 +1,47 @@
+flutter/ephemeral
+# === Flutter / Dart ===
+.dart_tool/
+.packages
+.pub/
+build/
+
+# === IDE ===
+.idea/
+.vscode/
+*.iml
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Environment ===
+.env
+.env.*
+*.env
+
+# === Firebase / Secrets (varsa) ===
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+firebase_options.dart
+
+# === Android ===
+android/.gradle/
+android/local.properties
+android/key.properties
+*.jks
+
+# === iOS ===
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/App.framework
+ios/Flutter/App.framework.dSYM
+ios/Flutter/engine/
+ios/Flutter/.last_build_id
+ios/Runner.xcworkspace/
+
+# === Coverage / Logs ===
+coverage/
+*.log
