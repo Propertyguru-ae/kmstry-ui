@@ -1981,10 +1981,13 @@ class _ProfilePageState extends State<ProfilePage>
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(
-                      Icons.add_rounded,
+                  : Icon(
+                      // Check-in yoksa story eklenemez → kilit; varsa "+".
+                      _activeCheckinId() == null
+                          ? Icons.lock_rounded
+                          : Icons.add_rounded,
                       color: Colors.white,
-                      size: 18,
+                      size: _activeCheckinId() == null ? 14 : 18,
                     ),
             ),
           ),
