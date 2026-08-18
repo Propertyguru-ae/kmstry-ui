@@ -1,20 +1,29 @@
 import 'dart:developer';
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 class MomentsViewerPage extends StatefulWidget {
   final List<CheckinProfileMedia> media;
   final int initialIndex;
   final bool allowFeature;
+  final String? checkinId;
 
   const MomentsViewerPage({
     super.key,
     required this.media,
     required this.initialIndex,
     this.allowFeature = false,
+    this.checkinId,
   });
 
   @override
@@ -25,7 +34,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   late PageController _controller;
   late int _currentIndex;
   final CheckinRepository _repo = CheckinRepository();
-  bool _loading = false;
+  bool _loading = false; // sadece "featured yap" işlemi (yıldız spinner'ı)
+  bool _deleting = false;
   late List<CheckinProfileMedia> _media;
   bool _hasChanged = false;
   VideoPlayerController? _videoController;
@@ -94,11 +104,9 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       return;
     }
 
-    setState(() => _loading = true);
-
     try {
+      setState(() => _loading = true);
       await _repo.setFeaturedPhoto(selected.id);
-
       if (!mounted) return;
 
       setState(() {
@@ -109,13 +117,128 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
       });
     } catch (e) {
       log("Feature error: $e");
+      if (!mounted) return;
       await showPremiumErrorDialog(
         context,
         message: 'Failed to set featured media',
       );
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      if (mounted) {
+        await _showFeaturedCropPrompt(selected);
+      }
+    } catch (e) {
+      log("Featured avatar crop/upload error: $e");
+      if (mounted) {
+        await showPremiumErrorDialog(
+          context,
+          message: 'Featured updated, but avatar crop could not be saved.',
+        );
+      }
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _showFeaturedCropPrompt(CheckinProfileMedia selected) async {
+    final checkinId = widget.checkinId;
+    if (checkinId == null || checkinId.isEmpty) return;
+
+    final colors = Theme.of(context).colorScheme;
+    final shouldCrop = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Use as your check-in avatar?',
+                  style: TextStyle(
+                    color: colors.onSurface,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Adjust how this featured photo appears on your profile while this check-in is active.',
+                  style: TextStyle(
+                    color: colors.onSurface.withValues(alpha: 0.62),
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.crop_rounded),
+                  title: const Text('Adjust crop'),
+                  onTap: () => Navigator.pop(ctx, true),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.check_circle_outline_rounded),
+                  title: const Text('Use as is'),
+                  onTap: () => Navigator.pop(ctx, false),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (shouldCrop != true || !mounted) return;
+
+    final localFile = await _downloadMediaToTemp(selected.url);
+    if (!mounted) return;
+    if (localFile == null) {
+      throw Exception('Could not download selected featured photo for crop');
+    }
+
+    final cropped = await cropSquareAvatar(context, localFile);
+    if (!mounted || cropped == null) return;
+
+    await _repo.uploadCheckinAvatar(checkinId: checkinId, file: cropped);
+    _hasChanged = true;
+  }
+
+  Future<File?> _downloadMediaToTemp(String url) async {
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode >= 400) return null;
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        '${dir.path}/kmstry-featured-avatar-${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      return file;
+    } catch (e) {
+      log('Featured avatar download error: $e');
+      return null;
+    }
   }
 
   Future<void> _deleteMedia(CheckinProfileMedia media) async {
@@ -123,19 +246,43 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     if (!shouldDelete) return;
     if (!mounted) return;
 
-    setState(() => _loading = true);
+    setState(() => _deleting = true);
 
     try {
       await _repo.deletePhoto(media.id);
 
       if (!mounted) return;
-      Navigator.pop(context, true);
+
+      // Story mantığı: silinince listeden çıkar. Başka post varsa bir sonrakini
+      // göster; hiç kalmadıysa kapanıp profile dön.
+      _media.removeWhere((m) => m.id == media.id);
+      _hasChanged = true;
+
+      if (_media.isEmpty) {
+        Navigator.pop(context, true);
+        return;
+      }
+
+      // Silinen item mevcut index'teydi; liste kaydığı için aynı index artık
+      // bir sonraki postu gösterir. Son item silindiyse bir geri git.
+      final newIndex = _currentIndex >= _media.length
+          ? _media.length - 1
+          : _currentIndex;
+
+      setState(() {
+        _currentIndex = newIndex;
+        _deleting = false;
+      });
+      _controller.jumpToPage(newIndex);
+      await _setupVideoIfNeeded(newIndex);
+      return;
     } catch (e) {
       log("Delete error: $e");
+      if (!mounted) return;
       await showPremiumErrorDialog(context, message: 'Failed to delete media');
     }
 
-    if (mounted) setState(() => _loading = false);
+    if (mounted) setState(() => _deleting = false);
   }
 
   Future<bool> _confirmDelete(CheckinProfileMedia media) async {
@@ -217,29 +364,29 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
               // 🖼 PHOTO
               if (item.mediaType == MediaType.photo) {
-                return Center(
-                  child: InteractiveViewer(
-                    child: Image.network(
-                      item.url,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
+                return SizedBox.expand(
+                  child: CachedImage(item.url, fit: BoxFit.cover),
                 );
               }
 
               // 🎬 VIDEO
-              return Center(
-                child: _videoController != null &&
-                        _videoController!.value.isInitialized &&
-                        _currentIndex == index
-                    ? AspectRatio(
-                        aspectRatio:
-                            _videoController!.value.aspectRatio,
-                        child: VideoPlayer(_videoController!),
-                      )
-                    : const CircularProgressIndicator(
-                        color: Colors.white,
-                      ),
+              if (_videoController != null &&
+                  _videoController!.value.isInitialized &&
+                  _currentIndex == index) {
+                return SizedBox.expand(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: _videoController!.value.size.width,
+                      height: _videoController!.value.size.height,
+                      child: VideoPlayer(_videoController!),
+                    ),
+                  ),
+                );
+              }
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.white),
               );
             },
           ),
@@ -249,10 +396,8 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
             top: 40,
             right: 16,
             child: IconButton(
-              icon: const Icon(Icons.close,
-                  color: Colors.white, size: 28),
-              onPressed: () =>
-                  Navigator.pop(context, _hasChanged),
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.pop(context, _hasChanged),
             ),
           ),
 
@@ -263,54 +408,91 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
               left: 20,
               right: 20,
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // FEATURE
-                  GestureDetector(
-                    onTap: !canFeaturePhoto || _loading
+                  // FEATURE — glass buton, featured'da teal accent.
+                  _GlassCircleButton(
+                    onTap: !canFeaturePhoto || _loading || _deleting
                         ? null
                         : _setFeatured,
-                    child: CircleAvatar(
-                      backgroundColor:
-                          Colors.black.withValues(alpha: 0.6),
-                      radius: 28,
-                      child: _loading
-                          ? const CircularProgressIndicator(
-                              color: Colors.white,
-                            )
-                          : Icon(
-                              Icons.star,
-                              color: currentMedia.isFeatured
-                                  ? Colors.amber
-                                  : canFeaturePhoto
-                                  ? Colors.white
-                                  : Colors.white38,
-                              size: 26,
-                            ),
-                    ),
+                    busy: _loading,
+                    icon: currentMedia.isFeatured
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    iconColor: currentMedia.isFeatured
+                        ? AppColors.tealDark
+                        : canFeaturePhoto
+                        ? Colors.white
+                        : Colors.white38,
+                    spinnerColor: AppColors.tealDark,
                   ),
 
-                  // DELETE
-                  GestureDetector(
-                    onTap: _loading
+                  // DELETE — glass buton, magenta accent.
+                  _GlassCircleButton(
+                    onTap: _loading || _deleting
                         ? null
                         : () => _deleteMedia(currentMedia),
-                    child: CircleAvatar(
-                      backgroundColor:
-                          Colors.black.withValues(alpha: 0.6),
-                      radius: 28,
-                      child: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.redAccent,
-                        size: 26,
-                      ),
-                    ),
+                    busy: _deleting,
+                    icon: Icons.delete_outline_rounded,
+                    iconColor: AppColors.magentaDark,
+                    spinnerColor: AppColors.magentaDark,
                   ),
                 ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Uygulama geneli glassmorphism buton — buzlu cam daire, ince kenarlık.
+/// Moments viewer'daki featured/delete aksiyonları için kullanılır.
+class _GlassCircleButton extends StatelessWidget {
+  const _GlassCircleButton({
+    required this.onTap,
+    required this.icon,
+    required this.iconColor,
+    this.busy = false,
+    this.spinnerColor = Colors.white,
+  });
+
+  final VoidCallback? onTap;
+  final IconData icon;
+  final Color iconColor;
+  final bool busy;
+  final Color spinnerColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipOval(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.12),
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              width: 52,
+              height: 52,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+              ),
+              child: busy
+                  ? SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: spinnerColor,
+                      ),
+                    )
+                  : Icon(icon, color: iconColor, size: 24),
+            ),
+          ),
+        ),
       ),
     );
   }

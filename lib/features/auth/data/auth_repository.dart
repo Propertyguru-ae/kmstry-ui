@@ -1,24 +1,81 @@
+import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
+import '../../../core/network/api_client.dart';
 import 'auth_api.dart';
+import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
+import '../../venue_stories/data/venue_story_viewed_cache.dart';
+import '../../stories/data/story_viewed_cache.dart';
+import '../../../core/push/push_manager.dart';
+import '../../../core/checkin/checkin_ping_manager.dart';
+import '../../checkin/services/active_checkin_service.dart';
 
 class AuthRepository {
+  // ── One-time app bootstrap ────────────────────────────────────────────────
+  /// Call this once from main() after navigatorKey is ready.
+  /// Wires up the 401 silent-refresh interceptor in ApiClient.
+  static void init({required GlobalKey<NavigatorState> navigatorKey}) {
+    ApiClient.onRefreshToken = () async {
+      return AuthRepository()._refreshTokenInternal();
+    };
+
+    ApiClient.onSessionExpired = () async {
+      CheckinPingManager.I.stop();
+      ActiveCheckinService().clear();
+      await SecureStorage.clearSession();
+      invalidateMeCache();
+      ProfilePreviewPage.clearActionStateCache();
+      VenueStoryViewedCache.instance.clear();
+      await StoryViewedCache.clearAll();
+      navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        AuthRoutes.startupGate,
+        (route) => false,
+      );
+    };
+  }
+
+  Future<String?> _refreshTokenInternal() async {
+    return refreshAccessToken();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   final AuthApi _api = AuthApi();
+  final ApiClient _http = ApiClient();
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId:
         '525936528438-c2i235kepeou80utta1rhsgg7jdfhrca.apps.googleusercontent.com',
   );
+  String? _pendingGoogleIdToken;
+  String? _pendingAppleIdentityToken;
+  String? _pendingAppleAuthorizationCode;
+  String? _pendingAppleFullName;
 
   static const bool _enableAuthLogs = false;
   void _log(String message) {
     if (kDebugMode && _enableAuthLogs) debugPrint(message);
+  }
+
+  // ── getMe() short-lived cache ─────────────────────────────────────────────
+  // Multiple widgets call getMe() simultaneously on startup / account switch.
+  // Cache the result for a short window so burst calls hit the API only once.
+  static Map<String, dynamic>? _getMeCache;
+  static DateTime? _getMeCacheTime;
+  static const _getMeCacheTtl = Duration(seconds: 6);
+
+  /// Invalidate the cache — call after any operation that changes server-side
+  /// user state (switchContext, logout, register, etc.).
+  static void invalidateMeCache() {
+    _getMeCache = null;
+    _getMeCacheTime = null;
   }
 
   Future<void> register(
@@ -138,6 +195,19 @@ class AuthRepository {
     );
   }
 
+  Future<void> acceptActiveLegalVersions() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) throw Exception('Not authenticated');
+
+    final response = await _api.acceptActiveLegalVersions(accessToken: token);
+    if (response['success'] == true) {
+      invalidateMeCache();
+      return;
+    }
+
+    throw Exception(response['message'] ?? 'Failed to accept legal documents');
+  }
+
   Future<List<String>> getUsernameSuggestions(String base) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
@@ -250,10 +320,13 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Failed to confirm email change');
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String identifier, String password) async {
     _log('🔥 Password login started');
 
-    final response = await _api.login(email: email, password: password);
+    final response = await _api.login(
+      identifier: identifier,
+      password: password,
+    );
     _log('📡 backend password response = $response');
 
     if (response['success'] == true) {
@@ -297,31 +370,58 @@ class AuthRepository {
     String? termsVersionId,
     String? privacyVersionId,
     String? consentSource,
+    bool reusePendingToken = false,
   }) async {
     _log('🔥 Google login started');
 
-    final googleUser = await _googleSignIn.signIn();
-    _log('👤 googleUser = $googleUser');
+    String? idToken;
+    if (reusePendingToken && _pendingGoogleIdToken != null) {
+      idToken = _pendingGoogleIdToken;
+      _log('♻️ Reusing pending Google idToken after consent');
+    } else {
+      _pendingGoogleIdToken = null;
 
-    if (googleUser == null) return false;
+      // Önceki (başarısız olabilen) oturumu temizle → her seferinde taze idToken.
+      // signOut yoksa plugin cache'lediği hesabı sessizce döndürüp idToken=null
+      // verebiliyor ve "bir daha giriş yapılamıyor" durumu oluşuyor.
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
 
-    final googleAuth = await googleUser.authentication;
-    final idToken = googleAuth.idToken;
+      final googleUser = await _googleSignIn.signIn();
+      _log('👤 googleUser = $googleUser');
+
+      if (googleUser == null) return false;
+
+      final googleAuth = await googleUser.authentication;
+      idToken = googleAuth.idToken;
+      _pendingGoogleIdToken = idToken;
+    }
 
     if (idToken == null) {
+      _pendingGoogleIdToken = null;
       throw Exception('Google idToken is null');
     }
 
-    final response = await _api.loginWithGoogle(
-      idToken: idToken,
-      consentGiven: consentGiven,
-      termsVersionId: termsVersionId,
-      privacyVersionId: privacyVersionId,
-      consentSource: consentSource,
-    );
+    late final Map<String, dynamic> response;
+    try {
+      response = await _api.loginWithGoogle(
+        idToken: idToken,
+        consentGiven: consentGiven,
+        termsVersionId: termsVersionId,
+        privacyVersionId: privacyVersionId,
+        consentSource: consentSource,
+      );
+    } catch (e) {
+      if (!_looksLikeConsentRequired(e)) {
+        _pendingGoogleIdToken = null;
+      }
+      rethrow;
+    }
     _log('📡 backend google response = $response');
 
     if (response['success'] == true) {
+      _pendingGoogleIdToken = null;
       await SecureStorage.saveTokens(
         accessToken: response['accessToken'],
         refreshToken: response['refreshToken'],
@@ -329,10 +429,115 @@ class AuthRepository {
       return true;
     }
 
+    _pendingGoogleIdToken = null;
     throw Exception(response['message'] ?? 'Google login failed');
   }
 
+  bool _looksLikeConsentRequired(Object error) {
+    if (error is! ApiException) return false;
+    final data = error.data;
+    final code = data['errorCode'] ?? data['error_code'] ?? data['code'];
+    if (code == 'CONSENT_REQUIRED_FOR_SOCIAL_LOGIN' ||
+        code == 'LEGAL_CONSENT_REQUIRED') {
+      return true;
+    }
+    final message = data['message']?.toString().toLowerCase() ?? '';
+    return message.contains('consent is required for first-time social login');
+  }
+
+  Future<bool> loginWithApple({
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
+    bool reusePendingCredential = false,
+  }) async {
+    _log('🍎 Apple login started');
+
+    String? identityToken;
+    String? authorizationCode;
+    String? fullName;
+
+    if (reusePendingCredential && _pendingAppleIdentityToken != null) {
+      identityToken = _pendingAppleIdentityToken;
+      authorizationCode = _pendingAppleAuthorizationCode;
+      fullName = _pendingAppleFullName;
+    } else {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
+
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+      );
+
+      identityToken = credential.identityToken;
+      authorizationCode = credential.authorizationCode;
+
+      // Apple only sends the name on the FIRST authorization — forward it so the
+      // backend can seed the account. Subsequent logins have null name parts.
+      final nameParts = [
+        credential.givenName,
+        credential.familyName,
+      ].where((p) => p != null && p.isNotEmpty).join(' ');
+      fullName = nameParts.isEmpty ? null : nameParts;
+
+      _pendingAppleIdentityToken = identityToken;
+      _pendingAppleAuthorizationCode = authorizationCode;
+      _pendingAppleFullName = fullName;
+    }
+
+    if (identityToken == null) {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
+      throw Exception('Apple identityToken is null');
+    }
+
+    Map<String, dynamic> response;
+    try {
+      response = await _api.loginWithApple(
+        identityToken: identityToken,
+        authorizationCode: authorizationCode,
+        fullName: fullName,
+        consentGiven: consentGiven,
+        termsVersionId: termsVersionId,
+        privacyVersionId: privacyVersionId,
+        consentSource: consentSource,
+      );
+    } catch (error) {
+      if (!_looksLikeConsentRequired(error)) {
+        _pendingAppleIdentityToken = null;
+        _pendingAppleAuthorizationCode = null;
+        _pendingAppleFullName = null;
+      }
+      rethrow;
+    }
+    _log('📡 backend apple response = $response');
+
+    if (response['success'] == true) {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
+      await SecureStorage.saveTokens(
+        accessToken: response['accessToken'],
+        refreshToken: response['refreshToken'],
+      );
+      return true;
+    }
+
+    _pendingAppleIdentityToken = null;
+    _pendingAppleAuthorizationCode = null;
+    _pendingAppleFullName = null;
+    throw Exception(response['message'] ?? 'Apple login failed');
+  }
+
   Future<void> logout() async {
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     final refreshToken = await SecureStorage.getRefreshToken();
     if (refreshToken != null) {
       try {
@@ -343,8 +548,15 @@ class AuthRepository {
     }
     await _googleSignIn.signOut();
 
+    // Backend logout tüm device token'ları pasifleştirir; guard'ı sıfırla ki
+    // sonraki login aynı cihaz token'ını yeniden aktif kaydetsin.
+    PushManager.instance.onSessionEnded();
+
     await SecureStorage.clearSession();
+    invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+    await StoryViewedCache.clearAll();
   }
 
   /// Root/global hesap silme: kimlik + bağlı contextler tamamen silinir.
@@ -353,8 +565,13 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
     await _googleSignIn.signOut();
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
+    PushManager.instance.onSessionEnded();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+    await StoryViewedCache.clearAll();
   }
 
   /// Geriye dönük uyumluluk.
@@ -379,6 +596,8 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
     await _api.deactivateAccount(accessToken: token);
     await _googleSignIn.signOut();
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
   }
@@ -429,13 +648,20 @@ class AuthRepository {
     await _api.resendVerifyEmail(accessToken: token);
   }
 
-  Future<Map<String, dynamic>> getMe() async {
+  Future<Map<String, dynamic>> getMe({bool forceRefresh = false}) async {
     final token = await SecureStorage.getAccessToken();
-    if (token == null) {
-      throw Exception('Not authenticated');
+    if (token == null) throw Exception('Not authenticated');
+
+    if (!forceRefresh && _getMeCache != null && _getMeCacheTime != null) {
+      final age = DateTime.now().difference(_getMeCacheTime!);
+      if (age < _getMeCacheTtl) return Map<String, dynamic>.from(_getMeCache!);
     }
+
     final me = await _api.me(accessToken: token);
-    return _normalizeMeResponse(me);
+    final normalized = _normalizeMeResponse(me);
+    _getMeCache = normalized;
+    _getMeCacheTime = DateTime.now();
+    return Map<String, dynamic>.from(normalized);
   }
 
   Map<String, dynamic> _normalizeMeResponse(Map<String, dynamic> source) {
@@ -526,6 +752,7 @@ class AuthRepository {
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
+    invalidateMeCache();
     return _api.switchContext(
       accessToken: token,
       lastActiveContext: lastActiveContext,
@@ -545,6 +772,7 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
 
     await _api.upsertPersonalProfile(accessToken: token, data: data);
+    invalidateMeCache();
 
     // Keep legacy /auth/me fields in sync for clients that still read user root fields.
     final mirror = <String, dynamic>{};
@@ -574,7 +802,11 @@ class AuthRepository {
       mirror['bio_onboarding_skipped'] = true;
     }
     if (mirror.isNotEmpty) {
-      await _api.updateMe(accessToken: token, data: mirror);
+      // Fire-and-forget: mirror is a legacy sync for old clients.
+      // Never block navigation on this call — personal-profile endpoint is the source of truth.
+      _api
+          .updateMe(accessToken: token, data: mirror)
+          .catchError((_) => <String, dynamic>{});
     }
   }
 
@@ -621,6 +853,61 @@ class AuthRepository {
       final body = await response.stream.bytesToString();
       throw Exception('Upload failed: ${response.statusCode} $body');
     }
+    invalidateMeCache();
+  }
+
+  Future<void> removeProfilePhoto() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _http.delete(
+      '/users/me/photo',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    invalidateMeCache();
+  }
+
+  /// Anonymous Mode (KMSTRY+) aç/kapa. Premium değilse backend PREMIUM_REQUIRED döner.
+  Future<void> setAnonymous(bool enabled) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _http.patch(
+      '/users/me/anonymous',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'enabled': enabled},
+    );
+  }
+
+  /// Read Receipts (KMSTRY+) aç/kapa. Kapatmak premium ister; backend
+  /// premium değilse PREMIUM_REQUIRED döner.
+  Future<void> setReadReceipts(bool enabled) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _http.patch(
+      '/users/me/read-receipts',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'enabled': enabled},
+    );
+  }
+
+  /// Per-category push notification preferences. Partial updates allowed —
+  /// only the provided keys change. Mutes push delivery only (in-app kept).
+  Future<void> setNotificationPrefs({
+    bool? messages,
+    bool? invites,
+    bool? venueUpdates,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final body = <String, dynamic>{};
+    if (messages != null) body['messages'] = messages;
+    if (invites != null) body['invites'] = invites;
+    if (venueUpdates != null) body['venueUpdates'] = venueUpdates;
+    await _http.patch(
+      '/users/me/notification-prefs',
+      headers: {'Authorization': 'Bearer $token'},
+      body: body,
+    );
   }
 
   Future<void> updatePermissions(Map<String, dynamic> data) async {

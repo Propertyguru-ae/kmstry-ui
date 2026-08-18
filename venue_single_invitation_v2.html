@@ -1,0 +1,209 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.pf {
+  width: 320px; min-height: 640px;
+  background: #06091A; border-radius: 42px;
+  margin: 0 auto; display: flex; flex-direction: column;
+  position: relative; overflow: hidden;
+  border: 1px solid #1a2240;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+}
+.orb1 { position:absolute; width:220px; height:220px; top:-80px; left:-60px; background:radial-gradient(circle,rgba(224,32,216,0.13) 0%,transparent 70%); pointer-events:none; animation:float 6s ease-in-out infinite; }
+.orb2 { position:absolute; width:180px; height:180px; top:30px; right:-50px; background:radial-gradient(circle,rgba(31,217,168,0.09) 0%,transparent 70%); pointer-events:none; animation:float 6s ease-in-out infinite; animation-delay:2s; }
+.orb3 { position:absolute; width:160px; height:160px; bottom:100px; right:-30px; background:radial-gradient(circle,rgba(240,136,56,0.07) 0%,transparent 70%); pointer-events:none; animation:float 6s ease-in-out infinite; animation-delay:4s; }
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-14px)} }
+
+.topbar { display:flex; align-items:center; justify-content:flex-end; padding:22px 22px 0; position:relative; z-index:2; }
+.later-btn { font-size:13px; font-weight:600; color:#1FD9A8; cursor:pointer; }
+
+.hero {
+  position:relative; z-index:2;
+  display:flex; flex-direction:column; align-items:center;
+  padding:32px 24px 24px; text-align:center;
+}
+.icon-ring {
+  width:80px; height:80px; border-radius:26px;
+  display:flex; align-items:center; justify-content:center;
+  position:relative; margin-bottom:22px;
+}
+.icon-ring::before {
+  content:''; position:absolute; inset:-2px; border-radius:28px;
+  background:conic-gradient(#E020D8,#1FD9A8,#1A9FE8,#F08838,#E020D8);
+  animation:spin 4s linear infinite; z-index:0;
+}
+@keyframes spin { to{transform:rotate(360deg)} }
+.icon-ring::after { content:''; position:absolute; inset:1px; border-radius:26px; background:#0d1525; z-index:1; }
+.icon-ring i { font-size:32px; color:#E020D8; position:relative; z-index:2; }
+
+.eyebrow {
+  font-size:11px; font-weight:700; letter-spacing:2px;
+  text-transform:uppercase; color:#E020D8;
+  margin-bottom:12px; display:flex; align-items:center; gap:7px;
+}
+.eyebrow::before { content:''; width:18px; height:2px; background:#E020D8; border-radius:1px; display:block; }
+.headline { font-size:28px; font-weight:800; color:#fff; line-height:1.15; letter-spacing:-0.6px; margin-bottom:8px; }
+.headline .acc {
+  background:linear-gradient(90deg,#E020D8,#1A9FE8);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.sub { font-size:13px; color:#4a6280; line-height:1.6; max-width:230px; }
+
+.sheet {
+  background:#0b1322; border-radius:26px 26px 0 0;
+  border-top:1px solid #162040;
+  padding:8px 18px 28px;
+  margin-top:16px; flex:1;
+  display:flex; flex-direction:column;
+  position:relative; z-index:2;
+}
+.handle { width:32px; height:4px; border-radius:2px; background:rgba(255,255,255,0.08); margin:0 auto 20px; }
+
+.invite-card {
+  background:#0d1a30; border:1.5px solid #1e3060;
+  border-radius:22px; overflow:hidden; margin-bottom:14px;
+}
+.card-header {
+  display:flex; align-items:center; gap:14px;
+  padding:18px 18px 14px;
+}
+.venue-avatar {
+  width:56px; height:56px; border-radius:18px;
+  background:linear-gradient(135deg,#8B10C0,#E020D8);
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px; font-weight:800; color:#fff;
+  flex-shrink:0; position:relative; overflow:hidden;
+}
+.venue-avatar::before { content:''; position:absolute; top:0; left:0; right:0; height:50%; background:rgba(255,255,255,0.12); }
+.venue-avatar span { position:relative; z-index:1; }
+.venue-info { flex:1; }
+.venue-name { font-size:16px; font-weight:700; color:#eef2ff; margin-bottom:4px; letter-spacing:-0.2px; }
+.venue-meta { font-size:11px; color:#3a5070; display:flex; align-items:center; gap:4px; }
+.venue-meta i { font-size:12px; }
+.invite-time-top { font-size:10.5px; color:#2e4560; white-space:nowrap; align-self:flex-start; margin-top:2px; }
+
+.role-section {
+  margin:0 18px 14px;
+  background:rgba(224,32,216,0.08);
+  border:1px solid rgba(224,32,216,0.2);
+  border-radius:14px; padding:12px 14px;
+  display:flex; align-items:center; gap:10px;
+}
+.role-icon {
+  width:36px; height:36px; border-radius:11px;
+  background:rgba(224,32,216,0.18);
+  display:flex; align-items:center; justify-content:center;
+  font-size:17px; color:#E020D8; flex-shrink:0;
+}
+.role-info { flex:1; }
+.role-label { font-size:10px; font-weight:700; letter-spacing:0.8px; text-transform:uppercase; color:#7a3060; margin-bottom:3px; }
+.role-name { font-size:14px; font-weight:700; color:#F020D0; }
+.role-desc { font-size:11px; color:#5a3050; margin-top:2px; line-height:1.4; }
+
+.invited-by {
+  margin:0 18px 16px;
+  display:flex; align-items:center; gap:8px;
+}
+.ib-avatar {
+  width:26px; height:26px; border-radius:50%;
+  background:linear-gradient(135deg,#0A5090,#1A9FE8);
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:700; color:#fff; flex-shrink:0;
+}
+.ib-text { font-size:11.5px; color:#3a5070; }
+.ib-text strong { color:#7aa8d0; font-weight:600; }
+
+.action-row { display:flex; gap:10px; padding:0 18px 18px; }
+.btn-decline {
+  flex:1; padding:13px; border-radius:14px;
+  border:1px solid #1e3060; background:transparent;
+  color:#5a7090; font-size:13px; font-weight:600;
+  font-family:inherit; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+}
+.btn-accept {
+  flex:2; padding:13px; border-radius:14px;
+  border:none; background:#C010B8;
+  color:#fff; font-size:14px; font-weight:700;
+  font-family:inherit; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:7px;
+  position:relative; overflow:hidden;
+}
+.btn-accept::before { content:''; position:absolute; top:0; left:0; right:0; height:50%; background:rgba(255,255,255,0.1); pointer-events:none; }
+.btn-accept i, .btn-decline i { font-size:15px; position:relative; }
+.btn-accept span { position:relative; }
+
+.info-box {
+  display:flex; align-items:flex-start; gap:9px;
+  background:rgba(26,159,232,0.07);
+  border:1px solid rgba(26,159,232,0.15);
+  border-radius:14px; padding:11px 13px;
+}
+.info-box i { font-size:14px; color:#1A9FE8; flex-shrink:0; margin-top:1px; }
+.info-box p { font-size:11px; color:#2a4060; line-height:1.5; }
+.info-box p span { color:#1A9FE8; font-weight:600; }
+</style>
+
+<div style="padding:1.5rem 0;">
+<div class="pf">
+  <div class="orb1"></div>
+  <div class="orb2"></div>
+  <div class="orb3"></div>
+
+  <div class="topbar">
+    <span class="later-btn">Later</span>
+  </div>
+
+  <div class="hero">
+    <div class="icon-ring">
+      <i class="ti ti-building-store" aria-hidden="true"></i>
+    </div>
+    <div class="eyebrow">New invitation</div>
+    <h1 class="headline">You've been<br>invited to<br><span class="acc">a venue.</span></h1>
+    <p class="sub">Someone added you to their team. Review the details below.</p>
+  </div>
+
+  <div class="sheet">
+    <div class="handle"></div>
+
+    <div class="invite-card">
+      <div class="card-header">
+        <div class="venue-avatar"><span>K</span></div>
+        <div class="venue-info">
+          <p class="venue-name">Kordon Kafe</p>
+          <div class="venue-meta">
+            <i class="ti ti-coffee" aria-hidden="true"></i>
+            Café · Alsancak, İzmir
+          </div>
+        </div>
+        <span class="invite-time-top">2 min ago</span>
+      </div>
+
+      <div class="role-section">
+        <div class="role-icon"><i class="ti ti-social" aria-hidden="true"></i></div>
+        <div class="role-info">
+          <p class="role-label">Your role</p>
+          <p class="role-name">Social Media Manager</p>
+          <p class="role-desc">Manage content, stories and push notifications</p>
+        </div>
+      </div>
+
+      <div class="invited-by">
+        <div class="ib-avatar">D</div>
+        <p class="ib-text">Invited by <strong>Deniz K.</strong> · Owner</p>
+      </div>
+
+      <div class="action-row">
+        <button class="btn-decline"><i class="ti ti-x" aria-hidden="true"></i>Decline</button>
+        <button class="btn-accept"><i class="ti ti-check" aria-hidden="true"></i><span>Accept invitation</span></button>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <i class="ti ti-info-circle" aria-hidden="true"></i>
+      <p>Accepting gives you access to this venue's dashboard. You can <span>leave anytime</span> from your profile.</p>
+    </div>
+
+  </div>
+</div>
+</div>

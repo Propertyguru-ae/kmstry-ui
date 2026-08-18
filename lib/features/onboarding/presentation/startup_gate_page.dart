@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
 class StartupGatePage extends StatefulWidget {
@@ -21,16 +21,18 @@ class _StartupGatePageState extends State<StartupGatePage>
 
   late final Animation<double> _fadeAnimation;
   late final Animation<double> _slideAnimation;
-  late final Animation<double> _logoScaleAnimation;
   late final Animation<double> _buttonScaleAnimation;
 
   bool _checking = true;
   bool _navigating = false;
 
-  static const Color _bgColor = AppTheme.matteBlack;
-  static const Color _blue = AppTheme.brandPrimary;
-  static const Color _indigo = AppTheme.brandPrimary;
-  static const Color _violet = AppTheme.brandPrimary;
+  static const Color _bgColor = AppColors.darkBg;
+  static const Color _blue = AppColors.blue;
+  static const Color _blueBright = AppColors.blueDark;
+  static const Color _magenta = AppColors.magentaDark;
+  static const Color _teal = AppColors.tealDark;
+  static const Color _brand = AppColors.brand;
+  static const Color _muted = Color(0xFFA6B3D2);
 
   @override
   void initState() {
@@ -68,10 +70,6 @@ class _StartupGatePageState extends State<StartupGatePage>
 
     _slideAnimation = Tween<double>(begin: 26, end: 0).animate(
       CurvedAnimation(parent: _introController, curve: Curves.easeOutCubic),
-    );
-
-    _logoScaleAnimation = Tween<double>(begin: 0.94, end: 1.0).animate(
-      CurvedAnimation(parent: _introController, curve: Curves.easeOutBack),
     );
 
     _buttonScaleAnimation = CurvedAnimation(
@@ -163,7 +161,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               right: -120,
               child: Transform.rotate(
                 angle: angle,
-                child: _buildGlowSphere(_blue.withOpacity(0.12), 420),
+                child: _buildGlowSphere(_blue.withValues(alpha: 0.08), 420),
               ),
             ),
             Positioned(
@@ -171,7 +169,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               left: -150,
               child: Transform.rotate(
                 angle: -angle * 0.8,
-                child: _buildGlowSphere(_indigo.withOpacity(0.10), 500),
+                child: _buildGlowSphere(_brand.withValues(alpha: 0.08), 500),
               ),
             ),
             Positioned(
@@ -179,7 +177,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               left: -90,
               child: Transform.rotate(
                 angle: angle * 0.55,
-                child: _buildGlowSphere(_violet.withOpacity(0.06), 260),
+                child: _buildGlowSphere(_magenta.withValues(alpha: 0.04), 260),
               ),
             ),
             Positioned(
@@ -187,7 +185,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               right: -80,
               child: Transform.rotate(
                 angle: -angle * 0.45,
-                child: _buildGlowSphere(_blue.withOpacity(0.06), 240),
+                child: _buildGlowSphere(_teal.withValues(alpha: 0.04), 240),
               ),
             ),
             Container(
@@ -209,74 +207,110 @@ class _StartupGatePageState extends State<StartupGatePage>
   }
 
   Widget _buildBrandSection() {
-    return AnimatedBuilder(
-      animation: _introController,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, _slideAnimation.value),
-          child: FadeTransition(
-            opacity: _fadeAnimation,
-            child: ScaleTransition(scale: _logoScaleAnimation, child: child),
-          ),
-        );
-      },
-      child: Column(
-        children: [
-          ScaleTransition(
-            scale: _pulseController,
-            child: Container(
-              width: 156,
-              height: 156,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(42),
-                color: Colors.white.withOpacity(0.028),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.07),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _blue.withOpacity(0.12),
-                    blurRadius: 30,
-                    spreadRadius: 2,
+    return Column(
+      children: [
+        // Logo — native splash ile BİREBİR aynı konumda kalır (opacity 0'dan
+        // gelmez); yalnızca etrafındaki parıltı/kutu fade-in ile belirir. Bu,
+        // native splash → bu ekran geçişini kusursuz (zıplamasız) yapar.
+        AnimatedBuilder(
+          animation: Listenable.merge([_introController, _pulseController]),
+          builder: (context, child) {
+            final fade = _fadeAnimation.value;
+            final shimmer =
+                ((_pulseController.value - 0.98) / (1.03 - 0.98)).clamp(0.0, 1.0);
+            final borderTarget = Color.lerp(
+              Colors.white.withValues(alpha: 0.12),
+              _blueBright.withValues(alpha: 0.38),
+              shimmer,
+            )!;
+            return Transform.scale(
+              scale: _pulseController.value,
+              child: Container(
+                width: 166,
+                height: 166,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(44),
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.white.withValues(alpha: 0.070 * fade),
+                      _blue.withValues(alpha: (0.045 + shimmer * 0.020) * fade),
+                      _brand.withValues(alpha: 0.055 * fade),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                ],
+                  border: Border.all(
+                    color: Color.lerp(Colors.transparent, borderTarget, fade)!,
+                    width: 1.1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _blue.withValues(
+                        alpha: (0.16 + shimmer * 0.06) * fade,
+                      ),
+                      blurRadius: 34,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: child,
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Image.asset(
-                  'assets/images/kmstrylogo.png',
-                  fit: BoxFit.contain,
-                  alignment: Alignment.center,
+            );
+          },
+          child: const Padding(
+            padding: EdgeInsets.all(6),
+            child: Image(
+              image: AssetImage('assets/images/kmstrylogo.png'),
+              fit: BoxFit.contain,
+              alignment: Alignment.center,
+            ),
+          ),
+        ),
+        const SizedBox(height: 40),
+        // KMSTRY + tagline — aşağıdan yükselerek belirir.
+        AnimatedBuilder(
+          animation: _introController,
+          builder: (context, child) {
+            return Transform.translate(
+              offset: Offset(0, _slideAnimation.value),
+              child: FadeTransition(opacity: _fadeAnimation, child: child),
+            );
+          },
+          child: Column(
+            children: [
+              const Text(
+                'KMSTRY',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 52,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 7,
+                  height: 1,
+                  shadows: [
+                    Shadow(
+                      color: Color(0x661A9FE8),
+                      blurRadius: 22,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
                 ),
               ),
-            ),
+              const SizedBox(height: 18),
+              Text(
+                'REAL PLACES. REAL FACES.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: _muted.withValues(alpha: 0.76),
+                  fontSize: 12,
+                  letterSpacing: 2.8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
           ),
-          const SizedBox(height: 42),
-          const Text(
-            'KMSTRY',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 50,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 7,
-              height: 1,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            'REAL PLACES. REAL FACES.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.58),
-              fontSize: 12,
-              letterSpacing: 2.8,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -316,7 +350,7 @@ class _StartupGatePageState extends State<StartupGatePage>
               Text(
                 'KNOW BEFORE YOU GO',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.28),
+                  color: _muted.withValues(alpha: 0.85),
                   fontSize: 11,
                   letterSpacing: 2,
                   fontWeight: FontWeight.w800,
@@ -335,60 +369,52 @@ class _StartupGatePageState extends State<StartupGatePage>
     return SizedBox(
       width: double.infinity,
       height: 62,
-      child: ElevatedButton(
-        onPressed: _navigating ? null : _goToIntro,
-        style: ButtonStyle(
-          animationDuration: const Duration(milliseconds: 120),
-          backgroundColor: const WidgetStatePropertyAll<Color>(
-            Colors.transparent,
-          ),
-          shadowColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
-          foregroundColor: const WidgetStatePropertyAll<Color>(Colors.black),
-          elevation: const WidgetStatePropertyAll<double>(0),
-          padding: const WidgetStatePropertyAll<EdgeInsets>(
-            EdgeInsets.symmetric(horizontal: 24),
-          ),
-          shape: WidgetStatePropertyAll<RoundedRectangleBorder>(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
-          ),
-          textStyle: const WidgetStatePropertyAll<TextStyle>(
-            TextStyle(
-              inherit: false,
-              fontFamily: 'CupertinoSystemText',
-              fontWeight: FontWeight.w900,
-              letterSpacing: 2.2,
-              fontSize: 15,
-              height: 1.2,
-              color: Colors.black,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(40),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(40),
+          onTap: _navigating ? null : _goToIntro,
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [_blueBright, _blue],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(40),
             ),
-          ),
-        ),
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Colors.white, Colors.white],
-            ),
-            borderRadius: BorderRadius.circular(40),
-            boxShadow: [ ],
-          ),
-          child: Center(
-            child: _navigating
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
+            child: Center(
+              child: _navigating
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'CONTINUE',
+                          style: TextStyle(
+                            inherit: false,
+                            fontFamily: 'CupertinoSystemText',
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.2,
+                            fontSize: 15,
+                            height: 1.2,
+                            color: Colors.white,
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Icon(Icons.arrow_forward_rounded,
+                            size: 20, color: Colors.white),
+                      ],
                     ),
-                  )
-                : const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('CONTINUE'),
-                      SizedBox(width: 10),
-                      Icon(Icons.arrow_forward_rounded, size: 20),
-                    ],
-                  ),
+            ),
           ),
         ),
       ),
@@ -415,7 +441,7 @@ class _StartupGatePageState extends State<StartupGatePage>
     return Container(
       width: 4,
       height: 4,
-      decoration: const BoxDecoration(color: _blue, shape: BoxShape.circle),
+      decoration: const BoxDecoration(color: _teal, shape: BoxShape.circle),
     );
   }
 }

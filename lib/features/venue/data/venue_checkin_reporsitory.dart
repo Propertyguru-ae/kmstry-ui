@@ -1,68 +1,76 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
-import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/checkin_photo_model.dart';
 import 'package:kmstry_frontend/features/venue/data/ping_response.dart';
 import 'venue_checkin_model.dart';
+import 'attendee_filter.dart';
+
+/// Cold start yenileme adayı: yakın zamanda süre dolan son check-in.
+class RenewableCheckin {
+  final String checkinId;
+  final String venueId;
+  final String? venueName;
+  final double venueLatitude;
+  final double venueLongitude;
+
+  RenewableCheckin({
+    required this.checkinId,
+    required this.venueId,
+    this.venueName,
+    required this.venueLatitude,
+    required this.venueLongitude,
+  });
+
+  factory RenewableCheckin.fromJson(Map<String, dynamic> json) {
+    return RenewableCheckin(
+      checkinId: (json['checkinId'] ?? json['id'] ?? '').toString(),
+      venueId: (json['venueId'] ?? json['venue_id'] ?? '').toString(),
+      venueName: json['venueName']?.toString(),
+      venueLatitude: (json['venueLatitude'] as num?)?.toDouble() ?? 0,
+      venueLongitude: (json['venueLongitude'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
 
 class VenueCheckinRepository {
-  Future<List<VenueCheckin>> getWhoIsHere(String venueId) async {
+  final ApiClient _api = ApiClient();
+
+  Future<List<VenueCheckin>> getWhoIsHere(
+    String venueId, {
+    AttendeeFilter? filter,
+  }) async {
     final accessToken = await SecureStorage.getAccessToken();
     if (accessToken == null) {
       throw Exception('UnAuth: No access token available');
     }
 
     try {
-      final res = await http
-          .get(
-            Uri.parse('${AppConfig.baseUrl}/venues/$venueId/checkins'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${accessToken}',
-            },
-          )
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw Exception('Request timeout: Failed to load venue checkins');
-            },
-          );
+      final query = filter?.toQueryParameters() ?? const <String, String>{};
+      final queryString = query.isEmpty
+          ? ''
+          : '?${Uri(queryParameters: query).query}';
+      // ApiClient.get, plain http kullanan öncekinin aksine 401'de token'ı
+      // sessizce yeniler ve isteği tekrar dener — check-in sonrası token'ın
+      // henüz yenilenmemiş olması yüzünden oluşan yanlış "Unauthorized" hatasını önler.
+      final decoded = await _api.get(
+        '/venues/$venueId/checkins$queryString',
+        headers: {'Authorization': 'Bearer $accessToken'},
+      );
 
-      if (res.statusCode >= 400) {
-        final errorBody = res.body.isNotEmpty
-            ? res.body
-            : 'No error details provided';
+      if (decoded == null) return [];
+      if (decoded is! List) {
         throw Exception(
-          'Failed to load venue checkins (${res.statusCode}): $errorBody',
+          'Invalid response format: Expected List, got ${decoded.runtimeType}',
         );
       }
 
-      if (res.body.isEmpty) {
-        return [];
-      }
-      debugPrint("✅ status=${res.statusCode}");
-      debugPrint("✅ body=${res.body}");
-      try {
-        final decoded = jsonDecode(res.body);
-        if (decoded is! List) {
-          throw Exception(
-            'Invalid response format: Expected List, got ${decoded.runtimeType}',
-          );
-        }
-
-        final List data = decoded;
-        debugPrint("✅ decoded runtime=${decoded.runtimeType}");
-        debugPrint("✅ decoded length=${data.length}");
-        return data
-            .map((e) => VenueCheckin.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } catch (e) {
-        throw Exception('Failed to parse venue checkins response: $e');
-      }
+      return decoded
+          .map((e) => VenueCheckin.fromJson(e as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       if (e is Exception) {
         rethrow;
@@ -90,178 +98,74 @@ class VenueCheckinRepository {
     required double latitude,
     required double longitude,
   }) async {
-    final res = await http.post(
-      Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/ping'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'latitude': latitude, 'longitude': longitude}),
-    );
-
-    if (res.statusCode >= 400) {
-      throw Exception('Failed to ping checkin');
+    // Backend requires JwtAuthGuard on this endpoint; missing the header meant
+    // every ping 401'd. Routed through ApiClient for the token-refresh/retry too.
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) {
+      throw Exception('UnAuth: No access token available');
     }
 
-    return PingResponse.fromJson(jsonDecode(res.body));
+    final data = await _api.post(
+      '/checkins/$checkinId/ping',
+      headers: {'Authorization': 'Bearer $accessToken'},
+      body: {'latitude': latitude, 'longitude': longitude},
+    );
+
+    return PingResponse.fromJson(data as Map<String, dynamic>);
   }
 
-  /// Gets the current user's active check-in.
-  /// Tries multiple approaches:
-  /// 1. Checks /auth/me response for active_checkin field
-  /// 2. Falls back to /checkins/active or /users/me/checkins/active endpoint
-  /// Returns null if no active check-in exists.
+  /// Cold start yenileme: aktif check-in yoksa, yakın zamanda süre dolan son
+  /// check-in'i (venue koordinatlarıyla) döner. Yoksa null.
+  Future<RenewableCheckin?> getRenewableCheckin() async {
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) return null;
+    final data = await _api.get(
+      '/checkins/me/renewable',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    if (data == null) return null;
+    return RenewableCheckin.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Süresi dolan check-in'i kullanıcı hâlâ mekandaysa yeniden aktifleştirir.
+  /// Dönen map: { checkinId, venueId, expiresAt }.
+  Future<Map<String, dynamic>> renewCheckin({
+    required String checkinId,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final accessToken = await SecureStorage.getAccessToken();
+    if (accessToken == null) {
+      throw Exception('UnAuth: No access token available');
+    }
+    final data = await _api.post(
+      '/checkins/$checkinId/renew',
+      headers: {'Authorization': 'Bearer $accessToken'},
+      body: {'latitude': latitude, 'longitude': longitude},
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// Gets the current user's active check-in via the real backend endpoint
+  /// (`GET /my-active` — CheckinsController has an empty @Controller() prefix,
+  /// so the route is `/my-active`, NOT `/checkins/my-active`). Returns null if
+  /// none is active.
+  ///
+  /// Previously this cascaded through three approaches — /auth/me, then two
+  /// endpoints that don't exist in the backend at all — costing guaranteed-to-404
+  /// round trips on every venue detail page load. Routed through ApiClient for
+  /// the token-refresh/retry too.
   Future<ActiveCheckin?> getActiveCheckin() async {
     final accessToken = await SecureStorage.getAccessToken();
     if (accessToken == null) {
       throw Exception('UnAuth: No access token available');
     }
 
-    Object? lastError;
-    try {
-      // Approach 1: Check /auth/me for active_checkin field
-      try {
-        final me = await AuthRepository().getMe();
-        final rawActiveCheckin = me['activeCheckin'] ?? me['active_checkin'];
-        debugPrint(
-          '🔍 DEBUG getActiveCheckin: /auth/me response keys = ${me.keys}',
-        );
-        debugPrint(
-          '🔍 DEBUG getActiveCheckin: me[activeCheckin] = $rawActiveCheckin',
-        );
-
-        if (rawActiveCheckin is Map) {
-          final activeCheckinData = Map<String, dynamic>.from(rawActiveCheckin);
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: activeCheckinData = $activeCheckinData',
-          );
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: activeCheckinData keys = ${activeCheckinData.keys}',
-          );
-
-          // Check if it's actually active (not expired)
-          final checkin = ActiveCheckin.fromJson(activeCheckinData);
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}',
-          );
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: checkin.isActive = ${checkin.isActive}',
-          );
-
-          if (checkin.isActive) {
-            debugPrint(
-              '✅ DEBUG getActiveCheckin: Returning checkin from /auth/me',
-            );
-            return checkin;
-          } else {
-            debugPrint('⚠️ DEBUG getActiveCheckin: Check-in found but expired');
-          }
-        } else {
-          debugPrint(
-            '⚠️ DEBUG getActiveCheckin: /auth/me does not have active_checkin field',
-          );
-        }
-      } catch (e) {
-        // If /auth/me doesn't have active_checkin, continue to next approach
-        debugPrint('⚠️ /auth/me does not include active_checkin: $e');
-        lastError = e;
-      }
-
-      // Approach 2: Try dedicated endpoint /checkins/active
-      try {
-        final res = await http
-            .get(
-              Uri.parse('${AppConfig.baseUrl}/checkins/active'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ${accessToken}',
-              },
-            )
-            .timeout(
-              const Duration(seconds: 10),
-              onTimeout: () {
-                throw Exception('Request timeout');
-              },
-            );
-
-        if (res.statusCode == 404) {
-          // No active check-in
-          return null;
-        }
-
-        if (res.statusCode >= 400) {
-          // Try alternative endpoint
-          throw Exception(
-            'Failed to get active checkin from /checkins/active (${res.statusCode})',
-          );
-        }
-
-        if (res.body.isEmpty) {
-          return null;
-        }
-
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        debugPrint(
-          '🔍 DEBUG getActiveCheckin: /checkins/active response = $data',
-        );
-        final checkin = ActiveCheckin.fromJson(data);
-        debugPrint(
-          '🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}',
-        );
-        return checkin.isActive ? checkin : null;
-      } catch (e) {
-        lastError = e;
-        // Approach 3: Try /users/me/checkins/active
-        try {
-          final res = await http
-              .get(
-                Uri.parse('${AppConfig.baseUrl}/users/me/checkins/active'),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer ${accessToken}',
-                },
-              )
-              .timeout(
-                const Duration(seconds: 10),
-                onTimeout: () {
-                  throw Exception('Request timeout');
-                },
-              );
-
-          if (res.statusCode == 404) {
-            return null;
-          }
-
-          if (res.statusCode >= 400) {
-            throw Exception(
-              'Failed to get active checkin from /users/me/checkins/active (${res.statusCode})',
-            );
-          }
-
-          if (res.body.isEmpty) {
-            return null;
-          }
-
-          final data = jsonDecode(res.body) as Map<String, dynamic>;
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: /users/me/checkins/active response = $data',
-          );
-          final checkin = ActiveCheckin.fromJson(data);
-          debugPrint(
-            '🔍 DEBUG getActiveCheckin: parsed checkin.venueId = ${checkin.venueId}',
-          );
-          return checkin.isActive ? checkin : null;
-        } catch (e2) {
-          lastError = e2;
-          debugPrint(
-            '⚠️ Could not fetch active check-in from any endpoint: $e2',
-          );
-          throw Exception('Could not determine active check-in state');
-        }
-      }
-    } catch (e) {
-      debugPrint('⚠️ Error fetching active check-in: $e');
-      if (lastError != null) {
-        throw Exception('Failed to fetch active check-in: $lastError');
-      }
-      rethrow;
-    }
+    final data = await _api.get(
+      '/my-active',
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    if (data == null) return null;
+    return ActiveCheckin.fromJson(data as Map<String, dynamic>);
   }
 }

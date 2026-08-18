@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 /// Giriş yapmış kullanıcı için: mevcut şifre + yeni şifre (prod sosyal uygulama kalıbı).
@@ -222,14 +223,10 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
                   Text(_error!, style: TextStyle(color: colors.error)),
                 ],
                 const SizedBox(height: 28),
-                SizedBox(
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: _loading ? null : _submit,
-                    child: _loading
-                        ? CircularProgressIndicator(color: colors.onPrimary)
-                        : const Text('Update password'),
-                  ),
+                PrimaryButton(
+                  label: 'Update password',
+                  loading: _loading,
+                  onPressed: _submit,
                 ),
               ],
             ),
