@@ -54,6 +54,10 @@ class AuthRepository {
     serverClientId:
         '525936528438-c2i235kepeou80utta1rhsgg7jdfhrca.apps.googleusercontent.com',
   );
+  String? _pendingGoogleIdToken;
+  String? _pendingAppleIdentityToken;
+  String? _pendingAppleAuthorizationCode;
+  String? _pendingAppleFullName;
 
   static const bool _enableAuthLogs = false;
   void _log(String message) {
@@ -366,38 +370,58 @@ class AuthRepository {
     String? termsVersionId,
     String? privacyVersionId,
     String? consentSource,
+    bool reusePendingToken = false,
   }) async {
     _log('🔥 Google login started');
 
-    // Önceki (başarısız olabilen) oturumu temizle → her seferinde taze idToken.
-    // signOut yoksa plugin cache'lediği hesabı sessizce döndürüp idToken=null
-    // verebiliyor ve "bir daha giriş yapılamıyor" durumu oluşuyor.
-    try {
-      await _googleSignIn.signOut();
-    } catch (_) {}
+    String? idToken;
+    if (reusePendingToken && _pendingGoogleIdToken != null) {
+      idToken = _pendingGoogleIdToken;
+      _log('♻️ Reusing pending Google idToken after consent');
+    } else {
+      _pendingGoogleIdToken = null;
 
-    final googleUser = await _googleSignIn.signIn();
-    _log('👤 googleUser = $googleUser');
+      // Önceki (başarısız olabilen) oturumu temizle → her seferinde taze idToken.
+      // signOut yoksa plugin cache'lediği hesabı sessizce döndürüp idToken=null
+      // verebiliyor ve "bir daha giriş yapılamıyor" durumu oluşuyor.
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
 
-    if (googleUser == null) return false;
+      final googleUser = await _googleSignIn.signIn();
+      _log('👤 googleUser = $googleUser');
 
-    final googleAuth = await googleUser.authentication;
-    final idToken = googleAuth.idToken;
+      if (googleUser == null) return false;
+
+      final googleAuth = await googleUser.authentication;
+      idToken = googleAuth.idToken;
+      _pendingGoogleIdToken = idToken;
+    }
 
     if (idToken == null) {
+      _pendingGoogleIdToken = null;
       throw Exception('Google idToken is null');
     }
 
-    final response = await _api.loginWithGoogle(
-      idToken: idToken,
-      consentGiven: consentGiven,
-      termsVersionId: termsVersionId,
-      privacyVersionId: privacyVersionId,
-      consentSource: consentSource,
-    );
+    late final Map<String, dynamic> response;
+    try {
+      response = await _api.loginWithGoogle(
+        idToken: idToken,
+        consentGiven: consentGiven,
+        termsVersionId: termsVersionId,
+        privacyVersionId: privacyVersionId,
+        consentSource: consentSource,
+      );
+    } catch (e) {
+      if (!_looksLikeConsentRequired(e)) {
+        _pendingGoogleIdToken = null;
+      }
+      rethrow;
+    }
     _log('📡 backend google response = $response');
 
     if (response['success'] == true) {
+      _pendingGoogleIdToken = null;
       await SecureStorage.saveTokens(
         accessToken: response['accessToken'],
         refreshToken: response['refreshToken'],
@@ -405,7 +429,20 @@ class AuthRepository {
       return true;
     }
 
+    _pendingGoogleIdToken = null;
     throw Exception(response['message'] ?? 'Google login failed');
+  }
+
+  bool _looksLikeConsentRequired(Object error) {
+    if (error is! ApiException) return false;
+    final data = error.data;
+    final code = data['errorCode'] ?? data['error_code'] ?? data['code'];
+    if (code == 'CONSENT_REQUIRED_FOR_SOCIAL_LOGIN' ||
+        code == 'LEGAL_CONSENT_REQUIRED') {
+      return true;
+    }
+    final message = data['message']?.toString().toLowerCase() ?? '';
+    return message.contains('consent is required for first-time social login');
   }
 
   Future<bool> loginWithApple({
@@ -413,40 +450,78 @@ class AuthRepository {
     String? termsVersionId,
     String? privacyVersionId,
     String? consentSource,
+    bool reusePendingCredential = false,
   }) async {
     _log('🍎 Apple login started');
 
-    final credential = await SignInWithApple.getAppleIDCredential(
-      scopes: [
-        AppleIDAuthorizationScopes.email,
-        AppleIDAuthorizationScopes.fullName,
-      ],
-    );
+    String? identityToken;
+    String? authorizationCode;
+    String? fullName;
 
-    final identityToken = credential.identityToken;
+    if (reusePendingCredential && _pendingAppleIdentityToken != null) {
+      identityToken = _pendingAppleIdentityToken;
+      authorizationCode = _pendingAppleAuthorizationCode;
+      fullName = _pendingAppleFullName;
+    } else {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
+
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+      );
+
+      identityToken = credential.identityToken;
+      authorizationCode = credential.authorizationCode;
+
+      // Apple only sends the name on the FIRST authorization — forward it so the
+      // backend can seed the account. Subsequent logins have null name parts.
+      final nameParts = [
+        credential.givenName,
+        credential.familyName,
+      ].where((p) => p != null && p.isNotEmpty).join(' ');
+      fullName = nameParts.isEmpty ? null : nameParts;
+
+      _pendingAppleIdentityToken = identityToken;
+      _pendingAppleAuthorizationCode = authorizationCode;
+      _pendingAppleFullName = fullName;
+    }
+
     if (identityToken == null) {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
       throw Exception('Apple identityToken is null');
     }
 
-    // Apple only sends the name on the FIRST authorization — forward it so the
-    // backend can seed the account. Subsequent logins have null name parts.
-    final nameParts = [
-      credential.givenName,
-      credential.familyName,
-    ].where((p) => p != null && p.isNotEmpty).join(' ');
-
-    final response = await _api.loginWithApple(
-      identityToken: identityToken,
-      authorizationCode: credential.authorizationCode,
-      fullName: nameParts.isEmpty ? null : nameParts,
-      consentGiven: consentGiven,
-      termsVersionId: termsVersionId,
-      privacyVersionId: privacyVersionId,
-      consentSource: consentSource,
-    );
+    Map<String, dynamic> response;
+    try {
+      response = await _api.loginWithApple(
+        identityToken: identityToken,
+        authorizationCode: authorizationCode,
+        fullName: fullName,
+        consentGiven: consentGiven,
+        termsVersionId: termsVersionId,
+        privacyVersionId: privacyVersionId,
+        consentSource: consentSource,
+      );
+    } catch (error) {
+      if (!_looksLikeConsentRequired(error)) {
+        _pendingAppleIdentityToken = null;
+        _pendingAppleAuthorizationCode = null;
+        _pendingAppleFullName = null;
+      }
+      rethrow;
+    }
     _log('📡 backend apple response = $response');
 
     if (response['success'] == true) {
+      _pendingAppleIdentityToken = null;
+      _pendingAppleAuthorizationCode = null;
+      _pendingAppleFullName = null;
       await SecureStorage.saveTokens(
         accessToken: response['accessToken'],
         refreshToken: response['refreshToken'],
@@ -454,6 +529,9 @@ class AuthRepository {
       return true;
     }
 
+    _pendingAppleIdentityToken = null;
+    _pendingAppleAuthorizationCode = null;
+    _pendingAppleFullName = null;
     throw Exception(response['message'] ?? 'Apple login failed');
   }
 

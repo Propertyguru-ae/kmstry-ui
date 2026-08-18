@@ -1649,7 +1649,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           subColor: subColor,
           onSurface: onSurface,
         ),
-        if (_showSuggestedForYou && moments.isEmpty)
+        // "Suggested for you" bölümü gizlendi.
+        // ignore: dead_code
+        if (false && _showSuggestedForYou && moments.isEmpty)
           _buildSuggestedForYou(onSurface, subColor, isDark),
       ] else if (visitedPlaces.isEmpty)
         _buildVisitedPlacesEmptyState(

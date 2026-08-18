@@ -23,6 +23,10 @@ class StoryTray extends StatefulWidget {
   /// (ör. venue detail'de "story paylaş" teşvik metnini göstermek için).
   final ValueChanged<bool>? onMyStoryStateChanged;
 
+  /// Bu venue'da HİÇ story olup olmadığını (kimsenin paylaşmadığını) üst
+  /// widget'a bildirir — venue detail'de "ilk story'yi sen paylaş" CTA'sı için.
+  final ValueChanged<bool>? onStoriesEmptyChanged;
+
   const StoryTray({
     super.key,
     required this.venueId,
@@ -30,6 +34,7 @@ class StoryTray extends StatefulWidget {
     this.isUploading = false,
     this.anonymousLocked = false,
     this.onMyStoryStateChanged,
+    this.onStoriesEmptyChanged,
   });
 
   @override
@@ -93,10 +98,15 @@ class _StoryTrayState extends State<StoryTray> {
         _loading = false;
         _initialLoaded = true;
       });
+      _notifyEmptiness();
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  void _notifyEmptiness() {
+    widget.onStoriesEmptyChanged?.call(_groups.isEmpty && _myStories.isEmpty);
   }
 
   Future<void> _loadMyStories() async {
@@ -111,6 +121,7 @@ class _StoryTrayState extends State<StoryTray> {
           .toList();
       setState(() => _myStories = venueStories);
       widget.onMyStoryStateChanged?.call(venueStories.isNotEmpty);
+      _notifyEmptiness();
     } catch (_) {}
   }
 

@@ -53,6 +53,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       false; // kullanıcının bu venue'da kendi story'si var mı
   bool _storyStateKnown =
       false; // StoryTray ilk yüklemesini bitirdi mi (banner flash'ını önler)
+  bool _noStoriesHere = false; // bu venue'da hiç story paylaşılmamış mı
   List<VenueStoryItem> _headerStories = [];
   String? _activeCheckinId;
   String? _activeCheckinVenueId;
@@ -502,6 +503,117 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             const SizedBox(width: 6),
             Icon(Icons.chevron_right_rounded, size: 20, color: _textMuted),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Bu venue'da henüz hiç story yokken, check-in yapmamış kullanıcıyı ilk
+  /// story'yi paylaşmaya teşvik eden boş-durum kartı. Basınca check-in akışı.
+  Widget _buildFirstStoryCta() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GestureDetector(
+        onTap: _openCheckinFlow,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                AppColors.blue.withValues(alpha: _isDark ? 0.16 : 0.10),
+                AppColors.teal.withValues(alpha: _isDark ? 0.14 : 0.08),
+              ],
+            ),
+            border: Border.all(color: AppColors.blue.withValues(alpha: 0.35)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.blue, AppColors.teal],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Be the first to share a story!',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: _textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'No stories here yet. Check in and show everyone the vibe.',
+                          style: TextStyle(fontSize: 11.5, color: _textMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // "Check in" — check-in butonuyla aynı blue→teal gradient.
+              _actionButton(
+                height: 44,
+                onTap: _openCheckinFlow,
+                gradient: const LinearGradient(
+                  colors: [AppColors.blue, AppColors.teal],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.blue.withValues(alpha: 0.34),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.add_location_alt_rounded,
+                      size: 17,
+                      color: Colors.white,
+                    ),
+                    SizedBox(width: 7),
+                    Text(
+                      'Check in',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1671,6 +1783,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                             _buildShareStoryHint(),
                           ],
                           const SizedBox(height: 10),
+                          // Hiç story yok + kullanıcı burada check-in'li değil →
+                          // ilk story'yi paylaşmaya teşvik eden CTA.
+                          if (_noStoriesHere &&
+                              !hasActiveCheckinHere &&
+                              !_isAnonymous)
+                            _buildFirstStoryCta(),
                           StoryTray(
                             key: ValueKey(
                               '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
@@ -1689,6 +1807,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                   _hasMyStoryHere = hasMine;
                                   _storyStateKnown = true;
                                 });
+                              }
+                            },
+                            onStoriesEmptyChanged: (isEmpty) {
+                              if (mounted && isEmpty != _noStoriesHere) {
+                                setState(() => _noStoriesHere = isEmpty);
                               }
                             },
                           ),
