@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'add_venue_event_page.dart';
 import '../data/venue_event_repository.dart';
 
@@ -30,10 +32,34 @@ class VenueEventDetailPage extends StatefulWidget {
 class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
   late VenueUpcomingEvent _event;
 
+  /// EVENT_ATTENDEES_VIEW yetkisi olan kullanıcılar için katılımcı listesi.
+  List<Map<String, dynamic>>? _attendees;
+  bool _loadingAttendees = false;
+
+  bool get _canViewAttendees =>
+      VenueSession.instance.can(VenuePermission.eventAttendeesView);
+
   @override
   void initState() {
     super.initState();
     _event = widget.event;
+    if (_canViewAttendees) _loadAttendees();
+  }
+
+  Future<void> _loadAttendees() async {
+    if (_loadingAttendees) return;
+    setState(() => _loadingAttendees = true);
+    try {
+      final list = await VenueEventRepository().getEventRsvps(
+        venueId: widget.venueId,
+        eventId: _event.id,
+      );
+      if (mounted) setState(() => _attendees = list);
+    } catch (_) {
+      if (mounted) setState(() => _attendees = const []);
+    } finally {
+      if (mounted) setState(() => _loadingAttendees = false);
+    }
   }
 
   Future<void> _reloadEvent() async {
@@ -46,259 +72,321 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
       );
       if (mounted) setState(() => _event = updated);
     } catch (_) {}
+    if (_canViewAttendees) _loadAttendees();
     widget.onChanged?.call();
   }
 
   @override
   Widget build(BuildContext context) {
     final event    = _event;
-    final isDark    = Theme.of(context).brightness == Brightness.dark;
-    final kBg       = isDark ? const Color(0xFF06091A) : Colors.white;
-    final kCard     = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
-    final kBorder   = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
-    final kText     = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim      = isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B);
+    final isDark   = Theme.of(context).brightness == Brightness.dark;
+    final kBg      = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kCard    = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
+    final kBorder  = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
+    final kText    = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+    // Açıklama gövde metni için okunaklı, daha yüksek kontrastlı renk.
+    final kBody    = isDark ? const Color(0xFFB8C4DA) : const Color(0xFF334155);
+    final kDim     = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
+    final kLabel   = isDark ? const Color(0xFF44597A) : const Color(0xFF8794A6);
+    final kFaint   = isDark ? const Color(0xFF3A5070) : const Color(0xFF9AA6B6);
     final canManage = VenueSession.instance.can(VenuePermission.eventManage);
 
     final photos = event.photos.isNotEmpty
         ? event.photos
         : (event.photo != null ? [event.photo!] : <String>[]);
+    final coverPhoto = photos.isNotEmpty ? photos.first : null;
     final isFree = event.priceAed == null || event.priceAed == 0;
+    final isFull = event.capacity != null && event.rsvpCount >= event.capacity!;
+    final topInset = MediaQuery.of(context).padding.top;
 
     return Scaffold(
       backgroundColor: kBg,
-      body: CustomScrollView(
-        slivers: [
-          // ── App bar ────────────────────────────────────────────────────
-          SliverAppBar(
-            backgroundColor: kBg,
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-            pinned: true,
-            automaticallyImplyLeading: false,
-            title: Row(
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Container(
-                    width: 36, height: 36,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isDark
-                          ? Colors.white.withValues(alpha: 0.06)
-                          : Colors.black.withValues(alpha: 0.05),
-                      border: Border.all(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : Colors.black.withValues(alpha: 0.07),
-                      ),
-                    ),
-                    child: Icon(
-                      Icons.chevron_left_rounded,
-                      size: 22,
-                      color: isDark ? const Color(0xFF607090) : const Color(0xFF6B7280),
+                // ── COVER HERO ─────────────────────────────────────────────
+                _EventCover(photo: coverPhoto, pageBg: kBg),
+
+                // ── TITLE + CHIPS (cover'a biner) ──────────────────────────
+                Transform.translate(
+                  offset: const Offset(0, -36),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.title,
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
+                            color: kText,
+                            height: 1.15,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: [
+                            _InfoChip(
+                              icon: isFree
+                                  ? Icons.confirmation_num_outlined
+                                  : Icons.local_activity_outlined,
+                              label: isFree
+                                  ? 'Free entry'
+                                  : '${event.currency} ${event.priceAed} min.',
+                              color: isFree ? _kTurkuaz : _kTuruncu,
+                              isDark: isDark,
+                            ),
+                            if (event.isRecurring)
+                              _InfoChip(
+                                icon: Icons.repeat_rounded,
+                                label: 'Recurring',
+                                color: _kMagenta,
+                                isDark: isDark,
+                              ),
+                            if (event.capacity != null || event.rsvpCount > 0)
+                              _InfoChip(
+                                icon: Icons.people_outline_rounded,
+                                label: event.capacity != null
+                                    ? '${event.rsvpCount} / ${event.capacity}'
+                                    : '${event.rsvpCount} attending',
+                                color: isFull ? _kRed : _kMavi,
+                                isDark: isDark,
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const Spacer(),
+
+                // ── CONTENT ────────────────────────────────────────────────
+                Transform.translate(
+                  offset: const Offset(0, -20),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // DATE & TIME
+                        _InfoCard(
+                          icon: Icons.calendar_month_rounded,
+                          accent: _kTurkuaz,
+                          label: 'Date & Time',
+                          value: event.formattedDate,
+                          sub: _durationLabel(
+                            event.endAt.difference(event.startAt),
+                          ),
+                          kCard: kCard,
+                          kBorder: kBorder,
+                          kText: kText,
+                          kLabel: kLabel,
+                          kFaint: kFaint,
+                        ),
+                        const SizedBox(height: 10),
+
+                        // ENTRY
+                        _InfoCard(
+                          icon: Icons.local_activity_rounded,
+                          accent: _kTuruncu,
+                          label: 'Entry',
+                          value: isFree
+                              ? 'Free · No ticket required'
+                              : '${event.currency} ${event.priceAed} minimum spend',
+                          kCard: kCard,
+                          kBorder: kBorder,
+                          kText: kText,
+                          kLabel: kLabel,
+                          kFaint: kFaint,
+                        ),
+
+                        // RECURRING BANNER
+                        if (event.isRecurring) ...[
+                          const SizedBox(height: 14),
+                          _RecurringBanner(label: _recurrenceLabel(event)),
+                        ],
+
+                        // ABOUT
+                        if (event.description != null &&
+                            event.description!.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _DotTitle(color: _kMagenta, label: 'About', kText: kText),
+                          const SizedBox(height: 8),
+                          Text(
+                            event.description!,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: kBody,
+                              height: 1.7,
+                            ),
+                          ),
+                        ],
+
+                        // KMSTRY OFFER
+                        if (event.offerType != null) ...[
+                          const SizedBox(height: 20),
+                          _DotTitle(
+                            color: _kTuruncu,
+                            label: 'Kmstry Offer',
+                            kText: kText,
+                          ),
+                          const SizedBox(height: 8),
+                          _OfferCard(
+                            conditions: event.offerTitle,
+                            type: event.offerType,
+                            price: event.offerPrice,
+                            isDark: isDark,
+                            kCard: kCard,
+                            kBorder: kBorder,
+                            kText: kText,
+                            kDim: kDim,
+                          ),
+                        ],
+
+                        // ATTENDEES
+                        if (_canViewAttendees &&
+                            (event.capacity != null ||
+                                event.rsvpCount > 0)) ...[
+                          const SizedBox(height: 20),
+                          _DotTitle(
+                            color: _kTurkuaz,
+                            label: 'Attendees',
+                            kText: kText,
+                            count: _attendees?.length ?? event.rsvpCount,
+                          ),
+                          const SizedBox(height: 12),
+                          _AttendeeList(
+                            attendees: _attendees,
+                            loading: _loadingAttendees,
+                            isDark: isDark,
+                            kCard: kCard,
+                            kBorder: kBorder,
+                            kText: kText,
+                          ),
+                        ],
+
+                        // PARTNER BENEFITS
+                        if (event.partnershipBenefits.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _DotTitle(
+                            color: _kMavi,
+                            label: 'Partner Benefits',
+                            kText: kText,
+                          ),
+                          const SizedBox(height: 10),
+                          ...event.partnershipBenefits.map(
+                            (b) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _BenefitCard(
+                                benefit: b,
+                                isDark: isDark,
+                                kCard: kCard,
+                                kBorder: kBorder,
+                                kText: kText,
+                                kDim: kDim,
+                              ),
+                            ),
+                          ),
+                        ],
+
+                        // GALLERY
+                        if (photos.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          _DotTitle(
+                            color: _kMagenta,
+                            label: 'Gallery',
+                            kText: kText,
+                          ),
+                          const SizedBox(height: 10),
+                          _Gallery(photos: photos),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
-            actions: canManage
-                ? [
-                    _AppBarBtn(
-                      icon: Icons.edit_outlined,
-                      color: _kTurkuaz,
-                      isDark: isDark,
-                      onTap: () => _openEdit(context, isDark, kBg, kCard, kBorder, kText, kDim),
+          ),
+
+          // ── Floating back button ───────────────────────────────────────
+          Positioned(
+            top: topInset + 8,
+            left: 14,
+            child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
+          ),
+
+          // ── Edit / delete (owner) ──────────────────────────────────────
+          if (canManage)
+            Positioned(
+              top: topInset + 8,
+              right: 14,
+              child: Row(
+                children: [
+                  _coverCircleButton(
+                    Icons.edit_outlined,
+                    _kTurkuaz,
+                    () => _openEdit(
+                      context, isDark, kBg, kCard, kBorder, kText, kDim,
                     ),
-                    _AppBarBtn(
-                      icon: Icons.delete_outline_rounded,
-                      color: _kRed,
-                      isDark: isDark,
-                      onTap: () => _confirmDelete(context, isDark),
-                    ),
-                    const SizedBox(width: 6),
-                  ]
-                : null,
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(1),
-              child: Container(
-                height: 1,
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.05)
-                    : Colors.black.withValues(alpha: 0.06),
+                  ),
+                  const SizedBox(width: 8),
+                  _coverCircleButton(
+                    Icons.delete_outline_rounded,
+                    _kRed,
+                    () => _confirmDelete(context, isDark),
+                  ),
+                ],
               ),
             ),
-          ),
-
-          // ── Content ────────────────────────────────────────────────────
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 52),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-
-                // ── 1. Title ─────────────────────────────────────────────
-                Text(
-                  event.title,
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                    color: kText,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // ── 2. Date & price chips ─────────────────────────────────
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _InfoChip(
-                      icon: Icons.calendar_today_outlined,
-                      label: event.formattedDate,
-                      color: _kTurkuaz,
-                      isDark: isDark,
-                    ),
-                    _InfoChip(
-                      icon: isFree
-                          ? Icons.card_giftcard_outlined
-                          : Icons.confirmation_num_outlined,
-                      label: isFree
-                          ? 'Free entry'
-                          : '${event.currency} ${event.priceAed} min.',
-                      color: isFree ? _kTurkuaz : _kTuruncu,
-                      isDark: isDark,
-                    ),
-                    if (event.isRecurring)
-                      _InfoChip(
-                        icon: Icons.repeat_rounded,
-                        label: 'Recurring',
-                        color: _kMagenta,
-                        isDark: isDark,
-                      ),
-                    if (event.capacity != null || event.rsvpCount > 0)
-                      _InfoChip(
-                        icon: Icons.people_outline_rounded,
-                        label: event.capacity != null
-                            ? '${event.rsvpCount} / ${event.capacity}'
-                            : '${event.rsvpCount} attending',
-                        color: (event.capacity != null && event.rsvpCount >= event.capacity!)
-                            ? _kRed
-                            : _kMavi,
-                        isDark: isDark,
-                      ),
-                  ],
-                ),
-
-                // ── 3. Description ────────────────────────────────────────
-                if (event.description != null && event.description!.isNotEmpty) ...[
-                  _divider(isDark),
-                  _SectionLabel(
-                    icon: Icons.notes_rounded,
-                    label: 'About',
-                    color: _kMavi,
-                    kText: kText,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    event.description!,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: kDim,
-                      height: 1.7,
-                    ),
-                  ),
-                ],
-
-                // ── 4. Kmstry Offers ──────────────────────────────────────
-                if (event.offerType != null) ...[
-                  _divider(isDark),
-                  _SectionLabel(
-                    icon: Icons.local_offer_outlined,
-                    label: 'Kmstry Offer',
-                    color: _kTuruncu,
-                    kText: kText,
-                  ),
-                  const SizedBox(height: 10),
-                  _OfferCard(
-                    conditions: event.offerTitle,
-                    type: event.offerType,
-                    price: event.offerPrice,
-                    isDark: isDark,
-                    kCard: kCard,
-                    kBorder: kBorder,
-                    kText: kText,
-                    kDim: kDim,
-                  ),
-                ],
-
-                // ── 5. Capacity & Attendees ───────────────────────────────
-                if (canManage && (event.capacity != null || event.rsvpCount > 0)) ...[
-                  _divider(isDark),
-                  _SectionLabel(
-                    icon: Icons.people_outline_rounded,
-                    label: 'Attendees',
-                    color: _kTurkuaz,
-                    kText: kText,
-                  ),
-                  const SizedBox(height: 10),
-                  _AttendeeBar(
-                    rsvpCount: event.rsvpCount,
-                    capacity: event.capacity,
-                    isDark: isDark,
-                    kCard: kCard,
-                    kBorder: kBorder,
-                    kText: kText,
-                    kDim: kDim,
-                  ),
-                ],
-
-                // ── 6. Partner Benefits ───────────────────────────────────
-                if (event.partnershipBenefits.isNotEmpty) ...[
-                  _divider(isDark),
-                  _SectionLabel(
-                    icon: Icons.handshake_outlined,
-                    label: 'Partner Benefits',
-                    color: _kMavi,
-                    kText: kText,
-                  ),
-                  const SizedBox(height: 10),
-                  ...event.partnershipBenefits.map(
-                    (b) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _BenefitCard(
-                        benefit: b,
-                        isDark: isDark,
-                        kCard: kCard,
-                        kBorder: kBorder,
-                        kText: kText,
-                        kDim: kDim,
-                      ),
-                    ),
-                  ),
-                ],
-
-                // ── 7. Gallery ────────────────────────────────────────────
-                if (photos.isNotEmpty) ...[
-                  _divider(isDark),
-                  _SectionLabel(
-                    icon: Icons.photo_library_outlined,
-                    label: 'Gallery',
-                    color: _kMagenta,
-                    kText: kText,
-                  ),
-                  const SizedBox(height: 10),
-                  _Gallery(photos: photos),
-                ],
-
-              ]),
-            ),
-          ),
         ],
       ),
     );
+  }
+
+  Widget _coverCircleButton(IconData icon, Color iconColor, VoidCallback onTap) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.38),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icon, size: 16, color: iconColor),
+        ),
+      ),
+    );
+  }
+
+  String _durationLabel(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    if (h <= 0 && m <= 0) return '';
+    if (h > 0 && m > 0) return 'Duration: ${h}h ${m}m';
+    if (h > 0) return 'Duration: $h hour${h > 1 ? 's' : ''}';
+    return 'Duration: ${m}m';
+  }
+
+  String _recurrenceLabel(VenueUpcomingEvent event) {
+    final freq = event.recurrence?.frequency.toLowerCase();
+    switch (freq) {
+      case 'daily':
+        return 'Repeats every day';
+      case 'weekly':
+        return 'Repeats every week';
+      case 'monthly':
+        return 'Repeats every month';
+      default:
+        return 'This is a recurring event';
+    }
   }
 
   Future<void> _openEdit(
@@ -384,19 +472,6 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
     }
   }
 
-  Widget _divider(bool isDark) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 20),
-    child: Container(
-      height: 1,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [
-          Colors.transparent,
-          isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.09),
-          Colors.transparent,
-        ]),
-      ),
-    ),
-  );
 }
 
 // ─── Info chip ────────────────────────────────────────────────────────────────
@@ -440,19 +515,204 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-// ─── Section label ────────────────────────────────────────────────────────────
+// ─── Cover hero ─────────────────────────────────────────────────────────────
 
-class _SectionLabel extends StatelessWidget {
+class _EventCover extends StatelessWidget {
+  final String? photo;
+  final Color pageBg;
+  const _EventCover({required this.photo, required this.pageBg});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 210,
+      width: double.infinity,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (photo != null && photo!.isNotEmpty)
+            CachedImage(photo!, fit: BoxFit.cover)
+          else ...[
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF1A0828), Color(0xFF0A1840), Color(0xFF0A2010)],
+                ),
+              ),
+            ),
+            Align(
+              alignment: const Alignment(-0.5, -0.2),
+              child: _glow(_kMagenta.withValues(alpha: 0.22), 240),
+            ),
+            Align(
+              alignment: const Alignment(0.6, 0.4),
+              child: _glow(_kTurkuaz.withValues(alpha: 0.16), 220),
+            ),
+          ],
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              height: 130,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, pageBg],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _glow(Color color, double size) => IgnorePointer(
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [color, color.withValues(alpha: 0)],
+            ),
+          ),
+        ),
+      );
+}
+
+// ─── Info card (Date & Time, Entry) ───────────────────────────────────────────
+
+class _InfoCard extends StatelessWidget {
   final IconData icon;
+  final Color accent;
   final String label;
+  final String value;
+  final String? sub;
+  final Color kCard, kBorder, kText, kLabel, kFaint;
+
+  const _InfoCard({
+    required this.icon,
+    required this.accent,
+    required this.label,
+    required this.value,
+    this.sub,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.kLabel,
+    required this.kFaint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kBorder),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, size: 17, color: accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: kLabel,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: kText,
+                  ),
+                ),
+                if (sub != null && sub!.isNotEmpty) ...[
+                  const SizedBox(height: 1),
+                  Text(sub!, style: TextStyle(fontSize: 11, color: kFaint)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Recurring banner ─────────────────────────────────────────────────────────
+
+class _RecurringBanner extends StatelessWidget {
+  final String label;
+  const _RecurringBanner({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: _kMagenta.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kMagenta.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.repeat_rounded, size: 16, color: _kMagenta),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                color: _kMagenta.withValues(alpha: 0.9),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Dot section title ────────────────────────────────────────────────────────
+
+class _DotTitle extends StatelessWidget {
   final Color color;
+  final String label;
   final Color kText;
 
-  const _SectionLabel({
-    required this.icon,
-    required this.label,
+  /// Başlığın yanında gösterilecek opsiyonel sayı (ör. katılımcı adedi).
+  final int? count;
+
+  const _DotTitle({
     required this.color,
+    required this.label,
     required this.kText,
+    this.count,
   });
 
   @override
@@ -460,21 +720,38 @@ class _SectionLabel extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 26, height: 26,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Icon(icon, size: 12, color: color),
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 8),
-        Text(label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-              color: color,
-            )),
+        const SizedBox(width: 7),
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
+            color: kText,
+          ),
+        ),
+        if (count != null) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -516,7 +793,7 @@ class _OfferCard extends StatelessWidget {
     }
   }
 
-  String get _badge => price != null ? '${price!.toStringAsFixed(0)}' : '';
+  String get _badge => price != null ? price!.toStringAsFixed(0) : '';
 
   @override
   Widget build(BuildContext context) {
@@ -682,107 +959,190 @@ class _Gallery extends StatelessWidget {
   }
 }
 
-// ─── App bar button ───────────────────────────────────────────────────────────
+// ─── Attendee list ────────────────────────────────────────────────────────────
 
-class _AppBarBtn extends StatelessWidget {
-  final IconData icon;
-  final Color color;
+class _AttendeeList extends StatelessWidget {
+  final List<Map<String, dynamic>>? attendees;
+  final bool loading;
   final bool isDark;
-  final VoidCallback onTap;
+  final Color kCard, kBorder, kText;
 
-  const _AppBarBtn({
-    required this.icon,
-    required this.color,
-    required this.isDark,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
-        width: 34, height: 34,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: color.withValues(alpha: 0.12),
-          border: Border.all(color: color.withValues(alpha: 0.25)),
-        ),
-        child: Icon(icon, size: 15, color: color),
-      ),
-    );
-  }
-}
-
-// ─── Attendee bar ─────────────────────────────────────────────────────────────
-
-class _AttendeeBar extends StatelessWidget {
-  final int rsvpCount;
-  final int? capacity;
-  final bool isDark;
-  final Color kCard, kBorder, kText, kDim;
-
-  const _AttendeeBar({
-    required this.rsvpCount,
-    required this.capacity,
+  const _AttendeeList({
+    required this.attendees,
+    required this.loading,
     required this.isDark,
     required this.kCard,
     required this.kBorder,
     required this.kText,
-    required this.kDim,
   });
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  String _joinedLabel(String? iso) {
+    if (iso == null) return '';
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return '';
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return 'Joined ${dt.day} ${_months[dt.month - 1]} · $h:$m';
+  }
+
+  String _displayName(Map<String, dynamic> user) {
+    final full = (user['full_name'] ?? user['fullName'])?.toString().trim();
+    if (full != null && full.isNotEmpty) return full;
+    final uname = user['username']?.toString().trim();
+    if (uname != null && uname.isNotEmpty) return '@$uname';
+    return 'Guest';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isFull = capacity != null && rsvpCount >= capacity!;
+    final list = attendees;
+    // "Joined ..." alt satırı ve boş durum metni için okunaklı, kontrastlı renk.
+    final kSub = isDark ? const Color(0xFF8CA0BF) : const Color(0xFF64748B);
+
+    if (loading && list == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2, color: _kTurkuaz),
+        ),
+      );
+    }
+
+    if (list == null || list.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          color: kCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: Text(
+          'No attendees yet.',
+          style: TextStyle(fontSize: 13, color: kSub),
+        ),
+      );
+    }
+
     return Container(
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: kCard,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: kBorder),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.people_outline_rounded, size: 16, color: _kTurkuaz),
-              const SizedBox(width: 6),
-              Text(
-                capacity != null
-                    ? '$rsvpCount / $capacity attending'
-                    : '$rsvpCount attending',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText),
+          for (int i = 0; i < list.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: kBorder.withValues(alpha: 0.6),
+                indent: 14,
+                endIndent: 14,
               ),
-              const Spacer(),
-              if (isFull)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEF4444).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text('Full',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _kRed)),
-                ),
-            ],
-          ),
-          if (capacity != null) ...[
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: (rsvpCount / capacity!).clamp(0.0, 1.0),
-                minHeight: 6,
-                backgroundColor: isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA),
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  isFull ? _kRed : _kTurkuaz,
+            _AttendeeRow(
+              user: Map<String, dynamic>.from(
+                (list[i]['user'] as Map?) ?? const {},
+              ),
+              subtitle: _joinedLabel(list[i]['createdAt']?.toString()),
+              displayName: _displayName(
+                Map<String, dynamic>.from(
+                  (list[i]['user'] as Map?) ?? const {},
                 ),
               ),
+              kText: kText,
+              kDim: kSub,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendeeRow extends StatelessWidget {
+  final Map<String, dynamic> user;
+  final String subtitle;
+  final String displayName;
+  final Color kText, kDim;
+
+  const _AttendeeRow({
+    required this.user,
+    required this.subtitle,
+    required this.displayName,
+    required this.kText,
+    required this.kDim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = user['photo']?.toString();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: (photo != null && photo.trim().isNotEmpty)
+                ? CachedImage(photo, width: 38, height: 38, fit: BoxFit.cover)
+                : Container(
+                    width: 38,
+                    height: 38,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF0F8060), _kTurkuaz],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      displayName.replaceAll('@', '').isNotEmpty
+                          ? displayName.replaceAll('@', '')[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: kText,
+                  ),
+                ),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 11, color: kDim),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

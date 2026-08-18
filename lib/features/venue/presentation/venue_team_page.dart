@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
@@ -486,10 +488,10 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         backgroundColor: bg,
         elevation: 0,
         automaticallyImplyLeading: false,
-        leading: _NavBtn(
-          icon: Icons.arrow_back_ios_new_rounded,
-          onTap: () => Navigator.pop(context),
-          isDark: isDark,
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
         ),
         title: Text(
           _canManage || _canManageRoles ? 'Team Management' : 'Team',
@@ -772,22 +774,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
               ),
             )
           else
-            FilledButton.icon(
-              onPressed: _openAddMember,
-              icon: const Icon(Icons.person_add_outlined, size: 18),
-              label: const Text(
-                'Add Member',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: _TeamColors.turkuaz,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
+            PrimaryButton(label: 'Add Member', onPressed: _openAddMember),
         ],
       ),
     );

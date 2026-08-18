@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/services/active_checkin_service.dart';
+import '../../checkin/services/quick_checkin_launcher.dart';
+import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -86,6 +88,8 @@ class _ProfilePageState extends State<ProfilePage>
 
   bool _uploadingMoment = false;
   bool _uploadingStory = false;
+  bool _openingStory = false; // kamera açılışı sırasında çift-tıklama guard'ı
+  bool _isAnonymous = false; // profil yüklemesinden cache'lenir → anında kamera
   bool _openingVenueDetail = false;
   final Set<String> _updatingProfileVisibilityIds = {};
   List<StoryItem> _myStories = [];
@@ -641,24 +645,28 @@ class _ProfilePageState extends State<ProfilePage>
 
   Future<void> _openAddStoryFromProfile() async {
     final checkinId = _activeCheckinId();
-    if (checkinId == null || _uploadingStory) return;
+    if (checkinId == null || _uploadingStory || _openingStory) return;
 
+    // Anonim kontrolünü cache'lenmiş bayrakla anında yap — ağ çağrısı
+    // beklemeden kamera açılsın.
+    if (_isAnonymous) {
+      _showAnonymousStoryBlockedDialog();
+      return;
+    }
+
+    _openingStory = true;
+    final dynamic captureResult;
     try {
-      final me = await AuthRepository().getMe(forceRefresh: true);
-      if (!mounted) return;
-      if (me['isAnonymous'] == true) {
-        _showAnonymousStoryBlockedDialog();
-        return;
-      }
-    } catch (_) {}
-
-    final dynamic captureResult = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => const CameraScreen(useFrontCamera: true),
-      ),
-    );
+      captureResult = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => const CameraScreen(useFrontCamera: true),
+        ),
+      );
+    } finally {
+      _openingStory = false;
+    }
 
     final File? file = captureResult is CapturedMedia
         ? captureResult.file
@@ -720,6 +728,7 @@ class _ProfilePageState extends State<ProfilePage>
     try {
       final me = await AuthRepository().getMe(forceRefresh: forceRefresh);
       print('ME :  $me');
+      _isAnonymous = me['isAnonymous'] == true;
 
       List<CheckinProfileMedia> media = [];
       List<CheckinVisitedPlace> visitedPlaces = [];
@@ -1863,7 +1872,7 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Widget _buildProfileAvatar(String photo, bool isDark) {
-    const avatarSize = 128.0;
+    const avatarSize = 132.0;
     const ringWidth = 3.0;
     const gap = 2.5;
     const radius = 32.0;
@@ -2468,6 +2477,119 @@ class _ProfilePageState extends State<ProfilePage>
     if (mounted) unawaited(_loadMyStories());
   }
 
+  /// Hiç check-in'i olmayan kullanıcıya moments boş ekranında yönlendirme:
+  /// hızlı check-in başlat veya haritada mekan keşfet.
+  Widget _buildEmptyMomentsCta(bool isDark, Color sub) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Ana aksiyon: hızlı check-in — navbar butonuyla aynı blue→teal gradient
+        SizedBox(
+          width: double.infinity,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: const LinearGradient(
+                colors: [AppColors.blue, AppColors.teal],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.blue.withValues(alpha: 0.30),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => QuickCheckinLauncher().launch(context),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.add_location_alt_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Quick check-in',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        // İkincil aksiyon: haritada keşfet — tema-güvenli dolgu + kontrast metin
+        SizedBox(
+          width: double.infinity,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.04),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.14)
+                    : Colors.black.withValues(alpha: 0.10),
+              ),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => AppShellNav.of(
+                  context,
+                )?.selectTabId(kPersonalDiscoverTabId),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.explore_outlined,
+                        size: 20,
+                        color: isDark
+                            ? Colors.white
+                            : AppColors.lightTextPrimary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Discover on map',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? Colors.white
+                              : AppColors.lightTextPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildMomentsGrid(bool canAddMore, bool isDark, Color sub) {
     final hasAny = _media.isNotEmpty || canAddMore;
     if (!hasAny) {
@@ -2492,6 +2614,9 @@ class _ProfilePageState extends State<ProfilePage>
                 textAlign: TextAlign.center,
                 style: TextStyle(color: sub, fontSize: 13.5),
               ),
+              const SizedBox(height: 20),
+              // ── CTA: hızlı check-in (gradient) + haritada keşfet
+              _buildEmptyMomentsCta(isDark, sub),
             ],
           ),
         ),

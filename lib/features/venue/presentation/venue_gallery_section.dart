@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
 
@@ -17,7 +19,11 @@ class VenueGallerySection extends StatefulWidget {
   final String venueId;
   final bool canEdit;
 
-  const VenueGallerySection({super.key, required this.venueId, required this.canEdit});
+  const VenueGallerySection({
+    super.key,
+    required this.venueId,
+    required this.canEdit,
+  });
 
   @override
   State<VenueGallerySection> createState() => _VenueGallerySectionState();
@@ -48,10 +54,30 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
     }
   }
 
-  static const _videoExts = {'mp4', 'mov', 'm4v', '3gp', 'webm', 'mkv', 'avi', 'mpeg', 'mpg'};
-  static const _imageExts = {'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'gif', 'bmp'};
+  static const _videoExts = {
+    'mp4',
+    'mov',
+    'm4v',
+    '3gp',
+    'webm',
+    'mkv',
+    'avi',
+    'mpeg',
+    'mpg',
+  };
+  static const _imageExts = {
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'heic',
+    'heif',
+    'gif',
+    'bmp',
+  };
 
-  bool _isVideoPath(String path) => _videoExts.contains(path.split('.').last.toLowerCase());
+  bool _isVideoPath(String path) =>
+      _videoExts.contains(path.split('.').last.toLowerCase());
   bool _isMediaPath(String path) {
     final ext = path.split('.').last.toLowerCase();
     return _videoExts.contains(ext) || _imageExts.contains(ext);
@@ -62,7 +88,10 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
     // FileType.media → yalnızca foto + video gösterir (belge/PDF gösterilmez), çoklu seçim.
     FilePickerResult? result;
     try {
-      result = await FilePicker.platform.pickFiles(type: FileType.media, allowMultiple: true);
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.media,
+        allowMultiple: true,
+      );
     } catch (_) {}
     final paths = (result?.files ?? [])
         .map((f) => f.path)
@@ -72,29 +101,55 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
     if (paths.isEmpty || !mounted) return;
 
     setState(() => _uploading = true);
-    final added = <VenueGalleryItem>[];
-    String? error;
-    try {
-      for (final path in paths) {
+    var hadError = false;
+
+    // Yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 720p) ve hepsini
+    // paralel yükle; giriş sırasını koru.
+    Future<VenueGalleryItem?> processAndUpload(String path) async {
+      try {
         final isVideo = _isVideoPath(path);
-        final thumb = isVideo ? await _generateThumbnail(path) : null;
-        final item = await _repo.uploadItem(widget.venueId, File(path), thumbnail: thumb);
-        added.add(item);
-      }
-    } catch (e) {
-      error = '$e';
-    } finally {
-      if (mounted) {
-        setState(() {
-          if (added.isNotEmpty) _items = [...added.reversed, ..._items];
-          _uploading = false;
-        });
-        if (error != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Some uploads failed: $error'), behavior: SnackBarBehavior.floating),
-          );
+        final File fileToUpload;
+        File? thumb;
+        if (isVideo) {
+          fileToUpload = await MediaCompressor.compressGalleryVideo(File(path));
+          thumb = await _generateThumbnail(path);
+        } else {
+          fileToUpload = await MediaCompressor.compressImage(File(path));
         }
+        return await _repo.uploadItem(
+          widget.venueId,
+          fileToUpload,
+          thumbnail: thumb,
+        );
+      } catch (_) {
+        hadError = true;
+        return null;
       }
+    }
+
+    final results = await Future.wait(paths.map(processAndUpload));
+    final added = results.whereType<VenueGalleryItem>().toList();
+
+    if (!mounted) return;
+    setState(() {
+      if (added.isNotEmpty) _items = [...added.reversed, ..._items];
+      _uploading = false;
+    });
+    if (added.isNotEmpty) {
+      showSuccessSnackBar(
+        context,
+        message: added.length == 1
+            ? 'Added to gallery!'
+            : '${added.length} added to gallery!',
+      );
+    }
+    if (hadError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Some uploads failed'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -121,13 +176,28 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
       builder: (ctx) => AlertDialog(
         backgroundColor: isDark ? const Color(0xFF0B1322) : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Remove from gallery', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        content: const Text('This media will be permanently removed.', style: TextStyle(fontSize: 13)),
+        title: const Text(
+          'Remove from gallery',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+        ),
+        content: const Text(
+          'This media will be permanently removed.',
+          style: TextStyle(fontSize: 13),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
+            child: const Text(
+              'Remove',
+              style: TextStyle(
+                color: Color(0xFFEF4444),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -135,30 +205,42 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
     if (ok != true || !mounted) return;
     try {
       await _repo.deleteItem(widget.venueId, item.id);
-      if (mounted) setState(() => _items = _items.where((i) => i.id != item.id).toList());
+      if (mounted)
+        setState(() => _items = _items.where((i) => i.id != item.id).toList());
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not remove media'), behavior: SnackBarBehavior.floating),
+          const SnackBar(
+            content: Text('Could not remove media'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
   }
 
   void _openViewer(int index) {
-    Navigator.push(context, MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => GalleryViewer(
-        items: List.of(_items),
-        initialIndex: index,
-        onDelete: widget.canEdit
-            ? (item) async {
-                await _repo.deleteItem(widget.venueId, item.id);
-                if (mounted) setState(() => _items = _items.where((i) => i.id != item.id).toList());
-              }
-            : null,
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => GalleryViewer(
+          items: List.of(_items),
+          initialIndex: index,
+          onDelete: widget.canEdit
+              ? (item) async {
+                  await _repo.deleteItem(widget.venueId, item.id);
+                  if (mounted)
+                    setState(
+                      () => _items = _items
+                          .where((i) => i.id != item.id)
+                          .toList(),
+                    );
+                }
+              : null,
+        ),
       ),
-    ));
+    );
   }
 
   @override
@@ -177,13 +259,33 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
             children: [
               Icon(Icons.photo_library_outlined, size: 18, color: kText),
               const SizedBox(width: 8),
-              Text('Gallery', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kText)),
+              Text(
+                'Gallery',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: kText,
+                ),
+              ),
               if (_items.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(color: _kMagenta.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(8)),
-                  child: Text('${_items.length}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _kMagenta)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _kMagenta.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${_items.length}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: _kMagenta,
+                    ),
+                  ),
                 ),
               ],
               const Spacer(),
@@ -191,15 +293,38 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
                 GestureDetector(
                   onTap: _uploading ? null : _addMedia,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(color: _kMagenta.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _kMagenta.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                     child: _uploading
-                        ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kMagenta)))
-                        : const Row(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.add, size: 15, color: _kMagenta),
-                            SizedBox(width: 4),
-                            Text('Add', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _kMagenta)),
-                          ]),
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation(_kMagenta),
+                            ),
+                          )
+                        : const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.add, size: 15, color: _kMagenta),
+                              SizedBox(width: 4),
+                              Text(
+                                'Add',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: _kMagenta,
+                                ),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
             ],
@@ -209,7 +334,12 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
         if (_loading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 28),
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kMagenta))),
+            child: Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(_kMagenta),
+              ),
+            ),
           )
         else if (_items.isEmpty)
           Padding(
@@ -219,16 +349,31 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
               padding: const EdgeInsets.symmetric(vertical: 30),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: colors.outlineVariant.withValues(alpha: 0.4),
+                ),
               ),
               child: Column(
                 children: [
-                  Icon(Icons.image_outlined, size: 34, color: kDim.withValues(alpha: 0.6)),
+                  Icon(
+                    Icons.image_outlined,
+                    size: 34,
+                    color: kDim.withValues(alpha: 0.6),
+                  ),
                   const SizedBox(height: 10),
-                  Text('No gallery yet', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kText)),
+                  Text(
+                    'No gallery yet',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: kText,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(
-                    widget.canEdit ? 'Add photos and videos of your venue' : 'This venue has no gallery yet',
+                    widget.canEdit
+                        ? 'Add photos and videos of your venue'
+                        : 'This venue has no gallery yet',
                     style: TextStyle(fontSize: 12, color: kDim),
                     textAlign: TextAlign.center,
                   ),
@@ -239,42 +384,50 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
         else
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            child: LayoutBuilder(builder: (context, constraints) {
-              const cols = 3;
-              const gap = 6.0;
-              // Kare tile boyu (genişlikten) → 3 satırlık sabit yükseklik
-              final tile = (constraints.maxWidth - gap * (cols - 1)) / cols;
-              final maxHeight = tile * 3 + gap * 2; // 9 öğe (3 satır)
-              final scrolls = _items.length > 9;
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                const cols = 3;
+                const gap = 6.0;
+                // Kare tile boyu (genişlikten) → 3 satırlık sabit yükseklik
+                final tile = (constraints.maxWidth - gap * (cols - 1)) / cols;
+                final maxHeight = tile * 3 + gap * 2; // 9 öğe (3 satır)
+                final scrolls = _items.length > 9;
 
-              final grid = GridView.builder(
-                shrinkWrap: !scrolls,
-                physics: scrolls ? const ClampingScrollPhysics() : const NeverScrollableScrollPhysics(),
-                padding: EdgeInsets.zero,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: cols, mainAxisSpacing: gap, crossAxisSpacing: gap,
-                ),
-                itemCount: _items.length,
-                itemBuilder: (_, i) {
-                  final item = _items[i];
-                  return GestureDetector(
-                    onTap: () => _openViewer(i),
-                    onLongPress: widget.canEdit ? () => _confirmDelete(item) : null,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: GalleryTile(item: item),
-                    ),
-                  );
-                },
-              );
+                final grid = GridView.builder(
+                  shrinkWrap: !scrolls,
+                  physics: scrolls
+                      ? const ClampingScrollPhysics()
+                      : const NeverScrollableScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisSpacing: gap,
+                    crossAxisSpacing: gap,
+                  ),
+                  itemCount: _items.length,
+                  itemBuilder: (_, i) {
+                    final item = _items[i];
+                    return GestureDetector(
+                      onTap: () => _openViewer(i),
+                      onLongPress: widget.canEdit
+                          ? () => _confirmDelete(item)
+                          : null,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: GalleryTile(item: item),
+                      ),
+                    );
+                  },
+                );
 
-              return scrolls
-                  ? SizedBox(
-                      height: maxHeight,
-                      child: Scrollbar(child: grid),
-                    )
-                  : grid;
-            }),
+                return scrolls
+                    ? SizedBox(
+                        height: maxHeight,
+                        child: Scrollbar(child: grid),
+                      )
+                    : grid;
+              },
+            ),
           ),
       ],
     );
@@ -295,7 +448,11 @@ class GalleryTile extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (item.thumbnailUrl != null && item.thumbnailUrl!.isNotEmpty)
-            CachedImage(item.thumbnailUrl!, fit: BoxFit.cover, errorWidget: (_) => Container(color: Colors.black))
+            CachedImage(
+              item.thumbnailUrl!,
+              fit: BoxFit.cover,
+              errorWidget: (_) => Container(color: Colors.black),
+            )
           else
             Container(color: Colors.black87),
           const Center(
@@ -317,6 +474,7 @@ class GalleryTile extends StatelessWidget {
 class GalleryViewer extends StatefulWidget {
   final List<VenueGalleryItem> items;
   final int initialIndex;
+
   /// null → salt-okunur (silme ikonu gösterilmez, ör. müşteri detay sayfası).
   final Future<void> Function(VenueGalleryItem item)? onDelete;
   const GalleryViewer({
@@ -358,13 +516,35 @@ class _GalleryViewerState extends State<GalleryViewer> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF0B1322),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Remove from gallery', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
-        content: const Text('This media will be permanently removed.', style: TextStyle(fontSize: 13, color: Colors.white70)),
+        title: const Text(
+          'Remove from gallery',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+        content: const Text(
+          'This media will be permanently removed.',
+          style: TextStyle(fontSize: 13, color: Colors.white70),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.white70))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
+            child: const Text(
+              'Remove',
+              style: TextStyle(
+                color: Color(0xFFEF4444),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -375,7 +555,10 @@ class _GalleryViewerState extends State<GalleryViewer> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not remove media'), behavior: SnackBarBehavior.floating),
+          const SnackBar(
+            content: Text('Could not remove media'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
       return;
@@ -402,8 +585,11 @@ class _GalleryViewerState extends State<GalleryViewer> {
               final item = _items[i];
               if (item.isVideo) return _VideoPage(url: item.url);
               return InteractiveViewer(
-                minScale: 1, maxScale: 4,
-                child: Center(child: CachedImage(item.url, fit: BoxFit.contain)),
+                minScale: 1,
+                maxScale: 4,
+                child: Center(
+                  child: CachedImage(item.url, fit: BoxFit.contain),
+                ),
               );
             },
           ),
@@ -416,15 +602,36 @@ class _GalleryViewerState extends State<GalleryViewer> {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(12)),
-                  child: Text('${_index + 1} / ${_items.length}', style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_index + 1} / ${_items.length}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 const Spacer(),
                 if (widget.canEdit)
-                  _CircleBtn(icon: Icons.delete_outline_rounded, color: const Color(0xFFEF4444), onTap: _delete),
+                  _CircleBtn(
+                    icon: Icons.delete_outline_rounded,
+                    color: const Color(0xFFEF4444),
+                    onTap: _delete,
+                  ),
                 const SizedBox(width: 8),
-                _CircleBtn(icon: Icons.close_rounded, color: Colors.white, onTap: () => Navigator.of(context).pop()),
+                _CircleBtn(
+                  icon: Icons.close_rounded,
+                  color: Colors.white,
+                  onTap: () => Navigator.of(context).pop(),
+                ),
               ],
             ),
           ),
@@ -438,15 +645,23 @@ class _CircleBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
-  const _CircleBtn({required this.icon, required this.color, required this.onTap});
+  const _CircleBtn({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 38, height: 38,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withValues(alpha: 0.4)),
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withValues(alpha: 0.4),
+        ),
         child: Icon(icon, size: 20, color: color),
       ),
     );
@@ -486,12 +701,17 @@ class _VideoPageState extends State<_VideoPage> {
   Widget build(BuildContext context) {
     final c = _controller;
     if (c == null || !c.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      );
     }
     return Center(
       child: GestureDetector(
         onTap: () => setState(() => c.value.isPlaying ? c.pause() : c.play()),
-        child: AspectRatio(aspectRatio: c.value.aspectRatio, child: VideoPlayer(c)),
+        child: AspectRatio(
+          aspectRatio: c.value.aspectRatio,
+          child: VideoPlayer(c),
+        ),
       ),
     );
   }
@@ -501,7 +721,16 @@ class _VideoPageState extends State<_VideoPage> {
 /// Kendi verisini yükler; boşsa hiç görünmez. Tap → salt-okunur fullscreen viewer.
 class VenueGalleryStrip extends StatefulWidget {
   final String venueId;
-  const VenueGalleryStrip({super.key, required this.venueId});
+
+  /// Galeri yüklendiğinde öğe sayısını üst widget'a bildirir — böylece sayı
+  /// strip'in kendi başlığı yerine ebeveynin bölüm başlığında gösterilebilir.
+  final ValueChanged<int>? onCountChanged;
+
+  const VenueGalleryStrip({
+    super.key,
+    required this.venueId,
+    this.onCountChanged,
+  });
 
   @override
   State<VenueGalleryStrip> createState() => _VenueGalleryStripState();
@@ -522,37 +751,37 @@ class _VenueGalleryStripState extends State<VenueGalleryStrip> {
     try {
       final items = await _repo.getGallery(widget.venueId);
       if (!mounted) return;
-      setState(() { _items = items; _loading = false; });
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+      widget.onCountChanged?.call(_items.length);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
+      widget.onCountChanged?.call(0);
     }
   }
 
   void _openViewer(int index) {
-    Navigator.push(context, MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => GalleryViewer(items: List.of(_items), initialIndex: index),
-    ));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) =>
+            GalleryViewer(items: List.of(_items), initialIndex: index),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading || _items.isEmpty) return const SizedBox.shrink();
-    final colors = Theme.of(context).colorScheme;
-    final kText = colors.onSurface;
 
+    // Başlık ve adet artık ebeveyndeki bölüm başlığında gösteriliyor; strip
+    // sadece yatay görsel şeridini render eder.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Text('Photos & Videos', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kText)),
-            const SizedBox(width: 8),
-            Text('${_items.length}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText.withValues(alpha: 0.45))),
-          ],
-        ),
-        const SizedBox(height: 10),
         SizedBox(
           height: 150,
           child: ListView.separated(
@@ -564,7 +793,11 @@ class _VenueGalleryStripState extends State<VenueGalleryStrip> {
               onTap: () => _openViewer(i),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: SizedBox(width: 120, height: 150, child: GalleryTile(item: _items[i])),
+                child: SizedBox(
+                  width: 120,
+                  height: 150,
+                  child: GalleryTile(item: _items[i]),
+                ),
               ),
             ),
           ),

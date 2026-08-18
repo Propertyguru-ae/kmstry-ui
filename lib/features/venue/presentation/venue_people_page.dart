@@ -12,6 +12,12 @@ import 'package:kmstry_frontend/features/venue/presentation/attendee_filter_shee
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
 import 'package:kmstry_frontend/core/user/premium_gate.dart';
 
+const _kBlue = Color(0xFF1A9FE8);
+const _kTeal = Color(0xFF1FD9A8);
+const _kMagenta = Color(0xFFE020D8);
+const _kDeepPurple = Color(0xFF3D1F8C);
+const _kDarkBg = Color(0xFF06091A);
+
 class VenuePeoplePage extends StatefulWidget {
   final Venue venue;
 
@@ -80,22 +86,64 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
     _loadCheckins();
   }
 
+  Future<void> _setGenderFilter(String? gender) async {
+    if (_filter.gender == gender) return;
+    if (gender != null) {
+      final allowed = await PremiumGate.ensure(
+        context,
+        PremiumFeature.advancedFilters,
+        title: 'Advanced Filters is a KMSTRY+ feature',
+        message:
+            'Filter who\'s here by gender, age, intent and vibe with KMSTRY+.',
+        icon: Icons.tune_rounded,
+      );
+      if (!allowed || !mounted) return;
+    }
+    setState(() => _filter = _filter.copyWith(gender: gender));
+    _loadCheckins();
+  }
+
+  String? get _venueAvatarUrl {
+    final primary = widget.venue.photoUrl.trim();
+    if (primary.isNotEmpty) return primary;
+    for (final photo in widget.venue.photos) {
+      final cleaned = photo.trim();
+      if (cleaned.isNotEmpty) return cleaned;
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final colors = Theme.of(context).colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final bg = isDark ? _kDarkBg : colors.surface;
+    final dividerColor = colors.onSurface.withValues(
+      alpha: isDark ? 0.08 : 0.10,
+    );
+
     return Scaffold(
-      backgroundColor: colors.surface,
+      backgroundColor: bg,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(70),
+        preferredSize: const Size.fromHeight(78),
         child: AppBar(
-          backgroundColor: colors.surface,
+          backgroundColor: bg,
           elevation: 0,
           scrolledUnderElevation: 0,
           centerTitle: false,
-          titleSpacing: 0,
+          titleSpacing: 4,
+          leadingWidth: 54,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 12, top: 10, bottom: 8),
+            child: _RoundIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+          ),
           actions: [
             Padding(
-              padding: const EdgeInsets.only(right: 8, top: 8),
+              padding: const EdgeInsets.only(right: 12, top: 10, bottom: 8),
               child: _FilterButton(
                 count: _filter.activeCount,
                 onTap: _openFilters,
@@ -103,17 +151,12 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
             ),
           ],
           title: Padding(
-            padding: const EdgeInsets.only(top: 8.0),
+            padding: const EdgeInsets.only(top: 9.0),
             child: Row(
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: CachedImage(
-                    'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4',
-                    width: 40,
-                    height: 40,
-                    fit: BoxFit.cover,
-                  ),
+                _VenueHeaderAvatar(
+                  imageUrl: _venueAvatarUrl,
+                  venueName: widget.venue.name,
                 ),
 
                 const SizedBox(width: 12),
@@ -151,25 +194,21 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               Icon(
                                 Icons.people_rounded,
                                 size: 14,
-                                color: colors.onSurface.withValues(alpha: 0.72),
+                                color: _kTeal,
                               ),
                               const SizedBox(width: 3),
                               Text(
                                 '${stats.checkinCountActive}',
                                 style: TextStyle(
                                   color: colors.onSurface.withValues(
-                                    alpha: 0.72,
+                                    alpha: 0.82,
                                   ),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              Icon(
-                                Icons.man_rounded,
-                                size: 14,
-                                color: colors.onSurface.withValues(alpha: 0.72),
-                              ),
+                              Icon(Icons.man_rounded, size: 14, color: _kBlue),
                               const SizedBox(width: 3),
                               Text(
                                 '${stats.male}',
@@ -185,7 +224,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                               Icon(
                                 Icons.woman_rounded,
                                 size: 14,
-                                color: colors.onSurface.withValues(alpha: 0.72),
+                                color: _kMagenta,
                               ),
                               const SizedBox(width: 3),
                               Text(
@@ -212,51 +251,25 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       ),
       body: Column(
         children: [
-          Divider(
-            height: 1,
-            thickness: 0.5,
-            color: colors.onSurface.withValues(alpha: 0.2),
+          Divider(height: 1, thickness: 0.5, color: dividerColor),
+          FutureBuilder<VenueCheckinStats>(
+            future: _statsFuture,
+            builder: (_, snapshot) {
+              final stats = snapshot.data;
+              return _LiveFilterStrip(
+                stats: stats,
+                filter: _filter,
+                onClear: _clearFilters,
+                onGenderSelected: _setGenderFilter,
+              );
+            },
           ),
-          if (_filter.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-              color: const Color(0xFFE020D8).withValues(alpha: 0.08),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.tune_rounded,
-                    size: 16,
-                    color: Color(0xFFE020D8),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${_filter.activeCount} filter${_filter.activeCount == 1 ? '' : 's'} active',
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _clearFilters,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      minimumSize: const Size(0, 32),
-                    ),
-                    child: const Text('Clear'),
-                  ),
-                ],
-              ),
-            ),
           Expanded(
             child: FutureBuilder<List<VenueCheckin>>(
               future: _future,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const _PeopleLoadingState();
                 }
 
                 if (snapshot.hasError) {
@@ -311,39 +324,20 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                 final people = snapshot.data!;
 
                 if (people.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _filter.isEmpty
-                                ? 'No one is here yet'
-                                : 'No one matches these filters',
-                            style: TextStyle(color: colors.onSurface),
-                          ),
-                          if (_filter.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            TextButton(
-                              onPressed: _clearFilters,
-                              child: const Text('Clear filters'),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
+                  return _PeopleEmptyState(
+                    filtered: _filter.isNotEmpty,
+                    onClear: _clearFilters,
                   );
                 }
 
                 return GridView.builder(
-                  padding: EdgeInsets.zero,
+                  padding: const EdgeInsets.fromLTRB(6, 6, 6, 16),
                   itemCount: people.length,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 1.5,
-                    crossAxisSpacing: 1.5,
-                    childAspectRatio: 0.7,
+                    mainAxisSpacing: 4,
+                    crossAxisSpacing: 4,
+                    childAspectRatio: 0.72,
                   ),
                   itemBuilder: (context, index) {
                     final person = people[index];
@@ -403,6 +397,402 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
   }
 }
 
+class _LiveFilterStrip extends StatelessWidget {
+  final VenueCheckinStats? stats;
+  final AttendeeFilter filter;
+  final VoidCallback onClear;
+  final ValueChanged<String?> onGenderSelected;
+
+  const _LiveFilterStrip({
+    required this.stats,
+    required this.filter,
+    required this.onClear,
+    required this.onGenderSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final all = stats?.checkinCountActive ?? 0;
+    final women = stats?.female ?? 0;
+    final men = stats?.male ?? 0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 9),
+      decoration: BoxDecoration(
+        color: isDark ? _kDarkBg : colors.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.10),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          children: [
+            _LiveChip(
+              label: 'All',
+              value: all,
+              icon: Icons.groups_rounded,
+              color: _kTeal,
+              active: filter.gender == null,
+              onTap: () => onGenderSelected(null),
+            ),
+            const SizedBox(width: 8),
+            _LiveChip(
+              label: 'Women',
+              value: women,
+              icon: Icons.woman_rounded,
+              color: _kMagenta,
+              active: filter.gender == 'female',
+              onTap: () => onGenderSelected('female'),
+            ),
+            const SizedBox(width: 8),
+            _LiveChip(
+              label: 'Men',
+              value: men,
+              icon: Icons.man_rounded,
+              color: _kBlue,
+              active: filter.gender == 'male',
+              onTap: () => onGenderSelected('male'),
+            ),
+            if (filter.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: onClear,
+                child: Container(
+                  height: 34,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: _kDeepPurple.withValues(alpha: isDark ? 0.40 : 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: _kMagenta.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.tune_rounded,
+                        size: 15,
+                        color: _kMagenta,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${filter.activeCount} active',
+                        style: const TextStyle(
+                          color: _kMagenta,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(
+                        Icons.close_rounded,
+                        size: 15,
+                        color: _kMagenta,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveChip extends StatelessWidget {
+  final String label;
+  final int value;
+  final IconData icon;
+  final Color color;
+  final bool active;
+  final VoidCallback? onTap;
+
+  const _LiveChip({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    this.active = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: active
+              ? color.withValues(alpha: isDark ? 0.15 : 0.12)
+              : colors.onSurface.withValues(alpha: isDark ? 0.055 : 0.045),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: active
+                ? color.withValues(alpha: 0.36)
+                : colors.onSurface.withValues(alpha: isDark ? 0.09 : 0.08),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: active ? color : colors.onSurface.withValues(alpha: 0.58),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$label · $value',
+              style: TextStyle(
+                color: active
+                    ? color
+                    : colors.onSurface.withValues(alpha: 0.72),
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PeopleLoadingState extends StatelessWidget {
+  const _PeopleLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          color: colors.onSurface.withValues(alpha: 0.055),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: colors.onSurface.withValues(alpha: 0.08)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: _kTeal),
+            ),
+            SizedBox(width: 12),
+            Text(
+              'Checking the room',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PeopleEmptyState extends StatelessWidget {
+  final bool filtered;
+  final VoidCallback onClear;
+
+  const _PeopleEmptyState({required this.filtered, required this.onClear});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 82,
+              height: 82,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kTeal.withValues(alpha: isDark ? 0.08 : 0.10),
+                border: Border.all(color: _kTeal.withValues(alpha: 0.20)),
+              ),
+              child: const Icon(Icons.radar_rounded, color: _kTeal, size: 36),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              filtered ? 'No matches right now' : 'Quiet right now',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.onSurface,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              filtered
+                  ? 'Try widening your filters to see more people here.'
+                  : 'When people check in, they will appear here live.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.onSurface.withValues(alpha: 0.58),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (filtered)
+              TextButton(
+                onPressed: onClear,
+                style: TextButton.styleFrom(foregroundColor: _kBlue),
+                child: const Text('Clear filters'),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _kTeal.withValues(alpha: isDark ? 0.10 : 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: _kTeal.withValues(alpha: 0.20)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _PulseDot(),
+                    SizedBox(width: 8),
+                    Text(
+                      'Watching live',
+                      style: TextStyle(
+                        color: _kTeal,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PulseDot extends StatelessWidget {
+  const _PulseDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: const BoxDecoration(color: _kTeal, shape: BoxShape.circle),
+    );
+  }
+}
+
+class _RoundIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _RoundIconButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: colors.onSurface.withValues(alpha: isDark ? 0.055 : 0.045),
+          border: Border.all(
+            color: colors.onSurface.withValues(alpha: isDark ? 0.09 : 0.08),
+          ),
+        ),
+        child: Icon(icon, color: colors.onSurface, size: 18),
+      ),
+    );
+  }
+}
+
+class _VenueHeaderAvatar extends StatelessWidget {
+  final String? imageUrl;
+  final String venueName;
+
+  const _VenueHeaderAvatar({required this.imageUrl, required this.venueName});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final hasImage = imageUrl != null && imageUrl!.trim().isNotEmpty;
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.onSurface.withValues(alpha: 0.10)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: hasImage
+            ? CachedImage(imageUrl!, fit: BoxFit.cover)
+            : DecoratedBox(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF1A9FE8), Color(0xFF1FD9A8)],
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    venueName.trim().isNotEmpty
+                        ? venueName.trim()[0].toUpperCase()
+                        : 'V',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
 /// Filter icon with an active-count badge for the attendee list app bar.
 class _FilterButton extends StatelessWidget {
   final int count;
@@ -413,6 +803,7 @@ class _FilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return InkResponse(
       onTap: onTap,
       radius: 24,
@@ -421,7 +812,26 @@ class _FilterButton extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Icon(Icons.tune_rounded, color: colors.onSurface, size: 24),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: colors.onSurface.withValues(
+                  alpha: isDark ? 0.055 : 0.045,
+                ),
+                border: Border.all(
+                  color: colors.onSurface.withValues(
+                    alpha: isDark ? 0.10 : 0.08,
+                  ),
+                ),
+              ),
+              child: Icon(
+                Icons.tune_rounded,
+                color: count > 0 ? _kMagenta : colors.onSurface,
+                size: 19,
+              ),
+            ),
             if (count > 0)
               Positioned(
                 right: -4,

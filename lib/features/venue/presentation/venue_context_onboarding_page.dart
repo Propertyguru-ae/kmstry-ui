@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/force_dark.dart';
 
 enum _Step { search, contact, documents, review }
 
@@ -29,7 +30,11 @@ enum _Step { search, contact, documents, review }
 class VenueContextOnboardingPage extends StatefulWidget {
   final bool fromAppShell;
   final VoidCallback? onCancel;
-  const VenueContextOnboardingPage({super.key, this.fromAppShell = false, this.onCancel});
+  const VenueContextOnboardingPage({
+    super.key,
+    this.fromAppShell = false,
+    this.onCancel,
+  });
 
   @override
   State<VenueContextOnboardingPage> createState() =>
@@ -54,7 +59,11 @@ class _VenueContextOnboardingPageState
   // ── Step 2: İletişim ─────────────────────────────────────────────────────
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
-  _CountryCode _selectedCountry = _countryCodes.firstWhere((c) => c.code == 'TR');
+  // Varsayılan telefon kodu UAE (KMSTRY birincil pazarı). Kullanıcı isterse
+  // dropdown'dan değiştirebilir.
+  _CountryCode _selectedCountry = _countryCodes.firstWhere(
+    (c) => c.code == 'AE',
+  );
 
   void _clearErrorOnType() {
     if (_error != null) setState(() => _error = null);
@@ -106,11 +115,32 @@ class _VenueContextOnboardingPageState
         // hasClaimDraft=true olması için gerekli — restart'ta personal'a düşmeyi önler.
         await _repo.upsertClaimDraft(currentStep: 1);
       }
+      // İsim alanı henüz boşsa kullanıcının profil ad-soyadıyla önceden doldur.
+      // Kullanıcı Step 2'de dilerse düzenleyebilir.
+      if (_nameCtrl.text.trim().isEmpty) {
+        await _prefillOwnerName();
+      }
     } catch (e) {
       debugPrint('[VenueClaimFlow] draft init failed: $e');
       if (mounted) setState(() => _draftInitFailed = true);
     } finally {
       if (mounted) setState(() => _loadingDraft = false);
+    }
+  }
+
+  /// Owner adını mevcut kullanıcının profilinden doldurur (boşsa).
+  Future<void> _prefillOwnerName() async {
+    try {
+      final me = await AuthRepository().getMe();
+      if (!mounted) return;
+      final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
+      if (fullName != null &&
+          fullName.isNotEmpty &&
+          _nameCtrl.text.trim().isEmpty) {
+        setState(() => _nameCtrl.text = fullName);
+      }
+    } catch (e) {
+      debugPrint('[VenueWizard] owner name prefill failed: $e');
     }
   }
 
@@ -140,10 +170,14 @@ class _VenueContextOnboardingPageState
   Future<void> _saveDraft({required int stepNumber}) async {
     setState(() => _savingDraft = true);
     try {
-      debugPrint('[VenueWizard] saving draft step=$stepNumber venueId=${_selectedVenue?.id}');
+      debugPrint(
+        '[VenueWizard] saving draft step=$stepNumber venueId=${_selectedVenue?.id}',
+      );
       await _repo.upsertClaimDraft(
         venueId: _dbVenueId,
-        ownerFullName: _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : null,
+        ownerFullName: _nameCtrl.text.trim().isNotEmpty
+            ? _nameCtrl.text.trim()
+            : null,
         ownerPhone: _phoneCtrl.text.trim().isNotEmpty ? _fullPhone : null,
         tradeLicenceUrl: _tradeLicenceUrl,
         ownerVideoUrl: _ownerVideoUrl,
@@ -204,7 +238,10 @@ class _VenueContextOnboardingPageState
       setState(() => _error = 'Please select a venue to continue.');
       return;
     }
-    setState(() { _error = null; _searching = true; });
+    setState(() {
+      _error = null;
+      _searching = true;
+    });
     try {
       _dbVenueId = await _repo.ensureVenueDbId(_selectedVenue!.id);
     } catch (_) {
@@ -244,7 +281,10 @@ class _VenueContextOnboardingPageState
   // ── Step 3: Belgeler ──────────────────────────────────────────────────────
 
   Future<void> _pickTradeLicence() async {
-    setState(() { _uploadingLicence = true; _error = null; });
+    setState(() {
+      _uploadingLicence = true;
+      _error = null;
+    });
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -266,7 +306,10 @@ class _VenueContextOnboardingPageState
   }
 
   Future<void> _pickOwnerVideo() async {
-    setState(() { _uploadingVideo = true; _error = null; });
+    setState(() {
+      _uploadingVideo = true;
+      _error = null;
+    });
     try {
       final source = await _showVideoSourceSheet();
       if (source == null) return;
@@ -277,7 +320,10 @@ class _VenueContextOnboardingPageState
       if (picked == null) return;
       final url = await _uploadFile(File(picked.path), 'video');
       if (!mounted) return;
-      setState(() { _ownerVideoUrl = url; _error = null; });
+      setState(() {
+        _ownerVideoUrl = url;
+        _error = null;
+      });
     } catch (e) {
       debugPrint('[VenueWizard] video upload error: $e');
       if (!mounted) return;
@@ -361,9 +407,13 @@ class _VenueContextOnboardingPageState
 
   Future<void> _onDocumentsSkip() async {
     _tradeLicenceUrl = null;
-    _ownerVideoUrl   = null;
+    _ownerVideoUrl = null;
     await _saveDraft(stepNumber: 3);
-    if (mounted) setState(() { _error = null; _step = _Step.review; });
+    if (mounted)
+      setState(() {
+        _error = null;
+        _step = _Step.review;
+      });
   }
 
   // ── Step 4: Submit ────────────────────────────────────────────────────────
@@ -372,7 +422,10 @@ class _VenueContextOnboardingPageState
     final venue = _selectedVenue;
     if (venue == null) return;
 
-    setState(() { _submitting = true; _error = null; });
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
 
     final hasDocuments = _tradeLicenceUrl != null && _ownerVideoUrl != null;
 
@@ -380,7 +433,9 @@ class _VenueContextOnboardingPageState
       final dbVenueId = _dbVenueId ?? await _repo.ensureVenueDbId(venue.id);
       await _repo.claimVenue(
         venueId: dbVenueId,
-        ownerFullName: _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : null,
+        ownerFullName: _nameCtrl.text.trim().isNotEmpty
+            ? _nameCtrl.text.trim()
+            : null,
         ownerNote: [
           'Owner: ${_nameCtrl.text.trim()}',
           'Phone: ${_phoneCtrl.text.trim()}',
@@ -402,7 +457,8 @@ class _VenueContextOnboardingPageState
     } catch (e) {
       if (!mounted) return;
       final msg = e.toString().toLowerCase();
-      if (msg.contains('already pending') || msg.contains('already an active')) {
+      if (msg.contains('already pending') ||
+          msg.contains('already an active')) {
         await _repo.deleteClaimDraft();
         if (mounted) _onClaimSuccess(hasDocuments: hasDocuments);
         return;
@@ -437,11 +493,18 @@ class _VenueContextOnboardingPageState
     final notifDone = await SecureStorage.isNotificationOnboardingDone();
     if (!mounted) return;
     if (!notifDone) {
+      // Personal ile aynı: yeni venue-signup → dark; add-venue → seçilen tema.
+      final forceDark = !widget.fromAppShell && widget.onCancel == null;
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => NotificationPermissionPage(
-            onNext: () => Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate),
-          ),
+          builder: (_) {
+            final page = NotificationPermissionPage(
+              onNext: () => Navigator.of(
+                context,
+              ).pushReplacementNamed(AuthRoutes.authGate),
+            );
+            return forceDark ? ForceDark(child: page) : page;
+          },
         ),
       );
     } else {
@@ -479,12 +542,21 @@ class _VenueContextOnboardingPageState
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
-  static const _darkBg  = Color(0xFF06091A);
-  static const _blue    = AppColors.blue;
-  static const _teal    = Color(0xFF00D4C8);
+  static const _darkBg = Color(0xFF06091A);
+  static const _blue = AppColors.blue;
+  static const _teal = Color(0xFF00D4C8);
 
   @override
   Widget build(BuildContext context) {
+    // Personal ile aynı mantık: yeni venue-signup / ilk kurulum (paramsız) →
+    // marka akışı, DAİMA dark. Login sonrası add-venue (fromAppShell veya
+    // onCancel ile açılan) → kullanıcının seçtiği temayı izler.
+    final forceDark = !widget.fromAppShell && widget.onCancel == null;
+    final content = Builder(builder: _buildBody);
+    return forceDark ? ForceDark(child: content) : content;
+  }
+
+  Widget _buildBody(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -507,21 +579,28 @@ class _VenueContextOnboardingPageState
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 64, height: 64,
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
                     color: const Color(0x1A3B6DEA),
                     border: Border.all(color: const Color(0x2E3B6DEA)),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Icon(Icons.wifi_off_rounded,
-                      size: 30, color: AppColors.blue),
+                  child: const Icon(
+                    Icons.wifi_off_rounded,
+                    size: 30,
+                    color: AppColors.blue,
+                  ),
                 ),
                 const SizedBox(height: 16),
-                Text('Connection error',
-                    style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : const Color(0xFF111827),
-                    )),
+                Text(
+                  'Connection error',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.white : const Color(0xFF111827),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(
                   'Could not connect to the server. Please check your connection and try again.',
@@ -534,17 +613,28 @@ class _VenueContextOnboardingPageState
                 const SizedBox(height: 24),
                 GestureDetector(
                   onTap: () {
-                    setState(() { _draftInitFailed = false; _loadingDraft = true; });
+                    setState(() {
+                      _draftInitFailed = false;
+                      _loadingDraft = true;
+                    });
                     _loadDraft();
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 14,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E4FC7),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: const Text('Try again',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    child: const Text(
+                      'Try again',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -561,10 +651,13 @@ class _VenueContextOnboardingPageState
           // Ambient glows
           if (isDark) ...[
             Positioned(
-              top: -70, left: 0, right: 0,
+              top: -70,
+              left: 0,
+              right: 0,
               child: Center(
                 child: Container(
-                  width: 300, height: 260,
+                  width: 300,
+                  height: 260,
                   decoration: const BoxDecoration(
                     gradient: RadialGradient(
                       center: Alignment(0, -0.4),
@@ -576,9 +669,11 @@ class _VenueContextOnboardingPageState
               ),
             ),
             Positioned(
-              top: 60, right: -50,
+              top: 60,
+              right: -50,
               child: Container(
-                width: 160, height: 160,
+                width: 160,
+                height: 160,
                 decoration: const BoxDecoration(
                   gradient: RadialGradient(
                     colors: [Color(0x128C46FF), Colors.transparent],
@@ -595,10 +690,10 @@ class _VenueContextOnboardingPageState
                 _buildStepTabs(isDark),
                 Expanded(
                   child: switch (_step) {
-                    _Step.search    => _buildSearchStep(colors, isDark),
-                    _Step.contact   => _buildContactStep(colors),
+                    _Step.search => _buildSearchStep(colors, isDark),
+                    _Step.contact => _buildContactStep(colors),
                     _Step.documents => _buildDocumentsStep(colors, isDark),
-                    _Step.review    => _buildReviewStep(colors, isDark),
+                    _Step.review => _buildReviewStep(colors, isDark),
                   },
                 ),
               ],
@@ -634,7 +729,8 @@ class _VenueContextOnboardingPageState
                 }
               },
               child: Container(
-                width: 38, height: 38,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: isDark
@@ -646,8 +742,11 @@ class _VenueContextOnboardingPageState
                         : Colors.black.withValues(alpha: 0.1),
                   ),
                 ),
-                child: Icon(Icons.chevron_left_rounded, size: 22,
-                    color: isDark ? const Color(0xFF607090) : Colors.black54),
+                child: Icon(
+                  Icons.chevron_left_rounded,
+                  size: 22,
+                  color: isDark ? const Color(0xFF607090) : Colors.black54,
+                ),
               ),
             )
           else
@@ -685,21 +784,21 @@ class _VenueContextOnboardingPageState
         child: Row(
           children: List.generate(4, (i) {
             final active = i == current;
-            final done   = i < current;
+            final done = i < current;
             Color numBg, numFg, labelFg;
             if (active) {
-              numBg   = const Color(0xFF1E4FC7);
-              numFg   = Colors.white;
+              numBg = const Color(0xFF1E4FC7);
+              numFg = Colors.white;
               labelFg = AppColors.blueDark;
             } else if (done) {
-              numBg   = const Color(0x3300D4C8);
-              numFg   = _teal;
+              numBg = const Color(0x3300D4C8);
+              numFg = _teal;
               labelFg = _teal;
             } else {
-              numBg   = isDark
+              numBg = isDark
                   ? Colors.white.withValues(alpha: 0.05)
                   : Colors.black.withValues(alpha: 0.05);
-              numFg   = isDark ? const Color(0xFF2E4560) : Colors.black38;
+              numFg = isDark ? const Color(0xFF2E4560) : Colors.black38;
               labelFg = isDark ? const Color(0xFF2E4560) : Colors.black38;
             }
             return Expanded(
@@ -708,7 +807,9 @@ class _VenueContextOnboardingPageState
                 padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
                 decoration: BoxDecoration(
                   color: active
-                      ? (isDark ? const Color(0xFF0D1F45) : const Color(0xFFEEF4FF))
+                      ? (isDark
+                            ? const Color(0xFF0D1F45)
+                            : const Color(0xFFEEF4FF))
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
@@ -716,21 +817,33 @@ class _VenueContextOnboardingPageState
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      width: 20, height: 20,
-                      decoration: BoxDecoration(shape: BoxShape.circle, color: numBg),
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: numBg,
+                      ),
                       child: Center(
                         child: done
                             ? Icon(Icons.check_rounded, size: 11, color: numFg)
-                            : Text('${i + 1}',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: numFg)),
+                            : Text(
+                                '${i + 1}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: numFg,
+                                ),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       labels[i],
                       style: TextStyle(
-                        fontSize: 9.5, fontWeight: FontWeight.w600,
-                        letterSpacing: 0.2, color: labelFg,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                        color: labelFg,
                       ),
                     ),
                   ],
@@ -746,7 +859,7 @@ class _VenueContextOnboardingPageState
   // ── Step 1: Venue Ara ─────────────────────────────────────────────────────
 
   Widget _buildSearchStep(ColorScheme colors, bool isDark) {
-    final hasQuery   = _searchCtrl.text.trim().isNotEmpty;
+    final hasQuery = _searchCtrl.text.trim().isNotEmpty;
     final hasResults = _results.isNotEmpty;
 
     return GestureDetector(
@@ -764,32 +877,64 @@ class _VenueContextOnboardingPageState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Container(width: 18, height: 2,
-                        decoration: BoxDecoration(color: _blue, borderRadius: BorderRadius.circular(1))),
-                    const SizedBox(width: 7),
-                    const Text('STEP 1 OF 4',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                            letterSpacing: 2, color: AppColors.blue)),
-                  ]),
+                  Row(
+                    children: [
+                      Container(
+                        width: 18,
+                        height: 2,
+                        decoration: BoxDecoration(
+                          color: _blue,
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      const Text(
+                        'STEP 1 OF 4',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 2,
+                          color: AppColors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
-                  Text('Find your',
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800,
-                          letterSpacing: -0.7, height: 1.12,
-                          color: isDark ? Colors.white : const Color(0xFF111827))),
+                  Text(
+                    'Find your',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.7,
+                      height: 1.12,
+                      color: isDark ? Colors.white : const Color(0xFF111827),
+                    ),
+                  ),
                   ShaderMask(
                     shaderCallback: (b) => const LinearGradient(
                       colors: AppColors.gradientDark,
                     ).createShader(b),
                     blendMode: BlendMode.srcIn,
-                    child: const Text('venue.',
-                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800,
-                            letterSpacing: -0.7, height: 1.12, color: Colors.white)),
+                    child: const Text(
+                      'venue.',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.7,
+                        height: 1.12,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 6),
-                  Text('Search by venue name or city to get started.',
-                      style: TextStyle(fontSize: 13, height: 1.55,
-                          color: isDark ? const Color(0xFFB1B4BB) : Colors.black54)),
+                  Text(
+                    'Search by venue name or city to get started.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.55,
+                      color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -800,12 +945,16 @@ class _VenueContextOnboardingPageState
               child: Container(
                 height: 52,
                 decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF0F1C35) : const Color(0xFFF8FAFF),
+                  color: isDark
+                      ? const Color(0xFF0F1C35)
+                      : const Color(0xFFF8FAFF),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: _searching
                         ? _blue
-                        : (isDark ? const Color(0xFF1A3060) : const Color(0xFFD4E0FF)),
+                        : (isDark
+                              ? const Color(0xFF1A3060)
+                              : const Color(0xFFD4E0FF)),
                     width: 1.5,
                   ),
                 ),
@@ -815,23 +964,34 @@ class _VenueContextOnboardingPageState
                       padding: const EdgeInsets.only(left: 16),
                       child: _searching
                           ? const SizedBox(
-                              width: 18, height: 18,
+                              width: 18,
+                              height: 18,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: AppColors.blue))
-                          : const Icon(Icons.search_rounded,
-                              size: 20, color: AppColors.blue),
+                                strokeWidth: 2,
+                                color: AppColors.blue,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.search_rounded,
+                              size: 20,
+                              color: AppColors.blue,
+                            ),
                     ),
                     Expanded(
                       child: TextField(
                         controller: _searchCtrl,
                         style: TextStyle(
                           fontSize: 14,
-                          color: isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827),
+                          color: isDark
+                              ? const Color(0xFFEEF2FF)
+                              : const Color(0xFF111827),
                         ),
                         decoration: InputDecoration(
                           hintText: 'Search venues...',
                           hintStyle: TextStyle(
-                            color: isDark ? const Color(0xFF2E4560) : Colors.black26,
+                            color: isDark
+                                ? const Color(0xFF2E4560)
+                                : Colors.black26,
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -839,7 +999,10 @@ class _VenueContextOnboardingPageState
                           filled: false,
                           isDense: true,
                           isCollapsed: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 2,
+                          ),
                         ),
                       ),
                     ),
@@ -847,10 +1010,14 @@ class _VenueContextOnboardingPageState
                       GestureDetector(
                         onTap: () {
                           _searchCtrl.clear();
-                          setState(() { _results = []; _selectedVenue = null; });
+                          setState(() {
+                            _results = [];
+                            _selectedVenue = null;
+                          });
                         },
                         child: Container(
-                          width: 22, height: 22,
+                          width: 22,
+                          height: 22,
                           margin: const EdgeInsets.only(right: 14),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
@@ -858,8 +1025,13 @@ class _VenueContextOnboardingPageState
                                 ? Colors.white.withValues(alpha: 0.07)
                                 : Colors.black.withValues(alpha: 0.07),
                           ),
-                          child: Icon(Icons.close_rounded, size: 13,
-                              color: isDark ? const Color(0xFF4A6280) : Colors.black38),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 13,
+                            color: isDark
+                                ? const Color(0xFF4A6280)
+                                : Colors.black38,
+                          ),
                         ),
                       ),
                   ],
@@ -870,8 +1042,13 @@ class _VenueContextOnboardingPageState
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(_error!,
-                    style: const TextStyle(fontSize: 12.5, color: Color(0xFFEF4444))),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: Color(0xFFEF4444),
+                  ),
+                ),
               ),
 
             // Results list (shrinkWrap — no Expanded needed)
@@ -881,12 +1058,10 @@ class _VenueContextOnboardingPageState
               _buildEmptyState(isDark, idle: !hasQuery || _searching),
 
             // Selected venue + continue
-            if (_selectedVenue != null)
-              _buildSelectedVenueBar(colors, isDark),
+            if (_selectedVenue != null) _buildSelectedVenueBar(colors, isDark),
 
             // Can't find
-            if (_selectedVenue == null)
-              _buildCantFind(isDark),
+            if (_selectedVenue == null) _buildCantFind(isDark),
           ],
         ),
       ),
@@ -911,52 +1086,79 @@ class _VenueContextOnboardingPageState
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF0D1525) : const Color(0xFFF8FAFF),
               border: Border.all(
-                color: isDark ? const Color(0xFF162040) : const Color(0xFFD4E0FF),
+                color: isDark
+                    ? const Color(0xFF162040)
+                    : const Color(0xFFD4E0FF),
               ),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(
               children: [
                 Container(
-                  width: 36, height: 36,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1A2A4A) : const Color(0xFFEEF4FF),
+                    color: isDark
+                        ? const Color(0xFF1A2A4A)
+                        : const Color(0xFFEEF4FF),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: venue.photoUrl.isNotEmpty
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: Image.network(venue.photoUrl, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.store_mall_directory_outlined,
-                                  size: 18, color: Color(0xFF4A6AAA))),
+                          child: Image.network(
+                            venue.photoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.store_mall_directory_outlined,
+                              size: 18,
+                              color: Color(0xFF4A6AAA),
+                            ),
+                          ),
                         )
-                      : const Icon(Icons.store_mall_directory_outlined,
-                          size: 18, color: Color(0xFF4A6AAA)),
+                      : const Icon(
+                          Icons.store_mall_directory_outlined,
+                          size: 18,
+                          color: Color(0xFF4A6AAA),
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(venue.name,
-                          style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600,
-                            color: isDark ? const Color(0xFFC8D8F0) : const Color(0xFF111827),
-                          ),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        venue.name,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? const Color(0xFFC8D8F0)
+                              : const Color(0xFF111827),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       if (venue.address.isNotEmpty)
-                        Text(venue.address,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: isDark ? const Color(0xFF3A5070) : Colors.black45,
-                            ),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(
+                          venue.address,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark
+                                ? const Color(0xFF3A5070)
+                                : Colors.black45,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right_rounded, size: 18,
-                    color: isDark ? const Color(0xFF2E4060) : Colors.black26),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: isDark ? const Color(0xFF2E4060) : Colors.black26,
+                ),
               ],
             ),
           ),
@@ -973,21 +1175,28 @@ class _VenueContextOnboardingPageState
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 56, height: 56,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               color: const Color(0x1A3B6DEA),
               border: Border.all(color: const Color(0x2E3B6DEA)),
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const Icon(Icons.store_mall_directory_outlined,
-                size: 24, color: AppColors.blue),
+            child: const Icon(
+              Icons.store_mall_directory_outlined,
+              size: 24,
+              color: AppColors.blue,
+            ),
           ),
           const SizedBox(height: 14),
           Text(
             idle ? 'Find your venue' : 'No venues found',
             style: TextStyle(
-              fontSize: 14, fontWeight: FontWeight.w700,
-              color: isDark ? const Color.fromARGB(255, 79, 102, 130) : Colors.black54,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: isDark
+                  ? const Color.fromARGB(255, 79, 102, 130)
+                  : Colors.black54,
             ),
           ),
           const SizedBox(height: 6),
@@ -996,8 +1205,11 @@ class _VenueContextOnboardingPageState
                 ? 'Type a venue name or city above.'
                 : 'Try a different name or add it manually below.',
             style: TextStyle(
-              fontSize: 12, height: 1.55,
-              color: isDark ? Color.fromARGB(255, 147, 153, 167) : Colors.black38,
+              fontSize: 12,
+              height: 1.55,
+              color: isDark
+                  ? Color.fromARGB(255, 147, 153, 167)
+                  : Colors.black38,
             ),
             textAlign: TextAlign.center,
           ),
@@ -1022,41 +1234,68 @@ class _VenueContextOnboardingPageState
             child: Row(
               children: [
                 Container(
-                  width: 36, height: 36,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1A2A4A) : const Color(0xFFD4E4FF),
+                    color: isDark
+                        ? const Color(0xFF1A2A4A)
+                        : const Color(0xFFD4E4FF),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: venue.photoUrl.isNotEmpty
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: Image.network(venue.photoUrl, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.store_mall_directory_outlined,
-                                  size: 18, color: Color(0xFF4A6AAA))),
+                          child: Image.network(
+                            venue.photoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.store_mall_directory_outlined,
+                              size: 18,
+                              color: Color(0xFF4A6AAA),
+                            ),
+                          ),
                         )
-                      : const Icon(Icons.store_mall_directory_outlined,
-                          size: 18, color: Color(0xFF4A6AAA)),
+                      : const Icon(
+                          Icons.store_mall_directory_outlined,
+                          size: 18,
+                          color: Color(0xFF4A6AAA),
+                        ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(venue.name,
-                          style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700,
-                            color: isDark ? const Color(0xFFC8D8F0) : const Color(0xFF111827),
-                          ),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        venue.name,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: isDark
+                              ? const Color(0xFFC8D8F0)
+                              : const Color(0xFF111827),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       if (venue.address.isNotEmpty)
-                        Text(venue.address,
-                            style: const TextStyle(fontSize: 11, color: Color(0xFF5B6F8D)),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(
+                          venue.address,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF5B6F8D),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
-                const Icon(Icons.check_circle_rounded, color: AppColors.blue, size: 18),
+                const Icon(
+                  Icons.check_circle_rounded,
+                  color: AppColors.blue,
+                  size: 18,
+                ),
               ],
             ),
           ),
@@ -1073,27 +1312,47 @@ class _VenueContextOnboardingPageState
               child: Stack(
                 children: [
                   Positioned(
-                    top: 0, left: 0, right: 0,
+                    top: 0,
+                    left: 0,
+                    right: 0,
                     child: Container(
                       height: 26,
                       decoration: const BoxDecoration(
                         color: Color(0x12FFFFFF),
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(14),
+                        ),
                       ),
                     ),
                   ),
                   Center(
                     child: _savingDraft
-                        ? const SizedBox(width: 22, height: 22,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
                         : const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Text('Continue',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                                      color: Colors.white, letterSpacing: -0.2)),
+                              Text(
+                                'Continue',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
                               SizedBox(width: 8),
-                              Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                              Icon(
+                                Icons.arrow_forward_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
                             ],
                           ),
                   ),
@@ -1120,28 +1379,44 @@ class _VenueContextOnboardingPageState
         child: Row(
           children: [
             Container(
-              width: 34, height: 34,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
                 color: const Color(0x263B6DEA),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.add_rounded, size: 18, color: AppColors.blueDark),
+              child: const Icon(
+                Icons.add_rounded,
+                size: 18,
+                color: AppColors.blueDark,
+              ),
             ),
             const SizedBox(width: 10),
             const Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("Can't find your venue?",
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
-                          color: Color(0xFF7AAAFF))),
+                  Text(
+                    "Can't find your venue?",
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF7AAAFF),
+                    ),
+                  ),
                   SizedBox(height: 2),
-                  Text("Add it manually and we'll verify it",
-                      style: TextStyle(fontSize: 11, color: Color(0xFF5B6F8D))),
+                  Text(
+                    "Add it manually and we'll verify it",
+                    style: TextStyle(fontSize: 11, color: Color(0xFF5B6F8D)),
+                  ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.blue),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 16,
+              color: AppColors.blue,
+            ),
           ],
         ),
       ),
@@ -1166,32 +1441,66 @@ class _VenueContextOnboardingPageState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Container(width: 18, height: 2,
-                      decoration: BoxDecoration(color: _blue, borderRadius: BorderRadius.circular(1))),
-                  const SizedBox(width: 7),
-                  const Text('STEP 2 OF 4',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                          letterSpacing: 2, color: AppColors.blue)),
-                ]),
+                Row(
+                  children: [
+                    Container(
+                      width: 18,
+                      height: 2,
+                      decoration: BoxDecoration(
+                        color: _blue,
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    const Text(
+                      'STEP 2 OF 4',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 2,
+                        color: AppColors.blue,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 12),
-                Text('Your contact',
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800,
-                        letterSpacing: -0.7, height: 1.12,
-                        color: isDark ? Colors.white : const Color(0xFF111827))),
+                Text(
+                  'Your contact',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.7,
+                    height: 1.12,
+                    color: isDark ? Colors.white : const Color(0xFF111827),
+                  ),
+                ),
                 ShaderMask(
                   shaderCallback: (b) => LinearGradient(
-                    colors: isDark ? AppColors.gradientDark : AppColors.gradientLight,
+                    colors: isDark
+                        ? AppColors.gradientDark
+                        : AppColors.gradientLight,
                   ).createShader(b),
                   blendMode: BlendMode.srcIn,
-                  child: const Text('details.',
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800,
-                          letterSpacing: -0.7, height: 1.12, color: Colors.white)),
+                  child: const Text(
+                    'details.',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.7,
+                      height: 1.12,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 6),
-                Text('These will be used to verify your ownership.',
-                    style: TextStyle(fontSize: 12.5, height: 1.55,
-                        color: isDark ? const Color(0xFFB1B4BB) : Colors.black54)),
+                Text(
+                  'These will be used to verify your ownership.',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.55,
+                    color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1203,33 +1512,58 @@ class _VenueContextOnboardingPageState
               child: Container(
                 decoration: BoxDecoration(
                   color: AppColors.blue.withValues(alpha: 0.10),
-                  border: Border.all(color: AppColors.blue.withValues(alpha: 0.20)),
+                  border: Border.all(
+                    color: AppColors.blue.withValues(alpha: 0.20),
+                  ),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Container(
-                      width: 32, height: 32,
+                      width: 32,
+                      height: 32,
                       decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF1540A0) : const Color(0xFFDCEAFF),
+                        color: isDark
+                            ? const Color(0xFF1540A0)
+                            : const Color(0xFFDCEAFF),
                         borderRadius: BorderRadius.circular(9),
                       ),
-                      child: Icon(Icons.store_mall_directory_outlined,
-                          size: 15,
-                          color: isDark ? const Color(0xFF90B8FF) : AppColors.blueLight),
+                      child: Icon(
+                        Icons.store_mall_directory_outlined,
+                        size: 15,
+                        color: isDark
+                            ? const Color(0xFF90B8FF)
+                            : AppColors.blueLight,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(venue.name,
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
-                                  color: isDark ? const Color(0xFFAAC4FF) : const Color(0xFF111827))),
-                          Text('${venue.city} · Venue selected',
-                              style: TextStyle(fontSize: 10.5,
-                                  color: isDark ? const Color(0xFF5B6F8D) : Colors.black45)),
+                          Text(
+                            venue.name,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: isDark
+                                  ? const Color(0xFFAAC4FF)
+                                  : const Color(0xFF111827),
+                            ),
+                          ),
+                          Text(
+                            '${venue.city} · Venue selected',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: isDark
+                                  ? const Color(0xFF5B6F8D)
+                                  : Colors.black45,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1239,9 +1573,14 @@ class _VenueContextOnboardingPageState
                         _searchCtrl.clear();
                         _step = _Step.search;
                       }),
-                      child: const Text('Change',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                              color: AppColors.blue)),
+                      child: const Text(
+                        'Change',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.blue,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1253,10 +1592,19 @@ class _VenueContextOnboardingPageState
             child: Container(
               margin: const EdgeInsets.only(top: 16),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF0B1322) : const Color(0xFFF8FAFF),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-                border: Border(top: BorderSide(
-                    color: isDark ? const Color(0xFF162040) : const Color(0xFFE2E8F0))),
+                color: isDark
+                    ? const Color(0xFF0B1322)
+                    : const Color(0xFFF8FAFF),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(26),
+                ),
+                border: Border(
+                  top: BorderSide(
+                    color: isDark
+                        ? const Color(0xFF162040)
+                        : const Color(0xFFE2E8F0),
+                  ),
+                ),
               ),
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
@@ -1266,7 +1614,8 @@ class _VenueContextOnboardingPageState
                     // Handle
                     Center(
                       child: Container(
-                        width: 32, height: 4,
+                        width: 32,
+                        height: 4,
                         margin: const EdgeInsets.only(bottom: 20),
                         decoration: BoxDecoration(
                           color: isDark
@@ -1278,10 +1627,17 @@ class _VenueContextOnboardingPageState
                     ),
 
                     // Full name
-                    Text('FULL NAME',
-                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700,
-                            letterSpacing: 1,
-                            color: isDark ? const Color(0xFF5E708B) : Colors.black45)),
+                    Text(
+                      'FULL NAME',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: isDark
+                            ? const Color(0xFF5E708B)
+                            : Colors.black45,
+                      ),
+                    ),
                     const SizedBox(height: 7),
                     _ContactField(
                       controller: _nameCtrl,
@@ -1294,10 +1650,17 @@ class _VenueContextOnboardingPageState
                     const SizedBox(height: 12),
 
                     // Phone
-                    Text('PHONE NUMBER',
-                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700,
-                            letterSpacing: 1,
-                            color: isDark ? const Color(0xFF5E708B) : Colors.black45)),
+                    Text(
+                      'PHONE NUMBER',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: isDark
+                            ? const Color(0xFF5E708B)
+                            : Colors.black45,
+                      ),
+                    ),
                     const SizedBox(height: 7),
                     Row(
                       children: [
@@ -1308,26 +1671,43 @@ class _VenueContextOnboardingPageState
                             height: 52,
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: isDark ? const Color(0xFF0F1C35) : const Color(0xFFF3F6FA),
+                              color: isDark
+                                  ? const Color(0xFF0F1C35)
+                                  : const Color(0xFFF3F6FA),
                               border: Border.all(
-                                  color: isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E1EA),
-                                  width: 1.5),
+                                color: isDark
+                                    ? const Color(0xFF1A3060)
+                                    : const Color(0xFFD9E1EA),
+                                width: 1.5,
+                              ),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(_selectedCountry.flag,
-                                    style: const TextStyle(fontSize: 16)),
+                                Text(
+                                  _selectedCountry.flag,
+                                  style: const TextStyle(fontSize: 16),
+                                ),
                                 const SizedBox(width: 6),
-                                Text(_selectedCountry.dial,
-                                    style: TextStyle(fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: isDark ? const Color(0xFF7A9AC0) : const Color(0xFF111827))),
+                                Text(
+                                  _selectedCountry.dial,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark
+                                        ? const Color(0xFF7A9AC0)
+                                        : const Color(0xFF111827),
+                                  ),
+                                ),
                                 const SizedBox(width: 4),
-                                Icon(Icons.keyboard_arrow_down_rounded,
-                                    size: 16,
-                                    color: isDark ? const Color(0xFF3A5070) : Colors.black38),
+                                Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 16,
+                                  color: isDark
+                                      ? const Color(0xFF3A5070)
+                                      : Colors.black38,
+                                ),
                               ],
                             ),
                           ),
@@ -1349,8 +1729,13 @@ class _VenueContextOnboardingPageState
 
                     // Error
                     if (_error != null) ...[
-                      Text(_error!,
-                          style: const TextStyle(fontSize: 12.5, color: Color(0xFFEF4444))),
+                      Text(
+                        _error!,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Color(0xFFEF4444),
+                        ),
+                      ),
                       const SizedBox(height: 10),
                     ],
 
@@ -1366,18 +1751,31 @@ class _VenueContextOnboardingPageState
                           ),
                           child: Center(
                             child: _savingDraft
-                                ? const SizedBox(width: 20, height: 20,
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
                                     child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.white))
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                 : const Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text('Continue',
-                                          style: TextStyle(fontSize: 15,
-                                              fontWeight: FontWeight.w700, color: Colors.white)),
+                                      Text(
+                                        'Continue',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                       SizedBox(width: 8),
-                                      Icon(Icons.arrow_forward_rounded,
-                                          size: 16, color: Colors.white),
+                                      Icon(
+                                        Icons.arrow_forward_rounded,
+                                        size: 16,
+                                        color: Colors.white,
+                                      ),
                                     ],
                                   ),
                           ),
@@ -1388,32 +1786,46 @@ class _VenueContextOnboardingPageState
 
                     // Privacy note
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.blue.withValues(alpha: 0.07),
                         border: Border.all(
-                            color: AppColors.blue.withValues(alpha: 0.14)),
+                          color: AppColors.blue.withValues(alpha: 0.14),
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.lock_outline_rounded,
-                              size: 14, color: AppColors.blue),
+                          const Icon(
+                            Icons.lock_outline_rounded,
+                            size: 14,
+                            color: AppColors.blue,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text.rich(
                               TextSpan(
                                 style: const TextStyle(
-                                    fontSize: 11, color: Color(0xFF5B6F8D), height: 1.45),
+                                  fontSize: 11,
+                                  color: Color(0xFF5B6F8D),
+                                  height: 1.45,
+                                ),
                                 children: [
                                   const TextSpan(text: 'Your details are '),
                                   const TextSpan(
                                     text: 'never shared publicly',
                                     style: TextStyle(
-                                        color: AppColors.blueDark, fontWeight: FontWeight.w600),
+                                      color: AppColors.blueDark,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   const TextSpan(
-                                      text: ' and only used for ownership verification.'),
+                                    text:
+                                        ' and only used for ownership verification.',
+                                  ),
                                 ],
                               ),
                             ),
@@ -1434,7 +1846,8 @@ class _VenueContextOnboardingPageState
   // ── Step 3: Belgeler ──────────────────────────────────────────────────────
 
   Widget _buildDocumentsStep(ColorScheme colors, bool isDark) {
-    final uploadedCount = (_tradeLicenceUrl != null ? 1 : 0) + (_ownerVideoUrl != null ? 1 : 0);
+    final uploadedCount =
+        (_tradeLicenceUrl != null ? 1 : 0) + (_ownerVideoUrl != null ? 1 : 0);
     const requiredCount = 2;
     final isBusy = _savingDraft || _uploadingLicence || _uploadingVideo;
 
@@ -1447,32 +1860,66 @@ class _VenueContextOnboardingPageState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                Container(width: 18, height: 2,
-                    decoration: BoxDecoration(color: _blue, borderRadius: BorderRadius.circular(1))),
-                const SizedBox(width: 7),
-                const Text('STEP 3 OF 4',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                        letterSpacing: 2, color: AppColors.blue)),
-              ]),
+              Row(
+                children: [
+                  Container(
+                    width: 18,
+                    height: 2,
+                    decoration: BoxDecoration(
+                      color: _blue,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text(
+                    'STEP 3 OF 4',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 2,
+                      color: AppColors.blue,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 11),
-              Text('Upload your',
-                  style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800,
-                      letterSpacing: -0.7, height: 1.12,
-                      color: isDark ? Colors.white : const Color(0xFF111827))),
+              Text(
+                'Upload your',
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.7,
+                  height: 1.12,
+                  color: isDark ? Colors.white : const Color(0xFF111827),
+                ),
+              ),
               ShaderMask(
                 shaderCallback: (b) => LinearGradient(
-                  colors: isDark ? AppColors.gradientDark : AppColors.gradientLight,
+                  colors: isDark
+                      ? AppColors.gradientDark
+                      : AppColors.gradientLight,
                 ).createShader(b),
                 blendMode: BlendMode.srcIn,
-                child: const Text('documents.',
-                    style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800,
-                        letterSpacing: -0.7, height: 1.12, color: Colors.white)),
+                child: const Text(
+                  'documents.',
+                  style: TextStyle(
+                    fontSize: 27,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.7,
+                    height: 1.12,
+                    color: Colors.white,
+                  ),
+                ),
               ),
               const SizedBox(height: 6),
-              Text('Required to verify your ownership claim.',
-                  style: TextStyle(fontSize: 12.5, height: 1.55,
-                      color: isDark ? const Color(0xFFB1B4BB) : Colors.black54)),
+              Text(
+                'Required to verify your ownership claim.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.55,
+                  color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                ),
+              ),
             ],
           ),
         ),
@@ -1482,9 +1929,16 @@ class _VenueContextOnboardingPageState
           child: Container(
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF0B1322) : const Color(0xFFF8FAFF),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-              border: Border(top: BorderSide(
-                  color: isDark ? const Color(0xFF162040) : const Color(0xFFE2E8F0))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(26),
+              ),
+              border: Border(
+                top: BorderSide(
+                  color: isDark
+                      ? const Color(0xFF162040)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
             ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
@@ -1494,7 +1948,8 @@ class _VenueContextOnboardingPageState
                   // Handle
                   Center(
                     child: Container(
-                      width: 32, height: 4,
+                      width: 32,
+                      height: 4,
                       margin: const EdgeInsets.only(bottom: 18),
                       decoration: BoxDecoration(
                         color: isDark
@@ -1514,13 +1969,25 @@ class _VenueContextOnboardingPageState
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('UPLOAD PROGRESS',
-                                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
-                                    color: isDark ? const Color(0xFF5B6F8D) : Colors.black45)),
-                            Text('$uploadedCount of $requiredCount required',
-                                style: const TextStyle(fontSize: 11,
-                                    fontWeight: FontWeight.w600, color: AppColors.blue)),
+                            Text(
+                              'UPLOAD PROGRESS',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.5,
+                                color: isDark
+                                    ? const Color(0xFF5B6F8D)
+                                    : Colors.black45,
+                              ),
+                            ),
+                            Text(
+                              '$uploadedCount of $requiredCount required',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.blue,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 6),
@@ -1532,7 +1999,9 @@ class _VenueContextOnboardingPageState
                             backgroundColor: isDark
                                 ? Colors.white.withValues(alpha: 0.06)
                                 : Colors.black.withValues(alpha: 0.06),
-                            valueColor: const AlwaysStoppedAnimation(AppColors.blue),
+                            valueColor: const AlwaysStoppedAnimation(
+                              AppColors.blue,
+                            ),
                           ),
                         ),
                       ],
@@ -1549,7 +2018,9 @@ class _VenueContextOnboardingPageState
                     uploaded: _tradeLicenceUrl != null,
                     loading: _uploadingLicence,
                     isDark: isDark,
-                    onTap: _tradeLicenceUrl != null || _uploadingLicence ? null : _pickTradeLicence,
+                    onTap: _tradeLicenceUrl != null || _uploadingLicence
+                        ? null
+                        : _pickTradeLicence,
                     onRemove: _tradeLicenceUrl != null
                         ? () async {
                             setState(() => _tradeLicenceUrl = null);
@@ -1562,14 +2033,17 @@ class _VenueContextOnboardingPageState
                   // Ownership Video card
                   _UploadCard(
                     label: 'Ownership Video',
-                    description: 'Short video confirming ownership of the venue.',
+                    description:
+                        'Short video confirming ownership of the venue.',
                     formats: const ['MP4', 'MOV'],
                     icon: Icons.videocam_outlined,
                     isRequired: true,
                     uploaded: _ownerVideoUrl != null,
                     loading: _uploadingVideo,
                     isDark: isDark,
-                    onTap: _ownerVideoUrl != null || _uploadingVideo ? null : _pickOwnerVideo,
+                    onTap: _ownerVideoUrl != null || _uploadingVideo
+                        ? null
+                        : _pickOwnerVideo,
                     onRemove: _ownerVideoUrl != null
                         ? () async {
                             setState(() => _ownerVideoUrl = null);
@@ -1581,35 +2055,48 @@ class _VenueContextOnboardingPageState
 
                   // Info box
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 13,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.blue.withValues(alpha: 0.07),
                       border: Border.all(
-                          color: AppColors.blue.withValues(alpha: 0.14)),
+                        color: AppColors.blue.withValues(alpha: 0.14),
+                      ),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.shield_outlined,
-                            size: 14, color: AppColors.blue),
+                        const Icon(
+                          Icons.shield_outlined,
+                          size: 14,
+                          color: AppColors.blue,
+                        ),
                         const SizedBox(width: 9),
                         Expanded(
                           child: Text.rich(
                             TextSpan(
                               style: TextStyle(
-                                  fontSize: 11,
-                                  color: isDark ? const Color(0xFF5B6F8D) : Colors.black54,
-                                  height: 1.5),
+                                fontSize: 11,
+                                color: isDark
+                                    ? const Color(0xFF5B6F8D)
+                                    : Colors.black54,
+                                height: 1.5,
+                              ),
                               children: [
                                 const TextSpan(text: 'Documents are '),
                                 const TextSpan(
                                   text: 'encrypted and reviewed privately',
-                                  style: TextStyle(color: AppColors.blueDark,
-                                      fontWeight: FontWeight.w600),
+                                  style: TextStyle(
+                                    color: AppColors.blueDark,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                                 const TextSpan(
-                                    text: '. They will not be shared publicly.'),
+                                  text: '. They will not be shared publicly.',
+                                ),
                               ],
                             ),
                           ),
@@ -1622,15 +2109,21 @@ class _VenueContextOnboardingPageState
                   if (_error != null) ...[
                     Row(
                       children: [
-                        const Icon(Icons.error_outline_rounded,
-                            size: 14, color: Color(0xFFFF6B6B)),
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          size: 14,
+                          color: Color(0xFFFF6B6B),
+                        ),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: Text(_error!,
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFFFF6B6B))),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFFF6B6B),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -1650,18 +2143,31 @@ class _VenueContextOnboardingPageState
                       ),
                       child: Center(
                         child: _savingDraft
-                            ? const SizedBox(width: 20, height: 20,
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
                             : const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text('Continue',
-                                      style: TextStyle(fontSize: 15,
-                                          fontWeight: FontWeight.w700, color: Colors.white)),
+                                  Text(
+                                    'Continue',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                   SizedBox(width: 8),
-                                  Icon(Icons.arrow_forward_rounded,
-                                      size: 16, color: Colors.white),
+                                  Icon(
+                                    Icons.arrow_forward_rounded,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
                                 ],
                               ),
                       ),
@@ -1676,14 +2182,18 @@ class _VenueContextOnboardingPageState
                       height: 46,
                       decoration: BoxDecoration(
                         border: Border.all(
-                            color: isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA)),
+                          color: isDark
+                              ? const Color(0xFF162040)
+                              : const Color(0xFFD9E1EA),
+                        ),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Center(
                         child: Text(
                           "I don't have them right now",
                           style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                             color: isBusy
                                 ? const Color(0xFF2A3D58)
                                 : const Color(0xFF5B6F8D),
@@ -1716,32 +2226,66 @@ class _VenueContextOnboardingPageState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                Container(width: 18, height: 2,
-                    decoration: BoxDecoration(color: _blue, borderRadius: BorderRadius.circular(1))),
-                const SizedBox(width: 7),
-                const Text('FINAL STEP',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                        letterSpacing: 2, color: AppColors.blue)),
-              ]),
+              Row(
+                children: [
+                  Container(
+                    width: 18,
+                    height: 2,
+                    decoration: BoxDecoration(
+                      color: _blue,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text(
+                    'FINAL STEP',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 2,
+                      color: AppColors.blue,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 11),
-              Text('Review &',
-                  style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800,
-                      letterSpacing: -0.7, height: 1.12,
-                      color: isDark ? Colors.white : const Color(0xFF111827))),
+              Text(
+                'Review &',
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.7,
+                  height: 1.12,
+                  color: isDark ? Colors.white : const Color(0xFF111827),
+                ),
+              ),
               ShaderMask(
                 shaderCallback: (b) => LinearGradient(
-                  colors: isDark ? AppColors.gradientDark : AppColors.gradientLight,
+                  colors: isDark
+                      ? AppColors.gradientDark
+                      : AppColors.gradientLight,
                 ).createShader(b),
                 blendMode: BlendMode.srcIn,
-                child: const Text('confirm.',
-                    style: TextStyle(fontSize: 27, fontWeight: FontWeight.w800,
-                        letterSpacing: -0.7, height: 1.12, color: Colors.white)),
+                child: const Text(
+                  'confirm.',
+                  style: TextStyle(
+                    fontSize: 27,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.7,
+                    height: 1.12,
+                    color: Colors.white,
+                  ),
+                ),
               ),
               const SizedBox(height: 5),
-              Text('Check your details before submitting your claim.',
-                  style: TextStyle(fontSize: 12.5, height: 1.55,
-                      color: isDark ? const Color(0xFFB1B4BB) : Colors.black54)),
+              Text(
+                'Check your details before submitting your claim.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.55,
+                  color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                ),
+              ),
             ],
           ),
         ),
@@ -1751,9 +2295,16 @@ class _VenueContextOnboardingPageState
           child: Container(
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF0B1322) : const Color(0xFFF8FAFF),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-              border: Border(top: BorderSide(
-                  color: isDark ? const Color(0xFF162040) : const Color(0xFFE2E8F0))),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(26),
+              ),
+              border: Border(
+                top: BorderSide(
+                  color: isDark
+                      ? const Color(0xFF162040)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
             ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
@@ -1763,7 +2314,8 @@ class _VenueContextOnboardingPageState
                   // Handle
                   Center(
                     child: Container(
-                      width: 32, height: 4,
+                      width: 32,
+                      height: 4,
                       margin: const EdgeInsets.only(bottom: 14),
                       decoration: BoxDecoration(
                         color: isDark
@@ -1779,7 +2331,10 @@ class _VenueContextOnboardingPageState
                     icon: Icons.store_mall_directory_outlined,
                     title: 'VENUE',
                     isDark: isDark,
-                    onEdit: () => setState(() { _step = _Step.search; _error = null; }),
+                    onEdit: () => setState(() {
+                      _step = _Step.search;
+                      _error = null;
+                    }),
                     child: Row(
                       children: [
                         _venueAvatar(venue, colors, size: 44),
@@ -1788,14 +2343,25 @@ class _VenueContextOnboardingPageState
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(venue.name,
-                                  style: TextStyle(fontSize: 13.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: isDark ? const Color(0xFFC8D8F0) : const Color(0xFF111827))),
+                              Text(
+                                venue.name,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: isDark
+                                      ? const Color(0xFFC8D8F0)
+                                      : const Color(0xFF111827),
+                                ),
+                              ),
                               if (venue.address.isNotEmpty)
-                                Text(venue.address,
-                                    style: const TextStyle(fontSize: 11,
-                                        color: Color(0xFF5B6F8D), height: 1.4)),
+                                Text(
+                                  venue.address,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF5B6F8D),
+                                    height: 1.4,
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -1809,7 +2375,10 @@ class _VenueContextOnboardingPageState
                     icon: Icons.person_outline_rounded,
                     title: 'CONTACT',
                     isDark: isDark,
-                    onEdit: () => setState(() { _step = _Step.contact; _error = null; }),
+                    onEdit: () => setState(() {
+                      _step = _Step.contact;
+                      _error = null;
+                    }),
                     child: Column(
                       children: [
                         _RevContactRow(
@@ -1834,7 +2403,10 @@ class _VenueContextOnboardingPageState
                     icon: Icons.folder_outlined,
                     title: 'DOCUMENTS',
                     isDark: isDark,
-                    onEdit: () => setState(() { _step = _Step.documents; _error = null; }),
+                    onEdit: () => setState(() {
+                      _step = _Step.documents;
+                      _error = null;
+                    }),
                     child: Column(
                       children: [
                         _RevDocRow(
@@ -1867,8 +2439,13 @@ class _VenueContextOnboardingPageState
                   const SizedBox(height: 14),
 
                   if (_error != null) ...[
-                    Text(_error!,
-                        style: const TextStyle(fontSize: 12.5, color: Color(0xFFEF4444))),
+                    Text(
+                      _error!,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Color(0xFFEF4444),
+                      ),
+                    ),
                     const SizedBox(height: 10),
                   ],
 
@@ -1885,18 +2462,33 @@ class _VenueContextOnboardingPageState
                       ),
                       child: Center(
                         child: _submitting
-                            ? const SizedBox(width: 20, height: 20,
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
                             : Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.send_rounded,
-                                      size: 16, color: Colors.white),
+                                  const Icon(
+                                    Icons.send_rounded,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
                                   const SizedBox(width: 8),
-                                  Text(hasDocuments ? 'Submit Claim' : 'Register Without Documents',
-                                      style: const TextStyle(fontSize: 15,
-                                          fontWeight: FontWeight.w700, color: Colors.white)),
+                                  Text(
+                                    hasDocuments
+                                        ? 'Submit Claim'
+                                        : 'Register Without Documents',
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                 ],
                               ),
                       ),
@@ -1907,19 +2499,31 @@ class _VenueContextOnboardingPageState
                   if (hasDocuments)
                     const Text(
                       'Our team will review your claim and notify you once approved.',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF5B6F8D), height: 1.55),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF5B6F8D),
+                        height: 1.55,
+                      ),
                       textAlign: TextAlign.center,
                     )
                   else
                     Text.rich(
                       const TextSpan(
-                        style: TextStyle(fontSize: 11, color: Color(0xFF5B6F8D), height: 1.55),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF5B6F8D),
+                          height: 1.55,
+                        ),
                         children: [
-                          TextSpan(text: 'You can upload your documents anytime to '),
+                          TextSpan(
+                            text: 'You can upload your documents anytime to ',
+                          ),
                           TextSpan(
                             text: 'complete your claim',
                             style: TextStyle(
-                                color: AppColors.blueDark, fontWeight: FontWeight.w600),
+                              color: AppColors.blueDark,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           TextSpan(text: ' and speed up approval.'),
                         ],
@@ -1939,7 +2543,8 @@ class _VenueContextOnboardingPageState
 
   Widget _venueAvatar(Venue venue, ColorScheme colors, {required double size}) {
     return Container(
-      width: size, height: size,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: colors.primary.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(size * 0.25),
@@ -1948,11 +2553,20 @@ class _VenueContextOnboardingPageState
           ? ClipRRect(
               borderRadius: BorderRadius.circular(size * 0.25),
               child: Image.network(
-                venue.photoUrl, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Icon(Icons.store_mall_directory_outlined, color: colors.primary, size: size * 0.5),
+                venue.photoUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Icon(
+                  Icons.store_mall_directory_outlined,
+                  color: colors.primary,
+                  size: size * 0.5,
+                ),
               ),
             )
-          : Icon(Icons.store_mall_directory_outlined, color: colors.primary, size: size * 0.5),
+          : Icon(
+              Icons.store_mall_directory_outlined,
+              color: colors.primary,
+              size: size * 0.5,
+            ),
     );
   }
 }
@@ -1983,8 +2597,9 @@ class _ContactField extends StatelessWidget {
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF0F1C35) : const Color(0xFFF3F6FA),
         border: Border.all(
-            color: isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E1EA),
-            width: 1.5),
+          color: isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E1EA),
+          width: 1.5,
+        ),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -1992,8 +2607,11 @@ class _ContactField extends StatelessWidget {
           if (prefixIcon != null)
             Padding(
               padding: const EdgeInsets.only(left: 15),
-              child: Icon(prefixIcon, size: 17,
-                  color: isDark ? const Color(0xFF2E4A6A) : Colors.black38),
+              child: Icon(
+                prefixIcon,
+                size: 17,
+                color: isDark ? const Color(0xFF2E4A6A) : Colors.black38,
+              ),
             ),
           Expanded(
             child: TextField(
@@ -2001,12 +2619,16 @@ class _ContactField extends StatelessWidget {
               keyboardType: keyboardType,
               textCapitalization: textCapitalization,
               style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827)),
+                fontSize: 14,
+                color: isDark
+                    ? const Color(0xFFEEF2FF)
+                    : const Color(0xFF111827),
+              ),
               decoration: InputDecoration(
                 hintText: hint,
                 hintStyle: TextStyle(
-                    color: isDark ? const Color(0xFF253A58) : Colors.black38),
+                  color: isDark ? const Color(0xFF253A58) : Colors.black38,
+                ),
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
@@ -2062,8 +2684,8 @@ class _UploadCard extends StatelessWidget {
     final borderColor = uploaded
         ? AppColors.teal.withValues(alpha: isDark ? 0.5 : 0.6)
         : isRequired
-            ? (isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA))
-            : (isDark ? const Color(0xFF162040) : const Color(0xFFE8EEF5));
+        ? (isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA))
+        : (isDark ? const Color(0xFF162040) : const Color(0xFFE8EEF5));
     final cardBg = isDark
         ? (isRequired ? const Color(0xFF0D1A30) : const Color(0xFF0A1428))
         : (isRequired ? const Color(0xFFF0F6FF) : const Color(0xFFF8FAFF));
@@ -2086,16 +2708,25 @@ class _UploadCard extends StatelessWidget {
           children: [
             // Icon
             Container(
-              width: 46, height: 46,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
-                color: uploaded ? const Color(0xFF00D4C8).withValues(alpha: 0.15) : iconBg,
+                color: uploaded
+                    ? const Color(0xFF00D4C8).withValues(alpha: 0.15)
+                    : iconBg,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: loading
                   ? const Center(
-                      child: SizedBox(width: 20, height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: AppColors.blue)))
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.blue,
+                        ),
+                      ),
+                    )
                   : Icon(
                       uploaded ? Icons.check_circle_outline_rounded : icon,
                       size: 21,
@@ -2111,24 +2742,36 @@ class _UploadCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Text(label,
-                          style: TextStyle(fontSize: 13.5,
-                              fontWeight: FontWeight.w700,
-                              color: isDark ? const Color(0xFFC8D8F0) : const Color(0xFF111827))),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: isDark
+                              ? const Color(0xFFC8D8F0)
+                              : const Color(0xFF111827),
+                        ),
+                      ),
                       const SizedBox(width: 5),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: uploaded
                               ? AppColors.teal.withValues(alpha: 0.15)
                               : isRequired
-                                  ? const Color(0xFFEA5050).withValues(alpha: 0.15)
-                                  : (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04)),
+                              ? const Color(0xFFEA5050).withValues(alpha: 0.15)
+                              : (isDark
+                                    ? Colors.white.withValues(alpha: 0.05)
+                                    : Colors.black.withValues(alpha: 0.04)),
                           borderRadius: BorderRadius.circular(5),
                         ),
                         child: Text(
-                          uploaded ? 'UPLOADED' : (isRequired ? 'REQUIRED' : 'OPTIONAL'),
+                          uploaded
+                              ? 'UPLOADED'
+                              : (isRequired ? 'REQUIRED' : 'OPTIONAL'),
                           style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w700,
@@ -2136,40 +2779,53 @@ class _UploadCard extends StatelessWidget {
                             color: uploaded
                                 ? const Color(0xFF00D4C8)
                                 : isRequired
-                                    ? const Color(0xFFF08080)
-                                    : const Color(0xFF3A5070),
+                                ? const Color(0xFFF08080)
+                                : const Color(0xFF3A5070),
                           ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(description,
-                      style: const TextStyle(
-                          fontSize: 11, color: Color(0xFF5B6F8D), height: 1.45)),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF5B6F8D),
+                      height: 1.45,
+                    ),
+                  ),
                   const SizedBox(height: 5),
                   Row(
-                    children: formats.map((f) => Container(
-                      margin: const EdgeInsets.only(right: 4),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isRequired
-                            ? AppColors.blue.withValues(alpha: 0.15)
-                            : (isDark
-                                ? Colors.white.withValues(alpha: 0.04)
-                                : Colors.black.withValues(alpha: 0.05)),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Text(f,
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w600,
-                            color: isRequired
-                                ? AppColors.blueDark
-                                : const Color(0xFF5B6F8D),
-                          )),
-                    )).toList(),
+                    children: formats
+                        .map(
+                          (f) => Container(
+                            margin: const EdgeInsets.only(right: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isRequired
+                                  ? AppColors.blue.withValues(alpha: 0.15)
+                                  : (isDark
+                                        ? Colors.white.withValues(alpha: 0.04)
+                                        : Colors.black.withValues(alpha: 0.05)),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              f,
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                                color: isRequired
+                                    ? AppColors.blueDark
+                                    : const Color(0xFF5B6F8D),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
               ),
@@ -2180,27 +2836,32 @@ class _UploadCard extends StatelessWidget {
               GestureDetector(
                 onTap: onRemove,
                 child: Container(
-                  width: 36, height: 36,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: const Color(0xFFEF4444).withValues(alpha: 0.12),
                   ),
-                  child: const Icon(Icons.delete_outline_rounded,
-                      size: 16, color: Color(0xFFEF4444)),
+                  child: const Icon(
+                    Icons.delete_outline_rounded,
+                    size: 16,
+                    color: Color(0xFFEF4444),
+                  ),
                 ),
               )
             else
               Container(
-                width: 36, height: 36,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: uploaded
                       ? const Color(0xFF00D4C8).withValues(alpha: 0.15)
                       : isRequired
-                          ? AppColors.blue.withValues(alpha: 0.20)
-                          : (isDark
-                              ? Colors.white.withValues(alpha: 0.05)
-                              : Colors.black.withValues(alpha: 0.05)),
+                      ? AppColors.blue.withValues(alpha: 0.20)
+                      : (isDark
+                            ? Colors.white.withValues(alpha: 0.05)
+                            : Colors.black.withValues(alpha: 0.05)),
                 ),
                 child: Icon(
                   uploaded ? Icons.check_rounded : Icons.upload_rounded,
@@ -2208,8 +2869,8 @@ class _UploadCard extends StatelessWidget {
                   color: uploaded
                       ? const Color(0xFF00D4C8)
                       : isRequired
-                          ? AppColors.blueDark
-                          : const Color(0xFF2A4060),
+                      ? AppColors.blueDark
+                      : const Color(0xFF2A4060),
                 ),
               ),
           ],
@@ -2236,19 +2897,25 @@ class _RevCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final kCard   = isDark ? const Color(0xFF0D1A30) : Colors.white;
+    final kCard = isDark ? const Color(0xFF0D1A30) : Colors.white;
     final kBorder = isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E1EA);
     final kDivider = isDark ? const Color(0x0AFFFFFF) : const Color(0xFFEEF2F8);
-    final kLabel  = isDark ? const Color(0xFF5F718E) : const Color(0xFF5D6B7B);
+    final kLabel = isDark ? const Color(0xFF5F718E) : const Color(0xFF5D6B7B);
 
     return Container(
       decoration: BoxDecoration(
         color: kCard,
         border: Border.all(color: kBorder),
         borderRadius: BorderRadius.circular(18),
-        boxShadow: isDark ? null : [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2)),
-        ],
+        boxShadow: isDark
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2262,29 +2929,41 @@ class _RevCard extends StatelessWidget {
               children: [
                 Icon(icon, size: 13, color: AppColors.blue),
                 const SizedBox(width: 7),
-                Text(title,
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8, color: kLabel)),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: kLabel,
+                  ),
+                ),
                 const Spacer(),
                 GestureDetector(
                   onTap: onEdit,
                   child: const Row(
                     children: [
-                      Icon(Icons.edit_outlined, size: 11, color: AppColors.blueDark),
+                      Icon(
+                        Icons.edit_outlined,
+                        size: 11,
+                        color: AppColors.blueDark,
+                      ),
                       SizedBox(width: 3),
-                      Text('Edit',
-                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
-                              color: AppColors.blueDark)),
+                      Text(
+                        'Edit',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.blueDark,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: child,
-          ),
+          Padding(padding: const EdgeInsets.all(14), child: child),
         ],
       ),
     );
@@ -2312,7 +2991,8 @@ class _RevContactRow extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 30, height: 30,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: AppColors.blue.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(9),
@@ -2324,7 +3004,13 @@ class _RevContactRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(label, style: TextStyle(fontSize: 12.5, color: kLabel)),
-              Text(sub, style: const TextStyle(fontSize: 10.5, color: Color(0xFF5B6F8D))),
+              Text(
+                sub,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  color: Color(0xFF5B6F8D),
+                ),
+              ),
             ],
           ),
         ],
@@ -2353,27 +3039,42 @@ class _RevDocRow extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 30, height: 30,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: uploaded
                   ? const Color(0xFF00D4C8).withValues(alpha: 0.12)
                   : const Color(0xFFEA5550).withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(icon, size: 14,
-                color: uploaded ? const Color(0xFF00D4C8) : const Color(0xFFE05050)),
+            child: Icon(
+              icon,
+              size: 14,
+              color: uploaded
+                  ? const Color(0xFF00D4C8)
+                  : const Color(0xFFE05050),
+            ),
           ),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: uploaded ? const Color(0xFF00D4C8) : const Color(0xFFE05050),
-                  )),
-              Text(sub,
-                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF5B6F8D))),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: uploaded
+                      ? const Color(0xFF00D4C8)
+                      : const Color(0xFFE05050),
+                ),
+              ),
+              Text(
+                sub,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  color: Color(0xFF5B6F8D),
+                ),
+              ),
             ],
           ),
         ],
@@ -2421,11 +3122,13 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
       _filtered = q.isEmpty
           ? _countryCodes
           : _countryCodes
-              .where((c) =>
-                  c.name.toLowerCase().contains(q) ||
-                  c.dial.contains(q) ||
-                  c.code.toLowerCase().contains(q))
-              .toList();
+                .where(
+                  (c) =>
+                      c.name.toLowerCase().contains(q) ||
+                      c.dial.contains(q) ||
+                      c.code.toLowerCase().contains(q),
+                )
+                .toList();
     });
   }
 
@@ -2441,7 +3144,8 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
         children: [
           // Handle
           Container(
-            width: 40, height: 4,
+            width: 40,
+            height: 4,
             margin: const EdgeInsets.only(top: 12, bottom: 12),
             decoration: BoxDecoration(
               color: colors.onSurface.withValues(alpha: 0.2),
@@ -2450,8 +3154,14 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
           ),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Text('Select country',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.onSurface)),
+            child: Text(
+              'Select country',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurface,
+              ),
+            ),
           ),
           // Arama kutusu
           Padding(
@@ -2470,7 +3180,9 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
                     : null,
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
@@ -2479,8 +3191,12 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
           Expanded(
             child: _filtered.isEmpty
                 ? Center(
-                    child: Text('No results',
-                        style: TextStyle(color: colors.onSurface.withValues(alpha: 0.45))),
+                    child: Text(
+                      'No results',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
                   )
                 : ListView.builder(
                     controller: scrollCtrl,
@@ -2489,19 +3205,30 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
                       final c = _filtered[i];
                       final selected = c.code == widget.selected.code;
                       return ListTile(
-                        leading: Text(c.flag, style: const TextStyle(fontSize: 22)),
-                        title: Text(c.name,
-                            style: TextStyle(
-                              fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                              color: selected ? colors.primary : colors.onSurface,
-                            )),
-                        trailing: Text(c.dial,
-                            style: TextStyle(
-                              color: selected
-                                  ? colors.primary
-                                  : colors.onSurface.withValues(alpha: 0.50),
-                              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                            )),
+                        leading: Text(
+                          c.flag,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                        title: Text(
+                          c.name,
+                          style: TextStyle(
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                            color: selected ? colors.primary : colors.onSurface,
+                          ),
+                        ),
+                        trailing: Text(
+                          c.dial,
+                          style: TextStyle(
+                            color: selected
+                                ? colors.primary
+                                : colors.onSurface.withValues(alpha: 0.50),
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
                         onTap: () => widget.onSelected(c),
                       );
                     },
@@ -2520,33 +3247,43 @@ class _CountryCode {
   final String name;
   final String dial;
   final String flag;
-  const _CountryCode({required this.code, required this.name, required this.dial, required this.flag});
+  const _CountryCode({
+    required this.code,
+    required this.name,
+    required this.dial,
+    required this.flag,
+  });
 }
 
 const _countryCodes = [
-  _CountryCode(code: 'TR', name: 'Turkey',              dial: '+90',  flag: '🇹🇷'),
-  _CountryCode(code: 'AE', name: 'United Arab Emirates',dial: '+971', flag: '🇦🇪'),
-  _CountryCode(code: 'SA', name: 'Saudi Arabia',        dial: '+966', flag: '🇸🇦'),
-  _CountryCode(code: 'QA', name: 'Qatar',               dial: '+974', flag: '🇶🇦'),
-  _CountryCode(code: 'KW', name: 'Kuwait',              dial: '+965', flag: '🇰🇼'),
-  _CountryCode(code: 'BH', name: 'Bahrain',             dial: '+973', flag: '🇧🇭'),
-  _CountryCode(code: 'OM', name: 'Oman',                dial: '+968', flag: '🇴🇲'),
-  _CountryCode(code: 'EG', name: 'Egypt',               dial: '+20',  flag: '🇪🇬'),
-  _CountryCode(code: 'GB', name: 'United Kingdom',      dial: '+44',  flag: '🇬🇧'),
-  _CountryCode(code: 'US', name: 'United States',       dial: '+1',   flag: '🇺🇸'),
-  _CountryCode(code: 'DE', name: 'Germany',             dial: '+49',  flag: '🇩🇪'),
-  _CountryCode(code: 'FR', name: 'France',              dial: '+33',  flag: '🇫🇷'),
-  _CountryCode(code: 'NL', name: 'Netherlands',         dial: '+31',  flag: '🇳🇱'),
-  _CountryCode(code: 'BE', name: 'Belgium',             dial: '+32',  flag: '🇧🇪'),
-  _CountryCode(code: 'CH', name: 'Switzerland',         dial: '+41',  flag: '🇨🇭'),
-  _CountryCode(code: 'AT', name: 'Austria',             dial: '+43',  flag: '🇦🇹'),
-  _CountryCode(code: 'SE', name: 'Sweden',              dial: '+46',  flag: '🇸🇪'),
-  _CountryCode(code: 'NO', name: 'Norway',              dial: '+47',  flag: '🇳🇴'),
-  _CountryCode(code: 'DK', name: 'Denmark',             dial: '+45',  flag: '🇩🇰'),
-  _CountryCode(code: 'RU', name: 'Russia',              dial: '+7',   flag: '🇷🇺'),
-  _CountryCode(code: 'JP', name: 'Japan',               dial: '+81',  flag: '🇯🇵'),
-  _CountryCode(code: 'CN', name: 'China',               dial: '+86',  flag: '🇨🇳'),
-  _CountryCode(code: 'IN', name: 'India',               dial: '+91',  flag: '🇮🇳'),
-  _CountryCode(code: 'AU', name: 'Australia',           dial: '+61',  flag: '🇦🇺'),
-  _CountryCode(code: 'CA', name: 'Canada',              dial: '+1',   flag: '🇨🇦'),
+  _CountryCode(code: 'TR', name: 'Turkey', dial: '+90', flag: '🇹🇷'),
+  _CountryCode(
+    code: 'AE',
+    name: 'United Arab Emirates',
+    dial: '+971',
+    flag: '🇦🇪',
+  ),
+  _CountryCode(code: 'SA', name: 'Saudi Arabia', dial: '+966', flag: '🇸🇦'),
+  _CountryCode(code: 'QA', name: 'Qatar', dial: '+974', flag: '🇶🇦'),
+  _CountryCode(code: 'KW', name: 'Kuwait', dial: '+965', flag: '🇰🇼'),
+  _CountryCode(code: 'BH', name: 'Bahrain', dial: '+973', flag: '🇧🇭'),
+  _CountryCode(code: 'OM', name: 'Oman', dial: '+968', flag: '🇴🇲'),
+  _CountryCode(code: 'EG', name: 'Egypt', dial: '+20', flag: '🇪🇬'),
+  _CountryCode(code: 'GB', name: 'United Kingdom', dial: '+44', flag: '🇬🇧'),
+  _CountryCode(code: 'US', name: 'United States', dial: '+1', flag: '🇺🇸'),
+  _CountryCode(code: 'DE', name: 'Germany', dial: '+49', flag: '🇩🇪'),
+  _CountryCode(code: 'FR', name: 'France', dial: '+33', flag: '🇫🇷'),
+  _CountryCode(code: 'NL', name: 'Netherlands', dial: '+31', flag: '🇳🇱'),
+  _CountryCode(code: 'BE', name: 'Belgium', dial: '+32', flag: '🇧🇪'),
+  _CountryCode(code: 'CH', name: 'Switzerland', dial: '+41', flag: '🇨🇭'),
+  _CountryCode(code: 'AT', name: 'Austria', dial: '+43', flag: '🇦🇹'),
+  _CountryCode(code: 'SE', name: 'Sweden', dial: '+46', flag: '🇸🇪'),
+  _CountryCode(code: 'NO', name: 'Norway', dial: '+47', flag: '🇳🇴'),
+  _CountryCode(code: 'DK', name: 'Denmark', dial: '+45', flag: '🇩🇰'),
+  _CountryCode(code: 'RU', name: 'Russia', dial: '+7', flag: '🇷🇺'),
+  _CountryCode(code: 'JP', name: 'Japan', dial: '+81', flag: '🇯🇵'),
+  _CountryCode(code: 'CN', name: 'China', dial: '+86', flag: '🇨🇳'),
+  _CountryCode(code: 'IN', name: 'India', dial: '+91', flag: '🇮🇳'),
+  _CountryCode(code: 'AU', name: 'Australia', dial: '+61', flag: '🇦🇺'),
+  _CountryCode(code: 'CA', name: 'Canada', dial: '+1', flag: '🇨🇦'),
 ];

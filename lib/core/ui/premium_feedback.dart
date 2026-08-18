@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 
 /// Ekranın ortasında beliren fade-in/out toast — light/dark mode uyumlu.
 void showSuccessSnackBar(
@@ -120,7 +121,10 @@ class _CenteredToastState extends State<_CenteredToast>
               opacity: _opacity,
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 40),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: cs.inverseSurface,
                   borderRadius: BorderRadius.circular(18),
@@ -135,7 +139,11 @@ class _CenteredToastState extends State<_CenteredToast>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(widget.icon, color: widget.isError ? cs.error : cs.primary, size: 22),
+                    Icon(
+                      widget.icon,
+                      color: widget.isError ? cs.error : cs.primary,
+                      size: 22,
+                    ),
                     const SizedBox(width: 12),
                     Flexible(
                       child: Text(
@@ -180,7 +188,10 @@ Future<void> showPremiumErrorDialog(
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
@@ -201,6 +212,190 @@ Future<void> showPremiumErrorDialog(
       );
     },
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHECK-IN EXPIRED / RENEWAL DIALOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// "Check-in süren doldu" — uygulama diline uygun premium yenileme dialog'u.
+/// `true` döner → kullanıcı yenilemek istedi.
+Future<bool> showCheckinExpiredDialog(
+  BuildContext context, {
+  required String venueLabel,
+}) async {
+  if (!context.mounted) return false;
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+
+  final result = await showDialog<bool>(
+    context: context,
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    builder: (ctx) {
+      final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+      final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+      final bodyColor = isDark
+          ? const Color(0xFFB4C2D8)
+          : AppColors.lightTextSecondary;
+
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.05),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
+                blurRadius: 34,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── Gradient ikon tile'ı
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.blue, AppColors.magenta],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.magenta.withValues(alpha: 0.35),
+                        blurRadius: 22,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.timer_off_rounded,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                ),
+                const SizedBox(height: 18),
+
+                // ── Title
+                Text(
+                  'Your check-in expired',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // ── Description
+                Text.rich(
+                  TextSpan(
+                    style: TextStyle(
+                      color: bodyColor,
+                      fontSize: 14.5,
+                      height: 1.4,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    children: [
+                      const TextSpan(text: 'Looks like you\'re still at '),
+                      TextSpan(
+                        text: venueLabel,
+                        style: TextStyle(
+                          color: titleColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const TextSpan(
+                        text:
+                            '. Want to extend your check-in for 3 more hours?',
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 22),
+
+                // ── Yenile (gradient)
+                SizedBox(
+                  width: double.infinity,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: const LinearGradient(
+                        colors: [AppColors.blue, AppColors.magenta],
+                      ),
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => Navigator.pop(ctx, true),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 15),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.refresh_rounded,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Renew check-in',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+
+                // ── Not now
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    foregroundColor: bodyColor,
+                  ),
+                  child: const Text(
+                    'Not now',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+  return result == true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,10 +554,7 @@ class _StorySharedCardState extends State<_StorySharedCard>
                               // ── Başlık
                               const Row(
                                 children: [
-                                  Text(
-                                    '🎉',
-                                    style: TextStyle(fontSize: 20),
-                                  ),
+                                  Text('🎉', style: TextStyle(fontSize: 20)),
                                   SizedBox(width: 8),
                                   Text(
                                     'Story shared!',
@@ -401,10 +593,13 @@ class _StorySharedCardState extends State<_StorySharedCard>
                                                         fit: BoxFit.cover,
                                                       )
                                                     else
-                                                      Container(color: Colors.black87),
+                                                      Container(
+                                                        color: Colors.black87,
+                                                      ),
                                                     const Center(
                                                       child: Icon(
-                                                        Icons.play_circle_fill_rounded,
+                                                        Icons
+                                                            .play_circle_fill_rounded,
                                                         color: Colors.white,
                                                         size: 32,
                                                       ),
@@ -424,7 +619,8 @@ class _StorySharedCardState extends State<_StorySharedCard>
                                   // Metin
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Container(
                                           padding: const EdgeInsets.symmetric(
@@ -432,12 +628,16 @@ class _StorySharedCardState extends State<_StorySharedCard>
                                             vertical: 4,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF22C55E)
-                                                .withValues(alpha: 0.15),
-                                            borderRadius: BorderRadius.circular(8),
+                                            color: const Color(
+                                              0xFF22C55E,
+                                            ).withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                             border: Border.all(
-                                              color: const Color(0xFF22C55E)
-                                                  .withValues(alpha: 0.35),
+                                              color: const Color(
+                                                0xFF22C55E,
+                                              ).withValues(alpha: 0.35),
                                             ),
                                           ),
                                           child: const Row(

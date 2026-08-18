@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:video_compress/video_compress.dart';
 
 /// Yükleme öncesi medyayı sıkıştıran yardımcı.
@@ -17,12 +19,15 @@ class MediaCompressor {
   /// Videoyu sıkıştırır ve sıkıştırılmış dosyayı döndürür. Sıkıştırma
   /// başarısız olursa (veya sonuç orijinalden büyükse) orijinali döndürür —
   /// yani bu çağrı yüklemeyi asla bozmaz.
-  static Future<File> compressVideo(File input) async {
+  static Future<File> compressVideo(
+    File input, {
+    VideoQuality quality = VideoQuality.MediumQuality,
+  }) async {
     try {
       final originalSize = await input.length();
       final info = await VideoCompress.compressVideo(
         input.path,
-        quality: VideoQuality.MediumQuality, // 720p'ye yakın, iyi denge
+        quality: quality,
         deleteOrigin: false,
         includeAudio: true,
       );
@@ -38,14 +43,71 @@ class MediaCompressor {
       if (compressedSize >= originalSize) return input;
 
       if (kDebugMode) {
-        final pct = (100 * (1 - compressedSize / originalSize)).toStringAsFixed(0);
+        final pct = (100 * (1 - compressedSize / originalSize)).toStringAsFixed(
+          0,
+        );
         debugPrint(
           '🎬 Video compressed: ${_mb(originalSize)} → ${_mb(compressedSize)} ($pct% smaller)',
         );
       }
       return compressed;
     } catch (e) {
-      if (kDebugMode) debugPrint('⚠️ Video compression failed, using original: $e');
+      if (kDebugMode)
+        debugPrint('⚠️ Video compression failed, using original: $e');
+      return input;
+    }
+  }
+
+  /// Galeri gibi kalitenin önemli olduğu yerler için 1080p sıkıştırma.
+  /// Check-in akışı (720p, MediumQuality) etkilenmez.
+  static Future<File> compressGalleryVideo(File input) =>
+      compressVideo(input, quality: VideoQuality.Res1920x1080Quality);
+
+  /// Fotoğrafı yüklemeden önce en uzun kenarı ~[maxDimension]px olacak şekilde
+  /// küçültüp JPEG'e (kalite [quality]) çevirir. Native codec kullanır → iOS
+  /// HEIC'i de JPEG'e dönüştürür ve hızlıdır. Sıkıştırma başarısız olursa veya
+  /// sonuç orijinalden büyükse orijinali döndürür (yüklemeyi asla bozmaz).
+  static Future<File> compressImage(
+    File input, {
+    int maxDimension = 1600,
+    int quality = 85,
+  }) async {
+    try {
+      final originalSize = await input.length();
+      final dir = await getTemporaryDirectory();
+      final target =
+          '${dir.path}/img_${DateTime.now().microsecondsSinceEpoch}.jpg';
+
+      final result = await FlutterImageCompress.compressAndGetFile(
+        input.absolute.path,
+        target,
+        minWidth: maxDimension,
+        minHeight: maxDimension,
+        quality: quality,
+        format: CompressFormat.jpeg,
+        keepExif: false,
+      );
+      if (result == null) return input;
+
+      final compressed = File(result.path);
+      if (!await compressed.exists()) return input;
+
+      final compressedSize = await compressed.length();
+      if (compressedSize >= originalSize) return input;
+
+      if (kDebugMode) {
+        final pct = (100 * (1 - compressedSize / originalSize)).toStringAsFixed(
+          0,
+        );
+        debugPrint(
+          '🖼️ Image compressed: ${_mb(originalSize)} → ${_mb(compressedSize)} ($pct% smaller)',
+        );
+      }
+      return compressed;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('⚠️ Image compression failed, using original: $e');
+      }
       return input;
     }
   }
@@ -58,5 +120,6 @@ class MediaCompressor {
     } catch (_) {}
   }
 
-  static String _mb(int bytes) => '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+  static String _mb(int bytes) =>
+      '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
 }

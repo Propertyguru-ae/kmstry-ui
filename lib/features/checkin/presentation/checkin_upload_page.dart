@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -756,7 +757,10 @@ class _CheckInPageState extends State<CheckInPage> {
         }
       }
 
-      // ✅ Başarılı
+      // ✅ Başarılı — featured/avatar foto artık yüklü olduğundan navbar avatarını
+      // (avatarı olmayan kullanıcı için geçici check-in avatarı) tazelemesi için
+      // dinleyicileri uyar.
+      ActiveCheckinService().notifyMediaUpdated();
       unawaited(MediaCompressor.cleanup());
       if (!mounted) return;
       Navigator.pop(context);
@@ -922,7 +926,7 @@ class _CheckInPageState extends State<CheckInPage> {
       appBar: AppBar(
         backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
-        centerTitle: false,
+        centerTitle: true,
         leading: IconButton(
           icon: Icon(Icons.close, color: colors.onSurface, size: 28),
           onPressed: () => Navigator.pop(context),
@@ -931,8 +935,8 @@ class _CheckInPageState extends State<CheckInPage> {
           'Check in',
           style: TextStyle(
             color: colors.onSurface,
-            fontWeight: FontWeight.w800,
-            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
           ),
         ),
       ),
@@ -1203,35 +1207,10 @@ class _CheckInPageState extends State<CheckInPage> {
                 /// CHECK IN BUTTON
                 SizedBox(
                   width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    onPressed: (_media.isEmpty || _isSubmitting)
-                        ? null
-                        : _submitCheckin,
-                    style: ElevatedButton.styleFrom(
-                      foregroundColor: theme.brightness == Brightness.dark
-                          ? Colors.black
-                          : Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: _isSubmitting
-                        ? CircularProgressIndicator(
-                            color: theme.brightness == Brightness.dark
-                                ? Colors.black
-                                : Colors.white,
-                          )
-                        : Text(
-                            'Check in',
-                            style: TextStyle(
-                              color: theme.brightness == Brightness.dark
-                                  ? Colors.black
-                                  : Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                  child: PrimaryButton(
+                    label: 'Check in',
+                    loading: _isSubmitting,
+                    onPressed: _media.isEmpty ? null : _submitCheckin,
                   ),
                 ),
                 const SizedBox(height: 40),

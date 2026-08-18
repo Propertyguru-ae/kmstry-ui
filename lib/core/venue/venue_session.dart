@@ -77,6 +77,7 @@ class VenueSession extends ChangeNotifier {
       case VenueMemberRole.admin:
         return {
           VenuePermission.eventManage,
+          VenuePermission.eventAttendeesView,
           VenuePermission.storyManage,
           VenuePermission.storyViewStats,
           VenuePermission.postCreate,

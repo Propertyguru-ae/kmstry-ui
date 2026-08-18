@@ -7,6 +7,9 @@ import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
+const _kKmstryBlue = Color(0xFF1A9FE8);
+const _kKmstryTeal = Color(0xFF1FD9A8);
+
 /// Username-based friend search + friend-request entry. Nearby discovery now
 /// lives in its own navbar destination (WhoIsNearbyPage).
 class FindFriendsPage extends StatefulWidget {
@@ -252,22 +255,17 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final bgTop = isDark
-        ? const Color(0xFF121A2B)
-        : theme.scaffoldBackgroundColor;
-    final bgBottom = isDark
-        ? const Color(0xFF0B0F17)
-        : theme.scaffoldBackgroundColor;
+    final bg = theme.scaffoldBackgroundColor;
     final cardColor = isDark
-        ? const Color(0xFF161C28)
+        ? const Color(0xFF101A2A)
         : theme.colorScheme.surface;
     final borderColor = isDark
-        ? const Color(0xFF252D3D)
+        ? _kKmstryBlue.withValues(alpha: 0.14)
         : theme.colorScheme.outline.withValues(alpha: 0.25);
     final hasQuery = _queryCtrl.text.trim().length >= 2;
 
     return Scaffold(
-      backgroundColor: bgBottom,
+      backgroundColor: bg,
       appBar: AppBar(
         leading: IconButton(
           icon: Icon(
@@ -291,7 +289,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
           preferredSize: const Size.fromHeight(1),
           child: Container(
             color: isDark
-                ? Colors.white.withValues(alpha: 0.05)
+                ? _kKmstryBlue.withValues(alpha: 0.10)
                 : Colors.grey[200],
             height: 1,
           ),
@@ -302,27 +300,33 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [bgTop, bgBottom],
+            colors: [bg, bg],
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Column(
             children: [
               Container(
-                color: theme.appBarTheme.backgroundColor,
-                padding: const EdgeInsets.fromLTRB(4, 12, 4, 16),
+                padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
                 child: Container(
                   decoration: BoxDecoration(
                     color: isDark
-                        ? Colors.white.withValues(alpha: 0.05)
-                        : const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(16),
+                        ? const Color(0xFF101A2A)
+                        : const Color(0xFFF7FAFD),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isDark
+                          ? _kKmstryBlue.withValues(alpha: 0.22)
+                          : _kKmstryBlue.withValues(alpha: 0.14),
+                    ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.02),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                        color: isDark
+                            ? _kKmstryBlue.withValues(alpha: 0.09)
+                            : Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
@@ -331,22 +335,28 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                     onChanged: (_) => _onChanged(),
                     style: theme.textTheme.bodyLarge,
                     decoration: InputDecoration(
-                      hintText: 'Search by username...',
+                      hintText: 'Search by username',
                       hintStyle: TextStyle(
-                        color: isDark ? Colors.white38 : Colors.grey[500],
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.48)
+                            : Colors.black.withValues(alpha: 0.46),
                         fontSize: 15,
+                        fontWeight: FontWeight.w600,
                       ),
                       prefixIcon: Icon(
                         Icons.search_rounded,
-                        color: isDark
-                            ? Colors.white54
-                            : const Color(0xFF64748B),
+                        color: _kKmstryBlue.withValues(alpha: 0.90),
                         size: 22,
                       ),
                       suffixIcon: _queryCtrl.text.trim().isEmpty
                           ? null
                           : IconButton(
-                              icon: const Icon(Icons.close),
+                              icon: Icon(
+                                Icons.close_rounded,
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.70)
+                                    : Colors.black.withValues(alpha: 0.58),
+                              ),
                               onPressed: () {
                                 _debounce?.cancel();
                                 _queryCtrl.clear();
@@ -368,20 +378,29 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Text(
                     _error!,
-                    style: TextStyle(color: theme.colorScheme.error),
+                    style: TextStyle(
+                      color: theme.colorScheme.error,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               Expanded(
                 child: !hasQuery
-                    ? const Center(child: Text('Search friends by username'))
+                    ? _FindFriendsEmptyState(
+                        isDark: isDark,
+                        mode: _FindFriendsEmptyMode.idle,
+                      )
                     : _loading
                     ? Center(
                         child: CircularProgressIndicator(
-                          color: theme.colorScheme.primary,
+                          color: _kKmstryBlue,
                         ),
                       )
                     : _items.isEmpty
-                    ? const Center(child: Text('No users found'))
+                    ? _FindFriendsEmptyState(
+                        isDark: isDark,
+                        mode: _FindFriendsEmptyMode.noResults,
+                      )
                     : ListView.separated(
                         itemCount: _items.length,
                         separatorBuilder: (_, index) =>
@@ -398,6 +417,15 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                                   color: cardColor,
                                   borderRadius: BorderRadius.circular(18),
                                   border: Border.all(color: borderColor),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      blurRadius: 14,
+                                      offset: const Offset(0, 8),
+                                      color: isDark
+                                          ? _kKmstryBlue.withValues(alpha: 0.06)
+                                          : Colors.black.withValues(alpha: 0.04),
+                                    ),
+                                  ],
                                 ),
                                 child: ListTile(
                                   contentPadding: const EdgeInsets.symmetric(
@@ -405,31 +433,145 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                                     vertical: 6,
                                   ),
                                   leading: CircleAvatar(
-                                    backgroundColor: theme.colorScheme.primary
-                                        .withValues(alpha: 0.18),
+                                    radius: 24,
+                                    backgroundColor: _kKmstryBlue
+                                        .withValues(alpha: isDark ? 0.18 : 0.12),
                                     child: Icon(
                                       Icons.person_outline,
-                                      color: theme.colorScheme.primary,
+                                      color: _kKmstryBlue,
                                     ),
                                   ),
                                   title: Text(
                                     '@${item.username}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
+                                    style: TextStyle(
+                                      color: isDark ? Colors.white : Colors.black87,
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                   subtitle: Text(
                                     item.fullName?.trim().isNotEmpty == true
                                         ? item.fullName!
                                         : 'No name yet',
+                                    style: TextStyle(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.58)
+                                          : Colors.black.withValues(alpha: 0.50),
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                  trailing: const SizedBox.shrink(),
+                                  trailing: Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: isDark
+                                        ? Colors.white.withValues(alpha: 0.34)
+                                        : Colors.black.withValues(alpha: 0.30),
+                                  ),
                                 ),
                               ),
                             ),
                           );
                         },
                       ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _FindFriendsEmptyMode { idle, noResults }
+
+class _FindFriendsEmptyState extends StatelessWidget {
+  const _FindFriendsEmptyState({
+    required this.isDark,
+    required this.mode,
+  });
+
+  final bool isDark;
+  final _FindFriendsEmptyMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    final isIdle = mode == _FindFriendsEmptyMode.idle;
+    return Align(
+      alignment: const Alignment(0, -0.38),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 340),
+          padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF101A2A) : const Color(0xFFF8FBFD),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isDark
+                  ? _kKmstryBlue.withValues(alpha: 0.16)
+                  : _kKmstryBlue.withValues(alpha: 0.10),
+            ),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: 26,
+                offset: const Offset(0, 14),
+                color: isDark
+                    ? _kKmstryBlue.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.05),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      _kKmstryBlue.withValues(alpha: 0.22),
+                      _kKmstryTeal.withValues(alpha: 0.18),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: _kKmstryBlue.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Icon(
+                  isIdle
+                      ? Icons.person_search_rounded
+                      : Icons.search_off_rounded,
+                  color: _kKmstryBlue,
+                  size: 31,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isIdle ? 'Know their username?' : 'No users found',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                isIdle
+                    ? 'Enter it above to find their profile on KMSTRY.'
+                    : 'Check the spelling or try another username.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.62)
+                      : Colors.black.withValues(alpha: 0.55),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
               ),
             ],
           ),
