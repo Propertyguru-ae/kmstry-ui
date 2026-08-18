@@ -732,7 +732,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// synchronously, then the network round-trip runs in the background. The
   /// send button is never gated on the request — chat must feel immediate.
   void _sendMessage() {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final rawText = _messageController.text.trim();
     if (rawText.isEmpty) return;
     final cid = _normalizeChatId(_chatId);
@@ -741,7 +741,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -798,7 +798,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Message could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -2517,7 +2517,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
             ),
             _forwardSelectionMode
                 ? _buildForwardSelectionBar()
-                : _chat?.isActive == false
+                : _chat?.canSendMessages == false
                 ? _buildInactiveBanner()
                 : _buildMessageInput(),
           ],
@@ -3447,7 +3447,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       ),
       child: SafeArea(
         child: Text(
-          'Bu sohbet artık aktif değil. Birbirinizi tekrar eşleşirseniz mesajlaşabilirsiniz.',
+          _chat?.isBlocked == true
+              ? 'Messaging is paused because one of you blocked the other. You can still view your chat history.'
+              : 'This chat is no longer active. You can still view your chat history.',
           textAlign: TextAlign.center,
           style: TextStyle(color: _mutedTextColor, fontSize: 13),
         ),
@@ -3756,14 +3758,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   /// Belge seç → optimistic lokal bubble → Spaces'e yükle → file mesajı gönder.
   Future<void> _pickAndSendFile() async {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final cid = _normalizeChatId(_chatId);
     if (cid == null) {
       unawaited(
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -3833,7 +3835,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Belge gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Document could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -3854,14 +3856,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// Galeriden seç ya da kameradan çek → optimistic lokal bubble → Spaces'e
   /// yükle → image mesajı olarak gönder. Hata olursa bubble geri alınır.
   Future<void> _pickAndSendImage(ImageSource source) async {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final cid = _normalizeChatId(_chatId);
     if (cid == null) {
       unawaited(
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -3923,7 +3925,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Fotoğraf gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Photo could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
