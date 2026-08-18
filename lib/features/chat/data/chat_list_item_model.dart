@@ -95,11 +95,13 @@ class ChatListItemUser {
   final String id;
   final String? fullName;
   final String? photo;
+  final bool isOnline;
 
   ChatListItemUser({
     required this.id,
     this.fullName,
     this.photo,
+    this.isOnline = false,
   });
 
   factory ChatListItemUser.fromJson(Map<String, dynamic> json) {
@@ -107,6 +109,8 @@ class ChatListItemUser {
       id: json['id'] as String,
       fullName: json['full_name'] as String? ?? json['fullName'] as String?,
       photo: json['photo'] as String? ?? json['photoUrl'] as String?,
+      isOnline:
+          json['is_online'] as bool? ?? json['isOnline'] as bool? ?? false,
     );
   }
 }

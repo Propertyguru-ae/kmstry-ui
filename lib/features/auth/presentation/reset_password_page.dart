@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
 import '../data/auth_repository.dart';
@@ -91,6 +93,10 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ForceDark(child: Builder(builder: _buildBody));
+  }
+
+  Widget _buildBody(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final token = widget.resetToken;
     final invalidLink = token == null || token.isEmpty;
@@ -240,14 +246,10 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                         Text(_error!, style: TextStyle(color: colors.error)),
                       ],
                       const SizedBox(height: 24),
-                      SizedBox(
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: _loading ? null : _submit,
-                          child: _loading
-                              ? CircularProgressIndicator(color: colors.onPrimary)
-                              : const Text('Update password'),
-                        ),
+                      PrimaryButton(
+                        label: 'Update password',
+                        loading: _loading,
+                        onPressed: _submit,
                       ),
                     ],
                   ),

@@ -16,7 +16,7 @@ class VenueClusterNode {
     required this.containsSelected,
   });
 
-  bool get isCluster => venues.length > 4;
+  bool get isCluster => venues.length > 6;
   int get count => venues.length;
   Venue get primaryVenue => venues.first;
 }
@@ -125,12 +125,12 @@ class VenueClusterService {
   }
 
   double _cellSizeForZoom(double zoom) {
-    if (zoom >= 17) return 60;
-    if (zoom >= 15) return 90;
-    if (zoom >= 13) return 120;
-    if (zoom >= 11) return 160;
-    if (zoom >= 9) return 200;
-    return 260;
+    if (zoom >= 17) return 48;
+    if (zoom >= 15) return 72;
+    if (zoom >= 13) return 96;
+    if (zoom >= 11) return 132;
+    if (zoom >= 9) return 176;
+    return 230;
   }
 }
 

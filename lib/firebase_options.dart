@@ -60,11 +60,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAb5TqwL08pFZiE92M91u6O39H-EOgf7sA',
-    appId: '1:403759544454:ios:78be3e698518ab37293907',
+    appId: '1:403759544454:ios:6a840666761bb9b9293907',
     messagingSenderId: '403759544454',
     projectId: 'kmstry-8510d',
     storageBucket: 'kmstry-8510d.firebasestorage.app',
-    iosBundleId: 'com.deniz.kmstryFrontend.dev2',
+    iosBundleId: 'com.brightminds.kmstry',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
