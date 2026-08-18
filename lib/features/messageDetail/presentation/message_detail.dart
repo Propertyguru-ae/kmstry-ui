@@ -159,6 +159,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
   }
 
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    _scrollToBottom(animated: true);
+  }
+
   /// widget.otherUserId bildirimden boş gelirse yüklenen chat'ten kullan.
   /// Başlıktaki isme/avatara dokununca karşı kullanıcının profilini açar.
   Future<void> _openOtherProfile() async {
@@ -264,6 +271,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       }
     });
   }
+
+  // Composer (input/banner) Column'da liste ile KARDEŞ; listeyi örtmüyor.
+  // Bu yüzden listeye composer yüksekliği kadar alt boşluk EKLENMEZ — aksi
+  // halde klavye açıkken son mesaj ile klavye arasında büyük boşluk oluşur.
+  // Klavye zaten resizeToAvoidBottomInset ile ele alınıyor; sadece küçük bir
+  // nefes payı yeterli.
+  double _messageListBottomPadding() => 12;
 
   Future<void> _loadCurrentUser() async {
     try {
@@ -811,6 +825,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         );
         return;
       }
+      if (_isTooManyRequestsError(e)) {
+        return;
+      }
       await showPremiumErrorDialog(
         context,
         message:
@@ -827,6 +844,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         s.contains('not active') ||
         s.contains('403') ||
         s.contains('forbidden');
+  }
+
+  bool _isTooManyRequestsError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('too many requests') ||
+        s.contains('throttlerexception') ||
+        s.contains('429');
   }
 
   void _setReplyTarget(ChatMessage message) {
@@ -953,7 +977,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 height: 200,
                 child: Center(
                   child: Text(
-                    'Sohbetler yüklenemedi.',
+                    'Could not load chats.',
                     style: TextStyle(color: _mutedTextColor),
                   ),
                 ),
@@ -967,7 +991,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 height: 200,
                 child: Center(
                   child: Text(
-                    'İletilecek başka sohbet yok.',
+                    'No other chats to forward to.',
                     style: TextStyle(color: _mutedTextColor),
                   ),
                 ),
@@ -1266,7 +1290,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ),
             ),
             SizedBox(width: 12),
-            Text('Gönderiliyor...'),
+            Text('Sending...'),
           ],
         ),
       ),
@@ -1530,7 +1554,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj silinemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
+            'Message could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     }
   }
@@ -2306,7 +2330,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj düzenlenemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Message could not be edited: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -2356,7 +2380,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       : const Color(0xFFE3EAF3);
 
   String _statusText(String name) {
-    if (_isOtherTyping) return '${name.split(' ').first} yaziyor...';
+    if (_isOtherTyping) return '${name.split(' ').first} is typing...';
     if (_isSocketReconnecting) return 'Baglaniyor...';
     if (_isSocketConnected && _isOtherOnline) return 'Online';
     if (_isOtherOnline) return 'Online';
@@ -2443,6 +2467,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: _chatBackground,
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -2604,7 +2629,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           controller: _scrollController,
           // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+          padding: EdgeInsets.fromLTRB(14, 14, 14, _messageListBottomPadding()),
           itemCount: ordered.length + (_loadingMore ? 1 : 0),
           itemBuilder: (context, index) {
             if (_loadingMore && index == 0) {
@@ -3100,19 +3125,20 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (lines.length < 2) return null;
 
     final firstLine = lines.first.trim();
-    const marker = '↩️ ';
-    if (!firstLine.startsWith(marker)) return null;
+    final match = RegExp(r'^↩(?:️)?\s*(.*)$').firstMatch(firstLine);
+    if (match == null) return null;
 
-    final payload = firstLine.substring(marker.length).trim();
+    final payload = (match.group(1) ?? '').trim();
     final separatorIndex = payload.indexOf(':');
-    if (separatorIndex <= 0 || separatorIndex == payload.length - 1) {
+    if (separatorIndex < 0 || separatorIndex == payload.length - 1) {
       return null;
     }
 
-    final sender = payload.substring(0, separatorIndex).trim();
+    final rawSender = payload.substring(0, separatorIndex).trim();
     final quote = payload.substring(separatorIndex + 1).trim();
     final body = lines.skip(1).join('\n').trim();
-    if (sender.isEmpty || quote.isEmpty || body.isEmpty) return null;
+    if (quote.isEmpty || body.isEmpty) return null;
+    final sender = rawSender.isEmpty ? 'Reply' : rawSender;
     return _ParsedReplyMessage(sender: sender, quote: quote, body: body);
   }
 
@@ -3457,8 +3483,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final day = DateTime(local.year, local.month, local.day);
-    if (day == today) return 'Bugun';
-    if (day == today.subtract(const Duration(days: 1))) return 'Dun';
+    if (day == today) return 'Today';
+    if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
     final dd = local.day.toString().padLeft(2, '0');
     final mm = local.month.toString().padLeft(2, '0');
     return '$dd.$mm.${local.year}';
@@ -3824,7 +3850,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       if (!mounted) return;
       await showPremiumErrorDialog(
         context,
-        message: 'Dosyaya erişilemedi. Lütfen tekrar deneyin.',
+        message: 'Could not access the file. Please try again.',
       );
       return;
     }
@@ -3879,9 +3905,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       mode: LaunchMode.externalApplication,
     );
     if (!ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Belge açılamadı.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the document.')),
+      );
     }
   }
 
@@ -3915,8 +3941,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message: source == ImageSource.camera
-            ? 'Kameraya erişilemedi. Ayarlardan kamera iznini kontrol edin.'
-            : 'Galeriye erişilemedi. Ayarlardan foto iznini kontrol edin.',
+            ? 'Could not access the camera. Check camera permission in Settings.'
+            : 'Could not access the gallery. Check photo permission in Settings.',
       );
       return;
     }
@@ -4152,7 +4178,7 @@ class _EditMessageComposerOverlayState
                                   horizontal: 16,
                                   vertical: 12,
                                 ),
-                                hintText: 'Mesajı düzenle',
+                                hintText: 'Edit message',
                                 hintStyle: TextStyle(
                                   color: colors.onSurface.withValues(
                                     alpha: 0.45,
@@ -4181,7 +4207,7 @@ class _EditMessageComposerOverlayState
                               ],
                             ),
                             child: IconButton(
-                              tooltip: 'Kaydet',
+                              tooltip: 'Save',
                               icon: const Icon(
                                 Icons.check_rounded,
                                 color: Colors.black,

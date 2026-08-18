@@ -77,6 +77,22 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   void initState() {
     super.initState();
     _loadAll();
+    // Story herhangi bir yerden (home, profil, venue detay) paylaşılınca/silinince
+    // kendi story listesini + home story'lerini tazele. Böylece "paylaştım ama
+    // home'da bazen gelmiyor" durumu olmaz.
+    StoryRepository.changes.addListener(_onStoryChanged);
+  }
+
+  void _onStoryChanged() {
+    if (!mounted) return;
+    _loadMyStories();
+    _loadHomeStories();
+  }
+
+  @override
+  void dispose() {
+    StoryRepository.changes.removeListener(_onStoryChanged);
+    super.dispose();
   }
 
   Future<void> _loadAll() async {

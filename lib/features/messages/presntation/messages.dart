@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -226,6 +227,34 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 
   /// Called when returning from MessageDetailPage or when DM tab is selected (DM list refresh rule).
   /// [silent]: true iken yükleme göstergesi ve hata ekranı gösterilmez; mevcut data korunur.
+  /// Sohbet listesini getirir; geçici hatalarda (timeout / ağ / 5xx) kısa
+  /// backoff ile birkaç kez dener. Böylece cold/slow backend veya anlık ağ
+  /// dalgalanmasında kullanıcı gereksiz yere "Could not load chats" görmez.
+  /// Gerçek istemci hatalarında (4xx) beklemeden yükseltir.
+  Future<List<ChatListItem>> _fetchChatListWithRetry(String activeQuery) async {
+    const maxAttempts = 3;
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return activeQuery.isEmpty
+            ? await _repo.getChats()
+            : await _repo.searchChatsByParticipantName(activeQuery);
+      } catch (e) {
+        // 429 (rate limit) geçicidir → backoff ile tekrar dene. Diğer 4xx'ler
+        // gerçek istemci hatasıdır → beklemeden yükselt. 5xx / ağ / timeout da
+        // geçici sayılıp tekrar denenir.
+        final isRetriableClientError = e is ApiException && e.statusCode == 429;
+        final isNonRetriableClientError =
+            e is ApiException &&
+            e.statusCode >= 400 &&
+            e.statusCode < 500 &&
+            !isRetriableClientError;
+        if (isNonRetriableClientError || attempt >= maxAttempts) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+        if (!mounted) rethrow;
+      }
+    }
+  }
+
   Future<void> loadChats({bool silent = false}) async {
     final now = DateTime.now();
     if (silent &&
@@ -243,9 +272,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       });
     }
     try {
-      final list = activeQuery.isEmpty
-          ? await _repo.getChats()
-          : await _repo.searchChatsByParticipantName(activeQuery);
+      final list = await _fetchChatListWithRetry(activeQuery);
 
       if (!mounted || requestId != _requestId) return;
       setState(() {
