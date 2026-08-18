@@ -733,7 +733,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 children: [
                   if (!submitted)
                     Text(
-                      "Once blocked, you will no longer see each other in the app and your conversation will be closed.",
+                      "Once blocked, you will no longer see each other in the app and messaging will be paused. Your chat history will stay visible.",
                       style: TextStyle(
                         color: isDark
                             ? Colors.white.withValues(alpha: 0.86)
@@ -1241,7 +1241,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  'Thanks for your report. This user has been blocked automatically, and your chat has been closed for your safety.',
+                                  'Thanks for your report. This user has been blocked automatically, and messaging has been paused for your safety.',
                                   style: TextStyle(
                                     color: colors.onSurface,
                                     fontSize: 13,
