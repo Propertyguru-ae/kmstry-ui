@@ -348,9 +348,16 @@ class AuthRepository {
       final response = await _api.refresh(refreshToken: refreshToken);
 
       if (response['success'] == true) {
+        // Backend refresh token'ı her refresh'te ROTATE ediyor (eskisini revoke
+        // edip yenisini döndürüyor). Yeni token'ı saklamazsak eski (artık
+        // revoke edilmiş) token'la yapılan bir sonraki refresh 401 döner ve
+        // kullanıcı beklenmedik şekilde logout olur. Yeni token yoksa (eski
+        // backend) eskisine düş.
+        final rotatedRefreshToken =
+            (response['refreshToken'] as String?) ?? refreshToken;
         await SecureStorage.saveTokens(
           accessToken: response['accessToken'],
-          refreshToken: refreshToken,
+          refreshToken: rotatedRefreshToken,
         );
         return response['accessToken'];
       }

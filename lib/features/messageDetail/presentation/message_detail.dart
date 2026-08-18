@@ -161,22 +161,26 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   /// widget.otherUserId bildirimden boş gelirse yüklenen chat'ten kullan.
   /// Başlıktaki isme/avatara dokununca karşı kullanıcının profilini açar.
-  void _openOtherProfile() {
+  Future<void> _openOtherProfile() async {
     final userId = _effectiveOtherUserId;
     if (userId.isEmpty) return;
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ProfilePreviewPage(
           userId: userId,
           userName: widget.otherName,
-          userPhoto:
-              widget.otherPhotoUrl.isNotEmpty ? widget.otherPhotoUrl : null,
+          userPhoto: widget.otherPhotoUrl.isNotEmpty
+              ? widget.otherPhotoUrl
+              : null,
           chatIdHint: _chatId,
           isMatchedHint: true,
           hideVenueInfo: true,
         ),
       ),
     );
+    // Profilde block/unblock yapılmış olabilir — dönünce sohbet durumunu
+    // (canSendMessages / isBlocked) tazele ki input doğru kilitlensin.
+    if (mounted) unawaited(_loadChat());
   }
 
   String get _effectiveOtherUserId => widget.otherUserId.isNotEmpty
@@ -795,12 +799,34 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       if (!mounted) return;
       _removeMessageById(optimisticTempId);
       _messageController.text = text;
+      // Karşı taraf bloklandıysa / sohbet artık aktif değilse: sohbeti tazele
+      // (input kilitlensin) ve generic hata yerine anlaşılır mesaj göster.
+      if (_isBlockedOrInactiveError(e)) {
+        unawaited(_loadChat());
+        await showPremiumErrorDialog(
+          context,
+          title: 'Messaging paused',
+          message:
+              'You can\'t message this user right now. This happens when one of you has blocked the other.',
+        );
+        return;
+      }
       await showPremiumErrorDialog(
         context,
         message:
             'Message could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
+  }
+
+  /// Backend, block/inaktif sohbette 403 "cannot send messages while blocked"
+  /// veya "Chat is not active" döndürür — bunları generic hatadan ayırır.
+  bool _isBlockedOrInactiveError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('block') ||
+        s.contains('not active') ||
+        s.contains('403') ||
+        s.contains('forbidden');
   }
 
   void _setReplyTarget(ChatMessage message) {
@@ -2443,50 +2469,53 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                   child: Row(
                     children: [
                       _buildHeaderAvatar(
-                avatarSeed: avatarSeed,
-                avatarColor: avatarColor,
-                hasPhoto: hasPhoto,
-                photoUrl: photoUrl,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        height: 1.05,
+                        avatarSeed: avatarSeed,
+                        avatarColor: avatarColor,
+                        hasPhoto: hasPhoto,
+                        photoUrl: photoUrl,
                       ),
-                    ),
-                    const SizedBox(height: 5),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
-                      transitionBuilder: (child, animation) =>
-                          FadeTransition(opacity: animation, child: child),
-                      child: Text(
-                        _statusText(name),
-                        key: ValueKey(_statusText(name)),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _statusColor(),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.onSurface,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                height: 1.05,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 150),
+                              transitionBuilder: (child, animation) =>
+                                  FadeTransition(
+                                    opacity: animation,
+                                    child: child,
+                                  ),
+                              child: Text(
+                                _statusText(name),
+                                key: ValueKey(_statusText(name)),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: _statusColor(),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -3264,48 +3293,51 @@ class _MessageDetailPageState extends State<MessageDetailPage>
             _wrapHero(
               heroTag,
               ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
-              child: imageUrl.startsWith('http')
-                  ? CachedImage(
-                      imageUrl,
-                      width: min(MediaQuery.of(context).size.width * 0.62, 238),
-                      height: min(
-                        MediaQuery.of(context).size.width * 0.62,
-                        238,
+                borderRadius: BorderRadius.circular(12),
+                // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
+                child: imageUrl.startsWith('http')
+                    ? CachedImage(
+                        imageUrl,
+                        width: min(
+                          MediaQuery.of(context).size.width * 0.62,
+                          238,
+                        ),
+                        height: min(
+                          MediaQuery.of(context).size.width * 0.62,
+                          238,
+                        ),
+                        fit: BoxFit.cover,
+                        errorWidget: (context) =>
+                            const Icon(Icons.broken_image, size: 48),
+                      )
+                    : Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Image.file(
+                            File(imageUrl),
+                            width: min(
+                              MediaQuery.of(context).size.width * 0.62,
+                              238,
+                            ),
+                            height: min(
+                              MediaQuery.of(context).size.width * 0.62,
+                              238,
+                            ),
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(Icons.broken_image, size: 48),
+                          ),
+                          const SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ),
-                      fit: BoxFit.cover,
-                      errorWidget: (context) =>
-                          const Icon(Icons.broken_image, size: 48),
-                    )
-                  : Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Image.file(
-                          File(imageUrl),
-                          width: min(
-                            MediaQuery.of(context).size.width * 0.62,
-                            238,
-                          ),
-                          height: min(
-                            MediaQuery.of(context).size.width * 0.62,
-                            238,
-                          ),
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.broken_image, size: 48),
-                        ),
-                        const SizedBox(
-                          width: 34,
-                          height: 34,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
+              ),
             ),
             Positioned(
               right: 8,
@@ -4560,9 +4592,8 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
       return CachedImage(
         url,
         fit: BoxFit.contain,
-        placeholder: (context) => const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        ),
+        placeholder: (context) =>
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
         errorWidget: (context) => _errorIcon(),
       );
     }
@@ -4575,8 +4606,8 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
   }
 
   Widget _errorIcon() => const Center(
-        child: Icon(Icons.broken_image, size: 64, color: Colors.white54),
-      );
+    child: Icon(Icons.broken_image, size: 64, color: Colors.white54),
+  );
 
   @override
   Widget build(BuildContext context) {

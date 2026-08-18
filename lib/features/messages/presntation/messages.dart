@@ -165,16 +165,22 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   bool _applyChatRowUpdate(Map<String, dynamic> payload) {
     final chatId = _readStringField(payload, const ['chatId', 'chat_id']);
     if (chatId == null) return false;
-    final unread = _readIntField(payload, const ['unreadCount', 'unread_count']);
-    final preview = _readStringField(
-      payload,
-      const ['lastMessagePreview', 'last_message_preview'],
-    );
-    final lastMessageAt = _readDateField(
-      payload,
-      const ['lastMessageAt', 'last_message_at', 'createdAt', 'created_at'],
-    );
-    final hasAnyPatchData = unread != null || preview != null || lastMessageAt != null;
+    final unread = _readIntField(payload, const [
+      'unreadCount',
+      'unread_count',
+    ]);
+    final preview = _readStringField(payload, const [
+      'lastMessagePreview',
+      'last_message_preview',
+    ]);
+    final lastMessageAt = _readDateField(payload, const [
+      'lastMessageAt',
+      'last_message_at',
+      'createdAt',
+      'created_at',
+    ]);
+    final hasAnyPatchData =
+        unread != null || preview != null || lastMessageAt != null;
     if (!hasAnyPatchData) return false;
 
     final index = _chats.indexWhere((chat) => chat.id == chatId);
@@ -290,9 +296,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final isDark = theme.brightness == Brightness.dark;
 
     final colors = theme.colorScheme;
-    final bg = isDark
-        ? const Color(0xFF0B0F17)
-        : theme.scaffoldBackgroundColor;
+    final bg = isDark ? const Color(0xFF0B0F17) : theme.scaffoldBackgroundColor;
     return Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
@@ -313,9 +317,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
             icon: Icon(Icons.settings_outlined, color: colors.onSurface),
             tooltip: 'Message settings',
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const MessageSettingsPage(),
-              ),
+              MaterialPageRoute(builder: (_) => const MessageSettingsPage()),
             ),
           ),
           const SizedBox(width: 4),
@@ -604,27 +606,31 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 
   /// Sohbet listesi avatarı: fotoğrafı varsa fotoğraf, yoksa renkli baş harf.
   Widget _buildChatAvatar(
-      String? photo, String name, Color avatarColor, bool isDark) {
+    String? photo,
+    String name,
+    Color avatarColor,
+    bool isDark,
+  ) {
     final hasPhoto = photo != null && photo.trim().isNotEmpty;
     Widget initial() => Container(
-          width: 55,
-          height: 55,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: isDark
-                ? avatarColor.withValues(alpha: 0.2)
-                : avatarColor.withValues(alpha: 0.15),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            name.isNotEmpty ? name[0].toUpperCase() : '?',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: isDark ? avatarColor.withValues(alpha: 0.9) : avatarColor,
-            ),
-          ),
-        );
+      width: 55,
+      height: 55,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: isDark
+            ? avatarColor.withValues(alpha: 0.2)
+            : avatarColor.withValues(alpha: 0.15),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        name.isNotEmpty ? name[0].toUpperCase() : '?',
+        style: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+          color: isDark ? avatarColor.withValues(alpha: 0.9) : avatarColor,
+        ),
+      ),
+    );
     if (!hasPhoto) return initial();
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -733,7 +739,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
                     chatId: chat.id,
                     otherUserId: other?.id ?? '',
                     otherName: name,
-                    otherPhotoUrl: '',
+                    otherPhotoUrl: other?.photo ?? '',
                   ),
                 ),
               );
@@ -766,10 +772,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 }
 
 class _MessagesEmptyState extends StatelessWidget {
-  const _MessagesEmptyState({
-    required this.isDark,
-    required this.query,
-  });
+  const _MessagesEmptyState({required this.isDark, required this.query});
 
   final bool isDark;
   final String query;
