@@ -30,9 +30,6 @@ import 'package:kmstry_frontend/features/venue_events/presentation/discover_even
 import 'package:kmstry_frontend/features/venue_events/presentation/my_events_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 
-/// Location (map) tab position in the personal navbar: Home(0), Venues/map(1).
-const int _kLocationTabIndex = 1;
-
 /// Personal account landing tab — a lively feed: active check-in status, the
 /// stories of followed venues & matched people, and today's events the user is
 /// attending. Sections only render when they have content.
@@ -105,7 +102,12 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
           if (mounted) setState(() => _activeVenue = venue);
         } catch (_) {}
       }
-      await Future.wait([_loadFollowedEvents(), _loadTrendingVenues(), _loadMyStories(), _loadDiscoverEvents()]);
+      await Future.wait([
+        _loadFollowedEvents(),
+        _loadTrendingVenues(),
+        _loadMyStories(),
+        _loadDiscoverEvents(),
+      ]);
       return;
     }
 
@@ -131,7 +133,12 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
         // Non-fatal: banner still works with a minimal stub.
       }
     }
-    await Future.wait([_loadFollowedEvents(), _loadTrendingVenues(), _loadMyStories(), _loadDiscoverEvents()]);
+    await Future.wait([
+      _loadFollowedEvents(),
+      _loadTrendingVenues(),
+      _loadMyStories(),
+      _loadDiscoverEvents(),
+    ]);
   }
 
   Future<void> _loadTrendingVenues() async {
@@ -338,7 +345,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     // instead of pushing a full-screen route over it.
     final nav = AppShellNav.of(context);
     if (nav != null) {
-      nav.selectTab(_kLocationTabIndex);
+      nav.selectTabId(kPersonalDiscoverTabId);
     } else {
       // Fallback (e.g. Home opened outside the shell): push the map standalone.
       Navigator.push(
@@ -422,10 +429,8 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => StoryViewerPage(
-          groups: [meGroup],
-          initialGroupIndex: 0,
-        ),
+        builder: (_) =>
+            StoryViewerPage(groups: [meGroup], initialGroupIndex: 0),
       ),
     ).then((_) {
       if (mounted) _loadMyStories();
@@ -694,27 +699,6 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
               ),
             ],
 
-            // ── Up Next at Your Spots — takip edilen venue'lerin event'leri.
-            //    Veri yoksa (ve yükleme bittiyse) etkileyici boş-durum mesajı.
-            if (hasFollowedEvents) ...[
-              const SizedBox(height: 24),
-              _SectionTitle(
-                title: 'Up Next at Your Spots',
-                actionLabel: 'See more',
-                onAction: _openFollowedEvents,
-              ),
-              const SizedBox(height: 12),
-              _FollowedEventsRow(
-                events: _followedEvents,
-                onTap: _openEvent,
-              ),
-            ] else if (!_loading) ...[
-              const SizedBox(height: 24),
-              _SectionTitle(title: 'Up Next at Your Spots'),
-              const SizedBox(height: 12),
-              _FollowedEventsEmpty(followsAnyVenue: _followsAnyVenue),
-            ],
-
             // ── Stories row — her zaman "Your story" balonu + varsa
             //    arkadaş/venue story'leri. Check-in yoksa balon inactive olur.
             if (!_loading) ...[
@@ -738,6 +722,17 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                 onMeTap: _onMeStoryTap,
                 onMeAddTap: _onMeAddStoryTap,
                 isUploading: _storyUploading,
+              ),
+            ],
+
+            // ── Trending Now — görsel enerjiyi üst akışa taşır. ─────────────
+            if (hasTrending) ...[
+              const SizedBox(height: 20),
+              _SectionTitle(title: 'Trending Now'),
+              const SizedBox(height: 12),
+              _RecommendedVenuesRow(
+                venues: _trendingVenues,
+                onTap: _openRecommendedVenue,
               ),
             ],
 
@@ -767,18 +762,6 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
               const _TodaysEventsEmpty(),
             ],
 
-            // ── Trending Now — most-searched venues (same design as
-            //    "Places you might like") ────────────────────────────────────
-            if (hasTrending) ...[
-              const SizedBox(height: 20),
-              _SectionTitle(title: 'Trending Now'),
-              const SizedBox(height: 12),
-              _RecommendedVenuesRow(
-                venues: _trendingVenues,
-                onTap: _openRecommendedVenue,
-              ),
-            ],
-
             // ── Happening Nearby — takip edilmeyen mekanların yakın event'leri.
             if (hasDiscover) ...[
               const SizedBox(height: 20),
@@ -788,10 +771,25 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                 onAction: _openDiscoverEvents,
               ),
               const SizedBox(height: 12),
-              _DiscoverEventsList(
-                events: _discoverEvents,
-                onTap: _openEvent,
+              _DiscoverEventsList(events: _discoverEvents, onTap: _openEvent),
+            ],
+
+            // ── Up Next at Your Spots — takip edilen venue'lerin event'leri.
+            //    Boş durumda alta alınır; ana ekranın ilk izlenimini yavaşlatmaz.
+            if (hasFollowedEvents) ...[
+              const SizedBox(height: 22),
+              _SectionTitle(
+                title: 'Up Next at Your Spots',
+                actionLabel: 'See more',
+                onAction: _openFollowedEvents,
               ),
+              const SizedBox(height: 12),
+              _FollowedEventsRow(events: _followedEvents, onTap: _openEvent),
+            ] else if (!_loading) ...[
+              const SizedBox(height: 22),
+              _SectionTitle(title: 'Up Next at Your Spots'),
+              const SizedBox(height: 12),
+              _FollowedEventsEmpty(followsAnyVenue: _followsAnyVenue),
             ],
 
             if (nothingYet)
@@ -894,9 +892,10 @@ class _StoriesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // İlk item her zaman "Your story" balonu.
-    final itemCount = stories.length + 1;
+    final showEmptyHint = stories.isEmpty;
+    final itemCount = stories.length + 1 + (showEmptyHint ? 1 : 0);
     return SizedBox(
-      height: 96,
+      height: 104,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -913,6 +912,9 @@ class _StoriesRow extends StatelessWidget {
               uploading: isUploading,
             );
           }
+          if (showEmptyHint && i == 1) {
+            return _StoryUnlockHint(hasActiveCheckin: hasActiveCheckin);
+          }
           final s = stories[i - 1];
           return _StoryBubble(
             group: s,
@@ -920,6 +922,79 @@ class _StoriesRow extends StatelessWidget {
             onTap: () => onTap(i - 1),
           );
         },
+      ),
+    );
+  }
+}
+
+class _StoryUnlockHint extends StatelessWidget {
+  const _StoryUnlockHint({required this.hasActiveCheckin});
+
+  final bool hasActiveCheckin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      width: 188,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.045)
+            : Colors.black.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: hasActiveCheckin
+              ? AppColors.teal.withValues(alpha: 0.30)
+              : colors.onSurface.withValues(alpha: 0.10),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: hasActiveCheckin
+                  ? const LinearGradient(
+                      colors: [AppColors.blue, AppColors.teal],
+                    )
+                  : null,
+              color: hasActiveCheckin
+                  ? null
+                  : colors.onSurface.withValues(alpha: 0.08),
+            ),
+            child: Icon(
+              hasActiveCheckin
+                  ? Icons.auto_awesome_rounded
+                  : Icons.lock_rounded,
+              size: 18,
+              color: hasActiveCheckin
+                  ? Colors.white
+                  : colors.onSurface.withValues(alpha: 0.55),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              hasActiveCheckin
+                  ? 'Share your first moment here.'
+                  : 'Check in to unlock moments.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.25,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurface.withValues(alpha: 0.78),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1012,8 +1087,12 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
     Widget base = ClipRRect(
       borderRadius: BorderRadius.circular(avatarRadius),
       child: (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
-          ? CachedImage(widget.imageUrl!,
-              width: avatarSize, height: avatarSize, fit: BoxFit.cover)
+          ? CachedImage(
+              widget.imageUrl!,
+              width: avatarSize,
+              height: avatarSize,
+              fit: BoxFit.cover,
+            )
           : Container(
               width: avatarSize,
               height: avatarSize,
@@ -1267,7 +1346,7 @@ class _RecommendedVenuesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 282,
+      height: 248,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -1299,7 +1378,7 @@ class _RecommendedVenueCard extends StatelessWidget {
         : (venue.photos.isNotEmpty ? venue.photos.first : '');
     final reason = (venue.recommendationReason ?? '').trim().isNotEmpty
         ? venue.recommendationReason!.trim()
-        : 'Similar to places you like';
+        : 'Trending now';
 
     return Material(
       color: Colors.transparent,
@@ -1307,7 +1386,7 @@ class _RecommendedVenueCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Ink(
-          width: 272,
+          width: 252,
           decoration: BoxDecoration(
             color: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.white,
             borderRadius: BorderRadius.circular(18),
@@ -1321,6 +1400,12 @@ class _RecommendedVenueCard extends StatelessWidget {
                   blurRadius: 16,
                   offset: const Offset(0, 6),
                 ),
+              if (isDark)
+                BoxShadow(
+                  color: AppColors.blue.withValues(alpha: 0.08),
+                  blurRadius: 22,
+                  offset: const Offset(0, 10),
+                ),
             ],
           ),
           child: Column(
@@ -1332,19 +1417,18 @@ class _RecommendedVenueCard extends StatelessWidget {
                 ),
                 child: SizedBox(
                   width: double.infinity,
-                  height: 164,
+                  height: 132,
                   child: photo.isNotEmpty
                       ? CachedImage(
                           photo,
                           fit: BoxFit.cover,
-                          errorWidget: (context) =>
-                              _venuePhotoFallback(colors),
+                          errorWidget: (context) => _venuePhotoFallback(colors),
                         )
                       : _venuePhotoFallback(colors),
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1354,7 +1438,7 @@ class _RecommendedVenueCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colors.onSurface,
-                        fontSize: 15,
+                        fontSize: 14.5,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -1365,11 +1449,11 @@ class _RecommendedVenueCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colors.onSurface.withValues(alpha: 0.58),
-                        fontSize: 12.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 7),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -1570,11 +1654,27 @@ class _FollowedEventCard extends StatelessWidget {
   final VoidCallback onTap;
 
   static const List<String> _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   static const List<String> _weekdays = [
-    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
   ];
 
   String _dateLabel(DateTime dt) {
@@ -1796,8 +1896,7 @@ class _DiscoverEventsList extends StatelessWidget {
 
     // 3 tam kart + sonraki kartın bir kısmını (peek) göster → "devamı var" sinyali.
     const double peek = 30;
-    final scrollHeight =
-        _cardHeight * _maxVisible + _gap * _maxVisible + peek;
+    final scrollHeight = _cardHeight * _maxVisible + _gap * _maxVisible + peek;
     return SizedBox(
       height: scrollHeight,
       // Alt kenarda solma (fade) efekti: peek eden kart aşağı doğru silinir,
@@ -1832,11 +1931,27 @@ class _DiscoverEventCard extends StatelessWidget {
   final VoidCallback onTap;
 
   static const List<String> _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   static const List<String> _weekdays = [
-    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
   ];
 
   String _dateLabel(DateTime dt) {
@@ -1946,7 +2061,9 @@ class _DiscoverEventCard extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  color: colors.onSurface.withValues(alpha: 0.6),
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.6,
+                                  ),
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -2431,8 +2548,16 @@ class _MapCta extends StatelessWidget {
                 : Colors.black.withValues(alpha: 0.03),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: colors.onSurface.withValues(alpha: 0.10)),
+            boxShadow: [
+              if (isDark)
+                BoxShadow(
+                  color: AppColors.blue.withValues(alpha: 0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, 10),
+                ),
+            ],
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
           child: Row(
             children: [
               Container(
@@ -2465,8 +2590,9 @@ class _MapCta extends StatelessWidget {
                     Text(
                       'Find a place, check in, and see what is happening now.',
                       style: TextStyle(
-                        fontSize: 13,
-                        color: colors.onSurface.withValues(alpha: 0.6),
+                        fontSize: 12.5,
+                        height: 1.35,
+                        color: colors.onSurface.withValues(alpha: 0.68),
                       ),
                     ),
                   ],
@@ -2500,15 +2626,22 @@ class _CheckinCta extends StatelessWidget {
         onTap: onTap,
         child: Ink(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [colors.primary, colors.primary.withValues(alpha: 0.82)],
+            gradient: const LinearGradient(
+              colors: [AppColors.blue, AppColors.teal],
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
             ),
             borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.blue.withValues(alpha: 0.22),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
             child: Row(
               children: [
                 Container(
@@ -2539,9 +2672,10 @@ class _CheckinCta extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Share your moments. Check in now.',
+                        'Share your moments. Let people know you are here.',
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 12.5,
+                          height: 1.35,
                           color: colors.onPrimary.withValues(alpha: 0.85),
                         ),
                       ),

@@ -5,7 +5,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/nearby_venue_sheet.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
@@ -26,10 +29,9 @@ class QuickCheckinLauncher {
     VenueRepository? venueRepository,
     VenueContextRepository? venueContextRepository,
     LocationPermissionService? locationPermissionService,
-  })  : _venues = venueRepository ?? VenueRepository(),
-        _venueContext = venueContextRepository ?? VenueContextRepository(),
-        _permission =
-            locationPermissionService ?? LocationPermissionService();
+  }) : _venues = venueRepository ?? VenueRepository(),
+       _venueContext = venueContextRepository ?? VenueContextRepository(),
+       _permission = locationPermissionService ?? LocationPermissionService();
 
   final VenueRepository _venues;
   final VenueContextRepository _venueContext;
@@ -74,84 +76,106 @@ class QuickCheckinLauncher {
     final hasPermission = await _ensurePermission(context);
     if (!hasPermission || !context.mounted) return;
 
-    // Sheet için yaklaşık konum yeterli — check-in sayfası zaten yüksek
-    // doğrulukla yeniden ölçüp 200m guard'ını uyguluyor. Son bilinen konumu
-    // hemen kullan; yoksa orta doğrulukla ve 6 sn timeout ile al (high accuracy
-    // fix bazen 5-8 sn sürüp sheet'i geç açıyordu).
-    Position? position = await Geolocator.getLastKnownPosition();
-    if (position == null) {
-      try {
-        position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 6),
-        );
-      } catch (_) {
-        position = await Geolocator.getLastKnownPosition();
-      }
-    }
-    if (!context.mounted) return;
-    if (position == null) {
-      _showSnack(context, 'Could not get your location. Try again.');
-      return;
+    // Tap'ın hemen ardından anında geri bildirim: hafif loading sheet aç.
+    // Konum + yakın mekan çağrıları sürerken kullanıcı boş ekran görmesin.
+    final dismissLoading = showNearbyLoadingSheet(context);
+    var loadingClosed = false;
+    void closeLoading() {
+      if (loadingClosed) return;
+      loadingClosed = true;
+      dismissLoading();
     }
 
-    List<Venue> markers;
     try {
-      markers = await _venues.getMapMarkers(
+      // Sheet için yaklaşık konum yeterli — check-in sayfası zaten yüksek
+      // doğrulukla yeniden ölçüp 200m guard'ını uyguluyor. Son bilinen konumu
+      // hemen kullan; yoksa orta doğrulukla ve 6 sn timeout ile al.
+      Position? position = await Geolocator.getLastKnownPosition();
+      if (position == null) {
+        try {
+          position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+            timeLimit: const Duration(seconds: 6),
+          );
+        } catch (_) {
+          position = await Geolocator.getLastKnownPosition();
+        }
+      }
+      if (!context.mounted) return;
+      if (position == null) {
+        closeLoading();
+        if (context.mounted) {
+          _showSnack(context, 'Could not get your location. Try again.');
+        }
+        return;
+      }
+
+      // Yakın mekanlar + aktif check-in'i PARALEL çek (aktif check-in yalnızca
+      // sheet'teki rozet için; markers ile örtüşsün diye ayrı beklenmez).
+      final markersFuture = _venues.getMapMarkers(
         latitude: position.latitude,
         longitude: position.longitude,
         radiusMeters: _searchRadiusMeters,
         limit: 60,
       );
-    } catch (_) {
-      if (!context.mounted) return;
-      _showSnack(context, 'Could not load nearby venues. Try again.');
-      return;
-    }
-    if (!context.mounted) return;
+      final activeFuture = _checkinRepo
+          .getActiveCheckin()
+          .then<String?>((a) => a?.venueId)
+          .catchError((_) => null);
 
-    // Keep only venues with a known distance, sorted closest-first.
-    final candidates =
-        markers.where((v) => v.distanceMeters != null).toList()
-          ..sort(
-            (a, b) => a.distanceMeters!.compareTo(b.distanceMeters!),
+      List<Venue> markers;
+      try {
+        markers = await markersFuture;
+      } catch (_) {
+        closeLoading();
+        if (context.mounted) {
+          _showSnack(context, 'Could not load nearby venues. Try again.');
+        }
+        return;
+      }
+      final activeCheckinVenueId = await activeFuture;
+      if (!context.mounted) return;
+
+      // Keep only venues with a known distance, sorted closest-first.
+      final candidates = markers.where((v) => v.distanceMeters != null).toList()
+        ..sort((a, b) => a.distanceMeters!.compareTo(b.distanceMeters!));
+
+      final eligible = candidates
+          .where((v) => v.distanceMeters! <= _checkinMaxDistanceMeters)
+          .toList();
+
+      if (eligible.isEmpty) {
+        closeLoading();
+        if (context.mounted) {
+          _showSnack(
+            context,
+            "No venue found within range. Move closer and try again.",
           );
+        }
+        return;
+      }
 
-    final eligible = candidates
-        .where((v) => v.distanceMeters! <= _checkinMaxDistanceMeters)
-        .toList();
-
-    if (eligible.isEmpty) {
+      // Veri hazır → loading sheet'i kapat, sonra karar ver.
+      closeLoading();
       if (!context.mounted) return;
-      _showSnack(
+
+      if (_shouldAutoSelect(eligible, position.accuracy)) {
+        await _proceed(context, eligible.first, activeCheckinVenueId);
+        return;
+      }
+
+      final chosen = await showNearbyVenueSheet(
         context,
-        "No venue found within range. Move closer and try again.",
+        venues: eligible,
+        checkinMaxDistanceMeters: _checkinMaxDistanceMeters.toInt(),
+        activeCheckinVenueId: activeCheckinVenueId,
       );
-      return;
+      if (chosen == null || !context.mounted) return;
+      await _proceed(context, chosen, activeCheckinVenueId);
+    } finally {
+      // Herhangi bir erken çıkışta loading sheet açık kalmasın.
+      closeLoading();
     }
-
-    if (_shouldAutoSelect(eligible, position.accuracy)) {
-      await _openCheckin(context, eligible.first);
-      return;
-    }
-
-    if (!context.mounted) return;
-    String? activeCheckinVenueId;
-    try {
-      final active = await _checkinRepo.getActiveCheckin();
-      activeCheckinVenueId = active?.venueId;
-    } catch (_) {
-      // Sessiz geç — rozet gösterilmez.
-    }
-    if (!context.mounted) return;
-    final chosen = await showNearbyVenueSheet(
-      context,
-      venues: eligible,
-      checkinMaxDistanceMeters: _checkinMaxDistanceMeters.toInt(),
-      activeCheckinVenueId: activeCheckinVenueId,
-    );
-    if (chosen == null || !context.mounted) return;
-    await _openCheckin(context, chosen);
   }
 
   /// 1-tap fast path: closest venue is clearly the one, and the GPS fix is
@@ -166,6 +190,24 @@ class QuickCheckinLauncher {
       if (runnerUp <= _autoSelectRunnerUpMinMeters) return false;
     }
     return true;
+  }
+
+  /// Seçilen venue'da kullanıcı ZATEN check-in'liyse ("You're here") tekrar
+  /// check-in akışı açmak yerine venue detay sayfasını açar; değilse normal
+  /// check-in akışına girer.
+  Future<void> _proceed(
+    BuildContext context,
+    Venue venue,
+    String? activeCheckinVenueId,
+  ) async {
+    if (activeCheckinVenueId != null && venue.id == activeCheckinVenueId) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => VenueDetailPage(venue: venue)),
+      );
+      return;
+    }
+    await _openCheckin(context, venue);
   }
 
   /// Resolves a checkinable venue id (DB venues use their id directly;
@@ -195,6 +237,17 @@ class QuickCheckinLauncher {
         ),
       ),
     );
+
+    // Check-in tamamlandıysa → venue detail'deki gibi doğrudan "Who's here?"e geç.
+    if (!context.mounted) return;
+    if (ActiveCheckinService().isCheckedInAt(venueId)) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VenuePeoplePage(venue: venue, listVenueId: venueId),
+        ),
+      );
+    }
   }
 
   Future<String> _resolveVenueId(Venue venue) async {
@@ -259,8 +312,8 @@ class QuickCheckinLauncher {
   }
 
   void _showSnack(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }

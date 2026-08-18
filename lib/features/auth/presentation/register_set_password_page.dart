@@ -3,6 +3,8 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
@@ -31,24 +33,26 @@ class RegisterSetPasswordPage extends StatefulWidget {
 }
 
 class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
-  final _formKey        = GlobalKey<FormState>();
-  final _passwordCtrl   = TextEditingController();
-  final _confirmCtrl    = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _passwordCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
   bool _obscurePassword = true;
-  bool _obscureConfirm  = true;
+  bool _obscureConfirm = true;
   bool marketingEmailOptIn = false;
-  bool _legalConsent    = false;
+  bool _legalConsent = false;
   bool _loadingLegalVersions = true;
   String? _termsVersionId;
   String? _privacyVersionId;
   String? _legalVersionsError;
   String? _legalConsentError;
-  bool _loading  = false;
+  bool _loading = false;
   String? _error;
 
-  static const _darkBg  = Color(0xFF06091A);
+  static const _darkBg = Color(0xFF06091A);
   static const _sheetBg = Color(0xFF0B1322);
-  static const _teal    = Color(0xFF00D4C8);
+  static const _teal = Color(0xFF00D4C8);
+  static const _darkTextMuted = Color(0xFFB1BBD4);
+  static const _darkTextSoft = Color(0xFF8FA2C4);
 
   @override
   void initState() {
@@ -58,7 +62,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     _loadLegalVersions();
   }
 
-  void _onFormChanged() { if (mounted) setState(() {}); }
+  void _onFormChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
@@ -70,26 +76,35 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   }
 
   // ── Password rules ──────────────────────────────────────────────────────────
-  bool get _hasLength  => _passwordCtrl.text.length >= 8;
-  bool get _hasNumber  => _passwordCtrl.text.contains(RegExp(r'[0-9]'));
-  bool get _hasSpecial => _passwordCtrl.text.contains(RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-]'));
+  bool get _hasLength => _passwordCtrl.text.length >= 8;
+  bool get _hasNumber => _passwordCtrl.text.contains(RegExp(r'[0-9]'));
+  bool get _hasSpecial =>
+      _passwordCtrl.text.contains(RegExp(r'[!@#\$%^&*(),.?":{}|<>_\-]'));
 
-  int get _strengthLevel => [_hasLength, _hasNumber, _hasSpecial].where((v) => v).length;
+  int get _strengthLevel =>
+      [_hasLength, _hasNumber, _hasSpecial].where((v) => v).length;
 
   String get _strengthLabel {
     switch (_strengthLevel) {
-      case 0: return '';
-      case 1: return 'Weak';
-      case 2: return 'Good';
-      default: return 'Strong';
+      case 0:
+        return '';
+      case 1:
+        return 'Weak';
+      case 2:
+        return 'Good';
+      default:
+        return 'Strong';
     }
   }
 
   Color get _strengthColor {
     switch (_strengthLevel) {
-      case 1: return const Color(0xFFE05040);
-      case 2: return const Color(0xFFF0A030);
-      default: return _teal;
+      case 1:
+        return const Color(0xFFE05040);
+      case 2:
+        return const Color(0xFFF0A030);
+      default:
+        return _teal;
     }
   }
 
@@ -108,12 +123,15 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
 
   // ── Network ─────────────────────────────────────────────────────────────────
   Future<void> _loadLegalVersions() async {
-    setState(() { _loadingLegalVersions = true; _legalVersionsError = null; });
+    setState(() {
+      _loadingLegalVersions = true;
+      _legalVersionsError = null;
+    });
     try {
       final versions = await AuthRepository().getActiveLegalVersions();
       if (!mounted) return;
       setState(() {
-        _termsVersionId   = versions.termsVersionId;
+        _termsVersionId = versions.termsVersionId;
         _privacyVersionId = versions.privacyVersionId;
         _loadingLegalVersions = false;
       });
@@ -131,7 +149,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      await showPremiumErrorDialog(context, message: 'Unable to open policy link.');
+      await showPremiumErrorDialog(
+        context,
+        message: 'Unable to open policy link.',
+      );
     }
   }
 
@@ -139,15 +160,22 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
     if (!_formKey.currentState!.validate()) return;
     if (!_legalConsent) {
       setState(() {
-        _legalConsentError = 'You must agree to Terms of Service and Privacy Policy.';
+        _legalConsentError =
+            'You must agree to Terms of Service and Privacy Policy.';
       });
       return;
     }
     if (_termsVersionId == null || _privacyVersionId == null) {
-      setState(() { _legalVersionsError = 'Policies could not be loaded. Please try again.'; });
+      setState(() {
+        _legalVersionsError = 'Policies could not be loaded. Please try again.';
+      });
       return;
     }
-    setState(() { _loading = true; _error = null; _legalConsentError = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+      _legalConsentError = null;
+    });
     try {
       await AuthRepository().registerAndAutoLogin(
         widget.email,
@@ -175,7 +203,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
 
       // Invite-only signup: if no pending invite found, show error — do NOT fall through to onboarding
       if (widget.isInviteSignup) {
-        setState(() => _error = 'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.');
+        setState(
+          () => _error =
+              'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.',
+        );
         return;
       }
 
@@ -187,7 +218,13 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       } else {
         await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
         if (!mounted) return;
-        Navigator.of(context).pushReplacementNamed(AuthRoutes.onboardingUsername);
+        // Hesap oluşturuldu ve giriş yapıldı; bayat email/OTP sayfalarına geri
+        // dönülüp continue ile username'e tekrar düşülmesin diye tüm auth
+        // stack'ini temizleyerek username'i kök yapıyoruz.
+        Navigator.of(context).pushNamedAndRemoveUntil(
+          AuthRoutes.onboardingUsername,
+          (route) => false,
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -197,25 +234,36 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
           final isLoggedIn = await AuthRepository().restoreSession();
           if (!mounted) return;
           if (isLoggedIn) {
-            final pendingInvite = await VenueInviteRepository().getPendingInvite();
+            final pendingInvite = await VenueInviteRepository()
+                .getPendingInvite();
             if (!mounted) return;
             if (pendingInvite != null) {
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => VenueInvitePage(token: pendingInvite.token)),
+                MaterialPageRoute(
+                  builder: (_) => VenueInvitePage(token: pendingInvite.token),
+                ),
                 (route) => false,
               );
               return;
             }
             if (widget.isInviteSignup) {
-              setState(() => _error = 'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.');
+              setState(
+                () => _error =
+                    'No pending invite was found for this email. Please check that you entered the same email used on the invite link page.',
+              );
               return;
             }
             if (widget.isVenueSignup) {
               Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const VenueContextOnboardingPage()),
+                MaterialPageRoute(
+                  builder: (_) => const VenueContextOnboardingPage(),
+                ),
               );
             } else {
-              Navigator.of(context).pushReplacementNamed(AuthRoutes.onboardingUsername);
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                AuthRoutes.onboardingUsername,
+                (route) => false,
+              );
             }
             return;
           }
@@ -229,24 +277,44 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
 
   String _friendlySignupError(Object error) {
     if (error is ApiException) {
-      final status  = error.statusCode;
-      final code    = error.data['errorCode']?.toString();
+      final status = error.statusCode;
+      final code = error.data['errorCode']?.toString();
       final message = _extractBackendMessage(error.data);
       if (code == 'EMAIL_ALREADY_IN_USE' || code == 'AUTH_EMAIL_IN_USE') {
         return 'An account with this email already exists. Please sign in instead.';
       }
-      if (code == 'WEAK_PASSWORD') return 'Your password is too weak. Please choose a stronger password.';
-      if (status == 429) return 'Too many attempts. Please wait a moment and try again.';
-      if (status >= 500) return 'We are unable to create your account right now. Please try again shortly.';
-      if (code == 'LEGAL_CONSENT_REQUIRED') return 'You must accept Terms and Privacy to create an account.';
-      if (code == 'LEGAL_VERSION_INVALID') return 'Legal policy version is invalid. Please refresh and try again.';
-      if (code == 'LEGAL_VERSION_INACTIVE') return 'Legal policies were updated. Please review and try again.';
-      if (code == 'LEGAL_VERSION_TYPE_MISMATCH') return 'Legal policy mismatch detected. Please refresh and try again.';
-      if (code == 'LEGAL_CONSENT_SOURCE_INVALID') return 'Invalid consent source. Please update the app and try again.';
-      if (message.isNotEmpty) return message;
+      if (code == 'WEAK_PASSWORD') {
+        return 'Your password is too weak. Please choose a stronger password.';
+      }
+      if (status == 429) {
+        return 'Too many attempts. Please wait a moment and try again.';
+      }
+      if (status >= 500) {
+        return 'We are unable to create your account right now. Please try again shortly.';
+      }
+      if (code == 'LEGAL_CONSENT_REQUIRED') {
+        return 'You must accept Terms and Privacy to create an account.';
+      }
+      if (code == 'LEGAL_VERSION_INVALID') {
+        return 'Legal policy version is invalid. Please refresh and try again.';
+      }
+      if (code == 'LEGAL_VERSION_INACTIVE') {
+        return 'Legal policies were updated. Please review and try again.';
+      }
+      if (code == 'LEGAL_VERSION_TYPE_MISMATCH') {
+        return 'Legal policy mismatch detected. Please refresh and try again.';
+      }
+      if (code == 'LEGAL_CONSENT_SOURCE_INVALID') {
+        return 'Invalid consent source. Please update the app and try again.';
+      }
+      if (message.isNotEmpty) {
+        return message;
+      }
     }
     final raw = error.toString().toLowerCase();
-    if (raw.contains('timeout')) return 'The request timed out. Please check your connection and try again.';
+    if (raw.contains('timeout')) {
+      return 'The request timed out. Please check your connection and try again.';
+    }
     if (raw.contains('socketexception') || raw.contains('failed host lookup')) {
       return 'No internet connection. Please check your network and try again.';
     }
@@ -265,6 +333,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ForceDark(child: Builder(builder: _buildBody));
+  }
+
+  Widget _buildBody(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final pw = _passwordCtrl.text;
 
@@ -278,10 +350,13 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
             // Ambient glow — blue top
             if (isDark) ...[
               Positioned(
-                top: -70, left: 0, right: 0,
+                top: -70,
+                left: 0,
+                right: 0,
                 child: Center(
                   child: Container(
-                    width: 300, height: 260,
+                    width: 300,
+                    height: 260,
                     decoration: const BoxDecoration(
                       gradient: RadialGradient(
                         center: Alignment(0, -0.4),
@@ -294,9 +369,11 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
               ),
               // Ambient glow — teal bottom-right
               Positioned(
-                bottom: 100, right: -40,
+                bottom: 100,
+                right: -40,
                 child: Container(
-                  width: 180, height: 180,
+                  width: 180,
+                  height: 180,
                   decoration: const BoxDecoration(
                     gradient: RadialGradient(
                       colors: [Color(0x1200D4C8), Colors.transparent],
@@ -335,7 +412,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                         // Email chip
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 11, vertical: 5),
+                            horizontal: 11,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: isDark
                                 ? const Color(0x1F3B6DEA)
@@ -350,11 +429,13 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.mail_outline_rounded,
-                                  size: 12,
-                                  color: isDark
-                                      ? const Color(0xFF7AAAFF)
-                                      : AppColors.blueLight),
+                              Icon(
+                                Icons.mail_outline_rounded,
+                                size: 12,
+                                color: isDark
+                                    ? const Color(0xFF7AAAFF)
+                                    : AppColors.blueLight,
+                              ),
                               const SizedBox(width: 6),
                               Text(
                                 widget.email,
@@ -378,13 +459,16 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: isDark ? _sheetBg : Colors.white,
-                        borderRadius:
-                            const BorderRadius.vertical(top: Radius.circular(26)),
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(26),
+                        ),
                         border: isDark
                             ? const Border(
-                                top: BorderSide(color: Color(0xFF162040)))
+                                top: BorderSide(color: Color(0xFF162040)),
+                              )
                             : const Border(
-                                top: BorderSide(color: Color(0xFFE8EEF8))),
+                                top: BorderSide(color: Color(0xFFE8EEF8)),
+                              ),
                       ),
                       child: SingleChildScrollView(
                         keyboardDismissBehavior:
@@ -403,7 +487,8 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                               // Handle
                               Center(
                                 child: Container(
-                                  width: 32, height: 4,
+                                  width: 32,
+                                  height: 4,
                                   margin: const EdgeInsets.only(bottom: 20),
                                   decoration: BoxDecoration(
                                     color: isDark
@@ -423,10 +508,15 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 hint: 'Create a password',
                                 isDark: isDark,
                                 onToggle: () => setState(
-                                    () => _obscurePassword = !_obscurePassword),
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
                                 validator: (v) {
-                                  if ((v ?? '').isEmpty) return 'Please enter a password.';
-                                  if (v!.length < 8) return 'Password must be at least 8 characters.';
+                                  if ((v ?? '').isEmpty) {
+                                    return 'Please enter a password.';
+                                  }
+                                  if (v!.length < 8) {
+                                    return 'Password must be at least 8 characters.';
+                                  }
                                   return null;
                                 },
                               ),
@@ -455,7 +545,10 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                               const SizedBox(height: 4),
 
                               // Confirm password field
-                              _FieldLabel(label: 'CONFIRM PASSWORD', isDark: isDark),
+                              _FieldLabel(
+                                label: 'CONFIRM PASSWORD',
+                                isDark: isDark,
+                              ),
                               const SizedBox(height: 7),
                               _PasswordField(
                                 controller: _confirmCtrl,
@@ -463,10 +556,15 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 hint: 'Repeat your password',
                                 isDark: isDark,
                                 onToggle: () => setState(
-                                    () => _obscureConfirm = !_obscureConfirm),
+                                  () => _obscureConfirm = !_obscureConfirm,
+                                ),
                                 validator: (v) {
-                                  if ((v ?? '').isEmpty) return 'Please confirm your password.';
-                                  if (v != _passwordCtrl.text) return 'Passwords do not match.';
+                                  if ((v ?? '').isEmpty) {
+                                    return 'Please confirm your password.';
+                                  }
+                                  if (v != _passwordCtrl.text) {
+                                    return 'Passwords do not match.';
+                                  }
                                   return null;
                                 },
                               ),
@@ -478,14 +576,16 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 checked: marketingEmailOptIn,
                                 isDark: isDark,
                                 onTap: () => setState(
-                                    () => marketingEmailOptIn = !marketingEmailOptIn),
+                                  () => marketingEmailOptIn =
+                                      !marketingEmailOptIn,
+                                ),
                                 child: Text(
                                   'Send me occasional emails about my account and special offers',
                                   style: TextStyle(
                                     fontSize: 11.5,
                                     height: 1.5,
                                     color: isDark
-                                        ?Color(0xFFB1B4BB)
+                                        ? _darkTextMuted
                                         : Colors.black54,
                                   ),
                                 ),
@@ -497,16 +597,16 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 onTap: _loadingLegalVersions
                                     ? null
                                     : () => setState(() {
-                                          _legalConsent = !_legalConsent;
-                                          _legalConsentError = null;
-                                        }),
+                                        _legalConsent = !_legalConsent;
+                                        _legalConsentError = null;
+                                      }),
                                 child: Text.rich(
                                   TextSpan(
                                     style: TextStyle(
                                       fontSize: 11.5,
                                       height: 1.5,
                                       color: isDark
-                                          ? Color(0xFFB1B4BB)
+                                          ? _darkTextMuted
                                           : Colors.black54,
                                     ),
                                     children: [
@@ -562,15 +662,19 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                         child: Text(
                                           _legalVersionsError!,
                                           style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Color(0xFFEF4444)),
+                                            fontSize: 12,
+                                            color: Color(0xFFEF4444),
+                                          ),
                                         ),
                                       ),
                                       TextButton(
                                         onPressed: _loadLegalVersions,
-                                        child: const Text('Retry',
-                                            style: TextStyle(
-                                                color: AppColors.blue)),
+                                        child: const Text(
+                                          'Retry',
+                                          style: TextStyle(
+                                            color: AppColors.blue,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -581,8 +685,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                   child: Text(
                                     _legalConsentError!,
                                     style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFFEF4444)),
+                                      fontSize: 12,
+                                      color: Color(0xFFEF4444),
+                                    ),
                                   ),
                                 ),
                               if (_error != null) ...[
@@ -590,18 +695,20 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 Text(
                                   _error!,
                                   style: const TextStyle(
-                                      fontSize: 12.5,
-                                      color: Color(0xFFEF4444)),
+                                    fontSize: 12.5,
+                                    color: Color(0xFFEF4444),
+                                  ),
                                 ),
                               ],
 
                               const SizedBox(height: 16),
 
                               // Create Account button
-                              _CreateButton(
+                              PrimaryButton(
+                                label: 'Create Account',
+                                onPressed: _canSubmit ? _register : null,
                                 loading: _loading,
-                                enabled: _canSubmit,
-                                onTap: _register,
+                                trailingArrow: true,
                               ),
 
                               const SizedBox(height: 14),
@@ -609,7 +716,9 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                               // Security note
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 13, vertical: 10),
+                                  horizontal: 13,
+                                  vertical: 10,
+                                ),
                                 decoration: BoxDecoration(
                                   color: isDark
                                       ? const Color(0x1200D4C8)
@@ -623,8 +732,11 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                 ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.shield_outlined,
-                                        size: 15, color: _teal),
+                                    const Icon(
+                                      Icons.shield_outlined,
+                                      size: 15,
+                                      color: _teal,
+                                    ),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text.rich(
@@ -633,23 +745,22 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                             fontSize: 11,
                                             height: 1.45,
                                             color: isDark
-                                                ? const Color(0xFF1A6060)
+                                                ? const Color(0xFF9ADDD8)
                                                 : Colors.black45,
                                           ),
                                           children: const [
-                                            TextSpan(
-                                                text:
-                                                    'Your password is '),
+                                            TextSpan(text: 'Your password is '),
                                             TextSpan(
                                               text: 'end-to-end encrypted',
                                               style: TextStyle(
-                                                  color: _teal,
-                                                  fontWeight:
-                                                      FontWeight.w600),
+                                                color: _teal,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                             ),
                                             TextSpan(
-                                                text:
-                                                    ' and never stored in plain text.'),
+                                              text:
+                                                  ' and never stored in plain text.',
+                                            ),
                                           ],
                                         ),
                                       ),
@@ -684,7 +795,8 @@ class _CircleBackButton extends StatelessWidget {
     return GestureDetector(
       onTap: () => Navigator.pop(context),
       child: Container(
-        width: 38, height: 38,
+        width: 38,
+        height: 38,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: isDark
@@ -723,9 +835,7 @@ class _ProgressDots extends StatelessWidget {
             width: state == 'active' ? 20 : 20,
             height: 4,
             decoration: BoxDecoration(
-              color: state == 'done'
-                  ? const Color(0xFF00D4C8)
-                  : AppColors.blue,
+              color: state == 'done' ? const Color(0xFF00D4C8) : AppColors.blue,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -744,7 +854,8 @@ class _Eyebrow extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 18, height: 2,
+          width: 18,
+          height: 2,
           decoration: BoxDecoration(
             color: AppColors.blue,
             borderRadius: BorderRadius.circular(1),
@@ -808,7 +919,9 @@ class _FieldLabel extends StatelessWidget {
         fontSize: 10.5,
         fontWeight: FontWeight.w700,
         letterSpacing: 1,
-        color: isDark ? const Color.fromARGB(255, 105, 123, 149) : Colors.black38,
+        color: isDark
+            ? _RegisterSetPasswordPageState._darkTextSoft
+            : Colors.black45,
       ),
     );
   }
@@ -843,19 +956,19 @@ class _PasswordField extends StatelessWidget {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(
-          color: isDark ? const Color(0xFF253A58) : Colors.black26,
+          color: isDark ? const Color(0xFF6F84A8) : Colors.black38,
         ),
         prefixIcon: Icon(
           Icons.lock_outline_rounded,
           size: 18,
-          color: isDark ? const Color(0xFF2E4A6A) : Colors.black38,
+          color: isDark ? const Color(0xFF6F84A8) : Colors.black45,
         ),
         suffixIcon: IconButton(
           onPressed: onToggle,
           icon: Icon(
             obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
             size: 18,
-            color: isDark ? const Color(0xFF2E4A6A) : Colors.black38,
+            color: isDark ? const Color(0xFF6F84A8) : Colors.black45,
           ),
         ),
         filled: true,
@@ -879,8 +992,10 @@ class _PasswordField extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 15,
+          vertical: 15,
+        ),
       ),
       validator: validator,
     );
@@ -914,8 +1029,8 @@ class _StrengthBars extends StatelessWidget {
                   color: filled
                       ? color
                       : (isDark
-                          ? Colors.white.withValues(alpha: 0.07)
-                          : Colors.black.withValues(alpha: 0.07)),
+                            ? Colors.white.withValues(alpha: 0.07)
+                            : Colors.black.withValues(alpha: 0.07)),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -930,7 +1045,9 @@ class _StrengthBars extends StatelessWidget {
               'Password strength',
               style: TextStyle(
                 fontSize: 10.5,
-                color: isDark ? const Color(0xFF5B6F8D) : Colors.black38,
+                color: isDark
+                    ? _RegisterSetPasswordPageState._darkTextSoft
+                    : Colors.black45,
               ),
             ),
             if (label.isNotEmpty)
@@ -979,7 +1096,11 @@ class _RulesBox extends StatelessWidget {
           const SizedBox(height: 6),
           _Rule(label: 'Contains a number', ok: hasNumber, isDark: isDark),
           const SizedBox(height: 6),
-          _Rule(label: 'Contains a special character', ok: hasSpecial, isDark: isDark),
+          _Rule(
+            label: 'Contains a special character',
+            ok: hasSpecial,
+            isDark: isDark,
+          ),
         ],
       ),
     );
@@ -1000,14 +1121,22 @@ class _Rule extends StatelessWidget {
         Icon(
           ok ? Icons.check_circle_outline_rounded : Icons.circle_outlined,
           size: 13,
-          color: ok ? teal : (isDark ? const Color(0xFF5B6F8D) : Colors.black26),
+          color: ok
+              ? teal
+              : (isDark
+                    ? _RegisterSetPasswordPageState._darkTextSoft
+                    : Colors.black38),
         ),
         const SizedBox(width: 8),
         Text(
           label,
           style: TextStyle(
             fontSize: 11,
-            color: ok ? teal : (isDark ? const Color(0xFF5B6F8D) : Colors.black38),
+            color: ok
+                ? teal
+                : (isDark
+                      ? _RegisterSetPasswordPageState._darkTextMuted
+                      : Colors.black54),
           ),
         ),
       ],
@@ -1036,17 +1165,22 @@ class _CheckRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 18, height: 18,
+            width: 18,
+            height: 18,
             margin: const EdgeInsets.only(top: 1),
             decoration: BoxDecoration(
               color: checked
                   ? const Color(0xFF1E4FC7)
-                  : (isDark ? const Color(0xFF0F1C35) : const Color(0xFFF0F5FF)),
+                  : (isDark
+                        ? const Color(0xFF0F1C35)
+                        : const Color(0xFFF0F5FF)),
               borderRadius: BorderRadius.circular(5),
               border: Border.all(
                 color: checked
                     ? AppColors.blue
-                    : (isDark ? const Color(0xFF1E3A60) : const Color(0xFFD4E0FF)),
+                    : (isDark
+                          ? const Color(0xFF1E3A60)
+                          : const Color(0xFFD4E0FF)),
                 width: 1.5,
               ),
             ),
@@ -1057,76 +1191,6 @@ class _CheckRow extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(child: child),
         ],
-      ),
-    );
-  }
-}
-
-class _CreateButton extends StatelessWidget {
-  final bool loading;
-  final bool enabled;
-  final VoidCallback onTap;
-  const _CreateButton({
-    required this.loading,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: (loading || !enabled) ? null : onTap,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 200),
-        opacity: enabled ? 1.0 : 0.45,
-        child: Container(
-          height: 52,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E4FC7),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            children: [
-              Positioned(
-                top: 0, left: 0, right: 0,
-                child: Container(
-                  height: 26,
-                  decoration: const BoxDecoration(
-                    color: Color(0x12FFFFFF),
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(14)),
-                  ),
-                ),
-              ),
-              Center(
-                child: loading
-                    ? const SizedBox(
-                        width: 22, height: 22,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5),
-                      )
-                    : const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.person_add_outlined,
-                              color: Colors.white, size: 18),
-                          SizedBox(width: 8),
-                          Text(
-                            'Create Account',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

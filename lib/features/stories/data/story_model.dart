@@ -44,6 +44,7 @@ class StoryItem {
     this.viewedByMe = false,
     this.isUploadingPlaceholder = false,
     this.textOverlay,
+    this.isVenueStory = false,
   });
 
   final String? checkinFeaturedPhotoUrl;
@@ -51,6 +52,10 @@ class StoryItem {
   final String? venueName;
   final int viewCount;
   final bool viewedByMe;
+
+  /// true → bu bir venue hesabının kendi story'si (VenueStory). Viewer,
+  /// izlenmeyi venue endpoint'ine kaydeder. false → kişisel story.
+  final bool isVenueStory;
 
   /// Medya üzerine eklenen metin overlay'i (client render eder).
   final MediaTextOverlay? textOverlay;
@@ -97,6 +102,7 @@ class StoryItem {
       venueName: venueMap?['name'] as String?,
       viewedByMe: (j['viewed_by_me'] as bool?) ?? false,
       textOverlay: MediaTextOverlay.fromJson(j['text_overlay']),
+      isVenueStory: (j['is_venue_story'] as bool?) ?? false,
     );
   }
 }
@@ -135,6 +141,7 @@ class StoryGroup {
   factory StoryGroup.fromJson(Map<String, dynamic> j) => StoryGroup(
     user: StoryUser.fromJson(j['user'] as Map<String, dynamic>),
     featuredPhotoUrl: j['featured_photo_url'] as String?,
+    venueLabel: j['venue_label'] as String?,
     stories: (j['stories'] as List)
         .map((s) => StoryItem.fromJson(s as Map<String, dynamic>))
         .toList(),

@@ -39,6 +39,7 @@ extension VenueMemberRoleExt on VenueMemberRole {
 
 enum VenuePermission {
   eventManage,
+  eventAttendeesView,
   storyManage,
   storyViewStats,
   postCreate,
@@ -59,6 +60,8 @@ extension VenuePermissionExt on VenuePermission {
     switch (this) {
       case VenuePermission.eventManage:
         return 'EVENT_MANAGE';
+      case VenuePermission.eventAttendeesView:
+        return 'EVENT_ATTENDEES_VIEW';
       case VenuePermission.storyManage:
         return 'STORY_MANAGE';
       case VenuePermission.storyViewStats:
@@ -92,6 +95,8 @@ extension VenuePermissionExt on VenuePermission {
     switch (this) {
       case VenuePermission.eventManage:
         return 'Manage events';
+      case VenuePermission.eventAttendeesView:
+        return 'View event attendees';
       case VenuePermission.storyManage:
         return 'Post / manage stories';
       case VenuePermission.storyViewStats:

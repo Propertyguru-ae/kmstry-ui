@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
@@ -75,22 +78,63 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kBg = isDark ? AppColors.darkBg : Colors.white;
     final kBorder = isDark
-        ? Colors.white.withValues(alpha: 0.08)
+        ? const Color(0xFF162040)
         : Colors.black.withValues(alpha: 0.07);
 
     return Scaffold(
+      backgroundColor: kBg,
       appBar: AppBar(
+        backgroundColor: kBg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
+        ),
         title: Text(
           'Offers & Benefits',
           style: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
               color: colors.onSurface),
+        ),
+        actions: [
+          if (_canManagePartnerships)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Material(
+                color: AppColors.blue.withValues(alpha: isDark ? 0.16 : 0.10),
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          AddExternalPartnershipPage(venueId: widget.venueId),
+                    ),
+                  ).then((_) => _load()),
+                  child: const SizedBox(
+                    width: 38,
+                    height: 38,
+                    child: Icon(Icons.add_rounded,
+                        size: 22, color: AppColors.blue),
+                  ),
+                ),
+              ),
+            ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: kBorder),
         ),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.blue))
           : _error != null
               ? _buildError()
               : _buildPartnershipsTab(colors, isDark, kBorder),
@@ -185,7 +229,7 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                         itemCount: filtered.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 10),
                         itemBuilder: (_, i) => _PartnershipCard(
@@ -198,17 +242,6 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
                       ),
                     ),
         ),
-        if (_canManagePartnerships)
-          _AddButton(
-            label: 'Add Partnership',
-            icon: Icons.add,
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => AddExternalPartnershipPage(venueId: widget.venueId),
-              ),
-            ).then((_) => _load()),
-          ),
       ],
     );
   }
@@ -220,31 +253,17 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
     final options = ExternalPartnershipPlatform.values
         .where((p) => _partnerships.any((x) => x.platform == p))
         .toList();
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            const Text('Filter by Platform',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            ...options.map((p) => ListTile(
-                  title: Text(_platformLabel(p)),
-                  trailing: _filterPlatform == p
-                      ? const Icon(Icons.check, size: 18)
-                      : null,
-                  onTap: () {
-                    setState(() => _filterPlatform =
-                        _filterPlatform == p ? null : p);
-                    Navigator.pop(ctx);
-                  },
-                )),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+    _openFilterSheet(
+      title: 'Filter by Platform',
+      dotColor: AppColors.blue,
+      itemCount: options.length,
+      isSelectedAt: (i) => _filterPlatform == options[i],
+      labelAt: (i) => _platformLabel(options[i]),
+      onToggle: (i) {
+        setState(() =>
+            _filterPlatform = _filterPlatform == options[i] ? null : options[i]);
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -252,28 +271,99 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
     final options = ExternalPartnershipOfferType.values
         .where((t) => _partnerships.any((x) => x.offerType == t))
         .toList();
+    _openFilterSheet(
+      title: 'Filter by Benefit Type',
+      dotColor: AppColors.teal,
+      itemCount: options.length,
+      isSelectedAt: (i) => _filterOfferType == options[i],
+      labelAt: (i) => _offerTypeLabel(options[i]),
+      onToggle: (i) {
+        setState(() => _filterOfferType =
+            _filterOfferType == options[i] ? null : options[i]);
+        Navigator.pop(context);
+      },
+    );
+  }
+
+  /// Map filtre sheet'leriyle aynı premium dil: yuvarlak koyu sheet, logo renkli
+  /// nokta başlık ve tile'lar (mavi→turkuaz onay kutusu).
+  void _openFilterSheet({
+    required String title,
+    required Color dotColor,
+    required int itemCount,
+    required bool Function(int) isSelectedAt,
+    required String Function(int) labelAt,
+    required void Function(int) onToggle,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kSurface = isDark ? const Color(0xFF0D1525) : Colors.white;
+    final kCard = isDark ? const Color(0xFF111C2B) : const Color(0xFFF7FAFD);
+    final kBorder =
+        isDark ? const Color(0xFF162040) : Colors.black.withValues(alpha: 0.08);
+    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        margin: EdgeInsets.fromLTRB(
+            12, 0, 12, MediaQuery.of(ctx).padding.bottom + 12),
+        decoration: BoxDecoration(
+          color: kSurface,
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: kBorder),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 12),
-            const Text('Filter by Benefit Type',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            ...options.map((t) => ListTile(
-                  title: Text(_offerTypeLabel(t)),
-                  trailing: _filterOfferType == t
-                      ? const Icon(Icons.check, size: 18)
-                      : null,
-                  onTap: () {
-                    setState(() => _filterOfferType =
-                        _filterOfferType == t ? null : t);
-                    Navigator.pop(ctx);
-                  },
-                )),
-            const SizedBox(height: 8),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [AppColors.blue, AppColors.teal]),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration:
+                      BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  title.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: kText,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            for (int i = 0; i < itemCount; i++) ...[
+              _SheetTile(
+                label: labelAt(i),
+                selected: isSelectedAt(i),
+                isDark: isDark,
+                kCard: kCard,
+                kBorder: kBorder,
+                kText: kText,
+                onTap: () => onToggle(i),
+              ),
+              const SizedBox(height: 8),
+            ],
           ],
         ),
       ),
@@ -327,7 +417,6 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
         ),
         _AddButton(
           label: 'Create Offer',
-          icon: Icons.add,
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
@@ -351,18 +440,28 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 56, color: colors.onSurface.withValues(alpha: 0.2)),
-            const SizedBox(height: 16),
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                color: AppColors.blue.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Icon(icon, size: 38, color: AppColors.blueDark),
+            ),
+            const SizedBox(height: 18),
             Text(title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700)),
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurface)),
             const SizedBox(height: 8),
             Text(subtitle,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: 13,
-                    color: colors.onSurface.withValues(alpha: 0.5),
+                    color: colors.onSurface.withValues(alpha: 0.6),
                     height: 1.5)),
           ],
         ),
@@ -398,12 +497,12 @@ class _PartnershipCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
+            ? const Color(0xFF0D1525)
             : Colors.black.withValues(alpha: 0.025),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isDark
-              ? Colors.white.withValues(alpha: 0.07)
+              ? const Color(0xFF162040)
               : Colors.black.withValues(alpha: 0.07),
         ),
       ),
@@ -416,13 +515,15 @@ class _PartnershipCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(item.platformDisplayName,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w700)),
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: colors.onSurface)),
                 const SizedBox(height: 2),
                 Text(item.offerLabel,
                     style: TextStyle(
                         fontSize: 12,
-                        color: colors.onSurface.withValues(alpha: 0.6))),
+                        color: colors.onSurface.withValues(alpha: 0.72))),
                 const SizedBox(height: 6),
                 Container(
                   padding:
@@ -502,9 +603,9 @@ class _PartnershipCard extends StatelessWidget {
   Color _statusColor(ExternalPartnershipStatus s, ColorScheme colors) {
     switch (s) {
       case ExternalPartnershipStatus.ACTIVE:
-        return const Color(0xFF00A89E);
+        return AppColors.teal;
       case ExternalPartnershipStatus.PENDING_REVIEW:
-        return const Color(0xFFF59E0B);
+        return AppColors.orange;
       case ExternalPartnershipStatus.REJECTED:
         return colors.error;
       case ExternalPartnershipStatus.EXPIRED:
@@ -673,23 +774,28 @@ class _PlatformBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.black.withValues(alpha: 0.04),
+        gradient: LinearGradient(
+          colors: [
+            AppColors.blue.withValues(alpha: 0.22),
+            AppColors.teal.withValues(alpha: 0.18),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.blue.withValues(alpha: 0.28)),
       ),
       child: Center(
         child: Text(
           _initials,
-          style: TextStyle(
+          style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              color: Theme.of(context).colorScheme.primary),
+              color: AppColors.blueDark),
         ),
       ),
     );
@@ -731,19 +837,19 @@ class _FilterChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
           color: active
-              ? colors.primary.withValues(alpha: 0.12)
+              ? AppColors.blue.withValues(alpha: isDark ? 0.16 : 0.10)
               : (isDark
-                  ? Colors.white.withValues(alpha: 0.05)
+                  ? const Color(0xFF0D1525)
                   : Colors.black.withValues(alpha: 0.04)),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: active
-                ? colors.primary.withValues(alpha: 0.4)
+                ? AppColors.blue.withValues(alpha: 0.55)
                 : (isDark
-                    ? Colors.white.withValues(alpha: 0.08)
+                    ? const Color(0xFF162040)
                     : Colors.black.withValues(alpha: 0.08)),
           ),
         ),
@@ -755,20 +861,20 @@ class _FilterChip extends StatelessWidget {
                 label,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                  fontSize: 12.5,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w600,
                   color: active
-                      ? colors.primary
-                      : colors.onSurface.withValues(alpha: 0.6),
+                      ? AppColors.blue
+                      : colors.onSurface.withValues(alpha: 0.72),
                 ),
               ),
             ),
             Icon(
-              Icons.expand_more,
-              size: 16,
+              Icons.expand_more_rounded,
+              size: 17,
               color: active
-                  ? colors.primary
-                  : colors.onSurface.withValues(alpha: 0.4),
+                  ? AppColors.blue
+                  : colors.onSurface.withValues(alpha: 0.6),
             ),
           ],
         ),
@@ -779,11 +885,9 @@ class _FilterChip extends StatelessWidget {
 
 class _AddButton extends StatelessWidget {
   final String label;
-  final IconData icon;
   final VoidCallback onTap;
 
-  const _AddButton(
-      {required this.label, required this.icon, required this.onTap});
+  const _AddButton({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -795,19 +899,7 @@ class _AddButton extends StatelessWidget {
             top: BorderSide(
                 color: Colors.black.withValues(alpha: 0.07))),
       ),
-      child: SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: onTap,
-          icon: Icon(icon, size: 18),
-          label: Text(label),
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-        ),
-      ),
+      child: PrimaryButton(label: label, onPressed: onTap),
     );
   }
 }
@@ -823,16 +915,14 @@ class _InfoBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
+        color: AppColors.blue.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: const Color(0xFF3B82F6).withValues(alpha: 0.2)),
+        border: Border.all(color: AppColors.blue.withValues(alpha: 0.20)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline,
-              size: 16, color: Color(0xFF3B82F6)),
+          const Icon(Icons.info_outline, size: 16, color: AppColors.blue),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -844,6 +934,92 @@ class _InfoBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Filtre sheet tile'ı — map/add-partnership ile aynı görünüm ──────────────────
+class _SheetTile extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool isDark;
+  final Color kCard, kBorder, kText;
+  final VoidCallback onTap;
+
+  const _SheetTile({
+    required this.label,
+    required this.selected,
+    required this.isDark,
+    required this.kCard,
+    required this.kBorder,
+    required this.kText,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.blue.withValues(alpha: isDark ? 0.16 : 0.10)
+                : kCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? AppColors.blue.withValues(alpha: 0.62) : kBorder,
+              width: selected ? 1.2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  gradient: selected
+                      ? const LinearGradient(
+                          colors: [AppColors.blue, AppColors.teal],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                      : null,
+                  border: Border.all(
+                    color: selected
+                        ? Colors.transparent
+                        : kText.withValues(alpha: isDark ? 0.42 : 0.28),
+                    width: 1.6,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(Icons.check_rounded,
+                        color: Colors.white, size: 17)
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: selected
+                        ? kText
+                        : kText.withValues(alpha: isDark ? 0.78 : 0.72),
+                    fontSize: 14.5,
+                    fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (selected)
+                const Icon(Icons.done_rounded, color: AppColors.teal, size: 18),
+            ],
+          ),
+        ),
       ),
     );
   }

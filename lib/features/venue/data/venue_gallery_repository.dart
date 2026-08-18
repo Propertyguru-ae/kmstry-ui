@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
@@ -12,8 +13,20 @@ import 'venue_gallery_model.dart';
 class VenueGalleryRepository {
   final ApiClient _api = ApiClient();
 
+  /// Galeri her değiştiğinde (yükleme/silme) artan sayaç. Home'daki galeri
+  /// kartı gibi bağımsız state'ler bunu dinleyip kendini tazeleyebilir — böylece
+  /// profil sayfasından eklenen medya home kartında da anında görünür.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+  static void _notifyChanged() => changes.value++;
+
   Future<List<VenueGalleryItem>> getGallery(String venueId) async {
-    final data = await _api.get('/venues/$venueId/gallery');
+    // Endpoint JwtAuthGuard ile korumalı → token gönderilmezse 401 döner ve
+    // galeri boş görünür. (upload/delete zaten token gönderiyor.)
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.get(
+      '/venues/$venueId/gallery',
+      headers: token != null ? {'Authorization': 'Bearer $token'} : null,
+    );
     return (data as List)
         .whereType<Map>()
         .map((e) => VenueGalleryItem.fromJson(Map<String, dynamic>.from(e)))
@@ -21,7 +34,11 @@ class VenueGalleryRepository {
   }
 
   /// Foto veya video yükler (limit yok). [thumbnail] video için önizleme karesi.
-  Future<VenueGalleryItem> uploadItem(String venueId, File file, {File? thumbnail}) async {
+  Future<VenueGalleryItem> uploadItem(
+    String venueId,
+    File file, {
+    File? thumbnail,
+  }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
@@ -31,18 +48,25 @@ class VenueGalleryRepository {
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeParts = mimeType.split('/');
-    request.files.add(await http.MultipartFile.fromPath(
-      'file',
-      file.path,
-      contentType: MediaType(mimeParts[0], mimeParts.length > 1 ? mimeParts[1] : 'octet-stream'),
-    ));
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType: MediaType(
+          mimeParts[0],
+          mimeParts.length > 1 ? mimeParts[1] : 'octet-stream',
+        ),
+      ),
+    );
 
     if (thumbnail != null) {
-      request.files.add(await http.MultipartFile.fromPath(
-        'thumbnail',
-        thumbnail.path,
-        contentType: MediaType('image', 'jpeg'),
-      ));
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'thumbnail',
+          thumbnail.path,
+          contentType: MediaType('image', 'jpeg'),
+        ),
+      );
     }
 
     final response = await request.send();
@@ -51,7 +75,11 @@ class VenueGalleryRepository {
       throw Exception('Upload failed (${response.statusCode}): $body');
     }
     final json = jsonDecode(body);
-    return VenueGalleryItem.fromJson(Map<String, dynamic>.from(json as Map));
+    final item = VenueGalleryItem.fromJson(
+      Map<String, dynamic>.from(json as Map),
+    );
+    _notifyChanged();
+    return item;
   }
 
   Future<void> deleteItem(String venueId, String itemId) async {
@@ -60,5 +88,6 @@ class VenueGalleryRepository {
       '/venues/$venueId/gallery/$itemId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    _notifyChanged();
   }
 }

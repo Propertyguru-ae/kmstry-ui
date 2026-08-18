@@ -1296,9 +1296,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                       const SizedBox(height: 18),
                       VenueGallerySection(
                         venueId: venue.id,
+                        // Galeri ekleme/silme POST_CREATE iznine bağlı.
                         canEdit:
                             session.isOwner ||
-                            session.can(VenuePermission.venueEdit),
+                            session.can(VenuePermission.postCreate),
                       ),
                     ],
 

@@ -179,14 +179,18 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       return;
     }
 
-    _repo.recordView(story.id).ignore();
     StoryViewedCache.markViewed(story.id).ignore();
-    // Venue story izlenmesi HER ZAMAN kaydedilir (operator dahil) — böylece izlenme
-    // durumu kalıcı olur ve logout/login sonrası halka gri kalır. Operator'ın viewers
-    // listesinde kendini görmemesi backend'de (getStoryViewers) isteği yapan kişi
-    // hariç tutularak sağlanır.
-    if (widget.venueId != null) {
-      VenueStoryRepository().recordView(widget.venueId!, story.id).ignore();
+    if (story.isVenueStory && story.venueId != null) {
+      // Home feed'deki takip edilen venue'nün kendi story'si → yalnızca venue
+      // endpoint'ine kaydet (kişisel /stories/:id/view'a gönderme, o id orada yok).
+      VenueStoryRepository().recordView(story.venueId!, story.id).ignore();
+    } else {
+      _repo.recordView(story.id).ignore();
+      // Venue tray'inden açıldıysa (widget.venueId) izlenme venue'ye de yazılır —
+      // operatör dahil kalıcı gri halka için.
+      if (widget.venueId != null) {
+        VenueStoryRepository().recordView(widget.venueId!, story.id).ignore();
+      }
     }
 
     // Sonraki story'nin görselini/thumbnail'ını önden cache'e al (siyah ekran
@@ -694,21 +698,6 @@ class _StoryViewerPageState extends State<StoryViewerPage>
               ),
             ),
 
-            // ── DELETE (sağ alt) — kendi story'ni sil ─────────────────────
-            if (_canDeleteCurrentStory)
-              Positioned(
-                right: 12,
-                bottom: MediaQuery.of(context).padding.bottom + 20,
-                child: Material(
-                  color: Colors.black38,
-                  shape: const CircleBorder(),
-                  child: IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.white),
-                    onPressed: _deleteCurrentStory,
-                  ),
-                ),
-              ),
-
             // ── VENUE STORY: viewers count bar (Instagram-style) ──────────
             if (widget.venueId != null &&
                 widget.showViewers &&
@@ -763,11 +752,6 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                           Icons.keyboard_arrow_up_rounded,
                           color: Colors.white60,
                           size: 20,
-                        ),
-                        const SizedBox(width: 2),
-                        const Text(
-                          'viewers',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
                         ),
                       ],
                     ),

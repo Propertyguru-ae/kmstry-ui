@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
@@ -33,6 +35,7 @@ class _PermMeta {
 
 const _permMeta = <VenuePermission, _PermMeta>{
   VenuePermission.eventManage:   _PermMeta(Icons.event_outlined,         _PC.turkuaz),
+  VenuePermission.eventAttendeesView: _PermMeta(Icons.groups_outlined,    _PC.mavi),
   VenuePermission.storyManage:     _PermMeta(Icons.auto_stories_outlined,  _PC.turkuaz),
   VenuePermission.postCreate:    _PermMeta(Icons.edit_outlined,          _PC.mavi),
   VenuePermission.venueEdit:     _PermMeta(Icons.tune_outlined,          _PC.mavi),
@@ -177,19 +180,10 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
         backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            margin: const EdgeInsets.only(left: 12),
-            width: 38, height: 38,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: isDark ? 0.05 : 0.0),
-              border: Border.all(color: colors.outline.withValues(alpha: 0.15)),
-            ),
-            child: Icon(Icons.arrow_back_ios_new_rounded, size: 15,
-                color: colors.onSurface.withValues(alpha: 0.6)),
-          ),
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 12),
+          child: AppBackButton(),
         ),
         title: Text('Roles & Permissions',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800,
@@ -312,19 +306,7 @@ class _VenuePermissionsPageState extends State<VenuePermissionsPage> {
                           elevation: 0,
                         ),
                       )
-                    : FilledButton.icon(
-                        onPressed: _addRole,
-                        icon: const Icon(Icons.add_rounded, size: 20),
-                        label: const Text('Add Role',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _PC.turkuaz,
-                          foregroundColor: const Color(0xFF06091A),
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          elevation: 0,
-                        ),
-                      ),
+                    : PrimaryButton(label: 'Add Role', onPressed: _addRole),
               ),
             ),
           ),

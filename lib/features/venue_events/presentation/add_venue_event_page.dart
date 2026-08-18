@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
@@ -631,19 +633,10 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
         backgroundColor: kBg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            margin: const EdgeInsets.only(left: 14),
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: isDark ? 0.06 : 0.0),
-              border: Border.all(color: Colors.white.withValues(alpha: isDark ? 0.08 : 0.0)),
-            ),
-            child: Icon(Icons.close_rounded, size: 18,
-                color: isDark ? const Color(0xFF607090) : const Color(0xFF6B7280)),
-          ),
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
         ),
         title: Text(
           _isEdit ? 'Edit Event' : 'New Event',
@@ -651,20 +644,6 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
               letterSpacing: -0.3, color: kText),
         ),
         centerTitle: true,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 14),
-            child: _saving
-                ? const SizedBox(width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: _kMagenta))
-                : GestureDetector(
-                    onTap: _save,
-                    child: const Text('Publish',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800,
-                            color: _kMagenta)),
-                  ),
-          ),
-        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1,
@@ -1053,7 +1032,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                         style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
                             letterSpacing: 1.2, color: _kTuruncu)),
                     Text('optional',
-                        style: TextStyle(fontSize: 10, color: kLabel.withValues(alpha: 0.5))),
+                        style: TextStyle(fontSize: 10, color: kLabel.withValues(alpha: 0.8))),
                   ],
                 ),
                 const Spacer(),
@@ -1120,14 +1099,14 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kText)),
                         const SizedBox(height: 4),
                         Text('Optional — describe any conditions for this offer.',
-                            style: TextStyle(fontSize: 11, color: kDim.withValues(alpha: 0.7))),
+                            style: TextStyle(fontSize: 11, color: kDim.withValues(alpha: 0.82))),
                         const SizedBox(height: 8),
                         TextFormField(
                           controller: _offerTitleCtrl,
                           style: TextStyle(fontSize: 13, color: kText),
                           decoration: InputDecoration(
                             hintText: 'e.g. Valid until 22:00, min 2 guests',
-                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.5)),
+                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.72)),
                             filled: true,
                             fillColor: kCard,
                             border: OutlineInputBorder(
@@ -1151,7 +1130,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                           style: TextStyle(fontSize: 13, color: kText),
                           decoration: InputDecoration(
                             hintText: 'e.g. 150',
-                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.5)),
+                            hintStyle: TextStyle(fontSize: 13, color: kDim.withValues(alpha: 0.72)),
                             filled: true,
                             fillColor: kCard,
                             border: OutlineInputBorder(
@@ -1243,7 +1222,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
                               letterSpacing: 1.2, color: _kMagenta)),
                       Text('optional',
-                          style: TextStyle(fontSize: 10, color: kLabel.withValues(alpha: 0.5))),
+                          style: TextStyle(fontSize: 10, color: kLabel.withValues(alpha: 0.8))),
                     ],
                   ),
                   const Spacer(),
@@ -1511,6 +1490,16 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           ],
         ),
       ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
+          child: PrimaryButton(
+            label: _isEdit ? 'Save Changes' : 'Publish Event',
+            onPressed: _saving ? null : () => _save(),
+            loading: _saving,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1572,7 +1561,7 @@ class _SectionLabel extends StatelessWidget {
           const SizedBox(width: 6),
           Text('optional',
               style: TextStyle(fontSize: 10, fontWeight: FontWeight.w400,
-                  letterSpacing: 0, color: kLabel.withValues(alpha: 0.5),
+                  letterSpacing: 0, color: kLabel.withValues(alpha: 0.8),
                   textBaseline: TextBaseline.alphabetic)),
         ],
       ],
@@ -1618,8 +1607,8 @@ class _EventField extends StatelessWidget {
       style: TextStyle(fontSize: 14, color: kText),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: kDim.withValues(alpha: 0.5)),
-        counterStyle: TextStyle(color: kDim.withValues(alpha: 0.6), fontSize: 10),
+        hintStyle: TextStyle(color: kDim.withValues(alpha: 0.72)),
+        counterStyle: TextStyle(color: kDim.withValues(alpha: 0.78), fontSize: 10),
         filled: true,
         fillColor: kCard,
         contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
@@ -1963,7 +1952,7 @@ class _CounterBtn extends StatelessWidget {
           border: Border.all(color: kBorder, width: 1.5),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Icon(icon, size: 16, color: const Color(0xFF607090)),
+        child: Icon(icon, size: 16, color: const Color(0xFF8DA0BD)),
       ),
     );
   }

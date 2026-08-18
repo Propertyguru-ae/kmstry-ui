@@ -8,7 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -158,6 +160,25 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   /// widget.otherUserId bildirimden boş gelirse yüklenen chat'ten kullan.
+  /// Başlıktaki isme/avatara dokununca karşı kullanıcının profilini açar.
+  void _openOtherProfile() {
+    final userId = _effectiveOtherUserId;
+    if (userId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfilePreviewPage(
+          userId: userId,
+          userName: widget.otherName,
+          userPhoto:
+              widget.otherPhotoUrl.isNotEmpty ? widget.otherPhotoUrl : null,
+          chatIdHint: _chatId,
+          isMatchedHint: true,
+          hideVenueInfo: true,
+        ),
+      ),
+    );
+  }
+
   String get _effectiveOtherUserId => widget.otherUserId.isNotEmpty
       ? widget.otherUserId
       : (_chat?.displayOtherUser?.id ?? '');
@@ -2334,24 +2355,42 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        CircleAvatar(
-          radius: 22,
-          backgroundColor: avatarColor.withValues(alpha: 0.18),
-          backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
-          child: !hasPhoto
-              ? Text(
+        Container(
+          width: 44,
+          height: 44,
+          clipBehavior: Clip.antiAlias,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: avatarColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: hasPhoto
+              ? CachedImage(
+                  photoUrl,
+                  width: 44,
+                  height: 44,
+                  fit: BoxFit.cover,
+                  errorWidget: (_) => Text(
+                    initial,
+                    style: TextStyle(
+                      color: avatarColor,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
+                  ),
+                )
+              : Text(
                   initial,
                   style: TextStyle(
                     color: avatarColor,
                     fontWeight: FontWeight.w800,
                     fontSize: 17,
                   ),
-                )
-              : null,
+                ),
         ),
         Positioned(
-          right: -1,
-          bottom: 1,
+          right: -2,
+          bottom: -2,
           child: Container(
             width: 12,
             height: 12,
@@ -2380,20 +2419,30 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     return Scaffold(
       backgroundColor: _chatBackground,
       appBar: AppBar(
-        automaticallyImplyLeading: !_forwardSelectionMode,
+        automaticallyImplyLeading: false,
         backgroundColor: _headerBackground,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         iconTheme: IconThemeData(color: colors.onSurface),
-        titleSpacing: 0,
+        titleSpacing: 8,
         toolbarHeight: 72,
         shape: Border(bottom: BorderSide(color: _dividerColor, width: 1)),
-        title: Padding(
-          padding: const EdgeInsets.only(right: 12),
-          child: Row(
-            children: [
-              _buildHeaderAvatar(
+        title: Row(
+          children: [
+            if (!_forwardSelectionMode) ...[
+              const AppBackButton(),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: GestureDetector(
+                onTap: _forwardSelectionMode ? null : _openOtherProfile,
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Row(
+                    children: [
+                      _buildHeaderAvatar(
                 avatarSeed: avatarSeed,
                 avatarColor: avatarColor,
                 hasPhoto: hasPhoto,
@@ -2438,6 +2487,10 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ),
             ],
           ),
+                ),
+              ),
+            ),
+          ],
         ),
         actions: _forwardSelectionMode
             ? [

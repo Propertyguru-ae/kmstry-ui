@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_gate_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/photo_onboarding_page.dart';
@@ -58,8 +59,12 @@ class AuthRoutes {
       return VenueInvitePage(token: token);
     },
     people: (_) => const FindFriendsPage(),
-    onboardingPhoto: (context) => const PhotoOnboardingPage(),
-    onboardingUsername: (context) => const UsernameOnboardingPage(),
+    // Bu named route'lar yalnızca signup akışında kullanılır (register → username
+    // → …). Marka akışı olduğu için daima dark.
+    onboardingPhoto: (context) =>
+        const ForceDark(child: PhotoOnboardingPage()),
+    onboardingUsername: (context) =>
+        const ForceDark(child: UsernameOnboardingPage()),
     appShell: (context) => const AppShell(),
   };
 }

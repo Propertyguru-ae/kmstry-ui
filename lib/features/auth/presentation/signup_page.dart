@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/ui/force_dark.dart';
+import 'package:kmstry_frontend/core/ui/account_exists_sheet.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -33,6 +36,8 @@ class _SignupPageState extends State<SignupPage> {
   static const _darkBg = Color(0xFF06091A);
   static const _sheetBg = Color(0xFF0B1322);
   static const _blueAccent = AppColors.blueDark;
+  static const _darkTextMuted = Color(0xFFA6B3D2);
+  static const _darkTextSoft = Color(0xFF8FA2C4);
 
   @override
   void dispose() {
@@ -83,6 +88,12 @@ class _SignupPageState extends State<SignupPage> {
             Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
             return;
           }
+          // Otomatik giriş yapılamadı → tutarlı "Sign In" sheet'ini göster.
+          showAccountExistsSheet(
+            context,
+            onSignIn: () => Navigator.of(context).pop(),
+          );
+          return;
         }
       }
       setState(() => _error = _friendlyError(e));
@@ -214,42 +225,10 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   void _showAccountExistsSheet() {
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'You already have an account',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'This email is already registered with a password. '
-                  'Please sign in instead.',
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop();
-                      // Signup, login ekranından push edildi → geri dön.
-                      Navigator.of(context).pop();
-                    },
-                    child: const Text('Sign In'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    showAccountExistsSheet(
+      context,
+      // Signup, login ekranından push edildi → geri dön.
+      onSignIn: () => Navigator.of(context).pop(),
     );
   }
 
@@ -258,84 +237,95 @@ class _SignupPageState extends State<SignupPage> {
     return showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final colors = Theme.of(sheetContext).colorScheme;
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Consent Required',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text('Please agree to continue with Google sign in.'),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Checkbox(
-                          value: consent,
-                          onChanged: (v) =>
-                              setSheetState(() => consent = v ?? false),
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Wrap(
-                              children: [
-                                const Text('I agree to the '),
-                                InkWell(
-                                  onTap: () => _openPolicy('/terms'),
-                                  child: Text(
-                                    'Terms of Service',
-                                    style: TextStyle(
-                                      color: colors.primary,
-                                      decoration: TextDecoration.underline,
-                                    ),
-                                  ),
-                                ),
-                                const Text(' and '),
-                                InkWell(
-                                  onTap: () => _openPolicy('/privacy'),
-                                  child: Text(
-                                    'Privacy Policy',
-                                    style: TextStyle(
-                                      color: colors.primary,
-                                      decoration: TextDecoration.underline,
-                                    ),
-                                  ),
-                                ),
-                                const Text('.'),
-                              ],
+      builder: (_) {
+        // Signup akışı dark → onay sheet'i de ForceDark ile eşleşir.
+        return ForceDark(
+          child: Builder(
+            builder: (sheetContext) {
+              final colors = Theme.of(sheetContext).colorScheme;
+              return StatefulBuilder(
+                builder: (context, setSheetState) {
+                  return SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Text(
+                            'Consent Required',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: consent
-                            ? () => Navigator.of(sheetContext).pop(true)
-                            : null,
-                        child: const Text('Continue'),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Please agree to continue with Google sign in.',
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Checkbox(
+                                value: consent,
+                                onChanged: (v) =>
+                                    setSheetState(() => consent = v ?? false),
+                              ),
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: Wrap(
+                                    children: [
+                                      const Text('I agree to the '),
+                                      InkWell(
+                                        onTap: () => _openPolicy('/terms'),
+                                        child: Text(
+                                          'Terms of Service',
+                                          style: TextStyle(
+                                            color: colors.primary,
+                                            decoration:
+                                                TextDecoration.underline,
+                                          ),
+                                        ),
+                                      ),
+                                      const Text(' and '),
+                                      InkWell(
+                                        onTap: () => _openPolicy('/privacy'),
+                                        child: Text(
+                                          'Privacy Policy',
+                                          style: TextStyle(
+                                            color: colors.primary,
+                                            decoration:
+                                                TextDecoration.underline,
+                                          ),
+                                        ),
+                                      ),
+                                      const Text('.'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: consent
+                                  ? () => Navigator.of(sheetContext).pop(true)
+                                  : null,
+                              child: const Text('Continue'),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            );
-          },
+                  );
+                },
+              );
+            },
+          ),
         );
       },
     );
@@ -386,6 +376,10 @@ class _SignupPageState extends State<SignupPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ForceDark(child: Builder(builder: _buildBody));
+  }
+
+  Widget _buildBody(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -459,9 +453,7 @@ class _SignupPageState extends State<SignupPage> {
                         style: TextStyle(
                           fontSize: 13,
                           height: 1.6,
-                          color: isDark
-                              ? const Color(0xFF4A6280)
-                              : Colors.black54,
+                          color: isDark ? _darkTextMuted : Colors.black54,
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -528,9 +520,7 @@ class _SignupPageState extends State<SignupPage> {
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 1,
-                                color: isDark
-                                    ? const Color(0xFF5B6F8D)
-                                    : Colors.black38,
+                                color: isDark ? _darkTextSoft : Colors.black38,
                               ),
                             ),
                             const SizedBox(height: 7),
@@ -544,8 +534,8 @@ class _SignupPageState extends State<SignupPage> {
                               style: TextStyle(
                                 fontSize: 11,
                                 color: isDark
-                                    ? const Color(0xFF5A6F8F)
-                                    : Colors.black38,
+                                    ? const Color(0xFF8FA2C4)
+                                    : Colors.black45,
                               ),
                             ),
 
@@ -563,10 +553,11 @@ class _SignupPageState extends State<SignupPage> {
                             const SizedBox(height: 14),
 
                             // Continue button
-                            _ContinueButton(
+                            PrimaryButton(
+                              label: 'Continue',
+                              onPressed: _continueToOtp,
                               loading: _loading,
-                              isDark: isDark,
-                              onTap: _continueToOtp,
+                              trailingArrow: true,
                             ),
 
                             const SizedBox(height: 12),
@@ -591,7 +582,7 @@ class _SignupPageState extends State<SignupPage> {
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: isDark
-                                          ? const Color(0xFF506884)
+                                          ? _darkTextSoft
                                           : Colors.black38,
                                     ),
                                   ),
@@ -638,7 +629,7 @@ class _SignupPageState extends State<SignupPage> {
                                   fontSize: 10.5,
                                   height: 1.6,
                                   color: isDark
-                                      ? const Color(0xFF5B6F8D)
+                                      ? _darkTextSoft
                                       : Colors.black38,
                                 ),
                                 children: [
@@ -649,7 +640,7 @@ class _SignupPageState extends State<SignupPage> {
                                     text: 'Terms',
                                     style: TextStyle(
                                       color: isDark
-                                          ? const Color(0xFF2E4D80)
+                                          ? AppColors.blueDark
                                           : _blueAccent,
                                     ),
                                   ),
@@ -658,7 +649,7 @@ class _SignupPageState extends State<SignupPage> {
                                     text: 'Privacy Policy',
                                     style: TextStyle(
                                       color: isDark
-                                          ? const Color(0xFF2E4D80)
+                                          ? AppColors.blueDark
                                           : _blueAccent,
                                     ),
                                   ),
@@ -693,7 +684,7 @@ class _SignupPageState extends State<SignupPage> {
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: isDark
-                                      ? const Color(0xFF2E4560)
+                                      ? _darkTextSoft
                                       : Colors.black38,
                                 ),
                                 children: [
@@ -971,7 +962,7 @@ class _AccountBadge extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.4,
-                    color: isDark ? const Color(0xFF3A5880) : Colors.black45,
+                    color: isDark ? const Color(0xFF8FA2C4) : Colors.black45,
                   ),
                 ),
               ],
@@ -1053,79 +1044,6 @@ class _EmailField extends StatelessWidget {
         if (!x.contains('@')) return 'Please enter a valid email address.';
         return null;
       },
-    );
-  }
-}
-
-class _ContinueButton extends StatelessWidget {
-  final bool loading;
-  final bool isDark;
-  final VoidCallback onTap;
-  const _ContinueButton({
-    required this.loading,
-    required this.isDark,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: loading ? null : onTap,
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E4FC7),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          children: [
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                height: 26,
-                decoration: const BoxDecoration(
-                  color: Color(0x12FFFFFF),
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-                ),
-              ),
-            ),
-            Center(
-              child: loading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2.5,
-                      ),
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Continue',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

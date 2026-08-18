@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
@@ -16,6 +17,10 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_member_status_
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+
+const _kKmstryBlue = Color(0xFF1A9FE8);
+const _kKmstryTeal = Color(0xFF1FD9A8);
+const _kKmstryPink = Color(0xFFE020D8);
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -666,11 +671,9 @@ class _NotificationPageState extends State<NotificationPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
-    final bg = isDark
-        ? const Color(0xFF0B0F17)
-        : theme.scaffoldBackgroundColor;
+    final bg = theme.scaffoldBackgroundColor;
     final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.05)
+        ? _kKmstryBlue.withValues(alpha: 0.10)
         : Colors.grey[200];
     return Scaffold(
       backgroundColor: bg,
@@ -678,9 +681,10 @@ class _NotificationPageState extends State<NotificationPage> {
         backgroundColor: bg,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: colors.onSurface),
-          onPressed: () => Navigator.of(context).maybePop(),
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
         ),
         title: Text(
           'Notifications',
@@ -695,7 +699,16 @@ class _NotificationPageState extends State<NotificationPage> {
           child: Container(color: borderColor, height: 1),
         ),
       ),
-      body: _buildBody(),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: isDark ? [bg, bg] : [const Color(0xFFF7FAFD), bg],
+          ),
+        ),
+        child: _buildBody(),
+      ),
     );
   }
 
@@ -735,35 +748,17 @@ class _NotificationPageState extends State<NotificationPage> {
       );
     }
     if (recentList.isEmpty) {
-      return Center(
-        child: Text(
-          'No notifications in last 30 days',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: colors.onSurface.withValues(alpha: 0.65),
-          ),
-        ),
+      return _NotificationsEmptyState(
+        isDark: theme.brightness == Brightness.dark,
       );
     }
     return RefreshIndicator(
       onRefresh: _loadNotifications,
       child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: recentList.length + 1,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        itemCount: recentList.length,
         itemBuilder: (context, index) {
-          if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(2, 4, 2, 12),
-              child: Text(
-                'Last 30 days',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: colors.onSurface.withValues(alpha: 0.88),
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
-                ),
-              ),
-            );
-          }
-          final n = recentList[index - 1];
+          final n = recentList[index];
           return _buildNotificationItem(n);
         },
       ),
@@ -777,16 +772,30 @@ class _NotificationPageState extends State<NotificationPage> {
     final icon = _iconForType(n.type);
     final title = _displayTitle(n);
     final body = _displayBody(n);
+    final isDark = theme.brightness == Brightness.dark;
     return InkWell(
       onTap: () => _onNotificationTap(n),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colors.primary.withValues(alpha: 0.15)),
+          color: isDark ? const Color(0xFF101A2A) : colors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isDark
+                ? _kKmstryBlue.withValues(alpha: 0.14)
+                : colors.primary.withValues(alpha: 0.12),
+          ),
+          boxShadow: [
+            BoxShadow(
+              blurRadius: 18,
+              offset: const Offset(0, 10),
+              color: isDark
+                  ? _kKmstryBlue.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.04),
+            ),
+          ],
         ),
         child: Row(
           children: [
@@ -794,10 +803,20 @@ class _NotificationPageState extends State<NotificationPage> {
               width: 50,
               height: 50,
               decoration: BoxDecoration(
-                color: colors.primary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  colors: [
+                    _kKmstryBlue.withValues(alpha: isDark ? 0.24 : 0.15),
+                    _kKmstryTeal.withValues(alpha: isDark ? 0.18 : 0.12),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _kKmstryBlue.withValues(alpha: 0.22),
+                ),
               ),
-              child: Icon(icon, size: 28, color: colors.primary),
+              child: Icon(icon, size: 26, color: _kKmstryBlue),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -809,7 +828,7 @@ class _NotificationPageState extends State<NotificationPage> {
                     style: TextStyle(
                       color: colors.onSurface,
                       fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -818,6 +837,7 @@ class _NotificationPageState extends State<NotificationPage> {
                     style: TextStyle(
                       color: colors.onSurface.withValues(alpha: 0.75),
                       fontSize: 13,
+                      height: 1.32,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -828,12 +848,102 @@ class _NotificationPageState extends State<NotificationPage> {
                     style: TextStyle(
                       color: colors.onSurface.withValues(alpha: 0.55),
                       fontSize: 11,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationsEmptyState extends StatelessWidget {
+  const _NotificationsEmptyState({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+    return Align(
+      alignment: const Alignment(0, -0.10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 360),
+          padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF101A2A) : Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(
+              color: _kKmstryBlue.withValues(alpha: isDark ? 0.18 : 0.12),
+            ),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: 30,
+                offset: const Offset(0, 16),
+                color: isDark
+                    ? _kKmstryBlue.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.05),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 76,
+                height: 76,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      _kKmstryBlue.withValues(alpha: 0.24),
+                      _kKmstryTeal.withValues(alpha: 0.18),
+                      _kKmstryPink.withValues(alpha: 0.10),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: _kKmstryBlue.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.notifications_active_outlined,
+                  color: _kKmstryBlue,
+                  size: 34,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                "You're all caught up",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'New messages, interests, venue updates and account alerts will appear here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: textColor.withValues(alpha: isDark ? 0.64 : 0.56),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.38,
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );

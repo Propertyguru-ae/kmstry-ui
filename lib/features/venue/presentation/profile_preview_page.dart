@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -1668,10 +1669,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: Icon(Icons.arrow_back, color: onSurface),
-                    onPressed: () => Navigator.pop(context),
-                  ),
+                  const AppBackButton(),
+                  const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       topBarTitle,

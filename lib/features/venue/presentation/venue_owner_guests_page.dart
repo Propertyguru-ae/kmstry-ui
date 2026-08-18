@@ -102,8 +102,10 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
         leading: const AppLogo(),
         title: Text(
           'Guests',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
           ),
         ),
         bottom: PreferredSize(

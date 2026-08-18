@@ -19,12 +19,17 @@ class StoryTray extends StatefulWidget {
   /// yerine [onAddStory] bilgilendirme popup'ı gösterir.
   final bool anonymousLocked;
 
+  /// Kullanıcının BU venue'da kendi story'si olup olmadığını üst widget'a bildirir
+  /// (ör. venue detail'de "story paylaş" teşvik metnini göstermek için).
+  final ValueChanged<bool>? onMyStoryStateChanged;
+
   const StoryTray({
     super.key,
     required this.venueId,
     this.onAddStory,
     this.isUploading = false,
     this.anonymousLocked = false,
+    this.onMyStoryStateChanged,
   });
 
   @override
@@ -101,9 +106,11 @@ class _StoryTrayState extends State<StoryTray> {
       // getMyStories tüm venue'lardaki kendi story'lerini döndürür; bu tray
       // venue'ya özel olduğu için yalnızca BU venue'nunkileri göster. Aksi
       // halde Alpha'da paylaşılan story Beta detay sayfasında da görünüyordu.
-      final venueStories =
-          stories.where((s) => s.venueId == widget.venueId).toList();
+      final venueStories = stories
+          .where((s) => s.venueId == widget.venueId)
+          .toList();
       setState(() => _myStories = venueStories);
+      widget.onMyStoryStateChanged?.call(venueStories.isNotEmpty);
     } catch (_) {}
   }
 
@@ -548,6 +555,22 @@ class _MeBubbleState extends State<_MeBubble>
           child: avatar,
         ),
       );
+    } else if (canAdd) {
+      // Story yokken baloncuk belirgin dursun ama DÜZ renk olsun (gradient
+      // yalnızca bakılmamış story varken). "Story ekle" affordance'ı için
+      // marka mavisi tek renk halka.
+      content = CustomPaint(
+        painter: _SquareRingPainter(
+          colors: const [AppColors.blue, AppColors.blue],
+          pad: _kRingPad,
+          strokeWidth: _kRingStroke,
+          radius: _kAvatarRadius + _kRingPad + _kRingStroke,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(_kRingPad + _kRingStroke),
+          child: avatar,
+        ),
+      );
     } else {
       content = avatar;
     }
@@ -555,7 +578,7 @@ class _MeBubbleState extends State<_MeBubble>
     return GestureDetector(
       onTap: uploading
           ? _openUploadingViewer
-          : (hasStories ? widget.onViewStories : null),
+          : (hasStories ? widget.onViewStories : widget.onAddStory),
       child: Padding(
         padding: const EdgeInsets.only(right: 12),
         child: Column(
@@ -602,7 +625,9 @@ class _MeBubbleState extends State<_MeBubble>
             SizedBox(
               width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
               child: Text(
-                uploading ? 'Uploading…' : 'Me',
+                uploading
+                    ? 'Uploading…'
+                    : (!hasStories && canAdd ? 'Your story' : 'Me'),
                 style: const TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,

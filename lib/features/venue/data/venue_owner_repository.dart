@@ -9,6 +9,7 @@ import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_owner_stats_model.dart';
 import 'venue_analytics_model.dart';
+import 'venue_follower_model.dart';
 
 class VenueOwnerRepository {
   final ApiClient _api = ApiClient();
@@ -21,22 +22,41 @@ class VenueOwnerRepository {
 
   Future<VenueOwnerStatsResponse> getOwnerStats(String venueId) async {
     final headers = await _authHeaders();
-    final data = await _api.get('/venues/$venueId/owner-stats', headers: headers);
+    final data = await _api.get(
+      '/venues/$venueId/owner-stats',
+      headers: headers,
+    );
     final map = Map<String, dynamic>.from(data as Map);
     return VenueOwnerStatsResponse.fromJson(map);
+  }
+
+  /// Venue'yu takip eden kullanıcılar. [sort]: 'latest' | 'earliest'.
+  Future<List<VenueFollower>> getFollowers(
+    String venueId, {
+    String sort = 'latest',
+  }) async {
+    final headers = await _authHeaders();
+    final data = await _api.get(
+      '/venues/$venueId/followers?sort=$sort',
+      headers: headers,
+    );
+    final list = data is List ? data : (data['data'] as List? ?? []);
+    return list
+        .whereType<Map>()
+        .map((e) => VenueFollower.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   /// Venue-account push notification preferences for this membership.
   /// Returns { team: bool, events: bool }.
   Future<Map<String, bool>> getNotificationPrefs(String venueId) async {
     final headers = await _authHeaders();
-    final data =
-        await _api.get('/venues/$venueId/notification-prefs', headers: headers);
+    final data = await _api.get(
+      '/venues/$venueId/notification-prefs',
+      headers: headers,
+    );
     final map = Map<String, dynamic>.from(data as Map);
-    return {
-      'team': map['team'] != false,
-      'events': map['events'] != false,
-    };
+    return {'team': map['team'] != false, 'events': map['events'] != false};
   }
 
   Future<void> setNotificationPrefs(
@@ -66,7 +86,10 @@ class VenueOwnerRepository {
     final q = (from != null && to != null)
         ? 'from=$from&to=$to'
         : 'range=$range';
-    final data = await _api.get('/venues/$venueId/analytics?$q', headers: headers);
+    final data = await _api.get(
+      '/venues/$venueId/analytics?$q',
+      headers: headers,
+    );
     return VenueAnalytics.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
@@ -116,11 +139,13 @@ class VenueOwnerRepository {
 
     final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
     final mimeParts = mimeType.split('/');
-    request.files.add(await http.MultipartFile.fromPath(
-      'file',
-      file.path,
-      contentType: MediaType(mimeParts[0], mimeParts[1]),
-    ));
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType: MediaType(mimeParts[0], mimeParts[1]),
+      ),
+    );
 
     final response = await request.send();
     final body = await response.stream.bytesToString();

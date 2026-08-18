@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -328,25 +330,10 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
         backgroundColor: kBg,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
-        leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            margin: const EdgeInsets.only(left: 14),
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: isDark ? 0.05 : 0.0),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: isDark ? 0.08 : 0.0),
-              ),
-            ),
-            child: Icon(
-              Icons.chevron_left_rounded,
-              size: 22,
-              color: isDark ? const Color(0xFF607090) : const Color(0xFF6B7280),
-            ),
-          ),
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
         ),
         title: Text(
           'Events',
@@ -541,20 +528,38 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                       width: 44,
                       margin: const EdgeInsets.only(right: 8),
                       decoration: BoxDecoration(
+                        // Seçili gün: logo mavi→turkuaz gradient (hızlı check-in
+                        // butonuyla aynı). Bugün: hafif mavi tint.
+                        gradient: isSelected
+                            ? const LinearGradient(
+                                colors: [_kMavi, _kTurkuaz],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
                         color: isSelected
-                            ? _kMagenta
+                            ? null
                             : isToday
-                            ? _kMagenta.withValues(alpha: 0.08)
+                            ? _kMavi.withValues(alpha: 0.08)
                             : Colors.transparent,
                         border: Border.all(
                           color: isSelected
-                              ? _kMagenta
+                              ? Colors.transparent
                               : isToday
-                              ? _kMagenta.withValues(alpha: 0.4)
+                              ? _kMavi.withValues(alpha: 0.4)
                               : kBorder,
                           width: isSelected ? 1.5 : 1,
                         ),
                         borderRadius: BorderRadius.circular(13),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: _kMavi.withValues(alpha: 0.30),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 5),
+                                ),
+                              ]
+                            : null,
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -608,7 +613,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                     child: _DateField(
                       label: 'Start date',
                       date: _selectedDay,
-                      color: _kMagenta,
+                      color: _kMavi,
                       isDark: isDark,
                       kCard: kCard,
                       kBorder: kBorder,
@@ -883,20 +888,9 @@ class _CreateEventBar extends StatelessWidget {
           ),
         ),
       ),
-      child: SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: onTap,
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('Create Event'),
-          style: FilledButton.styleFrom(
-            backgroundColor: _kMagenta,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-        ),
+      child: PrimaryButton(
+        label: 'Create Event',
+        onPressed: onTap,
       ),
     );
   }

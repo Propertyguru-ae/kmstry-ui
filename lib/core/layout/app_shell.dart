@@ -19,6 +19,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
@@ -58,6 +59,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   String _userInitial = '?';
+  String? _userAvatarUrl;
   int _unreadNotificationCount = 0;
   int _unreadDmCount = 0;
   final NotificationRepository _notificationRepo = NotificationRepository();
@@ -102,6 +104,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _bindNotificationRealtime();
     unawaited(_connectChatRealtime());
     unawaited(_notificationRealtime.ensureConnected());
+    // Aktif check-in değişince (yeni check-in / temizleme) navbar avatarını
+    // tazele — avatarı olmayan kullanıcının geçici (featured) avatarı yansısın.
+    ActiveCheckinService.changes.addListener(_onActiveCheckinChanged);
     _loadUserInitial();
     _loadUnreadNotificationCount();
     _loadUnreadDmCount();
@@ -194,30 +199,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final venueLabel = (info.venueName ?? '').trim().isNotEmpty
         ? info.venueName!.trim()
         : 'this venue';
-    final renew = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
-        title: const Text('Check-in süren doldu'),
-        content: Text(
-          'Hâlâ $venueLabel\'dasın gibi görünüyor. Check-in\'ini 3 saat daha '
-          'uzatmak ister misin?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Şimdi değil'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Yenile'),
-          ),
-        ],
-      ),
+    final renew = await showCheckinExpiredDialog(
+      context,
+      venueLabel: venueLabel,
     );
-    if (renew != true || !mounted) return;
+    if (!renew || !mounted) return;
     await _renewCheckin(info);
   }
 
@@ -247,7 +233,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Check-in\'in yenilendi.'),
+          content: Text('Your check-in has been renewed.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -255,15 +241,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Yenilenemedi. Mekana yakın olduğundan emin ol.'),
+          content: Text('Couldn\'t renew. Make sure you\'re near the venue.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
     }
   }
 
+  void _onActiveCheckinChanged() {
+    if (!mounted) return;
+    // Check-in avatar'ı /auth/me üzerinden gelir → cache'i tazele ve yeniden çek.
+    AuthRepository.invalidateMeCache();
+    _loadUserInitial();
+  }
+
   @override
   void dispose() {
+    ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
     WidgetsBinding.instance.removeObserver(this);
     _chatEventsSub?.cancel();
     _chatStateSub?.cancel();
@@ -500,6 +494,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!mounted) return;
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
       final username = (me['username'])?.toString().trim();
+      final avatarUrl = _readUserAvatarUrl(me);
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
       // Sadece ACTIVE venue'lar context switching için kullanılır.
@@ -547,8 +542,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final resolvedVenue = resolvedVenueId == null
           ? null
           : allKnownVenues
-              .where((venue) => venue.id == resolvedVenueId)
-              .firstOrNull;
+                .where((venue) => venue.id == resolvedVenueId)
+                .firstOrNull;
       final email = me['email']?.toString().trim();
       setState(() {
         if (fullName != null && fullName.isNotEmpty) {
@@ -558,6 +553,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         } else if (email != null && email.isNotEmpty) {
           _userInitial = email[0].toUpperCase();
         }
+        _userAvatarUrl = avatarUrl;
         _isVenueContext = isVenueCtx;
         _isPendingClaim = resolvedVenue?.isPendingOwnerClaim ?? false;
         _isRejectedClaim = resolvedVenue?.isRejectedOwnerClaim ?? false;
@@ -590,6 +586,34 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         VenueSession.instance.clear();
       }
     } catch (_) {}
+  }
+
+  String? _readUserAvatarUrl(Map<String, dynamic> me) {
+    for (final key in const [
+      'photo',
+      'profilePhoto',
+      'profile_photo',
+      'avatarUrl',
+      'avatar_url',
+    ]) {
+      final value = me[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    // Profil fotosu yoksa: aktif check-in'in geçici avatarını (featured foto'dan
+    // kırpılan) kullan — diğer ekranlarda (who's here vb.) gösterilenle tutarlı.
+    final active = me['activeCheckin'];
+    if (active is Map) {
+      for (final key in const [
+        'avatarPhoto',
+        'avatar_photo',
+        'featuredPhoto',
+        'featured_photo',
+      ]) {
+        final value = active[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return null;
   }
 
   void _syncActiveCheckinFromMe(Map<String, dynamic> me) {
@@ -938,6 +962,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       },
       child: AppShellNav(
         selectTab: (index) => _onItemTapped(index),
+        selectTabId: (id) {
+          final i = tabs.indexWhere((t) => t.id == id);
+          if (i >= 0) _onItemTapped(i);
+        },
         child: Scaffold(
           extendBody: true,
           body: tabs[safeIndex].page,
@@ -950,22 +978,47 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// Centre navbar check-in button — a filled accent circle so it reads as the
   /// primary action, distinct from the flat destination icons around it.
   Widget _buildCheckinNavButton(ThemeData theme) {
-    final colors = theme.colorScheme;
     return Container(
-      width: 40,
-      height: 40,
+      width: 48,
+      height: 48,
       decoration: BoxDecoration(
-        color: colors.primary,
         shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          colors: [AppColors.blue, AppColors.teal],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         boxShadow: [
           BoxShadow(
-            color: colors.primary.withValues(alpha: 0.35),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: AppColors.blue.withValues(alpha: 0.34),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: AppColors.teal.withValues(alpha: 0.18),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
           ),
         ],
       ),
-      child: Icon(Icons.add_location_alt, color: colors.onPrimary, size: 22),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+            ),
+          ),
+          const Icon(
+            Icons.add_location_alt_rounded,
+            color: Colors.white,
+            size: 25,
+          ),
+        ],
+      ),
     );
   }
 
@@ -975,27 +1028,72 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     required ThemeData theme,
   }) {
     final colors = theme.colorScheme;
+
+    // Venue context'te profil avatarı aktif venue'nün logosunu/baş harfini
+    // gösterir; personal context'te kullanıcının kendi avatarını. Hesaplar
+    // arası geçişte avatar da doğru şekilde değişir.
+    String? avatarUrl = _userAvatarUrl;
+    String initial = _userInitial;
+    if (_isVenueContext) {
+      final activeVenue = _memberVenues
+          .where((v) => v.id == _activeVenueId)
+          .firstOrNull;
+      final venuePhoto = activeVenue?.photoUrl;
+      avatarUrl = (venuePhoto != null && venuePhoto.isNotEmpty)
+          ? venuePhoto
+          : null;
+      final venueName = activeVenue?.name.trim() ?? '';
+      initial = venueName.isNotEmpty
+          ? venueName[0].toUpperCase()
+          : _userInitial;
+    }
+
     return Container(
-      width: 34,
-      height: 34,
+      width: 36,
+      height: 36,
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: isActive ? colors.onSurface : Colors.transparent,
-          width: 2.5,
-        ),
-        color: isDark
-            ? colors.primary.withValues(alpha: 0.2)
-            : colors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(11),
+        gradient: isActive
+            ? const LinearGradient(
+                colors: [AppColors.blue, AppColors.teal],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: isActive ? null : colors.primary.withValues(alpha: 0.16),
       ),
       alignment: Alignment.center,
-      child: Text(
-        _userInitial,
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 16,
-          color: isDark ? colors.primary : colors.onSurface,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(9),
+          color: isDark
+              ? const Color(0xFF102238)
+              : colors.primary.withValues(alpha: 0.10),
         ),
+        alignment: Alignment.center,
+        child: avatarUrl != null
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(9),
+                child: Image.network(
+                  avatarUrl,
+                  width: 32,
+                  height: 32,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => _ProfileInitial(
+                    initial: initial,
+                    isActive: isActive,
+                    isDark: isDark,
+                    colors: colors,
+                  ),
+                ),
+              )
+            : _ProfileInitial(
+                initial: initial,
+                isActive: isActive,
+                isDark: isDark,
+                colors: colors,
+              ),
       ),
     );
   }
@@ -1034,6 +1132,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
+  Color _navInactiveColor(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    return isDark ? const Color(0xFF6F7D96) : const Color(0xFF7A879A);
+  }
+
+  /// Aktif sekme ikon rengi. Dark mode'da beyaz; light mode'da navbar beyaz
+  /// olduğu için beyaz görünmez olurdu → logo mavisi kullanılır.
+  Color _navActiveColor(ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    return isDark ? Colors.white : AppColors.blue;
+  }
+
   /// Builds a nav-icon closure so an icon's active/inactive rendering stays
   /// coupled to its tab (no index math).
   Widget Function(bool) _navIconBuilder(
@@ -1041,12 +1151,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     IconData outlined,
     ThemeData theme,
   ) {
-    final activeColor = theme.colorScheme.onSurface;
-    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha: 0.30);
-    return (bool active) => Icon(
-      active ? filled : outlined,
-      size: 28,
-      color: active ? activeColor : inactiveColor,
+    return (bool active) => _NavIconShell(
+      active: active,
+      child: Icon(
+        active ? filled : outlined,
+        size: active ? 28 : 27,
+        color: active ? _navActiveColor(theme) : _navInactiveColor(theme),
+      ),
     );
   }
 
@@ -1054,20 +1165,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// the navbar and tap side-effects all derive from it, so reordering is safe.
   /// Notifications are intentionally absent: reached via the Home header bell.
   List<_NavTab> _personalTabs(bool isDark, ThemeData theme) {
-    final activeColor = theme.colorScheme.onSurface;
-    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha: 0.30);
     return [
       _NavTab(
+        id: kPersonalHomeTabId,
         page: const PersonalHomePage(),
         icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
       ),
       _NavTab(
+        id: kPersonalDiscoverTabId,
         page: const VenueHomePage(),
-        icon: _navIconBuilder(
-          Icons.search,
-          Icons.search,
-          theme,
-        ),
+        icon: _navIconBuilder(Icons.search, Icons.search, theme),
       ),
       _NavTab(
         // Centre action: opens the quick check-in flow. Never a destination.
@@ -1076,15 +1183,21 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         action: () => QuickCheckinLauncher().launch(context),
       ),
       _NavTab(
+        id: kPersonalMessagesTabId,
         page: DmListPage(key: _dmListKey),
-        icon: (active) =>
-            _buildMessageIcon(active ? activeColor : inactiveColor),
+        icon: (active) => _NavIconShell(
+          active: active,
+          child: _buildMessageIcon(
+            active ? _navActiveColor(theme) : _navInactiveColor(theme),
+          ),
+        ),
         onSelected: () {
           _dmListKey.currentState?.loadChats();
           _scheduleDmRefresh();
         },
       ),
       _NavTab(
+        id: kPersonalProfileTabId,
         page: const ProfilePage(),
         icon: (active) =>
             _buildProfileAvatar(isActive: active, isDark: isDark, theme: theme),
@@ -1092,14 +1205,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     ];
   }
 
-  /// Venue-context tabs. Notifications reached via the Dashboard header bell.
+  /// Venue-context tabs. Order here is the ONLY source of truth — body, navbar
+  /// and any cross-page navigation target tabs by their stable [id], never by
+  /// position, so reordering the navbar is safe.
+  /// Notifications reached via the Dashboard header bell.
   List<_NavTab> _venueTabs(bool isDark, ThemeData theme) {
     return [
       _NavTab(
+        id: kVenueHomeTabId,
         page: VenueAccountHomePage(venueId: _activeVenueId),
         icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
       ),
       _NavTab(
+        id: kVenueGuestsTabId,
         page: VenueOwnerGuestsPage(
           venueId: _activeVenueId,
           isPendingClaim: _isPendingClaim,
@@ -1108,10 +1226,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         icon: _navIconBuilder(Icons.people, Icons.people_outline, theme),
       ),
       _NavTab(
+        id: kVenueManageTabId,
         page: VenueManagePage(venueId: _activeVenueId),
         icon: _navIconBuilder(Icons.grid_view, Icons.grid_view_outlined, theme),
       ),
       _NavTab(
+        id: kVenueProfileTabId,
         page: VenueProfilePage(
           activeVenueName: _activeAccount == 'Personal' ? null : _activeAccount,
           venueNames: _memberVenues.map((v) => v.name).toList(),
@@ -1174,6 +1294,71 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 }
 
+class _NavIconShell extends StatelessWidget {
+  final bool active;
+  final Widget child;
+
+  const _NavIconShell({required this.active, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          child,
+          Positioned(
+            bottom: 4,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: active ? 5 : 0,
+              height: active ? 5 : 0,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [AppColors.blue, AppColors.teal],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileInitial extends StatelessWidget {
+  final String initial;
+  final bool isActive;
+  final bool isDark;
+  final ColorScheme colors;
+
+  const _ProfileInitial({
+    required this.initial,
+    required this.isActive,
+    required this.isDark,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      initial,
+      style: TextStyle(
+        fontWeight: FontWeight.w800,
+        fontSize: 15,
+        color: isActive
+            ? (isDark ? Colors.white : AppColors.blue)
+            : isDark
+            ? AppColors.blueDark
+            : colors.onSurface,
+      ),
+    );
+  }
+}
+
 /// A single navbar destination: its page, its icon (given active state) and an
 /// optional side-effect to run when the tab is selected. Keeping all three
 /// together is what removes hardcoded index assumptions from the shell.
@@ -1182,7 +1367,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 class AppShellNav extends InheritedWidget {
   final void Function(int index) selectTab;
 
-  const AppShellNav({super.key, required this.selectTab, required super.child});
+  /// Sekmeyi index yerine kararlı kimliğiyle seçer (ör. [kVenueGuestsTabId]).
+  /// Kimlik bulunamazsa hiçbir şey yapmaz — güvenli.
+  final void Function(String id) selectTabId;
+
+  const AppShellNav({
+    super.key,
+    required this.selectTab,
+    required this.selectTabId,
+    required super.child,
+  });
 
   static AppShellNav? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<AppShellNav>();
@@ -1190,6 +1384,20 @@ class AppShellNav extends InheritedWidget {
   @override
   bool updateShouldNotify(AppShellNav oldWidget) => false;
 }
+
+/// Sekmeleri sıralarından bağımsız, sabit kimlikle hedeflemek için kullanılır
+/// (ör. dashboard'daki "See all" → Guests sekmesi). Böylece navbar'daki sıra
+/// değişse bile hedef sekme doğru kalır — hiçbir ikonun yeri kodu bağlamaz.
+// Venue context
+const String kVenueHomeTabId = 'venueHome';
+const String kVenueGuestsTabId = 'venueGuests';
+const String kVenueManageTabId = 'venueManage';
+const String kVenueProfileTabId = 'venueProfile';
+// Personal context
+const String kPersonalHomeTabId = 'personalHome';
+const String kPersonalDiscoverTabId = 'personalDiscover';
+const String kPersonalMessagesTabId = 'personalMessages';
+const String kPersonalProfileTabId = 'personalProfile';
 
 class _NavTab {
   final Widget page;
@@ -1201,10 +1409,14 @@ class _NavTab {
   /// never becomes a selected destination). [page] is only a safe fallback.
   final VoidCallback? action;
 
+  /// Sıradan bağımsız kararlı kimlik — [AppShellNav.selectTabId] ile hedeflenir.
+  final String? id;
+
   const _NavTab({
     required this.page,
     required this.icon,
     this.onSelected,
     this.action,
+    this.id,
   });
 }

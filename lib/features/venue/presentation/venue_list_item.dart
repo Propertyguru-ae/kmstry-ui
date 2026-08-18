@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
@@ -13,6 +12,8 @@ class VenueListItem extends StatelessWidget {
 
   /// "You're checked in" vurgusu — logo turkuazı (AppColors.teal).
   static const Color _checkedInColor = Color(0xFF1FD9A8);
+  static const Color _brandBlue = Color(0xFF1A9FE8);
+  static const Color _brandOrange = Color(0xFFF08838);
 
   const VenueListItem({
     super.key,
@@ -51,23 +52,35 @@ class VenueListItem extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: isSelected
-                ? AppTheme.brandPrimary.withValues(alpha: 0.14)
+                ? _brandBlue.withValues(alpha: isDark ? 0.15 : 0.10)
                 : (isDark
-                      ? theme.colorScheme.surface
+                      ? const Color(0xFF0E1724)
                       : const Color(0xFFF8FBFD)),
             borderRadius: BorderRadius.circular(20),
             border: isActiveCheckin
-                ? Border.all(color: _checkedInColor, width: 1.0)
+                ? Border.all(color: _checkedInColor.withValues(alpha: 0.72))
                 : (isSelected
                       ? Border.all(
-                          color: AppTheme.brandPrimary.withValues(alpha: 0.14),
-                          width: 1.0,
+                          color: _brandBlue.withValues(alpha: 0.56),
                         )
                       : (isDark
                             ? Border.all(
-                                color: Colors.white.withValues(alpha: 0.05),
+                                color: Colors.white.withValues(alpha: 0.07),
                               )
                             : Border.all(color: const Color(0xFFE6EEF4)))),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: isSelected || isActiveCheckin ? 20 : 12,
+                offset: const Offset(0, 8),
+                color: isDark
+                    ? (isActiveCheckin
+                          ? _checkedInColor.withValues(alpha: 0.12)
+                          : _brandBlue.withValues(
+                              alpha: isSelected ? 0.12 : 0.05,
+                            ))
+                    : Colors.black.withValues(alpha: 0.05),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,7 +140,7 @@ class VenueListItem extends StatelessWidget {
                     _MiniBadge(
                       icon: Icons.local_fire_department_rounded,
                       label: 'Busy now',
-                      color: const Color(0xFFF08838),
+                      color: _brandOrange,
                       isDark: isDark,
                     ),
                   VenueCheckinStatsRow(
@@ -141,7 +154,7 @@ class VenueListItem extends StatelessWidget {
                     _MiniBadge(
                       icon: Icons.handshake_outlined,
                       label: _partnershipLabel(platform),
-                      color: const Color(0xFF1A9FE8),
+                      color: _brandBlue,
                       isDark: isDark,
                     ),
                 ],
@@ -153,13 +166,13 @@ class VenueListItem extends StatelessWidget {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isDark
-                        ? Colors.white.withValues(alpha: 0.05)
-                        : const Color(0xFFEFF7F8),
+                        ? _brandBlue.withValues(alpha: 0.08)
+                        : const Color(0xFFEFF8FE),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
                       color: isDark
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : const Color(0xFFDDEBEC),
+                          ? _brandBlue.withValues(alpha: 0.18)
+                          : _brandBlue.withValues(alpha: 0.12),
                     ),
                   ),
                   child: Column(
@@ -252,7 +265,9 @@ class _VenueMetadataLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final rating = venue.rating;
     final typeLabel = _venueTypeLabel(venue);
-    final textColor = isDark ? Colors.white70 : Colors.black54;
+    final textColor = isDark
+        ? Colors.white.withValues(alpha: 0.74)
+        : Colors.black.withValues(alpha: 0.58);
     final strongColor = isDark
         ? Colors.white.withValues(alpha: 0.9)
         : Colors.black87;
@@ -302,17 +317,31 @@ class _VenueMetadataLine extends StatelessWidget {
       children.add(_MetadataText(distance!, color: textColor));
     }
 
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < children.length; i++) ...[
-          if (i > 0)
-            _MetadataText('·', color: textColor.withValues(alpha: 0.8)),
-          children[i],
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.045)
+            : const Color(0xFFF1F7FB),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.07)
+              : const Color(0xFFE3EEF6),
+        ),
+      ),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0)
+              _MetadataText('·', color: textColor.withValues(alpha: 0.8)),
+            children[i],
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -386,7 +415,6 @@ List<String> _galleryPhotos(Venue venue) {
   ];
   return ordered
       .where((url) => url.trim().isNotEmpty)
-      .where((url) => !_isGooglePlacePhotoUrl(url))
       .toSet()
       .toList();
 }
@@ -447,12 +475,4 @@ String _partnershipLabel(String raw) {
     default:
       return 'Partner';
   }
-}
-
-bool _isGooglePlacePhotoUrl(String url) {
-  final uri = Uri.tryParse(url);
-  if (uri == null) return false;
-  final host = uri.host.toLowerCase();
-  return host == 'maps.googleapis.com' &&
-      uri.path.contains('/maps/api/place/photo');
 }

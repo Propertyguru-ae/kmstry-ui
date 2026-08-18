@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 enum _ChangeEmailStep { request, confirm }
@@ -298,20 +299,10 @@ class _ChangeEmailPageState extends State<ChangeEmailPage> {
                 ),
               ],
               const SizedBox(height: 24),
-              SizedBox(
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _loading
-                      ? null
-                      : (isConfirm ? _confirmChange : _requestChange),
-                  child: _loading
-                      ? CircularProgressIndicator(color: colors.onPrimary)
-                      : Text(
-                          isConfirm
-                              ? 'Confirm email change'
-                              : 'Send verification',
-                        ),
-                ),
+              PrimaryButton(
+                label: isConfirm ? 'Confirm email change' : 'Send verification',
+                loading: _loading,
+                onPressed: isConfirm ? _confirmChange : _requestChange,
               ),
               if (isConfirm) ...[
                 const SizedBox(height: 12),

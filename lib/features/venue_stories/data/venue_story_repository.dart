@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
@@ -11,15 +12,18 @@ import 'venue_story_model.dart';
 class VenueStoryRepository {
   final ApiClient _api = ApiClient();
 
+  /// Venue story'leri değiştiğinde (paylaşma/silme) artan sayaç. Home'daki story
+  /// kartı bunu dinleyip kendini tazeler.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+  static void _notifyChanged() => changes.value++;
+
   Future<VenueStoryItem> createVenueStory({
     required String venueId,
     required File file,
     required String mediaType,
   }) async {
     final token = await SecureStorage.getAccessToken();
-    final uri = Uri.parse(
-      '${AppConfig.baseUrl}/venues/$venueId/venue-stories',
-    );
+    final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/venue-stories');
 
     final request = http.MultipartRequest('POST', uri);
     request.headers['Authorization'] = 'Bearer $token';
@@ -40,10 +44,16 @@ class VenueStoryRepository {
     final body = await streamed.stream.bytesToString();
 
     if (streamed.statusCode >= 400) {
-      throw Exception('Venue story upload failed (${streamed.statusCode}): $body');
+      throw Exception(
+        'Venue story upload failed (${streamed.statusCode}): $body',
+      );
     }
 
-    return VenueStoryItem.fromJson(jsonDecode(body) as Map<String, dynamic>);
+    final item = VenueStoryItem.fromJson(
+      jsonDecode(body) as Map<String, dynamic>,
+    );
+    _notifyChanged();
+    return item;
   }
 
   Future<List<VenueStoryItem>> getVenueStories(String venueId) async {
@@ -74,6 +84,7 @@ class VenueStoryRepository {
       '/venues/$venueId/venue-stories/$storyId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    _notifyChanged();
   }
 
   Future<List<Map<String, dynamic>>> getViewers(String venueId) async {

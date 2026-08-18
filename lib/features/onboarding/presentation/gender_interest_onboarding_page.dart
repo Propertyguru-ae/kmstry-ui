@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
 
 class GenderInterestOnboardingPage extends StatefulWidget {
-  const GenderInterestOnboardingPage({super.key});
+  /// Opsiyonel — çok adımlı onboarding akışında bu son profil adımından sonra
+  /// akışı bitirmek için çağrılır. Null ise klasik authGate yönlendirmesi.
+  final VoidCallback? onContinue;
+
+  const GenderInterestOnboardingPage({super.key, this.onContinue});
 
   @override
   State<GenderInterestOnboardingPage> createState() =>
@@ -17,9 +22,41 @@ class _GenderInterestOnboardingPageState
   String? gender;
   String? interest;
   bool loading = false;
-  bool _buttonPressed = false;
 
   bool get valid => gender != null && interest != null;
+
+  static const _teal = AppColors.teal;
+  static const _blue = AppColors.blue;
+  static const _blueBright = AppColors.blueDark;
+  static const _magenta = AppColors.magenta;
+  static const _orange = AppColors.orange;
+  static const _purple = AppColors.brandLight;
+  static const _muted = Color(0xFFA6B3D2);
+  static const _mutedDim = Color(0xFF7F91B2);
+
+  // ── Tema-duyarlı yüzey/metin renkleri ────────────────────────────────────
+  bool _isDark = true;
+  Color get _bg => _isDark ? AppColors.darkBg : const Color(0xFFF7FAFF);
+  Color get _sheet => _isDark ? AppColors.darkSurface : Colors.white;
+  Color get _sheetBorder =>
+      _isDark ? const Color(0xFF172445) : const Color(0xFFD9E5F4);
+  Color get _fieldBorderIdle =>
+      _isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E5F4);
+  Color get _textPrimary =>
+      _isDark ? const Color(0xFFF4F6FF) : AppColors.lightTextPrimary;
+  Color get _textSecondary => _isDark ? _muted : AppColors.lightTextSecondary;
+  Color get _handle => _isDark
+      ? Colors.white.withValues(alpha: 0.10)
+      : AppColors.lightTextPrimary.withValues(alpha: 0.12);
+  Color get _iconBtnBg => _isDark
+      ? Colors.white.withValues(alpha: 0.05)
+      : AppColors.lightTextPrimary.withValues(alpha: 0.05);
+  Color get _iconBtnBorder => _isDark
+      ? Colors.white.withValues(alpha: 0.09)
+      : AppColors.lightTextPrimary.withValues(alpha: 0.12);
+  List<Color> get _tileInactiveGrad => _isDark
+      ? const [Color(0xFF0F1C35), Color(0xFF13223D)]
+      : const [Color(0xFFF2F7FF), Color(0xFFEAF1FB)];
 
   Future<void> submit() async {
     if (!valid) return;
@@ -32,7 +69,12 @@ class _GenderInterestOnboardingPageState
       });
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      if (widget.onContinue != null) {
+        setState(() => loading = false);
+        widget.onContinue!();
+      } else {
+        Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => loading = false);
@@ -46,19 +88,7 @@ class _GenderInterestOnboardingPageState
     String? selected,
     ValueChanged<String> onTap,
   ) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final active = selected == value;
-    const accent = AppTheme.brandPrimary;
-    final textPrimary = isDark
-        ? const Color(0xFFF3F6FF)
-        : theme.colorScheme.onSurface;
-    final textSecondary = isDark
-        ? const Color(0xFF98A3BC)
-        : theme.colorScheme.onSurface.withValues(alpha: 0.66);
-    final border = isDark
-        ? const Color(0xFF252D3D)
-        : theme.colorScheme.outline.withValues(alpha: 0.28);
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -66,34 +96,23 @@ class _GenderInterestOnboardingPageState
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: active
-                ? [
-                    accent.withValues(alpha: 0.24),
-                    accent.withValues(alpha: 0.14),
-                  ]
-                : (isDark
-                    ? const [
-                        Color(0xFF161C28),
-                        Color(0xFF1A2233),
-                      ]
-                    : [
-                        theme.colorScheme.surface,
-                        theme.colorScheme.surface.withValues(alpha: 0.96),
-                      ]),
+                ? [_blue.withValues(alpha: 0.22), _teal.withValues(alpha: 0.12)]
+                : _tileInactiveGrad,
           ),
           border: Border.all(
-            color: active ? accent : border,
-            width: active ? 1.25 : 1,
+            color: active ? _blueBright : _fieldBorderIdle,
+            width: active ? 1.5 : 1.25,
           ),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
               color: active
-                  ? accent.withValues(alpha: 0.18)
-                  : Colors.black.withValues(alpha: isDark ? 0.10 : 0.05),
+                  ? _blue.withValues(alpha: 0.18)
+                  : Colors.black.withValues(alpha: 0.10),
               blurRadius: active ? 20 : 10,
               offset: const Offset(0, 8),
             ),
@@ -107,7 +126,7 @@ class _GenderInterestOnboardingPageState
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: active ? textPrimary : textSecondary,
+                  color: active ? _textPrimary : _textSecondary,
                 ),
               ),
             ),
@@ -116,31 +135,31 @@ class _GenderInterestOnboardingPageState
               child: active
                   ? Container(
                       key: const ValueKey('selected'),
-                      width: 24,
-                      height: 24,
+                      width: 22,
+                      height: 22,
                       decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.22),
+                        color: _teal.withValues(alpha: 0.18),
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: accent.withValues(alpha: 0.9),
+                          color: _teal.withValues(alpha: 0.95),
                           width: 1,
                         ),
                       ),
-                      child: Icon(
-                        Icons.check,
-                        size: 15,
-                        color: textPrimary,
+                      child: const Icon(
+                        Icons.check_rounded,
+                        size: 14,
+                        color: Color(0xFFF4F6FF),
                       ),
                     )
                   : Container(
                       key: const ValueKey('empty'),
-                      width: 24,
-                      height: 24,
+                      width: 22,
+                      height: 22,
                       decoration: BoxDecoration(
                         color: Colors.transparent,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: textSecondary.withValues(alpha: 0.35),
+                          color: _mutedDim.withValues(alpha: 0.45),
                           width: 1,
                         ),
                       ),
@@ -154,131 +173,248 @@ class _GenderInterestOnboardingPageState
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final textPrimary = isDark
-        ? const Color(0xFFF3F6FF)
-        : theme.colorScheme.onSurface;
-    final textSecondary = isDark
-        ? const Color(0xFF98A3BC)
-        : theme.colorScheme.onSurface.withValues(alpha: 0.68);
+    _isDark = Theme.of(context).brightness == Brightness.dark;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: const Text('About you'),
-        automaticallyImplyLeading: false,
-        backgroundColor: Colors.transparent,
-        foregroundColor: textPrimary,
-        elevation: 0,
-        leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.of(context).pop(),
-              )
-            : null,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pushReplacementNamed(context, AuthRoutes.authGate),
-            child: Text('Maybe later', style: TextStyle(color: textSecondary)),
-          ),
-        ],
-      ),
-      extendBodyBehindAppBar: true,
-      body: Column(
+      backgroundColor: _bg,
+      body: Stack(
         children: [
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 112, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'What is your gender?',
-                    style: TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.4,
-                      color: textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'This helps us personalize your experience.',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  tile('male', 'Male', gender, (v) => gender = v),
-                  const SizedBox(height: 10),
-                  tile('female', 'Female', gender, (v) => gender = v),
-                  const SizedBox(height: 32),
-                  Text(
-                    'Who do you want to connect with?',
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.3,
-                      color: textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Choose who you would like to see.',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  tile('men', 'Men', interest, (v) => interest = v),
-                  const SizedBox(height: 10),
-                  tile('women', 'Women', interest, (v) => interest = v),
-                  const SizedBox(height: 10),
-                  tile('everyone', 'Everyone', interest, (v) => interest = v),
-                ],
-              ),
+          Positioned(
+            top: -80,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _glow(320, 280, _blue.withValues(alpha: 0.14)),
             ),
+          ),
+          Positioned(
+            bottom: 40,
+            right: -60,
+            child: _glow(220, 220, _magenta.withValues(alpha: 0.10)),
+          ),
+          Positioned(
+            top: 200,
+            left: -70,
+            child: _glow(190, 190, _purple.withValues(alpha: 0.12)),
           ),
           SafeArea(
-            top: false,
-            minimum: EdgeInsets.fromLTRB(
-              24,
-              12,
-              24,
-              MediaQuery.of(context).padding.bottom + 12,
-            ),
-            child: AnimatedScale(
-              duration: const Duration(milliseconds: 120),
-              scale: _buttonPressed ? 0.985 : 1,
-              child: SizedBox(
-                width: double.infinity,
-                height: 54,
-                child: Listener(
-                  onPointerDown: (_) => setState(() => _buttonPressed = true),
-                  onPointerCancel: (_) => setState(() => _buttonPressed = false),
-                  onPointerUp: (_) => setState(() => _buttonPressed = false),
-                  child: ElevatedButton(
-                    onPressed: valid && !loading ? submit : null,
-                    child: loading
-                        ? SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: isDark ? Colors.black : Colors.white,
-                            ),
-                          )
-                        : const Text('Continue'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Row(
+                    children: [
+                      if (Navigator.canPop(context))
+                        _circleIconButton(() => Navigator.of(context).pop())
+                      else
+                        const SizedBox(width: 38),
+                      const Spacer(),
+                      const SizedBox(width: 38),
+                    ],
                   ),
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 18,
+                            height: 2,
+                            decoration: BoxDecoration(
+                              color: _orange,
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'ABOUT YOU',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2,
+                              color: _orange,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Tell us',
+                        style: TextStyle(
+                          fontSize: 30,
+                          height: 1.12,
+                          letterSpacing: -0.7,
+                          fontWeight: FontWeight.w800,
+                          color: _textPrimary,
+                        ),
+                      ),
+                      ShaderMask(
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [_orange, _magenta],
+                        ).createShader(bounds),
+                        child: const Text(
+                          'who you are.',
+                          style: TextStyle(
+                            fontSize: 30,
+                            height: 1.12,
+                            letterSpacing: -0.7,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'This helps KMSTRY personalize who you discover and who discovers you.',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          height: 1.45,
+                          fontWeight: FontWeight.w500,
+                          color: _textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: _sheet,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(26),
+                      ),
+                      border: Border(top: BorderSide(color: _sheetBorder)),
+                    ),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.only(
+                        left: 20,
+                        right: 20,
+                        top: 8,
+                        bottom: bottomInset + 18,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 34,
+                              height: 4,
+                              margin: const EdgeInsets.only(bottom: 16),
+                              decoration: BoxDecoration(
+                                color: _handle,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                          _fieldLabel(Icons.person_outline_rounded, 'GENDER'),
+                          const SizedBox(height: 8),
+                          tile('male', 'Male', gender, (v) => gender = v),
+                          const SizedBox(height: 8),
+                          tile('female', 'Female', gender, (v) => gender = v),
+                          const SizedBox(height: 16),
+                          _fieldLabel(
+                            Icons.favorite_border_rounded,
+                            'INTERESTED IN',
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Choose who you would like to connect with.',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.45,
+                              fontWeight: FontWeight.w500,
+                              color: _textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          tile('men', 'Men', interest, (v) => interest = v),
+                          const SizedBox(height: 8),
+                          tile('women', 'Women', interest, (v) => interest = v),
+                          const SizedBox(height: 8),
+                          tile(
+                            'everyone',
+                            'Everyone',
+                            interest,
+                            (v) => interest = v,
+                          ),
+                          const SizedBox(height: 16),
+                          PrimaryButton(
+                            label: 'Continue',
+                            onPressed: valid ? submit : null,
+                            loading: loading,
+                            trailingArrow: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _glow(double w, double h, Color color) {
+    return IgnorePointer(
+      child: Container(
+        width: w,
+        height: h,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [color, color.withValues(alpha: 0)],
+            stops: const [0.0, 0.65],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _circleIconButton(VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(19),
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: _iconBtnBg,
+          border: Border.all(color: _iconBtnBorder),
+        ),
+        child: Icon(
+          Icons.chevron_left_rounded,
+          size: 22,
+          color: _isDark ? const Color(0xFF7D88A8) : AppColors.lightTextSecondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _fieldLabel(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, size: 13, color: _blueBright),
+        const SizedBox(width: 6),
+        Text(
+          text,
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1,
+            color: _blueBright,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -12,6 +13,9 @@ import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/messages/presntation/message_settings_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
+
+const _kKmstryBlue = Color(0xFF1A9FE8);
+const _kKmstryTeal = Color(0xFF1FD9A8);
 
 class DmListPage extends StatefulWidget {
   const DmListPage({super.key});
@@ -338,18 +342,26 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
               style: theme.textTheme.bodyLarge,
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
-                hintText: 'Search messages',
+                hintText: 'Search chats',
                 hintStyle: TextStyle(
-                  color: isDark ? Colors.white38 : Colors.grey,
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.48)
+                      : Colors.black.withValues(alpha: 0.46),
+                  fontWeight: FontWeight.w600,
                 ),
                 prefixIcon: Icon(
                   Icons.search,
-                  color: isDark ? Colors.white38 : Colors.grey,
+                  color: _kKmstryBlue.withValues(alpha: 0.90),
                 ),
                 suffixIcon: _searchQuery.trim().isEmpty
                     ? null
                     : IconButton(
-                        icon: const Icon(Icons.close),
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: isDark
+                              ? Colors.white.withValues(alpha: 0.70)
+                              : Colors.black.withValues(alpha: 0.58),
+                        ),
                         onPressed: () {
                           _searchDebounce?.cancel();
                           _searchController.clear();
@@ -359,12 +371,31 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
                       ),
                 filled: true,
                 fillColor: isDark
-                    ? Colors.white.withValues(alpha: 0.05)
-                    : Colors.grey[100],
+                    ? const Color(0xFF101A2A)
+                    : const Color(0xFFF7FAFD),
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide(
+                    color: isDark
+                        ? _kKmstryBlue.withValues(alpha: 0.22)
+                        : _kKmstryBlue.withValues(alpha: 0.14),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide(
+                    color: isDark
+                        ? _kKmstryBlue.withValues(alpha: 0.22)
+                        : _kKmstryBlue.withValues(alpha: 0.14),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide(
+                    color: _kKmstryBlue.withValues(alpha: 0.70),
+                    width: 1.2,
+                  ),
                 ),
               ),
             ),
@@ -413,12 +444,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final list = _buildFilteredChats();
     if (list.isEmpty) {
       final query = _searchQuery.trim();
-      return Center(
-        child: Text(
-          query.isEmpty ? 'No messages yet' : 'No results for "$query"',
-          style: TextStyle(color: isDark ? Colors.white38 : Colors.grey),
-        ),
-      );
+      return _MessagesEmptyState(isDark: isDark, query: query);
     }
     return RefreshIndicator(
       onRefresh: loadChats,
@@ -517,22 +543,97 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
         decoration: BoxDecoration(
           color: isSelected
-              ? AppTheme.brandPrimary
-              : (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[200]),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
+              ? (isDark
+                    ? const Color(0xFF0A1422).withValues(alpha: 0.94)
+                    : _kKmstryBlue)
+              : (isDark
+                    ? Colors.white.withValues(alpha: 0.07)
+                    : const Color(0xFFF4F7FB)),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
             color: isSelected
-                ? const Color(0xFF0D1322)
-                : (isDark ? Colors.white70 : Colors.black54),
-            fontWeight: FontWeight.w600,
+                ? _kKmstryBlue.withValues(alpha: 0.76)
+                : (isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.black.withValues(alpha: 0.05)),
           ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    blurRadius: 16,
+                    offset: const Offset(0, 5),
+                    color: _kKmstryBlue.withValues(alpha: 0.22),
+                  ),
+                ]
+              : null,
         ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isSelected) ...[
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: _kKmstryTeal,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected
+                    ? Colors.white
+                    : (isDark
+                          ? Colors.white.withValues(alpha: 0.72)
+                          : Colors.black.withValues(alpha: 0.58)),
+                fontWeight: FontWeight.w800,
+                fontSize: 13.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Sohbet listesi avatarı: fotoğrafı varsa fotoğraf, yoksa renkli baş harf.
+  Widget _buildChatAvatar(
+      String? photo, String name, Color avatarColor, bool isDark) {
+    final hasPhoto = photo != null && photo.trim().isNotEmpty;
+    Widget initial() => Container(
+          width: 55,
+          height: 55,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: isDark
+                ? avatarColor.withValues(alpha: 0.2)
+                : avatarColor.withValues(alpha: 0.15),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            name.isNotEmpty ? name[0].toUpperCase() : '?',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: isDark ? avatarColor.withValues(alpha: 0.9) : avatarColor,
+            ),
+          ),
+        );
+    if (!hasPhoto) return initial();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: CachedImage(
+        photo,
+        width: 55,
+        height: 55,
+        fit: BoxFit.cover,
+        errorWidget: (_) => initial(),
       ),
     );
   }
@@ -568,25 +669,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
               horizontal: 16,
               vertical: 4,
             ),
-            leading: Container(
-              width: 55,
-              height: 55,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: isDark
-                    ? avatarColor.withValues(alpha: 0.2)
-                    : avatarColor.withValues(alpha: 0.15),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: isDark ? avatarColor.withValues(alpha: 0.9) : avatarColor,
-                ),
-              ),
-            ),
+            leading: _buildChatAvatar(other?.photo, name, avatarColor, isDark),
             title: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -679,5 +762,147 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     if (diff.inHours < 24) return '${diff.inHours} hour ago';
     if (diff.inDays < 2) return '1 day ago';
     return '${diff.inDays} days ago';
+  }
+}
+
+class _MessagesEmptyState extends StatelessWidget {
+  const _MessagesEmptyState({
+    required this.isDark,
+    required this.query,
+  });
+
+  final bool isDark;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasQuery = query.isNotEmpty;
+    final title = hasQuery ? 'No results found' : 'No chats yet';
+    final message = hasQuery
+        ? 'Try a different name or message.'
+        : 'Check in, meet people nearby, and start the conversation.';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 340),
+          padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF101A2A) : const Color(0xFFF8FBFD),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isDark
+                  ? _kKmstryBlue.withValues(alpha: 0.16)
+                  : _kKmstryBlue.withValues(alpha: 0.10),
+            ),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: 26,
+                offset: const Offset(0, 14),
+                color: isDark
+                    ? _kKmstryBlue.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.05),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      _kKmstryBlue.withValues(alpha: 0.22),
+                      _kKmstryTeal.withValues(alpha: 0.18),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: _kKmstryBlue.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Icon(
+                  hasQuery
+                      ? Icons.search_off_rounded
+                      : Icons.chat_bubble_outline_rounded,
+                  color: _kKmstryBlue,
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.62)
+                      : Colors.black.withValues(alpha: 0.55),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
+              ),
+              if (!hasQuery) ...[
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: const LinearGradient(
+                      colors: [_kKmstryBlue, _kKmstryTeal],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                        color: _kKmstryBlue.withValues(alpha: 0.24),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.add_location_alt_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                      SizedBox(width: 7),
+                      Text(
+                        'Start with a check-in',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
