@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
@@ -9,6 +10,31 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
 
+class CheckinMediaUploadTarget {
+  final String uploadUrl;
+  final String publicUrl;
+  final Map<String, String> headers;
+
+  const CheckinMediaUploadTarget({
+    required this.uploadUrl,
+    required this.publicUrl,
+    required this.headers,
+  });
+
+  factory CheckinMediaUploadTarget.fromJson(Map<String, dynamic> json) {
+    final rawHeaders = json['headers'];
+    return CheckinMediaUploadTarget(
+      uploadUrl: json['uploadUrl']?.toString() ?? '',
+      publicUrl: json['publicUrl']?.toString() ?? '',
+      headers: rawHeaders is Map
+          ? rawHeaders.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
+          : const <String, String>{},
+    );
+  }
+}
+
 class CheckinRepository {
   final ApiClient _api = ApiClient();
 
@@ -19,6 +45,7 @@ class CheckinRepository {
     required double longitude,
     required String vibe,
     List<String>? whatBringsYou,
+    bool showOnProfile = false,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final selectedReasons = (whatBringsYou ?? [])
@@ -32,6 +59,7 @@ class CheckinRepository {
       'latitude': latitude,
       'longitude': longitude,
       'vibe': vibe,
+      'show_on_profile': showOnProfile,
     };
 
     final enrichedBody = <String, dynamic>{
@@ -39,7 +67,7 @@ class CheckinRepository {
       if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
     };
 
-    Map<String, dynamic> data;
+    dynamic data;
     try {
       data = await _api.post(
         '/checkins',
@@ -59,7 +87,48 @@ class CheckinRepository {
       }
     }
 
-    return data['id'] as String;
+    final checkinId = data is Map ? data['id']?.toString() : null;
+    if (checkinId == null || checkinId.isEmpty) {
+      throw Exception('Check-in could not be created: missing id');
+    }
+    return checkinId;
+  }
+
+  Future<String> createPendingCheckin({
+    required String venueId,
+    required double latitude,
+    required double longitude,
+    required String vibe,
+    List<String>? whatBringsYou,
+    bool showOnProfile = false,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final selectedReasons = (whatBringsYou ?? [])
+        .where((item) => item.trim().isNotEmpty)
+        .map((item) => item.trim())
+        .toList();
+
+    final body = <String, dynamic>{
+      'venue_id': venueId,
+      'checkin_method': 'gps',
+      'latitude': latitude,
+      'longitude': longitude,
+      'vibe': vibe,
+      'show_on_profile': showOnProfile,
+      if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
+    };
+
+    final data = await _api.post(
+      '/checkins/pending',
+      headers: {'Authorization': 'Bearer $token'},
+      body: body,
+    );
+
+    final checkinId = data is Map ? data['id']?.toString() : null;
+    if (checkinId == null || checkinId.isEmpty) {
+      throw Exception('Check-in could not be created: missing id');
+    }
+    return checkinId;
   }
 
   bool _isUnknownWhatBringsFieldError(ApiException error) {
@@ -113,10 +182,46 @@ class CheckinRepository {
     }
   }
 
+  Future<String?> uploadCheckinAvatar({
+    required String checkinId,
+    required File file,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+
+    final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/avatar');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers['Authorization'] = 'Bearer $token';
+    final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
+    final mimeSplit = mimeType.split('/');
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: 'checkin-avatar.jpg',
+        contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+      ),
+    );
+
+    final response = await request.send();
+    final responseBody = await response.stream.bytesToString();
+
+    if (response.statusCode >= 400) {
+      throw Exception(
+        'Avatar upload failed (${response.statusCode}): $responseBody',
+      );
+    }
+
+    final data = responseBody.isNotEmpty
+        ? jsonDecode(responseBody) as Map<String, dynamic>
+        : const <String, dynamic>{};
+    return (data['avatarPhoto'] ?? data['avatar_photo'])?.toString();
+  }
+
   Future<void> uploadCheckinMedia({
     required String checkinId,
     required File file,
     required bool isFeatured,
+    String? textOverlayJson,
   }) async {
     final token = await SecureStorage.getAccessToken();
 
@@ -139,6 +244,9 @@ class CheckinRepository {
     );
 
     request.fields['isFeatured'] = isFeatured.toString();
+    if (textOverlayJson != null && textOverlayJson.isNotEmpty) {
+      request.fields['textOverlay'] = textOverlayJson;
+    }
 
     final response = await request.send();
     final responseBody = await response.stream.bytesToString();
@@ -148,6 +256,74 @@ class CheckinRepository {
         'Media upload failed (${response.statusCode}): $responseBody',
       );
     }
+  }
+
+  Future<CheckinMediaUploadTarget> createCheckinMediaUploadUrl({
+    required String checkinId,
+    required File file,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final sizeBytes = await file.length();
+
+    final data = await _api.post(
+      '/checkins/$checkinId/media/upload-url',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'mimeType': mimeType,
+        'fileName': file.uri.pathSegments.isNotEmpty
+            ? file.uri.pathSegments.last
+            : 'media',
+        'sizeBytes': sizeBytes,
+      },
+    );
+
+    return CheckinMediaUploadTarget.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<void> uploadFileToSignedUrl({
+    required CheckinMediaUploadTarget target,
+    required File file,
+  }) async {
+    // NOT: Önceden StreamedRequest kullanılıyordu ama send()'den önce
+    // sink.addStream çağrıldığı için büyük dosyalarda deadlock oluyordu
+    // (tüketici başlamadan iç buffer doluyordu). Dosyayı belleğe okuyup tek
+    // seferde PUT ediyoruz — sıkıştırılmış video/720px foto için boyut güvenli.
+    final bytes = await file.readAsBytes();
+    final response = await http
+        .put(Uri.parse(target.uploadUrl), headers: target.headers, body: bytes)
+        .timeout(const Duration(minutes: 2));
+
+    if (response.statusCode >= 400) {
+      throw Exception(
+        'Direct media upload failed (${response.statusCode}): ${response.body}',
+      );
+    }
+  }
+
+  Future<void> confirmCheckinMediaUpload({
+    required String checkinId,
+    required CheckinMediaUploadTarget target,
+    required File file,
+    required bool isFeatured,
+    String? textOverlayJson,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final sizeBytes = await file.length();
+
+    await _api.post(
+      '/checkins/$checkinId/media/confirm',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'url': target.publicUrl,
+        'mimeType': mimeType,
+        'sizeBytes': sizeBytes,
+        'isFeatured': isFeatured,
+        if (textOverlayJson != null && textOverlayJson.isNotEmpty)
+          'textOverlay': textOverlayJson,
+      },
+    );
   }
 
   Future<List<dynamic>> getMyCheckinMedia() async {
@@ -201,6 +377,42 @@ class CheckinRepository {
     return CheckinProfile.fromJson(data);
   }
 
+  Future<PublicUserProfile> getPublicUserProfile(String userId) async {
+    final token = await SecureStorage.getAccessToken();
+
+    final data = await _api.get(
+      '/users/$userId/public-profile',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    return PublicUserProfile.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<CheckinVisitedPlace>> getMyProfileHistory() async {
+    final token = await SecureStorage.getAccessToken();
+
+    final data = await _api.get(
+      '/checkins/me/profile-history',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    final items = data is Map ? data['items'] : data;
+    return CheckinVisitedPlace.listFromJson(items);
+  }
+
+  Future<void> updateProfileVisibility({
+    required String checkinId,
+    required bool showOnProfile,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+
+    await _api.patch(
+      '/checkins/$checkinId/profile-visibility',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'show_on_profile': showOnProfile},
+    );
+  }
+
   Future<void> setFeaturedPhoto(String photoId) async {
     final token = await SecureStorage.getAccessToken();
 
@@ -221,6 +433,30 @@ class CheckinRepository {
       headers: {'Authorization': 'Bearer $token'},
       body: {"vibe": vibe},
     );
+  }
+
+  /// Aktif check-in'in "what brings you to Kmstry" seçimlerini günceller.
+  /// Backend doğrulanmış listeyi döndürür (max 3, enum'a uygun).
+  Future<List<String>> updateWhatBrings({
+    required String checkinId,
+    required List<String> values,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final data = await _api.patch(
+      '/checkins/$checkinId/what-brings',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'what_brings_to_kmstry': values},
+    );
+    final raw = (data is Map)
+        ? (data['what_brings_to_kmstry'] ?? data['whatBringsToKmstry'])
+        : null;
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return values;
   }
 
   Future<void> deletePhoto(String photoId) async {
@@ -253,6 +489,18 @@ class CheckinRepository {
       '/feed/actions',
       headers: {'Authorization': 'Bearer $token'},
       body: body,
+    );
+  }
+
+  /// Rewind/undo the current user's last action (pass OR interested) toward
+  /// [targetUserId] so the profile becomes actionable again. Backend enforces
+  /// the daily rewind quota (403 REWIND_LIMIT_REACHED) and blocks undoing an
+  /// interested once matched (409 MATCH_EXISTS).
+  Future<void> undoAction(String targetUserId) async {
+    final token = await SecureStorage.getAccessToken();
+    await _api.delete(
+      '/feed/actions/$targetUserId',
+      headers: {'Authorization': 'Bearer $token'},
     );
   }
 
@@ -345,5 +593,16 @@ class CheckinRepository {
       if (nested is List) return nested;
     }
     return const [];
+  }
+
+  /// Kullanıcının aktif check-in'ini manuel olarak kapatır.
+  /// Backend: DELETE /checkins/:id
+  Future<void> checkout(String checkinId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.delete(
+      '/checkins/$checkinId',
+      headers: {'Authorization': 'Bearer $token'},
+    );
   }
 }

@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/permissions/battery_optimization_service.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -8,6 +10,7 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/change_password_page.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/features/profile/presentation/manage_accounts_page.dart';
 
 class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
@@ -25,10 +28,34 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   String? _accountEmail;
   bool _loadingAccountInfo = true;
 
+  final _batteryOptimizationService = BatteryOptimizationService();
+  bool _batteryOptimizationIgnored = true;
+  bool _loadingBatteryStatus = true;
+
   @override
   void initState() {
     super.initState();
     _loadAccountFlags();
+    if (Platform.isAndroid) {
+      _loadBatteryStatus();
+    } else {
+      _loadingBatteryStatus = false;
+    }
+  }
+
+  Future<void> _loadBatteryStatus() async {
+    final ignored = await _batteryOptimizationService
+        .isIgnoringBatteryOptimizations();
+    if (!mounted) return;
+    setState(() {
+      _batteryOptimizationIgnored = ignored;
+      _loadingBatteryStatus = false;
+    });
+  }
+
+  Future<void> _requestIgnoreBatteryOptimization() async {
+    await _batteryOptimizationService.requestIgnoreBatteryOptimizations();
+    await _loadBatteryStatus();
   }
 
   Future<void> _loadAccountFlags() async {
@@ -126,7 +153,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   }
 
   Future<void> _openPolicy(String path) async {
-    final uri = Uri.parse('${AppConfig.baseUrl}$path');
+    final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
       await showPremiumErrorDialog(
@@ -248,6 +275,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         child: Container(
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: premiumTileBg,
             borderRadius: BorderRadius.circular(14),
@@ -267,10 +295,75 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       );
     }
 
+    final isDark = theme.brightness == Brightness.dark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kBorder = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFD9E1EA);
     return Scaffold(
-      appBar: AppBar(title: const Text('Account Settings')),
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.onSurface),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: Text(
+          'Accounts Center',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(color: kBorder, height: 1),
+        ),
+      ),
       body: ListView(
         children: <Widget>[
+          // ── Manage Accounts ──────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: ListTile(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ManageAccountsPage(),
+                ),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(
+                  color: colors.primary.withValues(alpha: 0.12),
+                ),
+              ),
+              tileColor: theme.brightness == Brightness.dark
+                  ? colors.surface
+                  : const Color(0xFFF8FBFD),
+              leading: Icon(Icons.manage_accounts_outlined,
+                  color: colors.primary),
+              title: Text(
+                'Manage Accounts',
+                style: TextStyle(
+                  color: colors.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'Add, view or delete your accounts',
+                style: TextStyle(
+                  color: colors.onSurface.withValues(alpha: 0.6),
+                  fontSize: 13,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+          ),
+
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
@@ -317,6 +410,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Container(
+              clipBehavior: Clip.antiAlias,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: theme.brightness == Brightness.dark
@@ -408,6 +502,30 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 ),
               ),
             ),
+          if (Platform.isAndroid && !_loadingBatteryStatus)
+            premiumTile(
+              ListTile(
+                leading: Icon(
+                  Icons.battery_charging_full_outlined,
+                  color: colors.primary,
+                ),
+                title: const Text('Reliable notifications'),
+                subtitle: Text(
+                  _batteryOptimizationIgnored
+                      ? 'Background activity allowed — notifications arrive on time'
+                      : 'Some phones delay notifications in the background. Tap to fix.',
+                ),
+                trailing: _batteryOptimizationIgnored
+                    ? Icon(Icons.check_circle, color: colors.primary)
+                    : Icon(
+                        Icons.chevron_right_rounded,
+                        color: colors.onSurface.withValues(alpha: 0.45),
+                      ),
+                onTap: _batteryOptimizationIgnored
+                    ? null
+                    : _requestIgnoreBatteryOptimization,
+              ),
+            ),
           premiumTile(
             ListTile(
               leading: Icon(Icons.privacy_tip_outlined, color: colors.primary),
@@ -416,7 +534,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 Icons.chevron_right_rounded,
                 color: colors.onSurface.withValues(alpha: 0.45),
               ),
-              onTap: () => _openPolicy('/legal/privacy'),
+              onTap: () => _openPolicy('/privacy'),
             ),
           ),
           premiumTile(
@@ -427,7 +545,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 Icons.chevron_right_rounded,
                 color: colors.onSurface.withValues(alpha: 0.45),
               ),
-              onTap: () => _openPolicy('/legal/terms'),
+              onTap: () => _openPolicy('/terms'),
             ),
           ),
           premiumTile(

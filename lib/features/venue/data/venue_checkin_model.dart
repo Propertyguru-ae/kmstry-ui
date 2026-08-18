@@ -84,7 +84,7 @@ class VenueCheckin {
 }
 
 extension VenueCheckinX on VenueCheckin {
-  /// Grid + Hero için tek foto kaynağı:
-  /// featured varsa onu, yoksa userPhoto
+  /// "Who is here" attendee kartları için foto kaynağı: kişinin o mekandaki
+  /// temsili olan featured (yıldızlı) foto öncelikli; yoksa profil fotoğrafı.
   String get displayPhoto => featuredPhoto ?? userPhoto;
 }

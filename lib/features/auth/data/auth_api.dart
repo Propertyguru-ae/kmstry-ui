@@ -42,6 +42,17 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> acceptActiveLegalVersions({
+    required String accessToken,
+  }) async {
+    final res = await _client.post(
+      '/legal/consents/accept-active',
+      body: {'consentSource': 'MOBILE'},
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return res as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> getUsernameSuggestions({
     required String accessToken,
     required String base,
@@ -158,12 +169,12 @@ class AuthApi {
   }
 
   Future<Map<String, dynamic>> login({
-    required String email,
+    required String identifier,
     required String password,
   }) async {
     final res = await _client.post(
       '/auth/login',
-      body: {'email': email, 'password': password},
+      body: {'identifier': identifier, 'password': password},
     );
 
     return res as Map<String, dynamic>;
@@ -202,6 +213,30 @@ class AuthApi {
       if (consentSource != null) 'consentSource': consentSource,
     };
     final res = await _client.post('/auth/google', body: body);
+
+    return res as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> loginWithApple({
+    required String identityToken,
+    String? authorizationCode,
+    String? fullName,
+    bool? consentGiven,
+    String? termsVersionId,
+    String? privacyVersionId,
+    String? consentSource,
+  }) async {
+    final body = <String, dynamic>{
+      'identityToken': identityToken,
+      if (authorizationCode != null && authorizationCode.isNotEmpty)
+        'authorizationCode': authorizationCode,
+      if (fullName != null && fullName.isNotEmpty) 'fullName': fullName,
+      if (consentGiven != null) 'consentGiven': consentGiven,
+      if (termsVersionId != null) 'termsVersionId': termsVersionId,
+      if (privacyVersionId != null) 'privacyVersionId': privacyVersionId,
+      if (consentSource != null) 'consentSource': consentSource,
+    };
+    final res = await _client.post('/auth/apple', body: body);
 
     return res as Map<String, dynamic>;
   }
