@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
@@ -11,6 +12,12 @@ import 'story_model.dart';
 class StoryRepository {
   final ApiClient _api = ApiClient();
 
+  /// Kişisel story oluşturulunca/silinince artar. Home gibi ekranlar bunu
+  /// dinleyip kendi story listesini anında tazeler (paylaşımdan sonra "bazen
+  /// gelmiyor sonra geliyor" sorununu önler).
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+  static void _notifyChanged() => changes.value++;
+
   /// Upload a photo or video story for the given checkin.
   Future<StoryItem> createStory({
     required String checkinId,
@@ -20,14 +27,12 @@ class StoryRepository {
     String? textOverlayJson,
   }) async {
     final token = await SecureStorage.getAccessToken();
-    final uri =
-        Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/stories');
+    final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/stories');
 
     final request = http.MultipartRequest('POST', uri);
     request.headers['Authorization'] = 'Bearer $token';
 
-    final mimeType =
-        lookupMimeType(file.path) ?? 'application/octet-stream';
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeSplit = mimeType.split('/');
 
     request.files.add(
@@ -54,6 +59,7 @@ class StoryRepository {
     }
 
     final json = jsonDecode(body) as Map<String, dynamic>;
+    _notifyChanged();
     return StoryItem.fromJson(json);
   }
 
@@ -130,5 +136,6 @@ class StoryRepository {
       '/stories/$storyId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    _notifyChanged();
   }
 }
