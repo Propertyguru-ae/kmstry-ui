@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -61,80 +62,253 @@ class _LoginPageState extends State<LoginPage> {
     return showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (sheetContext) {
-        final colors = Theme.of(sheetContext).colorScheme;
+        final isDark = Theme.of(sheetContext).brightness == Brightness.dark;
+        final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+        final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+        final bodyColor = isDark
+            ? const Color(0xFFB4C2D8)
+            : AppColors.lightTextSecondary;
+        final linkColor = isDark ? AppColors.blueDark : AppColors.blue;
+
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Consent Required',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text('Please agree to continue with Google sign in.'),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Checkbox(
-                          value: consent,
-                          onChanged: (v) =>
-                              setSheetState(() => consent = v ?? false),
+            final linkStyle = TextStyle(
+              color: linkColor,
+              fontWeight: FontWeight.w700,
+              decoration: TextDecoration.underline,
+              decorationColor: linkColor,
+            );
+            return Container(
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : Colors.black.withValues(alpha: 0.04),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Grab handle
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 20),
+                          decoration: BoxDecoration(
+                            color: bodyColor.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Wrap(
-                              children: [
-                                const Text('I agree to the '),
-                                InkWell(
-                                  onTap: () => _openPolicy('/terms'),
-                                  child: Text(
-                                    'Terms of Service',
-                                    style: TextStyle(
-                                      color: colors.primary,
-                                      decoration: TextDecoration.underline,
-                                    ),
+                      ),
+
+                      // ── Gradient ikon tile'ı
+                      Center(
+                        child: Container(
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(18),
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [AppColors.blue, AppColors.magenta],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.magenta.withValues(
+                                  alpha: 0.32,
+                                ),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.verified_user_rounded,
+                            color: Colors.white,
+                            size: 30,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // ── Başlık
+                      Text(
+                        'One quick step',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Please review and accept to continue with Google.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: bodyColor,
+                          fontSize: 14.5,
+                          height: 1.4,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── Onay kutusu satırı (tıklanabilir kart)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => setSheetState(() => consent = !consent),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.04)
+                                : Colors.black.withValues(alpha: 0.03),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: consent
+                                  ? AppColors.blue.withValues(alpha: 0.55)
+                                  : (isDark
+                                        ? Colors.white.withValues(alpha: 0.12)
+                                        : Colors.black.withValues(alpha: 0.10)),
+                              width: consent ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Özel checkbox
+                              AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(7),
+                                  gradient: consent
+                                      ? const LinearGradient(
+                                          colors: [
+                                            AppColors.blue,
+                                            AppColors.magenta,
+                                          ],
+                                        )
+                                      : null,
+                                  color: consent ? null : Colors.transparent,
+                                  border: Border.all(
+                                    color: consent
+                                        ? Colors.transparent
+                                        : bodyColor.withValues(alpha: 0.5),
+                                    width: 1.5,
                                   ),
                                 ),
-                                const Text(' and '),
-                                InkWell(
-                                  onTap: () => _openPolicy('/privacy'),
-                                  child: Text(
-                                    'Privacy Policy',
+                                child: consent
+                                    ? const Icon(
+                                        Icons.check_rounded,
+                                        color: Colors.white,
+                                        size: 16,
+                                      )
+                                    : null,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text.rich(
+                                  TextSpan(
                                     style: TextStyle(
-                                      color: colors.primary,
-                                      decoration: TextDecoration.underline,
+                                      color: bodyColor,
+                                      fontSize: 13.5,
+                                      height: 1.45,
+                                      fontWeight: FontWeight.w500,
                                     ),
+                                    children: [
+                                      const TextSpan(text: 'I agree to the '),
+                                      TextSpan(
+                                        text: 'Terms of Service',
+                                        style: linkStyle,
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () => _openPolicy('/terms'),
+                                      ),
+                                      const TextSpan(text: ' and '),
+                                      TextSpan(
+                                        text: 'Privacy Policy',
+                                        style: linkStyle,
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () =>
+                                              _openPolicy('/privacy'),
+                                      ),
+                                      const TextSpan(text: '.'),
+                                    ],
                                   ),
                                 ),
-                                const Text('.'),
-                              ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // ── Continue (gradient, sadece onaylıysa aktif)
+                      Opacity(
+                        opacity: consent ? 1 : 0.45,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: const LinearGradient(
+                              colors: [AppColors.blue, AppColors.magenta],
+                            ),
+                            boxShadow: consent
+                                ? [
+                                    BoxShadow(
+                                      color: AppColors.blue.withValues(
+                                        alpha: 0.30,
+                                      ),
+                                      blurRadius: 18,
+                                      offset: const Offset(0, 8),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: consent
+                                  ? () => Navigator.of(sheetContext).pop(true)
+                                  : null,
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 15),
+                                child: Text(
+                                  'Continue',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: consent
-                            ? () => Navigator.of(sheetContext).pop(true)
-                            : null,
-                        child: const Text('Continue'),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );
@@ -159,6 +333,7 @@ class _LoginPageState extends State<LoginPage> {
         termsVersionId: versions.termsVersionId,
         privacyVersionId: versions.privacyVersionId,
         consentSource: 'MOBILE',
+        reusePendingToken: true,
       );
     }
   }
@@ -178,6 +353,7 @@ class _LoginPageState extends State<LoginPage> {
         termsVersionId: versions.termsVersionId,
         privacyVersionId: versions.privacyVersionId,
         consentSource: 'MOBILE',
+        reusePendingCredential: true,
       );
     }
   }

@@ -156,6 +156,7 @@ class _SignupPageState extends State<SignupPage> {
         termsVersionId: versions.termsVersionId,
         privacyVersionId: versions.privacyVersionId,
         consentSource: 'MOBILE',
+        reusePendingToken: true,
       );
     }
   }
@@ -207,6 +208,7 @@ class _SignupPageState extends State<SignupPage> {
         termsVersionId: versions.termsVersionId,
         privacyVersionId: versions.privacyVersionId,
         consentSource: 'MOBILE',
+        reusePendingCredential: true,
       );
     }
   }
