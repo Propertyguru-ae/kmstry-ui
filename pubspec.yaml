@@ -75,6 +75,7 @@ dependencies:
   # Marker foto ikonlarının ham Google Places fotoğraflarını diskte cache'lemek
   # için — aynı foto tekrar tekrar indirilmez (Place Photo SKU maliyeti düşer).
   flutter_cache_manager: ^3.4.1
+  firebase_app_check: ^0.4.6
 
 dev_dependencies:
   flutter_test:

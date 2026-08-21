@@ -697,155 +697,53 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) {
-        final theme = Theme.of(ctx);
-        final isDark = theme.brightness == Brightness.dark;
-        final colors = theme.colorScheme;
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
 
         return StatefulBuilder(
           builder: (ctx, setModalState) {
-            return AlertDialog(
-              backgroundColor: isDark ? _darkSurface : colors.surface,
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 20,
-              ),
-              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-              contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(
-                  color: isDark
-                      ? _darkBorder.withValues(alpha: 0.9)
-                      : colors.outline.withValues(alpha: 0.24),
-                ),
-              ),
-              title: Text(
-                submitted ? 'Blocked' : 'Block user?',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : colors.onSurface,
-                ),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!submitted)
-                    Text(
-                      "Once blocked, you will no longer see each other in the app and your conversation will be closed.",
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.86)
-                            : colors.onSurface.withValues(alpha: 0.85),
-                        height: 1.35,
-                      ),
-                    ),
-                  if (submitted)
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.check_circle_rounded,
-                          size: 20,
-                          color: Color(0xFF22C55E),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'This user has been blocked. You will no longer see each other in the app.',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : colors.onSurface,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  if (submitError != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      submitError!,
-                      style: TextStyle(
-                        color: colors.error,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  if (!submitted) ...[
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: submitting
-                            ? null
-                            : () async {
-                                setModalState(() {
-                                  submitting = true;
-                                  submitError = null;
-                                });
-                                if (mounted) {
-                                  setState(() => _isBlocking = true);
-                                }
-                                try {
-                                  await _repo.blockUser(targetUserId);
-                                  if (!mounted) return;
-                                  setState(() => _isBlocked = true);
-                                  setModalState(() {
-                                    submitting = false;
-                                    submitted = true;
-                                  });
-                                  await Future<void>.delayed(
-                                    const Duration(seconds: 2),
-                                  );
-                                  if (ctx.mounted) Navigator.of(ctx).pop();
-                                } catch (_) {
-                                  setModalState(() {
-                                    submitting = false;
-                                    submitError = 'Could not block user.';
-                                  });
-                                } finally {
-                                  if (mounted) {
-                                    setState(() => _isBlocking = false);
-                                  }
-                                }
-                              },
-                        child: submitting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Block'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Center(
-                      child: TextButton(
-                        onPressed: submitting
-                            ? null
-                            : () => Navigator.of(ctx).pop(),
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 32),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: const VisualDensity(
-                            horizontal: VisualDensity.minimumDensity,
-                            vertical: VisualDensity.minimumDensity,
-                          ),
-                        ),
-                        child: const Text('Cancel'),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              actions: const [],
+            return _PremiumConfirmDialog(
+              isDark: isDark,
+              iconColors: const [Color(0xFFF04438), Color(0xFFB42318)],
+              icon: submitted
+                  ? Icons.check_circle_rounded
+                  : Icons.block_rounded,
+              title: submitted ? 'User blocked' : 'Block user?',
+              message: submitted
+                  ? 'You will no longer see each other in the app. Your chat history stays visible.'
+                  : 'Once blocked, you will no longer see each other in the app and messaging will be paused. Your chat history will stay visible.',
+              errorText: submitError,
+              submitting: submitting,
+              submitted: submitted,
+              confirmLabel: 'Block',
+              confirmColors: const [Color(0xFFF04438), Color(0xFFB42318)],
+              onConfirm: () async {
+                setModalState(() {
+                  submitting = true;
+                  submitError = null;
+                });
+                if (mounted) setState(() => _isBlocking = true);
+                try {
+                  await _repo.blockUser(targetUserId);
+                  if (!mounted) return;
+                  setState(() => _isBlocked = true);
+                  setModalState(() {
+                    submitting = false;
+                    submitted = true;
+                  });
+                  await Future<void>.delayed(const Duration(seconds: 2));
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                } catch (_) {
+                  setModalState(() {
+                    submitting = false;
+                    submitError = 'Could not block user.';
+                  });
+                } finally {
+                  if (mounted) setState(() => _isBlocking = false);
+                }
+              },
+              onCancel: () => Navigator.of(ctx).pop(),
             );
           },
         );
@@ -861,155 +759,53 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) {
-        final theme = Theme.of(ctx);
-        final isDark = theme.brightness == Brightness.dark;
-        final colors = theme.colorScheme;
+        final isDark = Theme.of(ctx).brightness == Brightness.dark;
 
         return StatefulBuilder(
           builder: (ctx, setModalState) {
-            return AlertDialog(
-              backgroundColor: isDark ? _darkSurface : colors.surface,
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 20,
-              ),
-              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-              contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(
-                  color: isDark
-                      ? _darkBorder.withValues(alpha: 0.9)
-                      : colors.outline.withValues(alpha: 0.24),
-                ),
-              ),
-              title: Text(
-                submitted ? 'Unblocked' : 'Unblock user?',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : colors.onSurface,
-                ),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!submitted)
-                    Text(
-                      'If you unblock this user, you may be able to see each other again in the app and continue messaging.',
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.86)
-                            : colors.onSurface.withValues(alpha: 0.85),
-                        height: 1.35,
-                      ),
-                    ),
-                  if (submitted)
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.check_circle_rounded,
-                          size: 20,
-                          color: Color(0xFF22C55E),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'This user has been unblocked. You may now see each other again in the app.',
-                            style: TextStyle(
-                              color: isDark ? Colors.white : colors.onSurface,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  if (submitError != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      submitError!,
-                      style: TextStyle(
-                        color: colors.error,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  if (!submitted) ...[
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: submitting
-                            ? null
-                            : () async {
-                                setModalState(() {
-                                  submitting = true;
-                                  submitError = null;
-                                });
-                                if (mounted) {
-                                  setState(() => _isBlocking = true);
-                                }
-                                try {
-                                  await _repo.unblockUser(targetUserId);
-                                  if (!mounted) return;
-                                  setState(() => _isBlocked = false);
-                                  setModalState(() {
-                                    submitting = false;
-                                    submitted = true;
-                                  });
-                                  await Future<void>.delayed(
-                                    const Duration(seconds: 2),
-                                  );
-                                  if (ctx.mounted) Navigator.of(ctx).pop();
-                                } catch (_) {
-                                  setModalState(() {
-                                    submitting = false;
-                                    submitError = 'Could not unblock user.';
-                                  });
-                                } finally {
-                                  if (mounted) {
-                                    setState(() => _isBlocking = false);
-                                  }
-                                }
-                              },
-                        child: submitting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Unblock'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Center(
-                      child: TextButton(
-                        onPressed: submitting
-                            ? null
-                            : () => Navigator.of(ctx).pop(),
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 32),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: const VisualDensity(
-                            horizontal: VisualDensity.minimumDensity,
-                            vertical: VisualDensity.minimumDensity,
-                          ),
-                        ),
-                        child: const Text('Cancel'),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              actions: const [],
+            return _PremiumConfirmDialog(
+              isDark: isDark,
+              iconColors: const [AppColors.blue, AppColors.teal],
+              icon: submitted
+                  ? Icons.check_circle_rounded
+                  : Icons.lock_open_rounded,
+              title: submitted ? 'User unblocked' : 'Unblock user?',
+              message: submitted
+                  ? 'You may now see each other again in the app and continue messaging.'
+                  : 'If you unblock this user, you may be able to see each other again in the app and continue messaging.',
+              errorText: submitError,
+              submitting: submitting,
+              submitted: submitted,
+              confirmLabel: 'Unblock',
+              confirmColors: const [AppColors.blue, AppColors.teal],
+              onConfirm: () async {
+                setModalState(() {
+                  submitting = true;
+                  submitError = null;
+                });
+                if (mounted) setState(() => _isBlocking = true);
+                try {
+                  await _repo.unblockUser(targetUserId);
+                  if (!mounted) return;
+                  setState(() => _isBlocked = false);
+                  setModalState(() {
+                    submitting = false;
+                    submitted = true;
+                  });
+                  await Future<void>.delayed(const Duration(seconds: 2));
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                } catch (_) {
+                  setModalState(() {
+                    submitting = false;
+                    submitError = 'Could not unblock user.';
+                  });
+                } finally {
+                  if (mounted) setState(() => _isBlocking = false);
+                }
+              },
+              onCancel: () => Navigator.of(ctx).pop(),
             );
           },
         );
@@ -1046,223 +842,439 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: 0.55),
         builder: (ctx) {
-          final theme = Theme.of(ctx);
-          final colors = theme.colorScheme;
-          final isDark = theme.brightness == Brightness.dark;
+          final isDark = Theme.of(ctx).brightness == Brightness.dark;
+          final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+          final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+          final bodyColor = isDark
+              ? const Color(0xFFB4C2D8)
+              : AppColors.lightTextSecondary;
+          const reportColors = [AppColors.orange, AppColors.magenta];
+
           return StatefulBuilder(
             builder: (ctx, setModalState) {
               final isOther = selected == 'OTHER';
               final canSubmit =
                   !submitting && (!isOther || otherCtrl.text.trim().isNotEmpty);
               return Padding(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  0,
-                  16,
-                  MediaQuery.of(ctx).viewInsets.bottom + 16,
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
                 ),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? _darkSurface.withValues(alpha: 0.96)
-                        : colors.surface,
-                    borderRadius: BorderRadius.circular(22),
+                    color: surface,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(28),
+                    ),
                     border: Border.all(
                       color: isDark
-                          ? _darkBorder.withValues(alpha: 0.9)
-                          : colors.outline.withValues(alpha: 0.2),
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : Colors.black.withValues(alpha: 0.04),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.35 : 0.12,
-                        ),
-                        blurRadius: 24,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
                   ),
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 36,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: colors.onSurface.withValues(alpha: 0.25),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (!submitted) ...[
-                        Text(
-                          'What do you want to report?',
-                          style: TextStyle(
-                            color: colors.onSurface,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        ...options.map(
-                          (o) => RadioListTile<String>(
-                            value: o.key,
-                            groupValue: selected,
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            activeColor: colors.primary,
-                            title: Text(
-                              o.label,
-                              style: TextStyle(color: colors.onSurface),
-                            ),
-                            onChanged: submitting
-                                ? null
-                                : (v) {
-                                    if (v == null) return;
-                                    setModalState(() => selected = v);
-                                  },
-                          ),
-                        ),
-                        if (isOther) ...[
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: otherCtrl,
-                            enabled: !submitting,
-                            maxLines: 3,
-                            inputFormatters: [
-                              LengthLimitingTextInputFormatter(150),
-                            ],
-                            decoration: const InputDecoration(
-                              hintText: 'Help us understand what happened',
-                              border: OutlineInputBorder(),
-                            ),
-                            onChanged: (_) => setModalState(() {}),
-                          ),
-                          const SizedBox(height: 6),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              '${otherCtrl.text.characters.length}/150',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.onSurface.withValues(alpha: 0.65),
+                  child: SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 42,
+                              height: 4,
+                              margin: const EdgeInsets.only(bottom: 18),
+                              decoration: BoxDecoration(
+                                color: bodyColor.withValues(alpha: 0.35),
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ),
                           ),
-                        ],
-                        if (submitError != null) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            submitError!,
-                            style: TextStyle(color: colors.error, fontSize: 13),
-                          ),
-                        ],
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: canSubmit
-                                ? () async {
-                                    setModalState(() {
-                                      submitting = true;
-                                      submitError = null;
-                                    });
-                                    var reportSucceeded = false;
-                                    try {
-                                      await _repo.reportUser(
-                                        targetUserId: targetUserId,
-                                        reason: selected,
-                                        details: selected == 'OTHER'
-                                            ? otherCtrl.text.trim()
-                                            : null,
-                                      );
-                                      reportSucceeded = true;
-                                    } catch (_) {
-                                      setModalState(() {
-                                        submitting = false;
-                                        submitError =
-                                            'Could not submit report. Please try again.';
-                                      });
-                                    }
-                                    if (!reportSucceeded) return;
-
-                                    // Report başarılıysa block adımı best-effort:
-                                    // block çağrısı hata verse bile kullanıcıya report hatası göstermeyelim.
-                                    if (!_isBlocked) {
-                                      try {
-                                        await _repo.blockUser(targetUserId);
-                                      } catch (_) {}
-                                      if (mounted) {
-                                        setState(() => _isBlocked = true);
-                                      }
-                                    }
-                                    setModalState(() {
-                                      submitting = false;
-                                      submitted = true;
-                                    });
-                                  }
-                                : null,
-                            child: submitting
-                                ? SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: colors.onPrimary,
+                          if (!submitted) ...[
+                            Center(
+                              child: Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(17),
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: reportColors,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.orange.withValues(
+                                        alpha: 0.32,
+                                      ),
+                                      blurRadius: 18,
+                                      offset: const Offset(0, 6),
                                     ),
-                                  )
-                                : const Text('Report'),
-                          ),
-                        ),
-                      ] else ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: colors.primary.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: colors.primary.withValues(alpha: 0.32),
-                            ),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(
-                                Icons.verified_user_rounded,
-                                color: Color(0xFF22C55E),
-                                size: 20,
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.flag_rounded,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Report this user',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: titleColor,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Tell us what went wrong. Reporting also blocks this user.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: bodyColor,
+                                fontSize: 13,
+                                height: 1.35,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            ...options.map((o) {
+                              final active = selected == o.key;
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(14),
+                                  onTap: submitting
+                                      ? null
+                                      : () => setModalState(
+                                          () => selected = o.key,
+                                        ),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 13,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.04)
+                                          : Colors.black.withValues(
+                                              alpha: 0.03,
+                                            ),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: active
+                                            ? AppColors.magenta.withValues(
+                                                alpha: 0.6,
+                                              )
+                                            : (isDark
+                                                  ? Colors.white.withValues(
+                                                      alpha: 0.10,
+                                                    )
+                                                  : Colors.black.withValues(
+                                                      alpha: 0.08,
+                                                    )),
+                                        width: active ? 1.5 : 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            o.label,
+                                            style: TextStyle(
+                                              color: titleColor,
+                                              fontSize: 14.5,
+                                              fontWeight: active
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                        AnimatedContainer(
+                                          duration: const Duration(
+                                            milliseconds: 150,
+                                          ),
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            gradient: active
+                                                ? const LinearGradient(
+                                                    colors: reportColors,
+                                                  )
+                                                : null,
+                                            border: active
+                                                ? null
+                                                : Border.all(
+                                                    color: bodyColor.withValues(
+                                                      alpha: 0.5,
+                                                    ),
+                                                    width: 1.5,
+                                                  ),
+                                          ),
+                                          child: active
+                                              ? const Icon(
+                                                  Icons.check_rounded,
+                                                  color: Colors.white,
+                                                  size: 15,
+                                                )
+                                              : null,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                            if (isOther) ...[
+                              const SizedBox(height: 4),
+                              TextField(
+                                controller: otherCtrl,
+                                enabled: !submitting,
+                                maxLines: 3,
+                                inputFormatters: [
+                                  LengthLimitingTextInputFormatter(150),
+                                ],
+                                style: TextStyle(color: titleColor),
+                                decoration: InputDecoration(
+                                  hintText: 'Help us understand what happened',
+                                  hintStyle: TextStyle(color: bodyColor),
+                                  filled: true,
+                                  fillColor: isDark
+                                      ? Colors.white.withValues(alpha: 0.04)
+                                      : Colors.black.withValues(alpha: 0.03),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                                onChanged: (_) => setModalState(() {}),
+                              ),
+                              const SizedBox(height: 6),
+                              Align(
+                                alignment: Alignment.centerRight,
                                 child: Text(
-                                  'Thanks for your report. This user has been blocked automatically, and your chat has been closed for your safety.',
+                                  '${otherCtrl.text.characters.length}/150',
                                   style: TextStyle(
-                                    color: colors.onSurface,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.35,
+                                    fontSize: 12,
+                                    color: bodyColor,
                                   ),
                                 ),
                               ),
                             ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Done'),
-                          ),
-                        ),
-                      ],
-                    ],
+                            if (submitError != null) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                submitError!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFF04438),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            Opacity(
+                              opacity: canSubmit ? 1 : 0.5,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  gradient: const LinearGradient(
+                                    colors: reportColors,
+                                  ),
+                                  boxShadow: canSubmit
+                                      ? [
+                                          BoxShadow(
+                                            color: AppColors.orange.withValues(
+                                              alpha: 0.30,
+                                            ),
+                                            blurRadius: 18,
+                                            offset: const Offset(0, 8),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(16),
+                                    onTap: canSubmit
+                                        ? () async {
+                                            setModalState(() {
+                                              submitting = true;
+                                              submitError = null;
+                                            });
+                                            var reportSucceeded = false;
+                                            try {
+                                              await _repo.reportUser(
+                                                targetUserId: targetUserId,
+                                                reason: selected,
+                                                details: selected == 'OTHER'
+                                                    ? otherCtrl.text.trim()
+                                                    : null,
+                                              );
+                                              reportSucceeded = true;
+                                            } catch (_) {
+                                              setModalState(() {
+                                                submitting = false;
+                                                submitError =
+                                                    'Could not submit report. Please try again.';
+                                              });
+                                            }
+                                            if (!reportSucceeded) return;
+
+                                            // Report başarılıysa block adımı
+                                            // best-effort: block hata verse bile
+                                            // kullanıcıya report hatası gösterme.
+                                            if (!_isBlocked) {
+                                              try {
+                                                await _repo.blockUser(
+                                                  targetUserId,
+                                                );
+                                              } catch (_) {}
+                                              if (mounted) {
+                                                setState(
+                                                  () => _isBlocked = true,
+                                                );
+                                              }
+                                            }
+                                            setModalState(() {
+                                              submitting = false;
+                                              submitted = true;
+                                            });
+                                          }
+                                        : null,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 15,
+                                      ),
+                                      child: Center(
+                                        child: submitting
+                                            ? const SizedBox(
+                                                width: 18,
+                                                height: 18,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: Colors.white,
+                                                    ),
+                                              )
+                                            : const Text(
+                                                'Report & block',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 15.5,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            TextButton(
+                              onPressed: submitting
+                                  ? null
+                                  : () => Navigator.pop(ctx),
+                              style: TextButton.styleFrom(
+                                minimumSize: const Size.fromHeight(44),
+                                foregroundColor: bodyColor,
+                              ),
+                              child: const Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ] else ...[
+                            Center(
+                              child: Container(
+                                width: 60,
+                                height: 60,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(18),
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Color(0xFF22C55E),
+                                      Color(0xFF15803D),
+                                    ],
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.verified_user_rounded,
+                                  color: Colors.white,
+                                  size: 30,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Report received',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: titleColor,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Thanks for letting us know. This user has been blocked and messaging is now paused for your safety.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: bodyColor,
+                                fontSize: 14,
+                                height: 1.4,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                gradient: const LinearGradient(
+                                  colors: [AppColors.blue, AppColors.teal],
+                                ),
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(16),
+                                  onTap: () => Navigator.pop(ctx),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 15),
+                                    child: Center(
+                                      child: Text(
+                                        'Done',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               );
@@ -2924,6 +2936,207 @@ class _GlassActionButton extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Uygulama diline uygun premium onay dialog'u (block / unblock için).
+/// Gradient ikon tile'ı + gradient ana buton + submitting/submitted/error state.
+class _PremiumConfirmDialog extends StatelessWidget {
+  const _PremiumConfirmDialog({
+    required this.isDark,
+    required this.iconColors,
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.errorText,
+    required this.submitting,
+    required this.submitted,
+    required this.confirmLabel,
+    required this.confirmColors,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final bool isDark;
+  final List<Color> iconColors;
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? errorText;
+  final bool submitting;
+  final bool submitted;
+  final String confirmLabel;
+  final List<Color> confirmColors;
+  final Future<void> Function() onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+    final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+    final bodyColor = isDark
+        ? const Color(0xFFB4C2D8)
+        : AppColors.lightTextSecondary;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Container(
+        decoration: BoxDecoration(
+          color: surface,
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.05),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
+              blurRadius: 34,
+              offset: const Offset(0, 16),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Gradient ikon tile'ı
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: submitted
+                        ? const [Color(0xFF22C55E), Color(0xFF15803D)]
+                        : iconColors,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color:
+                          (submitted
+                                  ? const Color(0xFF22C55E)
+                                  : iconColors.last)
+                              .withValues(alpha: 0.32),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, color: Colors.white, size: 30),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: titleColor,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: bodyColor,
+                  fontSize: 14,
+                  height: 1.4,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  errorText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFFF04438),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              if (!submitted) ...[
+                const SizedBox(height: 22),
+                // Ana aksiyon (gradient)
+                Opacity(
+                  opacity: submitting ? 0.6 : 1,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: LinearGradient(colors: confirmColors),
+                      boxShadow: submitting
+                          ? null
+                          : [
+                              BoxShadow(
+                                color: confirmColors.last.withValues(
+                                  alpha: 0.30,
+                                ),
+                                blurRadius: 18,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: submitting ? null : () => onConfirm(),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          child: Center(
+                            child: submitting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : Text(
+                                    confirmLabel,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: submitting ? null : onCancel,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    foregroundColor: bodyColor,
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
