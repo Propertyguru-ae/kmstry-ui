@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:provider/provider.dart';
 import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
@@ -8,6 +9,7 @@ import 'features/auth/presentation/auth_routes.dart';
 import 'features/auth/presentation/reset_password_page.dart';
 import 'package:camera/camera.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'firebase_options.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'core/push/push_background_handler.dart';
@@ -30,6 +32,32 @@ Future<void> main() async {
 
   // Firebase initialize (push notif icin)
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Firebase App Check — istekleri gerçek, değiştirilmemiş uygulamamızdan
+  // geldiğini kanıtlar (iOS: App Attest, Android: Play Integrity). Backend'in
+  // App Check guard'ı bu token'ı doğrular ve bot/script kayıtlarını engeller.
+  // Debug build'lerde App Attest/Play Integrity çalışmadığı için debug
+  // provider kullanılır (konsola çıkan debug token'ı Firebase'e eklemek gerekir).
+  try {
+    // NOT: appleProvider/androidProvider parametreleri deprecated ama çalışıyor;
+    // yeni sınıf-tabanlı API'ye geçince buradaki enum kullanımı güncellenebilir.
+    // ignore: deprecated_member_use
+    await FirebaseAppCheck.instance.activate(
+      // ignore: deprecated_member_use
+      appleProvider: kReleaseMode
+          ? AppleProvider.appAttest
+          : AppleProvider.debug,
+      // ignore: deprecated_member_use
+      androidProvider: kReleaseMode
+          ? AndroidProvider.playIntegrity
+          : AndroidProvider.debug,
+    );
+    // Token'ı otomatik tazele — süresi dolunca istekler token'sız kalmasın.
+    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+  } catch (e) {
+    debugPrint('⚠️ App Check activate failed: $e');
+  }
+
   await PushManager.instance.init();
 
   // FCM bildirim tap routing — uygulamanın ömrü boyunca aktif kalır
