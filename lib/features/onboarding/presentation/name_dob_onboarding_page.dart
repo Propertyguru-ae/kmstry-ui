@@ -52,8 +52,14 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
   bool get _is18Plus {
     if (_birthdate == null) return false;
     final today = DateTime.now();
-    final age = today.year - _birthdate!.year;
-    return age >= 18;
+    // 18. yaş gününü hesapla; bugün o tarihte veya sonrasındaysa 18+.
+    // (Yıl-bazlı çıkarma, doğum günü henüz gelmemiş 17 yaşındakileri kaçırıyordu.)
+    final eighteenthBirthday = DateTime(
+      _birthdate!.year + 18,
+      _birthdate!.month,
+      _birthdate!.day,
+    );
+    return !eighteenthBirthday.isAfter(today);
   }
 
   bool get _isValid {
