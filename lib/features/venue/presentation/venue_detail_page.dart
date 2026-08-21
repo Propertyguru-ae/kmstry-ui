@@ -800,9 +800,18 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     } catch (e) {
       debugPrint('⚠️ Error loading active check-in: $e');
       if (!mounted) return;
+      // Geçici hata (ör. 429 rate-limit / ağ) durumunda check-in durumunu
+      // SİLME — aksi halde check-in'li kullanıcı yanlışlıkla "Check in" /
+      // "You're not at this venue" görür ve visited places kaybolur.
+      // Bellekten primed edilen (ActiveCheckinService) değerleri koru; API
+      // gerçekten "checkin yok" derse yukarıdaki başarı dalı zaten temizler.
+      final memory = ActiveCheckinService();
       setState(() {
-        _activeCheckinId = null;
-        _activeCheckinVenueId = null;
+        if (memory.activeCheckinId != null &&
+            memory.activeCheckinId!.isNotEmpty) {
+          _activeCheckinId = memory.activeCheckinId;
+          _activeCheckinVenueId = memory.activeVenueId;
+        }
         _loadingActiveCheckin = false;
       });
     }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import 'api_exception.dart';
@@ -9,6 +10,20 @@ import 'api_exception.dart';
 class ApiClient {
   final http.Client _client = http.Client();
   static const bool _enableVerboseHttpLogs = false;
+
+  /// Firebase App Check token'ını header olarak döner (varsa). Backend'in
+  /// App Check guard'ı bunu doğrulayıp bot/script isteklerini eler. Token
+  /// alınamazsa boş döner — normal akışı bozmaz (backend `off`/`monitor`
+  /// modunda zaten geçer; `enforce` modunda ise gerçek app zaten token üretir).
+  Future<Map<String, String>> _appCheckHeader() async {
+    try {
+      final token = await FirebaseAppCheck.instance.getToken();
+      if (token != null && token.isNotEmpty) {
+        return {'X-Firebase-AppCheck': token};
+      }
+    } catch (_) {}
+    return const {};
+  }
 
   // ── Silent token refresh ──────────────────────────────────────────────────
   /// Registered once by AuthRepository.init().
@@ -127,7 +142,11 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
-    final merged = {'Content-Type': 'application/json', ...?headers};
+    final merged = {
+      'Content-Type': 'application/json',
+      ...?headers,
+      ...(await _appCheckHeader()),
+    };
 
     _log('🌐 [HTTP] POST $url');
     _log('🌐 [HTTP] headers = ${_truncate(headers)}');
@@ -171,7 +190,11 @@ class ApiClient {
 
   Future<dynamic> get(String path, {Map<String, String>? headers}) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
-    final merged = {'Content-Type': 'application/json', ...?headers};
+    final merged = {
+      'Content-Type': 'application/json',
+      ...?headers,
+      ...(await _appCheckHeader()),
+    };
 
     _log('🌐 [HTTP] GET $url');
     _log('🌐 [HTTP] headers = ${_truncate(headers)}');
@@ -211,7 +234,11 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
-    final merged = {'Content-Type': 'application/json', ...?headers};
+    final merged = {
+      'Content-Type': 'application/json',
+      ...?headers,
+      ...(await _appCheckHeader()),
+    };
 
     _log('🌐 [HTTP] PATCH $url');
     _log('🌐 [HTTP] headers = ${_truncate(headers)}');
@@ -259,7 +286,11 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
-    final merged = {'Content-Type': 'application/json', ...?headers};
+    final merged = {
+      'Content-Type': 'application/json',
+      ...?headers,
+      ...(await _appCheckHeader()),
+    };
 
     _log('🌐 [HTTP] PUT $url');
     _log('🌐 [HTTP] body = ${_truncate(body)}');
@@ -302,7 +333,11 @@ class ApiClient {
 
   Future<dynamic> delete(String path, {Map<String, String>? headers}) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
-    final merged = {'Content-Type': 'application/json', ...?headers};
+    final merged = {
+      'Content-Type': 'application/json',
+      ...?headers,
+      ...(await _appCheckHeader()),
+    };
 
     _log('🌐 [HTTP] DELETE $url');
 

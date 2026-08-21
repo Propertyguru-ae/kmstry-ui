@@ -218,14 +218,24 @@ class ChatRepository {
       body['client_message_id'] = clientMessageId.trim();
     }
 
-    try {
-      final data = await _api.post(
+    Future<dynamic> postMessage(Map<String, dynamic> payload) {
+      return _api.post(
         '/chats/$chatId/messages',
         headers: {'Authorization': 'Bearer $token'},
-        body: body,
+        body: payload,
       );
+    }
+
+    try {
+      final data = await postMessage(body);
       return ChatMessage.fromJson(data as Map<String, dynamic>);
     } on ApiException catch (e) {
+      if (e.statusCode == 429) {
+        await Future.delayed(const Duration(milliseconds: 900));
+        final retryData = await postMessage(body);
+        return ChatMessage.fromJson(retryData as Map<String, dynamic>);
+      }
+
       // Backward compatibility: some backend versions still reject client_message_id.
       final hasClientMessageId =
           clientMessageId != null && clientMessageId.trim().isNotEmpty;
@@ -236,11 +246,7 @@ class ChatRepository {
 
       final fallbackBody = Map<String, dynamic>.from(body)
         ..remove('client_message_id');
-      final fallbackData = await _api.post(
-        '/chats/$chatId/messages',
-        headers: {'Authorization': 'Bearer $token'},
-        body: fallbackBody,
-      );
+      final fallbackData = await postMessage(fallbackBody);
       return ChatMessage.fromJson(fallbackData as Map<String, dynamic>);
     }
   }
