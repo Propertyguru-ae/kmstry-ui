@@ -17,7 +17,11 @@ class ApiClient {
   /// modunda zaten geçer; `enforce` modunda ise gerçek app zaten token üretir).
   Future<Map<String, String>> _appCheckHeader() async {
     try {
-      final token = await FirebaseAppCheck.instance.getToken();
+      // Önce cache'teki token; yoksa (henüz üretilmediyse) bir kez zorla çek.
+      var token = await FirebaseAppCheck.instance.getToken();
+      if (token == null || token.isEmpty) {
+        token = await FirebaseAppCheck.instance.getToken(true);
+      }
       if (token != null && token.isNotEmpty) {
         return {'X-Firebase-AppCheck': token};
       }
