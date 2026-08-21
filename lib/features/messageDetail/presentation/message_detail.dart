@@ -371,6 +371,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (cid == null || cid.isEmpty) return;
 
     try {
+      // Kaydırmadan önce kullanıcı en altta (son mesajları okurken) mıydı?
+      // Öyleyse resume'da yeni mesajları görünür kılmak için alta kaydırırız;
+      // yukarıda geçmişi okuyorsa görünümü zıplatmayız (WhatsApp davranışı).
+      final wasAtBottom = _isNearBottom();
+      var insertedAny = false;
+
       String? cursor = _lastCursor?.toUtc().toIso8601String();
       var loops = 0;
       while (loops < 6) {
@@ -383,13 +389,28 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         if (page.items.isEmpty) break;
         if (!mounted) return;
         for (final message in page.items) {
+          final before = _chat?.messages.length ?? 0;
           _mergeOrInsertMessage(message, shouldScroll: false);
+          if ((_chat?.messages.length ?? 0) > before) insertedAny = true;
         }
         if (page.nextCursor == null || page.nextCursor!.isEmpty) break;
         cursor = page.nextCursor;
         _touchCursor(_parseIsoDateTime(page.nextCursor));
       }
+
+      // Yeni mesaj geldiyse ve kullanıcı zaten en alttaysa → alta kaydır ki
+      // resume sonrası yeni mesajlar ekranda görünsün.
+      if (insertedAny && wasAtBottom && mounted) {
+        _scrollToBottom(animated: true);
+      }
     } catch (_) {}
+  }
+
+  /// Liste en alta yakın mı (son mesajlar görünüyor mu)?
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final pos = _scrollController.position;
+    return (pos.maxScrollExtent - pos.pixels) < 200;
   }
 
   void _handleRealtimeEvent(ChatRealtimeEnvelope envelope) {
