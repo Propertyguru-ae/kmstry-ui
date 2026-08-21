@@ -144,7 +144,16 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         PushManager.instance.markChatVisible(cid);
       }
       unawaited(_connectRealtimeIfPossible());
-      unawaited(_catchUpMessages());
+      // Resume sonrası yeni mesajları GÜVENİLİR şekilde göster:
+      // - Kullanıcı en alttaysa (son mesajları okuyorsa) → tam sessiz yeniden
+      //   yükleme: getChat en güncel mesajları kesin getirir, okundu işaretler,
+      //   alta kaydırır. (Kırılgan artımlı catch-up'a bel bağlamaz.)
+      // - Yukarıda geçmiş okuyorsa → görünümü zıplatmadan artımlı catch-up.
+      if (_isNearBottom()) {
+        unawaited(_loadChat(silent: true));
+      } else {
+        unawaited(_catchUpMessages());
+      }
       return;
     }
     final shouldClearActiveChat =
@@ -683,13 +692,17 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     });
   }
 
-  Future<void> _loadChat() async {
+  Future<void> _loadChat({bool silent = false}) async {
     final cid = _chatId;
     if (cid == null) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    // silent: mevcut mesajları ekranda tutarak arka planda tazele (resume'da
+    // spinner flicker'ı olmasın). Sadece ilk yüklemede tam loading gösterilir.
+    if (!silent || _chat == null) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final detail = await _repo.getChat(cid, markRead: true);
       if (!mounted) return;
