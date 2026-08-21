@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:provider/provider.dart';
@@ -54,6 +55,11 @@ Future<void> main() async {
     );
     // Token'ı otomatik tazele — süresi dolunca istekler token'sız kalmasın.
     await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+    // Token'ı önceden ISIT: App Attest ilk üretimi gecikmeli/asenkron olduğu
+    // için, açılıştaki ilk /auth/me isteği token'dan önce gidip "missing"
+    // görünüyordu. Burada bir kez zorla çekip cache'e alıyoruz ki auth
+    // isteklerine token yetişsin. (Hata olursa auto-refresh sonra halleder.)
+    unawaited(FirebaseAppCheck.instance.getToken(true));
   } catch (e) {
     debugPrint('⚠️ App Check activate failed: $e');
   }
