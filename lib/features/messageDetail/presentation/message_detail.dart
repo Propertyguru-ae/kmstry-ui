@@ -159,24 +159,35 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
   }
 
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    _scrollToBottom(animated: true);
+  }
+
   /// widget.otherUserId bildirimden boş gelirse yüklenen chat'ten kullan.
   /// Başlıktaki isme/avatara dokununca karşı kullanıcının profilini açar.
-  void _openOtherProfile() {
+  Future<void> _openOtherProfile() async {
     final userId = _effectiveOtherUserId;
     if (userId.isEmpty) return;
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ProfilePreviewPage(
           userId: userId,
           userName: widget.otherName,
-          userPhoto:
-              widget.otherPhotoUrl.isNotEmpty ? widget.otherPhotoUrl : null,
+          userPhoto: widget.otherPhotoUrl.isNotEmpty
+              ? widget.otherPhotoUrl
+              : null,
           chatIdHint: _chatId,
           isMatchedHint: true,
           hideVenueInfo: true,
         ),
       ),
     );
+    // Profilde block/unblock yapılmış olabilir — dönünce sohbet durumunu
+    // (canSendMessages / isBlocked) tazele ki input doğru kilitlensin.
+    if (mounted) unawaited(_loadChat());
   }
 
   String get _effectiveOtherUserId => widget.otherUserId.isNotEmpty
@@ -260,6 +271,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       }
     });
   }
+
+  // Composer (input/banner) Column'da liste ile KARDEŞ; listeyi örtmüyor.
+  // Bu yüzden listeye composer yüksekliği kadar alt boşluk EKLENMEZ — aksi
+  // halde klavye açıkken son mesaj ile klavye arasında büyük boşluk oluşur.
+  // Klavye zaten resizeToAvoidBottomInset ile ele alınıyor; sadece küçük bir
+  // nefes payı yeterli.
+  double _messageListBottomPadding() => 12;
 
   Future<void> _loadCurrentUser() async {
     try {
@@ -353,6 +371,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (cid == null || cid.isEmpty) return;
 
     try {
+      // Kaydırmadan önce kullanıcı en altta (son mesajları okurken) mıydı?
+      // Öyleyse resume'da yeni mesajları görünür kılmak için alta kaydırırız;
+      // yukarıda geçmişi okuyorsa görünümü zıplatmayız (WhatsApp davranışı).
+      final wasAtBottom = _isNearBottom();
+      var insertedAny = false;
+
       String? cursor = _lastCursor?.toUtc().toIso8601String();
       var loops = 0;
       while (loops < 6) {
@@ -365,13 +389,28 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         if (page.items.isEmpty) break;
         if (!mounted) return;
         for (final message in page.items) {
+          final before = _chat?.messages.length ?? 0;
           _mergeOrInsertMessage(message, shouldScroll: false);
+          if ((_chat?.messages.length ?? 0) > before) insertedAny = true;
         }
         if (page.nextCursor == null || page.nextCursor!.isEmpty) break;
         cursor = page.nextCursor;
         _touchCursor(_parseIsoDateTime(page.nextCursor));
       }
+
+      // Yeni mesaj geldiyse ve kullanıcı zaten en alttaysa → alta kaydır ki
+      // resume sonrası yeni mesajlar ekranda görünsün.
+      if (insertedAny && wasAtBottom && mounted) {
+        _scrollToBottom(animated: true);
+      }
     } catch (_) {}
+  }
+
+  /// Liste en alta yakın mı (son mesajlar görünüyor mu)?
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final pos = _scrollController.position;
+    return (pos.maxScrollExtent - pos.pixels) < 200;
   }
 
   void _handleRealtimeEvent(ChatRealtimeEnvelope envelope) {
@@ -732,7 +771,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// synchronously, then the network round-trip runs in the background. The
   /// send button is never gated on the request — chat must feel immediate.
   void _sendMessage() {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final rawText = _messageController.text.trim();
     if (rawText.isEmpty) return;
     final cid = _normalizeChatId(_chatId);
@@ -741,7 +780,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -795,12 +834,44 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       if (!mounted) return;
       _removeMessageById(optimisticTempId);
       _messageController.text = text;
+      // Karşı taraf bloklandıysa / sohbet artık aktif değilse: sohbeti tazele
+      // (input kilitlensin) ve generic hata yerine anlaşılır mesaj göster.
+      if (_isBlockedOrInactiveError(e)) {
+        unawaited(_loadChat());
+        await showPremiumErrorDialog(
+          context,
+          title: 'Messaging paused',
+          message:
+              'You can\'t message this user right now. This happens when one of you has blocked the other.',
+        );
+        return;
+      }
+      if (_isTooManyRequestsError(e)) {
+        return;
+      }
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Message could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
+  }
+
+  /// Backend, block/inaktif sohbette 403 "cannot send messages while blocked"
+  /// veya "Chat is not active" döndürür — bunları generic hatadan ayırır.
+  bool _isBlockedOrInactiveError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('block') ||
+        s.contains('not active') ||
+        s.contains('403') ||
+        s.contains('forbidden');
+  }
+
+  bool _isTooManyRequestsError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('too many requests') ||
+        s.contains('throttlerexception') ||
+        s.contains('429');
   }
 
   void _setReplyTarget(ChatMessage message) {
@@ -927,7 +998,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 height: 200,
                 child: Center(
                   child: Text(
-                    'Sohbetler yüklenemedi.',
+                    'Could not load chats.',
                     style: TextStyle(color: _mutedTextColor),
                   ),
                 ),
@@ -941,7 +1012,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 height: 200,
                 child: Center(
                   child: Text(
-                    'İletilecek başka sohbet yok.',
+                    'No other chats to forward to.',
                     style: TextStyle(color: _mutedTextColor),
                   ),
                 ),
@@ -1240,7 +1311,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ),
             ),
             SizedBox(width: 12),
-            Text('Gönderiliyor...'),
+            Text('Sending...'),
           ],
         ),
       ),
@@ -1504,7 +1575,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj silinemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
+            'Message could not be deleted: ${e.toString().replaceAll(RegExp(r'^Exception:?\\s*'), '')}',
       );
     }
   }
@@ -2280,7 +2351,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Mesaj düzenlenemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Message could not be edited: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -2330,7 +2401,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       : const Color(0xFFE3EAF3);
 
   String _statusText(String name) {
-    if (_isOtherTyping) return '${name.split(' ').first} yaziyor...';
+    if (_isOtherTyping) return '${name.split(' ').first} is typing...';
     if (_isSocketReconnecting) return 'Baglaniyor...';
     if (_isSocketConnected && _isOtherOnline) return 'Online';
     if (_isOtherOnline) return 'Online';
@@ -2417,6 +2488,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: _chatBackground,
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -2443,50 +2515,53 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                   child: Row(
                     children: [
                       _buildHeaderAvatar(
-                avatarSeed: avatarSeed,
-                avatarColor: avatarColor,
-                hasPhoto: hasPhoto,
-                photoUrl: photoUrl,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        height: 1.05,
+                        avatarSeed: avatarSeed,
+                        avatarColor: avatarColor,
+                        hasPhoto: hasPhoto,
+                        photoUrl: photoUrl,
                       ),
-                    ),
-                    const SizedBox(height: 5),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
-                      transitionBuilder: (child, animation) =>
-                          FadeTransition(opacity: animation, child: child),
-                      child: Text(
-                        _statusText(name),
-                        key: ValueKey(_statusText(name)),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _statusColor(),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.onSurface,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                height: 1.05,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 150),
+                              transitionBuilder: (child, animation) =>
+                                  FadeTransition(
+                                    opacity: animation,
+                                    child: child,
+                                  ),
+                              child: Text(
+                                _statusText(name),
+                                key: ValueKey(_statusText(name)),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: _statusColor(),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -2517,7 +2592,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
             ),
             _forwardSelectionMode
                 ? _buildForwardSelectionBar()
-                : _chat?.isActive == false
+                : _chat?.canSendMessages == false
                 ? _buildInactiveBanner()
                 : _buildMessageInput(),
           ],
@@ -2575,7 +2650,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           controller: _scrollController,
           // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+          padding: EdgeInsets.fromLTRB(14, 14, 14, _messageListBottomPadding()),
           itemCount: ordered.length + (_loadingMore ? 1 : 0),
           itemBuilder: (context, index) {
             if (_loadingMore && index == 0) {
@@ -3071,19 +3146,20 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (lines.length < 2) return null;
 
     final firstLine = lines.first.trim();
-    const marker = '↩️ ';
-    if (!firstLine.startsWith(marker)) return null;
+    final match = RegExp(r'^↩(?:️)?\s*(.*)$').firstMatch(firstLine);
+    if (match == null) return null;
 
-    final payload = firstLine.substring(marker.length).trim();
+    final payload = (match.group(1) ?? '').trim();
     final separatorIndex = payload.indexOf(':');
-    if (separatorIndex <= 0 || separatorIndex == payload.length - 1) {
+    if (separatorIndex < 0 || separatorIndex == payload.length - 1) {
       return null;
     }
 
-    final sender = payload.substring(0, separatorIndex).trim();
+    final rawSender = payload.substring(0, separatorIndex).trim();
     final quote = payload.substring(separatorIndex + 1).trim();
     final body = lines.skip(1).join('\n').trim();
-    if (sender.isEmpty || quote.isEmpty || body.isEmpty) return null;
+    if (quote.isEmpty || body.isEmpty) return null;
+    final sender = rawSender.isEmpty ? 'Reply' : rawSender;
     return _ParsedReplyMessage(sender: sender, quote: quote, body: body);
   }
 
@@ -3264,48 +3340,51 @@ class _MessageDetailPageState extends State<MessageDetailPage>
             _wrapHero(
               heroTag,
               ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
-              child: imageUrl.startsWith('http')
-                  ? CachedImage(
-                      imageUrl,
-                      width: min(MediaQuery.of(context).size.width * 0.62, 238),
-                      height: min(
-                        MediaQuery.of(context).size.width * 0.62,
-                        238,
+                borderRadius: BorderRadius.circular(12),
+                // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
+                child: imageUrl.startsWith('http')
+                    ? CachedImage(
+                        imageUrl,
+                        width: min(
+                          MediaQuery.of(context).size.width * 0.62,
+                          238,
+                        ),
+                        height: min(
+                          MediaQuery.of(context).size.width * 0.62,
+                          238,
+                        ),
+                        fit: BoxFit.cover,
+                        errorWidget: (context) =>
+                            const Icon(Icons.broken_image, size: 48),
+                      )
+                    : Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Image.file(
+                            File(imageUrl),
+                            width: min(
+                              MediaQuery.of(context).size.width * 0.62,
+                              238,
+                            ),
+                            height: min(
+                              MediaQuery.of(context).size.width * 0.62,
+                              238,
+                            ),
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(Icons.broken_image, size: 48),
+                          ),
+                          const SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ),
-                      fit: BoxFit.cover,
-                      errorWidget: (context) =>
-                          const Icon(Icons.broken_image, size: 48),
-                    )
-                  : Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Image.file(
-                          File(imageUrl),
-                          width: min(
-                            MediaQuery.of(context).size.width * 0.62,
-                            238,
-                          ),
-                          height: min(
-                            MediaQuery.of(context).size.width * 0.62,
-                            238,
-                          ),
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.broken_image, size: 48),
-                        ),
-                        const SizedBox(
-                          width: 34,
-                          height: 34,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
+              ),
             ),
             Positioned(
               right: 8,
@@ -3425,8 +3504,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final day = DateTime(local.year, local.month, local.day);
-    if (day == today) return 'Bugun';
-    if (day == today.subtract(const Duration(days: 1))) return 'Dun';
+    if (day == today) return 'Today';
+    if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
     final dd = local.day.toString().padLeft(2, '0');
     final mm = local.month.toString().padLeft(2, '0');
     return '$dd.$mm.${local.year}';
@@ -3447,7 +3526,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       ),
       child: SafeArea(
         child: Text(
-          'Bu sohbet artık aktif değil. Birbirinizi tekrar eşleşirseniz mesajlaşabilirsiniz.',
+          _chat?.isBlocked == true
+              ? 'Messaging is paused because one of you blocked the other. You can still view your chat history.'
+              : 'This chat is no longer active. You can still view your chat history.',
           textAlign: TextAlign.center,
           style: TextStyle(color: _mutedTextColor, fontSize: 13),
         ),
@@ -3756,14 +3837,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   /// Belge seç → optimistic lokal bubble → Spaces'e yükle → file mesajı gönder.
   Future<void> _pickAndSendFile() async {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final cid = _normalizeChatId(_chatId);
     if (cid == null) {
       unawaited(
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -3790,7 +3871,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       if (!mounted) return;
       await showPremiumErrorDialog(
         context,
-        message: 'Dosyaya erişilemedi. Lütfen tekrar deneyin.',
+        message: 'Could not access the file. Please try again.',
       );
       return;
     }
@@ -3833,7 +3914,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Belge gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Document could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -3845,23 +3926,23 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       mode: LaunchMode.externalApplication,
     );
     if (!ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Belge açılamadı.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the document.')),
+      );
     }
   }
 
   /// Galeriden seç ya da kameradan çek → optimistic lokal bubble → Spaces'e
   /// yükle → image mesajı olarak gönder. Hata olursa bubble geri alınır.
   Future<void> _pickAndSendImage(ImageSource source) async {
-    if (_chat?.isActive == false) return;
+    if (_chat?.canSendMessages == false) return;
     final cid = _normalizeChatId(_chatId);
     if (cid == null) {
       unawaited(
         showPremiumErrorDialog(
           context,
           message:
-              'Bu sohbet henuz aktif degil. Mesaj gonderebilmek icin eslesmeden gelen sohbete girin.',
+              'This chat is not ready yet. Open the active conversation to send a message.',
         ),
       );
       return;
@@ -3881,8 +3962,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message: source == ImageSource.camera
-            ? 'Kameraya erişilemedi. Ayarlardan kamera iznini kontrol edin.'
-            : 'Galeriye erişilemedi. Ayarlardan foto iznini kontrol edin.',
+            ? 'Could not access the camera. Check camera permission in Settings.'
+            : 'Could not access the gallery. Check photo permission in Settings.',
       );
       return;
     }
@@ -3923,7 +4004,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       await showPremiumErrorDialog(
         context,
         message:
-            'Fotoğraf gönderilemedi: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+            'Photo could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     }
   }
@@ -4118,7 +4199,7 @@ class _EditMessageComposerOverlayState
                                   horizontal: 16,
                                   vertical: 12,
                                 ),
-                                hintText: 'Mesajı düzenle',
+                                hintText: 'Edit message',
                                 hintStyle: TextStyle(
                                   color: colors.onSurface.withValues(
                                     alpha: 0.45,
@@ -4147,7 +4228,7 @@ class _EditMessageComposerOverlayState
                               ],
                             ),
                             child: IconButton(
-                              tooltip: 'Kaydet',
+                              tooltip: 'Save',
                               icon: const Icon(
                                 Icons.check_rounded,
                                 color: Colors.black,
@@ -4558,9 +4639,8 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
       return CachedImage(
         url,
         fit: BoxFit.contain,
-        placeholder: (context) => const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        ),
+        placeholder: (context) =>
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
         errorWidget: (context) => _errorIcon(),
       );
     }
@@ -4573,8 +4653,8 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
   }
 
   Widget _errorIcon() => const Center(
-        child: Icon(Icons.broken_image, size: 64, color: Colors.white54),
-      );
+    child: Icon(Icons.broken_image, size: 64, color: Colors.white54),
+  );
 
   @override
   Widget build(BuildContext context) {

@@ -8,6 +8,10 @@ class ChatDetail {
   final ChatListItemUser? otherUser;
   final List<ChatListItemUser>? participants;
   final bool isActive;
+  final bool isBlocked;
+  final bool blockedByMe;
+  final bool blockedMe;
+  final bool canSendMessages;
 
   ChatDetail({
     required this.id,
@@ -15,7 +19,11 @@ class ChatDetail {
     this.otherUser,
     this.participants,
     this.isActive = true,
-  });
+    this.isBlocked = false,
+    this.blockedByMe = false,
+    this.blockedMe = false,
+    bool? canSendMessages,
+  }) : canSendMessages = canSendMessages ?? isActive;
 
   ChatDetail copyWith({
     String? id,
@@ -23,6 +31,10 @@ class ChatDetail {
     ChatListItemUser? otherUser,
     List<ChatListItemUser>? participants,
     bool? isActive,
+    bool? isBlocked,
+    bool? blockedByMe,
+    bool? blockedMe,
+    bool? canSendMessages,
   }) {
     return ChatDetail(
       id: id ?? this.id,
@@ -30,6 +42,10 @@ class ChatDetail {
       otherUser: otherUser ?? this.otherUser,
       participants: participants ?? this.participants,
       isActive: isActive ?? this.isActive,
+      isBlocked: isBlocked ?? this.isBlocked,
+      blockedByMe: blockedByMe ?? this.blockedByMe,
+      blockedMe: blockedMe ?? this.blockedMe,
+      canSendMessages: canSendMessages ?? this.canSendMessages,
     );
   }
 
@@ -59,6 +75,10 @@ class ChatDetail {
       otherUser: parseUser(otherUserRaw),
       participants: participantsList,
       isActive: json['is_active'] as bool? ?? true,
+      isBlocked: json['is_blocked'] as bool? ?? false,
+      blockedByMe: json['blocked_by_me'] as bool? ?? false,
+      blockedMe: json['blocked_me'] as bool? ?? false,
+      canSendMessages: json['can_send_messages'] as bool?,
     );
   }
 

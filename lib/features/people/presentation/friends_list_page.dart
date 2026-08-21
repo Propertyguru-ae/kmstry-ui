@@ -142,7 +142,7 @@ class _FriendsListPageState extends State<FriendsListPage> {
           chatId: match.chatId,
           otherUserId: match.userId,
           otherName: match.fullName,
-          otherPhotoUrl: '',
+          otherPhotoUrl: match.userPhotoUrl ?? '',
         ),
       ),
     );

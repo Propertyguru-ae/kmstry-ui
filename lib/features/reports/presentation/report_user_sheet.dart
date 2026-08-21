@@ -117,7 +117,7 @@ Future<bool> showReportUserSheet(
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Text(
-                          'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and your chat will be closed.',
+                          'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
                           style: TextStyle(
                             color: colors.onSurface.withValues(alpha: 0.72),
                             fontSize: 12.5,
@@ -308,7 +308,7 @@ Future<bool> showReportUserSheet(
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'This user has been blocked automatically, and your chat has been closed for your safety.',
+                              'This user has been blocked automatically, and messaging has been paused for your safety.',
                               style: TextStyle(
                                 color: colors.onSurface.withValues(alpha: 0.7),
                                 fontSize: 13.5,
