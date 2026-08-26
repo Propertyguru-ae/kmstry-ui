@@ -226,7 +226,11 @@ class _VenueContextOnboardingPageState
   void _onVenueSelected(Venue venue) {
     setState(() {
       _selectedVenue = venue;
-      _dbVenueId = null; // yeni seçim — önceki DB ID geçersiz
+      // Venue zaten DB'de ise (ör. daha önce claim edilip bırakılmış) id'si DB
+      // UUID'sidir → doğrudan kullan; resolve-from-place'e (Google place_id
+      // bekler) UUID göndermek "could not submit" hatasına yol açıyordu.
+      // Google-only place ise resolve gerekir → null bırak.
+      _dbVenueId = venue.isInDb ? venue.id : null;
       _searchCtrl.text = venue.name;
       _results = [];
       _error = null;
@@ -243,7 +247,13 @@ class _VenueContextOnboardingPageState
       _searching = true;
     });
     try {
-      _dbVenueId = await _repo.ensureVenueDbId(_selectedVenue!.id);
+      // Zaten DB'de olan venue için resolve'a gerek yok (id = DB UUID).
+      // Google-only place ise placeId ile resolve et (id fallback).
+      _dbVenueId ??= _selectedVenue!.isInDb
+          ? _selectedVenue!.id
+          : await _repo.ensureVenueDbId(
+              _selectedVenue!.placeId ?? _selectedVenue!.id,
+            );
     } catch (_) {
       // Başarısız olsa bile devam et; submit'te tekrar denenecek
     } finally {
@@ -430,7 +440,11 @@ class _VenueContextOnboardingPageState
     final hasDocuments = _tradeLicenceUrl != null && _ownerVideoUrl != null;
 
     try {
-      final dbVenueId = _dbVenueId ?? await _repo.ensureVenueDbId(venue.id);
+      final dbVenueId =
+          _dbVenueId ??
+          (venue.isInDb
+              ? venue.id
+              : await _repo.ensureVenueDbId(venue.placeId ?? venue.id));
       await _repo.claimVenue(
         venueId: dbVenueId,
         ownerFullName: _nameCtrl.text.trim().isNotEmpty
