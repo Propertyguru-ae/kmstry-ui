@@ -373,7 +373,7 @@ class _VenueContextOnboardingPageState
 
     final streamed = await request.send();
     final body = await streamed.stream.bytesToString();
-    debugPrint('[VenueWizard] upload response ${streamed.statusCode}: $body');
+    debugPrint('[VenueWizard] upload response status=${streamed.statusCode}');
 
     if (streamed.statusCode >= 400) {
       Map<String, dynamic> data = {};
@@ -1558,10 +1558,10 @@ class _VenueContextOnboardingPageState
                           Text(
                             '${venue.city} · Venue selected',
                             style: TextStyle(
-                              fontSize: 10.5,
+                              fontSize: 11,
                               color: isDark
-                                  ? const Color(0xFF5B6F8D)
-                                  : Colors.black45,
+                                  ? const Color(0xFF9DB0CD)
+                                  : const Color(0xFF556376),
                             ),
                           ),
                         ],
@@ -1808,9 +1808,11 @@ class _VenueContextOnboardingPageState
                           Expanded(
                             child: Text.rich(
                               TextSpan(
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF5B6F8D),
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: isDark
+                                      ? const Color(0xFF9DB0CD)
+                                      : const Color(0xFF556376),
                                   height: 1.45,
                                 ),
                                 children: [
@@ -1976,8 +1978,8 @@ class _VenueContextOnboardingPageState
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 0.5,
                                 color: isDark
-                                    ? const Color(0xFF5B6F8D)
-                                    : Colors.black45,
+                                    ? const Color(0xFF8CA0BE)
+                                    : const Color(0xFF54627A),
                               ),
                             ),
                             Text(
@@ -2079,10 +2081,10 @@ class _VenueContextOnboardingPageState
                           child: Text.rich(
                             TextSpan(
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 11.5,
                                 color: isDark
-                                    ? const Color(0xFF5B6F8D)
-                                    : Colors.black54,
+                                    ? const Color(0xFF9DB0CD)
+                                    : const Color(0xFF556376),
                                 height: 1.5,
                               ),
                               children: [
@@ -2196,7 +2198,9 @@ class _VenueContextOnboardingPageState
                             fontWeight: FontWeight.w600,
                             color: isBusy
                                 ? const Color(0xFF2A3D58)
-                                : const Color(0xFF5B6F8D),
+                                : (isDark
+                                      ? const Color(0xFFAFC0DA)
+                                      : const Color(0xFF4C5A6E)),
                           ),
                         ),
                       ),
@@ -2356,9 +2360,11 @@ class _VenueContextOnboardingPageState
                               if (venue.address.isNotEmpty)
                                 Text(
                                   venue.address,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Color(0xFF5B6F8D),
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: isDark
+                                        ? const Color(0xFF9DB0CD)
+                                        : const Color(0xFF556376),
                                     height: 1.4,
                                   ),
                                 ),
@@ -2497,21 +2503,25 @@ class _VenueContextOnboardingPageState
                   const SizedBox(height: 12),
 
                   if (hasDocuments)
-                    const Text(
+                    Text(
                       'Our team will review your claim and notify you once approved.',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF5B6F8D),
+                        fontSize: 11.5,
+                        color: isDark
+                            ? const Color(0xFF9DB0CD)
+                            : const Color(0xFF556376),
                         height: 1.55,
                       ),
                       textAlign: TextAlign.center,
                     )
                   else
                     Text.rich(
-                      const TextSpan(
+                      TextSpan(
                         style: TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF5B6F8D),
+                          fontSize: 11.5,
+                          color: isDark
+                              ? const Color(0xFF9DB0CD)
+                              : const Color(0xFF556376),
                           height: 1.55,
                         ),
                         children: [
@@ -2789,9 +2799,11 @@ class _UploadCard extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     description,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF5B6F8D),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: isDark
+                          ? const Color(0xFF9DB0CD)
+                          : const Color(0xFF556376),
                       height: 1.45,
                     ),
                   ),
@@ -2820,7 +2832,9 @@ class _UploadCard extends StatelessWidget {
                                 fontWeight: FontWeight.w600,
                                 color: isRequired
                                     ? AppColors.blueDark
-                                    : const Color(0xFF5B6F8D),
+                                    : (isDark
+                                          ? const Color(0xFF9DB0CD)
+                                          : const Color(0xFF556376)),
                               ),
                             ),
                           ),
@@ -2900,7 +2914,7 @@ class _RevCard extends StatelessWidget {
     final kCard = isDark ? const Color(0xFF0D1A30) : Colors.white;
     final kBorder = isDark ? const Color(0xFF1A3060) : const Color(0xFFD9E1EA);
     final kDivider = isDark ? const Color(0x0AFFFFFF) : const Color(0xFFEEF2F8);
-    final kLabel = isDark ? const Color(0xFF5F718E) : const Color(0xFF5D6B7B);
+    final kLabel = isDark ? const Color(0xFF8CA0BE) : const Color(0xFF54627A);
 
     return Container(
       decoration: BoxDecoration(
@@ -3006,9 +3020,11 @@ class _RevContactRow extends StatelessWidget {
               Text(label, style: TextStyle(fontSize: 12.5, color: kLabel)),
               Text(
                 sub,
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  color: Color(0xFF5B6F8D),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: isDark
+                      ? const Color(0xFF9DB0CD)
+                      : const Color(0xFF556376),
                 ),
               ),
             ],
@@ -3034,6 +3050,7 @@ class _RevDocRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -3070,9 +3087,11 @@ class _RevDocRow extends StatelessWidget {
               ),
               Text(
                 sub,
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  color: Color(0xFF5B6F8D),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: isDark
+                      ? const Color(0xFF9DB0CD)
+                      : const Color(0xFF556376),
                 ),
               ),
             ],

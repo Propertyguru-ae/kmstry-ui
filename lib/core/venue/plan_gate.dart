@@ -11,7 +11,7 @@ class PlanGate {
   /// Aktif venue planı [feature]'ı açıyor mu?
   static bool allows(VenueFeature feature) => VenueSession.instance.hasFeature(feature);
 
-  /// Özellik açıksa true döner. Kapalıysa Paywall'ı açar ve false döner —
+  /// Özellik açıksa true döner. Kapalıysa salt okunur plan erişim ekranını açar —
   /// buton onTap'lerinde `if (!await PlanGate.ensure(context, X)) return;` şeklinde.
   static Future<bool> ensure(BuildContext context, VenueFeature feature) async {
     if (allows(feature)) return true;
@@ -28,8 +28,8 @@ class PlanGate {
     ));
   }
 
-  /// Özellik açıksa [onAllowed]'ı çalıştırır. Kapalıysa etkileyici bir upsell
-  /// bottom-sheet gösterir (kamera/akış hiç açılmadan) ve Upgrade → Paywall'a gider.
+  /// Özellik açıksa [onAllowed]'ı çalıştırır. Kapalıysa bilgilendirme
+  /// bottom-sheet'i gösterir (kamera/akış hiç açılmadan) ve plan erişimini açıklar.
   static Future<void> ensureWithUpsell(
     BuildContext context,
     VenueFeature feature, {
@@ -42,7 +42,7 @@ class PlanGate {
       onAllowed();
       return;
     }
-    await _showUpsellSheet(context, feature, icon: icon, title: title, message: message);
+    await _showUpsellSheet(context, feature, icon: icon, title: title);
   }
 
   static Future<void> _showUpsellSheet(
@@ -50,7 +50,6 @@ class PlanGate {
     VenueFeature feature, {
     required IconData icon,
     required String title,
-    required String message,
   }) {
     final color = feature.minPlan.color;
     return showModalBottomSheet<void>(
@@ -88,7 +87,9 @@ class PlanGate {
                       textAlign: TextAlign.center,
                       style: TextStyle(color: kText, fontSize: 19, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 10),
-                  Text(message,
+                  Text(
+                      'This feature is not enabled for this beta account. '
+                      'Plan access is assigned by the KMSTRY test team.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: kText.withValues(alpha: 0.6), fontSize: 14, height: 1.45)),
                   const SizedBox(height: 22),
@@ -104,8 +105,8 @@ class PlanGate {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: Text('Upgrade to ${feature.minPlan.label}',
-                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                      child: const Text('View plan access',
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                     ),
                   ),
                   const SizedBox(height: 6),

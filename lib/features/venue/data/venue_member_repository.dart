@@ -10,11 +10,21 @@ class MyVenueAccess {
   final DateTime? planUntil;
   final Set<VenueFeature> features;
 
+  /// Bu venue'deki rolüm (OWNER/ADMIN/STAFF) — üye değilsem null.
+  final String? role;
+
+  /// Tek OWNER benim → "Leave" yerine "Delete venue" gösterilir. Son owner
+  /// venue'den ayrılamadığı için (backend CANNOT_REMOVE_LAST_OWNER) mekanı
+  /// ancak silerek kapatabilir.
+  final bool isSoleOwner;
+
   const MyVenueAccess({
     required this.permissions,
     required this.plan,
     required this.planUntil,
     required this.features,
+    this.role,
+    this.isSoleOwner = false,
   });
 }
 
@@ -278,7 +288,16 @@ class VenueMemberRepository {
       plan: VenuePlanX.fromApi(map['plan']?.toString()),
       planUntil: until,
       features: features,
+      role: map['role']?.toString(),
+      isSoleOwner: map['isSoleOwner'] == true,
     );
+  }
+
+  /// Venue'yi OWNER olarak sil (soft-delete). Yalnızca OWNER yetkilidir; son
+  /// owner mekanı bu yolla kapatır. DELETE /venues/:venueId
+  Future<void> deleteVenue(String venueId) async {
+    final headers = await _authHeaders();
+    await _api.delete('/venues/$venueId', headers: headers);
   }
 
   // ── User search ─────────────────────────────────────────────────────────────

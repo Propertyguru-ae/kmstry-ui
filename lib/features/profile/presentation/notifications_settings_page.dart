@@ -15,7 +15,6 @@ class _NotificationsSettingsPageState
   // its push delivery only; in-app notifications are unaffected.
   bool _messages = true;
   bool _invites = true;
-  bool _venueUpdates = true;
   bool _receiveTest = true;
   bool _loading = true;
 
@@ -32,7 +31,6 @@ class _NotificationsSettingsPageState
       setState(() {
         _messages = me['notifMessagesEnabled'] != false;
         _invites = me['notifInvitesEnabled'] != false;
-        _venueUpdates = me['notifVenueUpdatesEnabled'] != false;
         _receiveTest = me['receiveTestNotifications'] != false;
         _loading = false;
       });
@@ -44,26 +42,22 @@ class _NotificationsSettingsPageState
   Future<void> _update({
     bool? messages,
     bool? invites,
-    bool? venueUpdates,
   }) async {
     // Optimistic — revert the specific toggle on failure.
     setState(() {
       if (messages != null) _messages = messages;
       if (invites != null) _invites = invites;
-      if (venueUpdates != null) _venueUpdates = venueUpdates;
     });
     try {
       await AuthRepository().setNotificationPrefs(
         messages: messages,
         invites: invites,
-        venueUpdates: venueUpdates,
       );
     } catch (_) {
       if (!mounted) return;
       setState(() {
         if (messages != null) _messages = !messages;
         if (invites != null) _invites = !invites;
-        if (venueUpdates != null) _venueUpdates = !venueUpdates;
       });
     }
   }
@@ -147,15 +141,6 @@ class _NotificationsSettingsPageState
                   subtitle: 'Connection requests and venue invites',
                   value: _invites,
                   onChanged: (v) => _update(invites: v),
-                  colors: colors,
-                ),
-                const SizedBox(height: 8),
-                _NotifTile(
-                  icon: Icons.location_on_outlined,
-                  title: 'Venue Updates',
-                  subtitle: 'Nearby venues and friends checking in — soon',
-                  value: _venueUpdates,
-                  onChanged: null, // coming soon — not wired yet
                   colors: colors,
                 ),
                 const SizedBox(height: 8),

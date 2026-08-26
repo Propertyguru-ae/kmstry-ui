@@ -7,6 +7,8 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/venue/plan_gate.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
@@ -90,6 +92,24 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
   // ── Story ──────────────────────────────────────────────────────────────────
 
   Future<void> _addStory() async {
+    // Plan kilidi: Free venue story paylaşamaz (backend STORIES → SOCIAL+).
+    // Kamerayı hiç açmadan baştan upsell göster — aksi halde upload 403 dönüp
+    // "could not upload" gibi anlamsız bir hata çıkıyordu.
+    if (!PlanGate.allows(VenueFeature.stories)) {
+      await PlanGate.ensureWithUpsell(
+        context,
+        VenueFeature.stories,
+        icon: Icons.amp_stories_rounded,
+        title: 'Share Stories with your guests',
+        message:
+            'Post 24-hour photo & video moments that pull people in and drive '
+            'foot traffic. Stories are part of the Social plan — upgrade to '
+            'start engaging your audience.',
+        onAllowed: () {},
+      );
+      return;
+    }
+
     final added = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
