@@ -16,6 +16,7 @@ import 'package:kmstry_frontend/features/people/presentation/find_friends_page.d
 import 'package:kmstry_frontend/features/people/presentation/who_is_nearby_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/stories/data/story_viewed_cache.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
@@ -96,6 +97,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   }
 
   Future<void> _loadAll() async {
+    // Kendi story bubble'ı bağımsız — checkin/homeStories/venue lookup'ı
+    // beklemeden hemen yükle ki geç görünmesin. (Kendi setState'ini yapıyor.)
+    _loadMyStories();
     if (_useDummyData) {
       final results = await Future.wait([
         _checkinRepo.getActiveCheckin().catchError((_) => null),
@@ -121,7 +125,6 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       await Future.wait([
         _loadFollowedEvents(),
         _loadTrendingVenues(),
-        _loadMyStories(),
         _loadDiscoverEvents(),
       ]);
       return;
@@ -152,7 +155,6 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     await Future.wait([
       _loadFollowedEvents(),
       _loadTrendingVenues(),
-      _loadMyStories(),
       _loadDiscoverEvents(),
     ]);
   }
@@ -374,11 +376,21 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   }
 
   Future<void> _openStories(int index) async {
+    // Seçilen grubun ilk izlenmemiş story'sinden başla (baştan değil).
+    // Tek kaynak: StoryViewedCache (viewer her izlenen story'i oraya yazar).
+    final viewed = await StoryViewedCache.loadAll();
+    if (!mounted) return;
+    final firstUnseen = _stories[index].stories.indexWhere(
+      (s) => !s.viewedByMe && !viewed.contains(s.id),
+    );
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            StoryViewerPage(groups: _stories, initialGroupIndex: index),
+        builder: (_) => StoryViewerPage(
+          groups: _stories,
+          initialGroupIndex: index,
+          initialStoryIndex: firstUnseen == -1 ? 0 : firstUnseen,
+        ),
       ),
     );
     if (!mounted) return;
@@ -433,24 +445,35 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   }
 
   /// Kendi mevcut story'sini izle (venue detaydaki mantıkla aynı).
-  void _viewMyStory() {
-    final mine = _myRealStories;
-    if (mine.isEmpty) return;
+  Future<void> _viewMyStory() async {
+    final realStories = _myRealStories;
+    if (realStories.isEmpty) return;
+    // Tek kaynak: StoryViewerPage her izlenen story'i StoryViewedCache'e
+    // (kalıcı) yazıyor. Profil ve home aynı cache'ten okuduğu için "kaldığın
+    // yerden devam" her iki ekranda tutarlı. (viewedByMe kendi story'lerinde
+    // hep false olduğundan tek başına yeterli değil.)
+    final viewed = await StoryViewedCache.loadAll();
+    if (!mounted) return;
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'You'),
-      stories: _myStories,
+      stories: realStories,
       isCurrentUserOwner: true,
     );
-    Navigator.push(
+    final firstUnseen = realStories.indexWhere(
+      (s) => !s.viewedByMe && !viewed.contains(s.id),
+    );
+    await Navigator.push(
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) =>
-            StoryViewerPage(groups: [meGroup], initialGroupIndex: 0),
+        builder: (_) => StoryViewerPage(
+          groups: [meGroup],
+          initialGroupIndex: 0,
+          initialStoryIndex: firstUnseen == -1 ? 0 : firstUnseen,
+        ),
       ),
-    ).then((_) {
-      if (mounted) _loadMyStories();
-    });
+    );
+    if (mounted) _loadMyStories();
   }
 
   /// Check-in yokken: story paylaşmak için önce check-in gerektiğini anlatan

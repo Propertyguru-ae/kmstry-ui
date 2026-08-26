@@ -54,10 +54,10 @@ post_install do |installer|
        'PERMISSION_MICROPHONE=1',
 
         ## Location
-        'PERMISSION_LOCATION=1',
         'PERMISSION_LOCATION_WHENINUSE=1',
-        # Always istemiyorsan bunu ekleme:
-        # 'PERMISSION_LOCATION_ALWAYS=1',
+        # Uygulama yalnızca foreground konumu kullanır. permission_handler ve
+        # geolocator binary'lerine Always authorization kodunu dahil etme.
+        'BYPASS_PERMISSION_LOCATION_ALWAYS=1',
       ]
     end
   end

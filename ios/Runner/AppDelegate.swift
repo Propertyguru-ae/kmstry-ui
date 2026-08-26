@@ -1,9 +1,13 @@
 import Flutter
 import UIKit
 import GoogleMaps
+import AVKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
+  private var volumeShutterChannel: FlutterMethodChannel?
+  private var captureEventInteraction: AnyObject?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -40,6 +44,41 @@ import GoogleMaps
               ))
             }
           }
+        }
+      }
+
+      let shutterChannel = FlutterMethodChannel(
+        name: "app/volume_shutter",
+        binaryMessenger: controller.binaryMessenger
+      )
+      volumeShutterChannel = shutterChannel
+
+      if #available(iOS 17.2, *) {
+        let interaction = AVCaptureEventInteraction { [weak self] event in
+          if event.phase == .ended {
+            self?.volumeShutterChannel?.invokeMethod("onVolumeShutter", arguments: nil)
+          }
+        }
+        interaction.isEnabled = false
+        controller.view.addInteraction(interaction)
+        captureEventInteraction = interaction
+
+        shutterChannel.setMethodCallHandler { [weak interaction] call, result in
+          guard call.method == "setEnabled" else {
+            result(FlutterMethodNotImplemented)
+            return
+          }
+          interaction?.isEnabled = (call.arguments as? Bool) ?? false
+          result(nil)
+        }
+      } else {
+        shutterChannel.setMethodCallHandler { call, result in
+          guard call.method == "setEnabled" else {
+            result(FlutterMethodNotImplemented)
+            return
+          }
+          // Older iOS versions keep the normal volume-button behavior.
+          result(nil)
         }
       }
     }

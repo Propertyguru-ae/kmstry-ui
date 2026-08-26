@@ -441,7 +441,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           PremiumFeature.unlimitedRewinds,
           title: 'Out of rewinds today',
           message:
-              'You\'ve used all your free rewinds today. Upgrade to KMSTRY+ for unlimited rewinds.',
+              'You\'ve used all your rewinds for today. Unlimited rewinds are '
+              'not enabled for this beta account.',
         );
       } else if (e.statusCode == 409 && code == 'MATCH_EXISTS') {
         await showPremiumErrorDialog(
@@ -553,7 +554,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
 
     final profile = _profile;
-    debugPrint('🔥 profile: $profile');
     if (profile == null) {
       final userId = widget.userId;
       if (userId == null || userId.isEmpty) {

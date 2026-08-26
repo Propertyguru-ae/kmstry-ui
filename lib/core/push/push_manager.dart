@@ -45,7 +45,7 @@ class PushManager {
 
     _messaging.onTokenRefresh.listen((token) async {
       if (kDebugMode) {
-        debugPrint("🔄 FCM token refreshed: $token");
+        debugPrint('🔄 FCM token refreshed');
       }
       await _tryRegisterToken(token);
     });
@@ -119,9 +119,7 @@ class PushManager {
       await _forceRefreshTokenIfStale();
 
       final token = await _getFcmToken();
-      debugPrint(
-        '[PUSH] fcmToken=${token == null ? "NULL" : "${token.substring(0, 20)}..."}',
-      );
+      debugPrint('[PUSH] FCM token available=${token != null}');
       if (token == null) return;
 
       await _tryRegisterToken(token);
@@ -314,7 +312,7 @@ class PushManager {
     }
 
     final accessToken = await SecureStorage.getAccessToken();
-    debugPrint('[PUSH] accessToken=${accessToken == null ? "NULL" : "var"}');
+    debugPrint('[PUSH] authenticated=${accessToken != null}');
     if (accessToken == null) return;
 
     for (int attempt = 1; attempt <= _maxRegisterAttempts; attempt++) {

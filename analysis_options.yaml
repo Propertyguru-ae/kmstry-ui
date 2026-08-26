@@ -9,6 +9,21 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Legacy, unreferenced venue-story implementation. The active flow lives
+    # under lib/features/venue_stories/. Keep these files until the dedicated
+    # "Remove legacy venue story implementation" cleanup task.
+    - lib/features/stories/presentation/add_venue_story_page.dart
+    - lib/features/stories/presentation/venue_story_tray.dart
+    # Retained for possible OEM-specific investigation, but intentionally not
+    # used by the Play-distributed app. FCM remains the notification transport.
+    - lib/core/permissions/battery_optimization_service.dart
+    # Unused vendored plugin snapshot. The app resolves camera_android_camerax
+    # from pub.dev via .dart_tool/package_config.json; there is no path override
+    # or source import pointing at this directory.
+    - third_party/camera_android_camerax/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

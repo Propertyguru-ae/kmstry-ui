@@ -73,7 +73,7 @@ class AuthApi {
         '/auth/register/otp/request',
         body: {'email': email},
       );
-      debugPrint('[requestRegisterOtp] response (primary): ${jsonEncode(res)}');
+      debugPrint('[requestRegisterOtp] primary request completed');
       return res as Map<String, dynamic>;
     } on ApiException catch (e) {
       if (e.statusCode != 404) rethrow;
@@ -81,9 +81,7 @@ class AuthApi {
         '/auth/register/request-otp',
         body: {'email': email},
       );
-      debugPrint(
-        '[requestRegisterOtp] response (404 fallback): ${jsonEncode(res)}',
-      );
+      debugPrint('[requestRegisterOtp] fallback request completed');
       return res as Map<String, dynamic>;
     }
   }

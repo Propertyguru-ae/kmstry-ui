@@ -85,9 +85,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 
     _realtimeEventsSub = _realtime.events.listen((envelope) {
       if (!mounted) return;
-      debugPrint(
-        '💬 [Messages] Event yakalandi: ${envelope.event}, payload=${envelope.payload}',
-      );
+      debugPrint('💬 [Messages] Event yakalandi: ${envelope.event}');
       switch (envelope.event) {
         case 'chat.unread.updated':
           if (!_applyChatRowUpdate(envelope.payload)) {
