@@ -65,12 +65,18 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
         file: file,
         mediaType: isVideo ? 'video' : 'photo',
       );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _uploading = false);
+      // Backend STORIES'i SOCIAL+ plana kilitliyor. Bu ekrana normalde gate'li
+      // giriş noktalarından ulaşılır; yine de plan hatası düşerse generic
+      // "could not upload" yerine gerçek nedeni göster.
+      final isPlanLocked = e.toString().contains('PLAN_UPGRADE_REQUIRED');
       await showPremiumErrorDialog(
         context,
-        message: 'Could not upload story. Please try again.',
+        message: isPlanLocked
+            ? 'Venue stories are part of the Social plan. Upgrade your venue to post stories.'
+            : 'Could not upload story. Please try again.',
       );
       if (mounted) Navigator.pop(context);
       return;

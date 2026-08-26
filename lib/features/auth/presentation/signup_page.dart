@@ -91,7 +91,8 @@ class _SignupPageState extends State<SignupPage> {
           // Otomatik giriş yapılamadı → tutarlı "Sign In" sheet'ini göster.
           showAccountExistsSheet(
             context,
-            onSignIn: () => Navigator.of(context).pop(),
+            onSignIn: () =>
+                Navigator.of(context).pushReplacementNamed(AuthRoutes.login),
           );
           return;
         }
@@ -229,8 +230,10 @@ class _SignupPageState extends State<SignupPage> {
   void _showAccountExistsSheet() {
     showAccountExistsSheet(
       context,
-      // Signup, login ekranından push edildi → geri dön.
-      onSignIn: () => Navigator.of(context).pop(),
+      // Signup, hesap-türü seçim sayfasından da push edilebiliyor; pop yerine
+      // doğrudan login'e git ki kullanıcı her durumda giriş ekranına ulaşsın.
+      onSignIn: () =>
+          Navigator.of(context).pushReplacementNamed(AuthRoutes.login),
     );
   }
 

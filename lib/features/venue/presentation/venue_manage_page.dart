@@ -60,7 +60,7 @@ class _VenueManagePageState extends State<VenueManagePage> {
   /// bu da yetki gate'li satırları gizler. Burada oturumu garanti altına alıyoruz.
   Future<void> _ensureSession() async {
     final session = VenueSession.instance;
-    if (session.loaded && session.venueId != null) return;
+    if ((session.loaded && session.venueId != null) || session.loading) return;
     try {
       final me = await AuthRepository().getMe();
       final ctx = MeContextModel.fromMe(me);
@@ -126,14 +126,15 @@ class _VenueManagePageState extends State<VenueManagePage> {
           children: [
             // İzinler yüklenene kadar skeleton göster — gate'li satırların "pat" diye
             // eklenmesini (pop-in) önler.
-            if (!VenueSession.instance.loaded) ...[
+            if (VenueSession.instance.loadFailed &&
+                !VenueSession.instance.loaded) ...[
+              _AccessLoadError(onRetry: VenueSession.instance.retry),
+            ] else if (!VenueSession.instance.loaded) ...[
               for (var i = 0; i < 5; i++) const _ManageTileSkeleton(),
             ] else ...[
 
             _PlanCard(
               plan: VenueSession.instance.plan,
-              planUntil: VenueSession.instance.planUntil,
-              onTap: () => PlanGate.openPaywall(context),
             ),
             const SizedBox(height: 4),
 
@@ -143,7 +144,7 @@ class _VenueManagePageState extends State<VenueManagePage> {
                 color: const Color(0xFF1A9FE8),
                 title: 'Analytics',
                 subtitle: 'Check-in trends, demographics, reports',
-                trailingText: _locked(VenueFeature.advancedAnalytics) ? 'Upgrade' : null,
+                trailingText: _locked(VenueFeature.advancedAnalytics) ? 'Locked' : null,
                 onTap: id == null
                     ? null
                     : () => _openOrPaywall(
@@ -160,7 +161,7 @@ class _VenueManagePageState extends State<VenueManagePage> {
                 color: const Color(0xFF1FD9A8),
                 title: 'Events',
                 subtitle: 'Create & manage events, RSVPs',
-                trailingText: _locked(VenueFeature.events) ? 'Upgrade' : null,
+                trailingText: _locked(VenueFeature.events) ? 'Locked' : null,
                 onTap: id == null
                     ? null
                     : () => _openOrPaywall(
@@ -181,7 +182,7 @@ class _VenueManagePageState extends State<VenueManagePage> {
                 color: const Color(0xFFF08838),
                 title: 'Offers',
                 subtitle: 'Promotions & external partnerships',
-                trailingText: _locked(VenueFeature.offers) ? 'Upgrade' : null,
+                trailingText: _locked(VenueFeature.offers) ? 'Locked' : null,
                 onTap: id == null
                     ? null
                     : () => _openOrPaywall(
@@ -191,15 +192,6 @@ class _VenueManagePageState extends State<VenueManagePage> {
                           )),
                         ),
               ),
-
-            _ManageTile(
-              icon: Icons.campaign_outlined,
-              color: const Color(0xFFE020D8),
-              title: 'Campaigns',
-              subtitle: 'Ad campaigns & boosts',
-              trailingText: 'Soon',
-              onTap: null,
-            ),
 
             if (_can(VenuePermission.memberManage) || _can(VenuePermission.roleManage))
               _ManageTile(
@@ -237,10 +229,8 @@ class _VenueManagePageState extends State<VenueManagePage> {
 /// Manage üstündeki abonelik kartı — mevcut kademe + yükseltme girişi.
 class _PlanCard extends StatelessWidget {
   final VenuePlan plan;
-  final DateTime? planUntil;
-  final VoidCallback onTap;
 
-  const _PlanCard({required this.plan, required this.planUntil, required this.onTap});
+  const _PlanCard({required this.plan});
 
   @override
   Widget build(BuildContext context) {
@@ -251,12 +241,7 @@ class _PlanCard extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Container(
+      child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
@@ -279,19 +264,13 @@ class _PlanCard extends StatelessWidget {
                         children: [
                           Text('${plan.label} plan',
                               style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
-                          if (!isFree && plan.priceAed > 0) ...[
-                            const SizedBox(width: 6),
-                            Text('· AED ${plan.priceAed}/mo', style: TextStyle(color: kDim, fontSize: 12)),
-                          ],
                         ],
                       ),
                       const SizedBox(height: 2),
                       Text(
                         isFree
-                            ? 'Upgrade to unlock stories, events, analytics & more'
-                            : (planUntil != null
-                                ? 'Renews ${_fmtDate(planUntil!)}'
-                                : 'Tap to manage your plan'),
+                            ? 'Limited feature access for this beta account'
+                            : '${plan.label} access enabled for this beta account',
                         style: TextStyle(color: kDim, fontSize: 12),
                       ),
                     ],
@@ -300,20 +279,13 @@ class _PlanCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: plan.color, borderRadius: BorderRadius.circular(20)),
-                  child: Text(isFree ? 'Upgrade' : 'Manage',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                  child: const Text('Current',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
                 ),
               ],
             ),
           ),
-        ),
-      ),
     );
-  }
-
-  String _fmtDate(DateTime d) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 }
 
@@ -352,6 +324,50 @@ class _ManageTileSkeleton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AccessLoadError extends StatelessWidget {
+  final Future<void> Function() onRetry;
+
+  const _AccessLoadError({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_outlined, color: colors.onSurfaceVariant),
+          const SizedBox(height: 10),
+          Text(
+            'Plan access could not be loaded',
+            style: TextStyle(
+              color: colors.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Check your connection and try again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colors.onSurfaceVariant, fontSize: 13),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Try again'),
+          ),
+        ],
       ),
     );
   }

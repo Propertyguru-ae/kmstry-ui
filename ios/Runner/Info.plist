@@ -51,8 +51,6 @@
 		<string>We need permission to save photos and videos you capture to your photo library.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>We need access to your photo library to let you share photos and videos.</string>
-		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-		<string>We use your location to show nearby venues and improve discovery.</string>
 		<key>NSLocationWhenInUseUsageDescription</key>
 		<string>We use your location to show nearby venues and improve discovery.</string>
 		<key>NSMicrophoneUsageDescription</key>

@@ -727,7 +727,6 @@ class _ProfilePageState extends State<ProfilePage>
 
     try {
       final me = await AuthRepository().getMe(forceRefresh: forceRefresh);
-      print('ME :  $me');
       _isAnonymous = me['isAnonymous'] == true;
 
       List<CheckinProfileMedia> media = [];
@@ -742,20 +741,10 @@ class _ProfilePageState extends State<ProfilePage>
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _checkinRepo.getCheckinProfile(checkinId);
-          print('PROFILE :  $profile');
-          //print('PROFILE PHOTOS :  ${profile.checkin.vibe}');
           checkinVibe = profile.checkin.vibe ?? '';
           final profileVenueId = profile.checkin.venueId?.trim();
           if (profileVenueId != null && profileVenueId.isNotEmpty) {
             activeCheckinVenueId = profileVenueId;
-          }
-          //print('CHECKIN VIBE :  $checkinVibe');
-          for (final m in profile.media) {
-            print("MEDIA ITEM:");
-            print("url: ${m.url}");
-            print("thumbnail: ${m.thumbnailUrl}");
-            print("type: ${m.mediaType}");
-            print("duration: ${m.durationSeconds}");
           }
           if (profile.media.isNotEmpty) {
             media = profile.media;

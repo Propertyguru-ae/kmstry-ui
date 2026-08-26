@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
 import 'package:kmstry_frontend/core/user/user_session.dart';
 
-/// KMSTRY+ access helper — the user-side mirror of [PlanGate]. Answers "did this
-/// user buy KMSTRY+?" independent of any venue role. Every premium feature
-/// (T41–T48) routes through here.
+/// KMSTRY+ access helper — the user-side mirror of [PlanGate]. It checks the
+/// user's assigned entitlement independently of any venue role. Every premium
+/// feature (T41–T48) routes through here.
 class PremiumGate {
   static const Color _kmstryPlus = Color(0xFFE020D8); // brand magenta
 
@@ -13,7 +13,7 @@ class PremiumGate {
       UserSession.instance.has(feature);
 
   /// Ensures [UserSession] is loaded, then returns whether [feature] is unlocked.
-  /// Opens the upsell sheet when locked. Use as:
+  /// Opens the beta access information sheet when locked. Use as:
   /// `if (!await PremiumGate.ensure(context, X)) return;`
   static Future<bool> ensure(
     BuildContext context,
@@ -29,14 +29,14 @@ class PremiumGate {
       context,
       feature,
       icon: icon,
-      title: title ?? '${feature.label} is a KMSTRY+ feature',
-      message: message ??
-          'Upgrade to KMSTRY+ to unlock ${feature.label} and more.',
+      title: title ?? '${feature.label} access',
+      message: 'This feature is not enabled for this beta account. '
+          'Access is assigned by the KMSTRY test team.',
     );
     return false;
   }
 
-  /// Runs [onAllowed] when unlocked; otherwise shows the upsell sheet.
+  /// Runs [onAllowed] when unlocked; otherwise shows access information.
   static Future<void> ensureWithUpsell(
     BuildContext context,
     PremiumFeature feature, {
@@ -128,15 +128,7 @@ class PremiumGate {
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-                      child: const Text('Get KMSTRY+'),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text(
-                      'Not now',
-                      style: TextStyle(color: kSub, fontWeight: FontWeight.w600),
+                      child: const Text('Close'),
                     ),
                   ),
                 ],

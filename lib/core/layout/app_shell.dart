@@ -579,7 +579,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final roleStr = match.isNotEmpty ? match.first.role : null;
         final role = VenueMemberRoleExt.fromApi(roleStr ?? 'STAFF');
         if (VenueSession.instance.venueId != resolvedVenueId ||
-            !VenueSession.instance.loaded) {
+            (!VenueSession.instance.loaded &&
+                !VenueSession.instance.loading &&
+                !VenueSession.instance.loadFailed)) {
           VenueSession.instance.load(resolvedVenueId, role);
         }
       } else if (!isVenueCtx) {

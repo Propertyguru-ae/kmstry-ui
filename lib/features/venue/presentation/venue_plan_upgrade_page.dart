@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 
-/// Venue abonelik kademelerini karşılaştıran Paywall / Upgrade ekranı.
-/// Ödeme akışı (Faz 2) henüz bağlı değil — CTA şimdilik bilgilendirir.
+/// External beta sırasında venue erişim kademelerini salt okunur karşılaştırır.
+/// Bu ekranda satın alma veya plan değiştirme işlemi sunulmaz.
 class VenuePlanUpgradePage extends StatelessWidget {
   final VenuePlan currentPlan;
   final VenueFeature? highlightFeature; // hangi kilitli özellikten gelindi
@@ -24,7 +24,7 @@ class VenuePlanUpgradePage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBg,
         elevation: 0,
-        title: Text('Plans', style: TextStyle(color: kText, fontSize: 18, fontWeight: FontWeight.w700)),
+        title: Text('Plan access', style: TextStyle(color: kText, fontSize: 18, fontWeight: FontWeight.w700)),
         iconTheme: IconThemeData(color: kText),
       ),
       body: SafeArea(
@@ -48,8 +48,8 @@ class VenuePlanUpgradePage extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'This feature is part of the ${highlightFeature!.minPlan.label} plan. '
-                          'Upgrade to unlock it.',
+                          'This feature is not enabled for this beta account. '
+                          'It is available with ${highlightFeature!.minPlan.label} access.',
                           style: TextStyle(color: kText, fontSize: 13, height: 1.35),
                         ),
                       ),
@@ -65,7 +65,7 @@ class VenuePlanUpgradePage extends StatelessWidget {
               ),
             const SizedBox(height: 8),
             Text(
-              'Venue subscriptions are billed monthly. Manage or change your plan anytime.',
+              'Plan access is assigned by the KMSTRY test team during the external beta.',
               style: TextStyle(color: kText.withValues(alpha: 0.5), fontSize: 12, height: 1.4),
               textAlign: TextAlign.center,
             ),
@@ -117,10 +117,11 @@ class _PlanCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Text(
-                plan.priceAed == 0 ? 'Free' : 'AED ${plan.priceAed}/mo',
-                style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15),
-              ),
+              if (isCurrent)
+                Text(
+                  'Current',
+                  style: TextStyle(color: plan.color, fontWeight: FontWeight.w700, fontSize: 13),
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -136,39 +137,8 @@ class _PlanCard extends StatelessWidget {
                 ],
               ),
             ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: isCurrent
-                ? OutlinedButton(
-                    onPressed: null,
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: plan.color.withValues(alpha: 0.5)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: Text('Current plan', style: TextStyle(color: plan.color, fontWeight: FontWeight.w600)),
-                  )
-                : FilledButton(
-                    onPressed: () => _onSelect(context),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: plan.color,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: Text(
-                      plan == VenuePlan.free ? 'Downgrade' : 'Choose ${plan.label}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-          ),
         ],
       ),
-    );
-  }
-
-  void _onSelect(BuildContext context) {
-    // Faz 2'de burası Stripe checkout / IAP akışına bağlanacak.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Billing coming soon — subscriptions launch shortly.')),
     );
   }
 
