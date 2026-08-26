@@ -280,7 +280,7 @@ class ChatRealtimeService {
       }
     }
 
-    debugPrint('💬 [Realtime] Event alindi: $event payload=$payload');
+    debugPrint('💬 [Realtime] Event alindi: $event');
     _eventsController.add(ChatRealtimeEnvelope(event: event, payload: payload));
   }
 

@@ -1,7 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
-import 'package:kmstry_frontend/core/permissions/battery_optimization_service.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -28,34 +27,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   String? _accountEmail;
   bool _loadingAccountInfo = true;
 
-  final _batteryOptimizationService = BatteryOptimizationService();
-  bool _batteryOptimizationIgnored = true;
-  bool _loadingBatteryStatus = true;
-
   @override
   void initState() {
     super.initState();
     _loadAccountFlags();
-    if (Platform.isAndroid) {
-      _loadBatteryStatus();
-    } else {
-      _loadingBatteryStatus = false;
-    }
-  }
-
-  Future<void> _loadBatteryStatus() async {
-    final ignored = await _batteryOptimizationService
-        .isIgnoringBatteryOptimizations();
-    if (!mounted) return;
-    setState(() {
-      _batteryOptimizationIgnored = ignored;
-      _loadingBatteryStatus = false;
-    });
-  }
-
-  Future<void> _requestIgnoreBatteryOptimization() async {
-    await _batteryOptimizationService.requestIgnoreBatteryOptimizations();
-    await _loadBatteryStatus();
   }
 
   Future<void> _loadAccountFlags() async {
@@ -68,9 +43,10 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       final marketingOptIn =
           me['marketingEmailOptIn'] == true ||
           me['marketing_email_opt_in'] == true;
-      final emailRaw = (me['email'] ?? me['emailAddress'] ?? me['email_address'])
-          ?.toString()
-          .trim();
+      final emailRaw =
+          (me['email'] ?? me['emailAddress'] ?? me['email_address'])
+              ?.toString()
+              .trim();
       setState(() {
         _showChangePasswordTile = AuthRepository().hasLocalPasswordProvider(me);
         _marketingEmailOptIn = marketingOptIn;
@@ -156,10 +132,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
-      await showPremiumErrorDialog(
-        context,
-        message: 'Unable to open link.',
-      );
+      await showPremiumErrorDialog(context, message: 'Unable to open link.');
     }
   }
 
@@ -218,26 +191,14 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Deletee account?'),
-        content: const Text(
-          'This permanently removes your full account identity and all linked data. Are you sure?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Delete your KMSTRY account?',
+      message:
+          'Your identity, personal profile, venue access, conversations and linked data will be permanently deleted. This cannot be undone.',
+      confirmLabel: 'Delete entire account',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     setState(() => _deleting = true);
     try {
@@ -331,21 +292,19 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             child: ListTile(
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const ManageAccountsPage(),
-                ),
+                MaterialPageRoute(builder: (_) => const ManageAccountsPage()),
               ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
-                side: BorderSide(
-                  color: colors.primary.withValues(alpha: 0.12),
-                ),
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.12)),
               ),
               tileColor: theme.brightness == Brightness.dark
                   ? colors.surface
                   : const Color(0xFFF8FBFD),
-              leading: Icon(Icons.manage_accounts_outlined,
-                  color: colors.primary),
+              leading: Icon(
+                Icons.manage_accounts_outlined,
+                color: colors.primary,
+              ),
               title: Text(
                 'Manage Accounts',
                 style: TextStyle(
@@ -500,30 +459,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                       ? null
                       : _setMarketingEmailOptIn,
                 ),
-              ),
-            ),
-          if (Platform.isAndroid && !_loadingBatteryStatus)
-            premiumTile(
-              ListTile(
-                leading: Icon(
-                  Icons.battery_charging_full_outlined,
-                  color: colors.primary,
-                ),
-                title: const Text('Reliable notifications'),
-                subtitle: Text(
-                  _batteryOptimizationIgnored
-                      ? 'Background activity allowed — notifications arrive on time'
-                      : 'Some phones delay notifications in the background. Tap to fix.',
-                ),
-                trailing: _batteryOptimizationIgnored
-                    ? Icon(Icons.check_circle, color: colors.primary)
-                    : Icon(
-                        Icons.chevron_right_rounded,
-                        color: colors.onSurface.withValues(alpha: 0.45),
-                      ),
-                onTap: _batteryOptimizationIgnored
-                    ? null
-                    : _requestIgnoreBatteryOptimization,
               ),
             ),
           premiumTile(

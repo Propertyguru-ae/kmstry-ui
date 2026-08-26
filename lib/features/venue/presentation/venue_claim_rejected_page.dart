@@ -104,7 +104,7 @@ class _VenueClaimRejectedPageState extends State<VenueClaimRejectedPage> {
 
   Future<void> _openSupport() async {
     // Destek hattı URL'si hazır olduğunda buraya eklenecek.
-    const url = 'mailto:support@kmstry.com';
+    const url = 'mailto:adops@brightmindshub.net';
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);

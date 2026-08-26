@@ -49,8 +49,8 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
         icon: Icons.done_all_rounded,
         title: 'Control your read receipts with KMSTRY+',
         message:
-            'Hide when you\'ve read messages. Upgrade to KMSTRY+ to turn read '
-            'receipts off.',
+            'Read receipt controls are not enabled for this beta account. '
+            'Access is assigned by the KMSTRY test team.',
       );
       if (!ok) return; // not premium — leave the switch on
     }

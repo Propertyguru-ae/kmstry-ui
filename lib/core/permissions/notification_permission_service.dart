@@ -1,12 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
-enum NotificationSystemStatus {
-  authorized,
-  provisional,
-  denied,
-  notDetermined,
-}
+enum NotificationSystemStatus { authorized, provisional, denied, notDetermined }
 
 class NotificationPermissionState {
   final NotificationSystemStatus systemStatus;
@@ -43,7 +38,6 @@ class NotificationPermissionService {
 
   Future<NotificationPermissionState> readStateFromBackend() async {
     final me = await _auth.getMe();
-    print("🔍 ME RESPONSE: $me");
     final accountPreference = me['notificationPermissionGranted'] != false;
     final settings = await _messaging.getNotificationSettings();
     return NotificationPermissionState(

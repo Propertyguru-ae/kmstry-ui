@@ -15,6 +15,7 @@ import 'preview_video_screen.dart';
 import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
 import '../data/video_mirror.dart';
+import '../data/volume_shutter.dart';
 
 class CameraScreen extends StatefulWidget {
   final bool useFrontCamera;
@@ -36,7 +37,8 @@ class _CameraScreenState extends State<CameraScreen>
   late CameraDescription _currentCamera;
   int _recordSeconds = 0;
   Timer? _recordTimer;
-  final int _maxSeconds = 60; // maksimum video süresi (Instagram tarzı halka bununla dolar)
+  final int _maxSeconds =
+      60; // maksimum video süresi (Instagram tarzı halka bununla dolar)
   bool _isReady = false;
   bool _cameraPermissionDenied = false;
   bool _cameraPermissionPermanentlyDenied = false;
@@ -47,6 +49,7 @@ class _CameraScreenState extends State<CameraScreen>
   // ---- Instagram tarzı basılı-tut jest state'i ----
   /// Kayıt long-press ile mi başladı — parmak çekilince direkt durur.
   bool _gestureRecording = false;
+
   /// Parmak hâlâ ekranda mı (izin dialogu sırasında kalkarsa kayıt başlamasın).
   bool _longPressActive = false;
   // Reentrancy guard'ları — çift tetiklenmeyi engeller (örn. max süre timer'ı
@@ -78,7 +81,23 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+    VolumeShutter.listen(_handleVolumeShutter);
     _initCamera();
+  }
+
+  Future<void> _handleVolumeShutter() async {
+    if (!mounted || !_isReady || _processingVideo) return;
+    await _takePicture();
+  }
+
+  Future<void> _setVolumeShutterEnabled(bool enabled) async {
+    try {
+      await VolumeShutter.setEnabled(enabled);
+    } on PlatformException {
+      // Unsupported platform/version: retain the normal system button behavior.
+    } on MissingPluginException {
+      // Allows widget tests and non-mobile targets to use the camera screen.
+    }
   }
 
   Future<void> _initCamera() async {
@@ -133,6 +152,7 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() {
       _isReady = true;
     });
+    await _setVolumeShutterEnabled(true);
   }
 
   Future<void> _switchCamera() async {
@@ -176,11 +196,11 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _takePictureInner() async {
-
     // Ekranın gerçek oranını async'ten önce oku (context await sonrası geçersiz olabilir).
     // Bu oran = kullanıcının kamera önizlemesinde tam gördüğü alan.
     final screenSize = MediaQuery.of(context).size;
-    final screenAr = screenSize.width / screenSize.height; // örn. 390/844 ≈ 0.462
+    final screenAr =
+        screenSize.width / screenSize.height; // örn. 390/844 ≈ 0.462
 
     final image = await _controller.takePicture();
 
@@ -221,23 +241,35 @@ class _CameraScreenState extends State<CameraScreen>
         if (imageAr > screenAr) {
           final newW = (fixed.height * screenAr).round();
           final x = ((fixed.width - newW) / 2).round();
-          fixed =
-              img.copyCrop(fixed, x: x, y: 0, width: newW, height: fixed.height);
+          fixed = img.copyCrop(
+            fixed,
+            x: x,
+            y: 0,
+            width: newW,
+            height: fixed.height,
+          );
         } else {
           final newH = (fixed.width / screenAr).round();
           final y = ((fixed.height - newH) / 2).round();
-          fixed =
-              img.copyCrop(fixed, x: 0, y: y, width: fixed.width, height: newH);
+          fixed = img.copyCrop(
+            fixed,
+            x: 0,
+            y: y,
+            width: fixed.width,
+            height: newH,
+          );
         }
       }
 
       // Video ile aynı genişlik (720px) — AR korunur.
       if (fixed.width != 720) {
         final targetH = (720 * fixed.height / fixed.width).round();
-        fixed = img.copyResize(fixed,
-            width: 720,
-            height: targetH,
-            interpolation: img.Interpolation.linear);
+        fixed = img.copyResize(
+          fixed,
+          width: 720,
+          height: targetH,
+          interpolation: img.Interpolation.linear,
+        );
       }
 
       final fixedBytes = img.encodeJpg(fixed, quality: 92);
@@ -252,6 +284,8 @@ class _CameraScreenState extends State<CameraScreen>
     // Preview'ı await ediyoruz: "Use Photo" ile sonuç dönerse kamerayı KENDİMİZ
     // kapatıp sonucu çağırana forward ediyoruz (standart desen). Böylece kamera
     // "alttan" pop edilmiyor ve CameraX surface dispose crash'i olmuyor.
+    await _setVolumeShutterEnabled(false);
+    if (!mounted) return;
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -266,6 +300,8 @@ class _CameraScreenState extends State<CameraScreen>
     if (!mounted) return;
     if (result != null) {
       Navigator.pop(context, result);
+    } else {
+      await _setVolumeShutterEnabled(true);
     }
     // result == null → kullanıcı "Retake" dedi, kamerada kal.
   }
@@ -430,6 +466,8 @@ class _CameraScreenState extends State<CameraScreen>
     if (!mounted) return;
     // Preview'ı await et; "Use Video" ile sonuç dönerse kamerayı kendimiz
     // kapatıp forward et (fotoğrafla aynı standart desen — alttan pop yok).
+    await _setVolumeShutterEnabled(false);
+    if (!mounted) return;
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => PreviewVideoScreen(file: savedVideo)),
@@ -437,11 +475,15 @@ class _CameraScreenState extends State<CameraScreen>
     if (!mounted) return;
     if (result != null) {
       Navigator.pop(context, result);
+    } else {
+      await _setVolumeShutterEnabled(true);
     }
   }
 
   @override
   void dispose() {
+    unawaited(_setVolumeShutterEnabled(false));
+    VolumeShutter.stopListening();
     _recordTimer?.cancel();
     _ringController.dispose();
     // CameraX bazı geçiş durumlarında dispose'ta surface hatası atabiliyor;
@@ -527,7 +569,6 @@ class _CameraScreenState extends State<CameraScreen>
           // renkli şeritten takip ediliyor.
           // PHOTO/VIDEO mod seçici kaldırıldı: tek dokunuş = fotoğraf,
           // basılı tut = video.
-
           Positioned(
             bottom: 40,
             left: 0,
@@ -592,8 +633,9 @@ class _CameraScreenState extends State<CameraScreen>
                         shape: BoxShape.circle,
                         border: Border.all(
                           // Kayıt sırasında beyaz çerçeve yerine renkli şerit var.
-                          color:
-                              _isRecording ? Colors.transparent : Colors.white,
+                          color: _isRecording
+                              ? Colors.transparent
+                              : Colors.white,
                           width: 4,
                         ),
                         // Instagram tarzı: kırmızı yok — kayıtta hafif saydam
@@ -670,7 +712,6 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
             ),
-
         ],
       ),
     );

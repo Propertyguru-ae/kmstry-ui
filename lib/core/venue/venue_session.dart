@@ -18,10 +18,15 @@ class VenueSession extends ChangeNotifier {
   DateTime? _planUntil;
   Set<VenueFeature> _features = {};
   bool _loaded = false;
+  bool _loading = false;
+  bool _loadFailed = false;
+  int _loadGeneration = 0;
 
   String? get venueId => _venueId;
   VenueMemberRole get role => _role;
   bool get loaded => _loaded;
+  bool get loading => _loading;
+  bool get loadFailed => _loadFailed;
   bool get isOwner => _role == VenueMemberRole.owner;
 
   /// Venue'nun abonelik kademesi.
@@ -37,29 +42,48 @@ class VenueSession extends ChangeNotifier {
   bool hasFeature(VenueFeature feature) => _features.contains(feature);
 
   Future<void> load(String venueId, VenueMemberRole role) async {
+    final generation = ++_loadGeneration;
+    final venueChanged = _venueId != venueId;
     _venueId = venueId;
     _role = role;
-    _loaded = false;
-    notifyListeners();
-
-    try {
-      final access = await _repo.getMyPermissions(venueId);
-      _permissions = access.permissions.toSet();
-      _plan = access.plan;
-      _planUntil = access.planUntil;
-      _features = access.features;
-    } catch (_) {
-      _permissions = _defaultPermissions(role);
+    _loading = true;
+    _loadFailed = false;
+    if (venueChanged) {
+      _loaded = false;
+      _permissions = {};
       _plan = VenuePlan.free;
       _planUntil = null;
       _features = {};
     }
+    notifyListeners();
 
-    _loaded = true;
+    try {
+      final access = await _repo.getMyPermissions(venueId);
+      if (generation != _loadGeneration || _venueId != venueId) return;
+      _permissions = access.permissions.toSet();
+      _plan = access.plan;
+      _planUntil = access.planUntil;
+      _features = access.features;
+      _loaded = true;
+    } catch (_) {
+      if (generation != _loadGeneration || _venueId != venueId) return;
+      // A transient API failure is not a FREE plan. Keep a previously loaded
+      // snapshot for the same venue; otherwise expose an explicit error state.
+      _loadFailed = true;
+    }
+    if (generation != _loadGeneration || _venueId != venueId) return;
+    _loading = false;
     notifyListeners();
   }
 
+  Future<void> retry() async {
+    final id = _venueId;
+    if (id == null || _loading) return;
+    await load(id, _role);
+  }
+
   void clear() {
+    _loadGeneration++;
     _venueId = null;
     _role = VenueMemberRole.staff;
     _permissions = {};
@@ -67,32 +91,8 @@ class VenueSession extends ChangeNotifier {
     _planUntil = null;
     _features = {};
     _loaded = false;
+    _loading = false;
+    _loadFailed = false;
     notifyListeners();
-  }
-
-  Set<VenuePermission> _defaultPermissions(VenueMemberRole role) {
-    switch (role) {
-      case VenueMemberRole.owner:
-        return VenuePermission.values.toSet();
-      case VenueMemberRole.admin:
-        return {
-          VenuePermission.eventManage,
-          VenuePermission.eventAttendeesView,
-          VenuePermission.storyManage,
-          VenuePermission.storyViewStats,
-          VenuePermission.postCreate,
-          VenuePermission.venueEdit,
-          VenuePermission.viewGuests,
-          VenuePermission.sendPush,
-          VenuePermission.viewStats,
-          VenuePermission.viewAnalytics,
-          VenuePermission.memberManage,
-        };
-      case VenueMemberRole.staff:
-        return {
-          VenuePermission.viewGuests,
-          VenuePermission.viewStats,
-        };
-    }
   }
 }
