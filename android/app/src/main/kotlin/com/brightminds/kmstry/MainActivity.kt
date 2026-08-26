@@ -1,6 +1,7 @@
 package com.brightminds.kmstry
 
 import android.os.Build
+import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -20,6 +21,9 @@ import java.io.File
 class MainActivity : FlutterActivity() {
 
     private val channelName = "app/video_mirror"
+    private val volumeShutterChannelName = "app/volume_shutter"
+    private var volumeShutterChannel: MethodChannel? = null
+    private var volumeShutterEnabled = false
 
     @OptIn(UnstableApi::class)
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -38,6 +42,32 @@ class MainActivity : FlutterActivity() {
                 }
                 mirrorVideo(path, result)
             }
+
+        volumeShutterChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            volumeShutterChannelName
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                if (call.method == "setEnabled") {
+                    volumeShutterEnabled = call.arguments as? Boolean ?: false
+                    result.success(null)
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val isVolumeButton = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        if (volumeShutterEnabled && isVolumeButton) {
+            if (event.action == KeyEvent.ACTION_UP) {
+                volumeShutterChannel?.invokeMethod("onVolumeShutter", null)
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     @OptIn(UnstableApi::class)

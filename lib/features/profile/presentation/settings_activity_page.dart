@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
@@ -60,7 +61,8 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
   }
 
   Future<void> _loadAndSyncNotifications() async {
-    final fcmSettings = await FirebaseMessaging.instance.getNotificationSettings();
+    final fcmSettings = await FirebaseMessaging.instance
+        .getNotificationSettings();
     final systemGranted =
         fcmSettings.authorizationStatus == AuthorizationStatus.authorized ||
         fcmSettings.authorizationStatus == AuthorizationStatus.provisional;
@@ -79,7 +81,10 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
       final accountEnabled = accountOptIn is bool ? accountOptIn : true;
       final permissionState = await _notificationPermissionService
           .readStateWithAccountPreference(accountEnabled);
-      await SecureStorage.write(_notificationsEnabledKey, accountEnabled.toString());
+      await SecureStorage.write(
+        _notificationsEnabledKey,
+        accountEnabled.toString(),
+      );
 
       final meContext = MeContextModel.fromMe(me);
 
@@ -88,7 +93,8 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
       final locationStatus = await Permission.locationWhenInUse.status;
       // iOS'ta permission_handler bildirim iznini yanlış okuyabiliyor.
       // Firebase'in kendi API'si her zaman doğru durumu döndürür.
-      final fcmSettings = await FirebaseMessaging.instance.getNotificationSettings();
+      final fcmSettings = await FirebaseMessaging.instance
+          .getNotificationSettings();
       final notifGranted =
           fcmSettings.authorizationStatus == AuthorizationStatus.authorized ||
           fcmSettings.authorizationStatus == AuthorizationStatus.provisional;
@@ -101,9 +107,13 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
         _accountNotificationsEnabled = accountEnabled;
         _systemNotificationsEnabled = permissionState.systemGranted;
         _isVenueContext = meContext.lastActiveContext?.toUpperCase() == 'VENUE';
-        _canDeleteCurrentContextProfile = meContext.canDeleteCurrentContextProfile;
-        _activeVenueId = meContext.activeVenueId ??
-            (meContext.memberVenues.isNotEmpty ? meContext.memberVenues.first.id : null);
+        _canDeleteCurrentContextProfile =
+            meContext.canDeleteCurrentContextProfile;
+        _activeVenueId =
+            meContext.activeVenueId ??
+            (meContext.memberVenues.isNotEmpty
+                ? meContext.memberVenues.first.id
+                : null);
         _loading = false;
       });
     } catch (_) {
@@ -121,7 +131,9 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     }
     setState(() => _accountNotificationsEnabled = enabled);
     await SecureStorage.write(_notificationsEnabledKey, enabled.toString());
-    await AuthRepository().updatePermissions({'notificationPermissionGranted': enabled});
+    await AuthRepository().updatePermissions({
+      'notificationPermissionGranted': enabled,
+    });
     if (enabled) {
       await PushManager.instance.ensureRegisteredIfAllowed();
     }
@@ -135,7 +147,6 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     }
   }
 
-
   Future<void> _logout() async {
     if (_loggingOut) return;
     setState(() => _loggingOut = true);
@@ -143,50 +154,44 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
       await AuthRepository().logout();
     } catch (_) {}
     if (!mounted) return;
-    Navigator.of(context).pushNamedAndRemoveUntil(AuthRoutes.login, (r) => false);
+    Navigator.of(
+      context,
+    ).pushNamedAndRemoveUntil(AuthRoutes.login, (r) => false);
   }
 
   Future<void> _deleteAccount() async {
     if (_deletingAccount || !_canDeleteCurrentContextProfile) return;
     final isVenue = _isVenueContext;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isVenue ? 'Delete venue profile?' : 'Delete personal profile?'),
-        content: Text(
-          isVenue
-              ? 'This action is permanent. Your venue context will be removed, but your root account stays active. Are you sure?'
-              : 'This action is permanent. Only your personal profile will be deleted. Your account and any venue memberships stay active. Are you sure?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: isVenue ? 'Leave this venue?' : 'Delete personal profile?',
+      message: isVenue
+          ? 'Your venue access will be removed. Your KMSTRY account and other profiles will stay active.'
+          : 'Only your personal profile will be deleted. Your KMSTRY account and any venue access will stay active.',
+      confirmLabel: isVenue ? 'Leave venue' : 'Delete personal profile',
+      icon: isVenue ? Icons.logout_rounded : Icons.person_remove_rounded,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _deletingAccount = true);
     try {
       if (isVenue) {
         final venueId = _activeVenueId;
-        if (venueId == null || venueId.isEmpty) throw Exception('Active venue id is missing');
+        if (venueId == null || venueId.isEmpty)
+          throw Exception('Active venue id is missing');
         await AuthRepository().deleteVenueContextMembership(venueId: venueId);
       } else {
         await AuthRepository().deletePersonalContextProfile();
       }
       if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil(AuthRoutes.authGate, (r) => false);
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AuthRoutes.authGate, (r) => false);
     } catch (e) {
       if (!mounted) return;
       await showPremiumErrorDialog(
         context,
-        message: 'Could not delete ${isVenue ? 'venue' : 'personal'} profile: '
+        message:
+            'Could not delete ${isVenue ? 'venue' : 'personal'} profile: '
             '${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
       );
     } finally {
@@ -239,19 +244,35 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-
                 // ── Account Center ───────────────────────────────
                 _SectionLabel(label: 'Account'),
                 const SizedBox(height: 8),
                 _Card(
                   child: ListTile(
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const AccountSettingsPage())),
-                    leading: Icon(Icons.manage_accounts_outlined, color: colors.primary),
-                    title: Text('Account Center',
-                        style: TextStyle(color: colors.onSurface, fontWeight: FontWeight.w600)),
-                    subtitle: Text('Email, password, theme & more',
-                        style: TextStyle(color: colors.onSurface.withValues(alpha: 0.6), fontSize: 13)),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AccountSettingsPage(),
+                      ),
+                    ),
+                    leading: Icon(
+                      Icons.manage_accounts_outlined,
+                      color: colors.primary,
+                    ),
+                    title: Text(
+                      'Account Center',
+                      style: TextStyle(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Email, password, theme & more',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.6),
+                        fontSize: 13,
+                      ),
+                    ),
                     trailing: const Icon(Icons.chevron_right),
                   ),
                 ),
@@ -280,7 +301,8 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
                 _PermissionTile(
                   icon: Icons.notifications_outlined,
                   title: 'Notifications',
-                  subtitle: _notificationGranted && !_accountNotificationsEnabled
+                  subtitle:
+                      _notificationGranted && !_accountNotificationsEnabled
                       ? 'Tap to enable in-app notifications'
                       : 'System-level notification permission',
                   granted: _notificationGranted && _accountNotificationsEnabled,
@@ -330,9 +352,7 @@ class _SectionLabel extends StatelessWidget {
     final theme = Theme.of(context);
     return Text(
       label,
-      style: theme.textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.w700,
-      ),
+      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
     );
   }
 }
@@ -418,12 +438,20 @@ class _PermissionTile extends StatelessWidget {
       child: ListTile(
         onTap: onTap ?? openAppSettings,
         leading: Icon(icon, color: colors.primary),
-        title: Text(title,
-            style: TextStyle(
-                color: colors.onSurface, fontWeight: FontWeight.w600)),
-        subtitle: Text(subtitle,
-            style: TextStyle(
-                color: colors.onSurface.withValues(alpha: 0.6), fontSize: 12)),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: colors.onSurface,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(
+            color: colors.onSurface.withValues(alpha: 0.6),
+            fontSize: 12,
+          ),
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -445,8 +473,11 @@ class _PermissionTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            Icon(Icons.chevron_right,
-                color: colors.onSurface.withValues(alpha: 0.4), size: 18),
+            Icon(
+              Icons.chevron_right,
+              color: colors.onSurface.withValues(alpha: 0.4),
+              size: 18,
+            ),
           ],
         ),
       ),

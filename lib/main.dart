@@ -58,8 +58,18 @@ Future<void> main() async {
     // Token'ı önceden ISIT: App Attest ilk üretimi gecikmeli/asenkron olduğu
     // için, açılıştaki ilk /auth/me isteği token'dan önce gidip "missing"
     // görünüyordu. Burada bir kez zorla çekip cache'e alıyoruz ki auth
-    // isteklerine token yetişsin. (Hata olursa auto-refresh sonra halleder.)
-    unawaited(FirebaseAppCheck.instance.getToken(true));
+    // isteklerine token yetişsin. Fire-and-forget; hatayı KENDİ içinde yut —
+    // aksi halde reject olan Future dıştaki try/catch'e düşmeyip "unhandled
+    // exception" olarak loglanıyordu. (Başarısızlığı auto-refresh sonra halleder.)
+    unawaited(() async {
+      try {
+        await FirebaseAppCheck.instance.getToken(true);
+      } catch (_) {
+        debugPrint(
+          '⚠️ App Check warm-up failed; automatic refresh will retry.',
+        );
+      }
+    }());
   } catch (e) {
     debugPrint('⚠️ App Check activate failed: $e');
   }
