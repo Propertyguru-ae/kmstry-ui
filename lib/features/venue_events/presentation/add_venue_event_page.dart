@@ -259,7 +259,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
                   children: [
                     const Icon(Icons.handshake_outlined, size: 18, color: _kMavi),
                     const SizedBox(width: 8),
-                    Text('Partner Benefits',
+                    Text('Deals and discounts',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText)),
                     const Spacer(),
                     if (_activePartnerships.isNotEmpty &&
@@ -888,7 +888,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
             _SectionLabel(
               icon: Icons.handshake_outlined,
               color: _kMavi,
-              label: 'Partner Benefits',
+              label: 'Deals and discounts',
               optional: true,
               kLabel: kLabel,
             ),

@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dar
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_list_item.dart';
+import 'package:kmstry_frontend/core/network/network_error.dart';
 
 enum _VenueSort { latest, earliest }
 
@@ -20,6 +21,7 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
   List<Venue> _venues = const [];
   bool _loading = true;
   String? _error;
+  bool _errorOffline = false;
   String _query = '';
   _VenueSort _sort = _VenueSort.latest;
 
@@ -47,10 +49,14 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
         _venues = venues;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      final offline = isOfflineError(e);
       setState(() {
-        _error = 'Followed venues could not be loaded.';
+        _errorOffline = offline;
+        _error = offline
+            ? 'You\'re offline'
+            : 'Followed venues could not be loaded.';
         _loading = false;
       });
     }
@@ -222,9 +228,13 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
               )
             else if (_error != null)
               _buildMessageState(
-                icon: Icons.error_outline_rounded,
+                icon: _errorOffline
+                    ? Icons.wifi_off_rounded
+                    : Icons.error_outline_rounded,
                 title: _error!,
-                subtitle: 'Pull to refresh and try again.',
+                subtitle: _errorOffline
+                    ? 'Check your connection and pull to refresh.'
+                    : 'Pull to refresh and try again.',
                 isDark: isDark,
               )
             else if (_venues.isEmpty)

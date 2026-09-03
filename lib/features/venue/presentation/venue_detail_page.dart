@@ -3,12 +3,15 @@ import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -47,6 +50,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   final _venueContextRepo = VenueContextRepository();
   final _storyRepo = StoryRepository();
   final _venueStoryRepo = VenueStoryRepository();
+  final _partnershipRepo = ExternalPartnershipRepository();
+  List<ExternalPartnershipModel> _partnerships = const [];
   int _storyTrayRefreshCount = 0;
   bool _storyUploading = false;
   bool _hasMyStoryHere =
@@ -74,11 +79,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int _galleryCount = 0; // VenueGalleryStrip'ten gelen foto/video adedi
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
 
-  // Backend'deki 200m check-in mesafe sınırıyla aynı değer (checkins.service.ts).
-  static const double _kCheckinMaxDistanceMeters = 200;
+  // Tüm mobil check-in girişleri aynı yakınlık politikasını kullanır.
+  static const double _kCheckinMaxDistanceMeters =
+      CheckinLocationPolicy.maxDistanceMeters;
 
   /// null = henüz doğrulanmadı → buton pasif kalır. Sadece kesin olarak
-  /// venue'nün 200m içinde olduğu ölçülünce true olur ("fail-closed").
+  /// venue'nün izin verilen mesafede olduğu ölçülünce true olur ("fail-closed").
   bool? _isNearVenue;
   bool _checkingProximity = true;
 
@@ -327,6 +333,13 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     } catch (e) {
       debugPrint('⚠️ Could not load enriched venue data: $e');
     }
+    // Deals & discounts (external partnerships) — public, best-effort.
+    try {
+      final partnerships = await _partnershipRepo.getActivePartnerships(
+        widget.venue.id,
+      );
+      if (mounted) setState(() => _partnerships = partnerships);
+    } catch (_) {}
   }
 
   Future<void> _loadVenueDetails() async {
@@ -574,43 +587,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              // "Check in" — check-in butonuyla aynı blue→teal gradient.
-              _actionButton(
-                height: 44,
-                onTap: _openCheckinFlow,
-                gradient: const LinearGradient(
-                  colors: [AppColors.blue, AppColors.teal],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.blue.withValues(alpha: 0.34),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.add_location_alt_rounded,
-                      size: 17,
-                      color: Colors.white,
-                    ),
-                    SizedBox(width: 7),
-                    Text(
-                      'Check in',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ],
           ),
@@ -918,7 +894,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   /// Zaten bu venue'da aktif check-in varsa mesafe kontrolü uygulanmaz
   /// (kullanıcı zaten orada, sadece "Who's here?"e gidiyor). Yeni check-in
-  /// için buton SADECE konum doğrulanıp venue'nün 200m içinde olduğu
+  /// için buton SADECE konum doğrulanıp venue'nün izin verilen mesafede olduğu
   /// kesinleşince aktif olur — doğrulanana kadar ve venue dışındaysa pasif
   /// kalır, "You're not at this venue" yazar.
   Widget _buildCheckinButton(bool hasActiveCheckinHere) {
@@ -1189,6 +1165,99 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
           style: TextStyle(fontSize: 13, height: 1.6, color: _textMuted),
         ),
       ],
+    );
+  }
+
+  Future<void> _openDealUrl(String url) async {
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  String _dealValidLabel(DateTime d) =>
+      'until ${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
+
+  /// Deals & discounts (external partnerships) for this venue.
+  Widget _buildDealsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(AppColors.orange, 'Deals & discounts'),
+        const SizedBox(height: 10),
+        ..._partnerships.map(_buildDealCard),
+      ],
+    );
+  }
+
+  Widget _buildDealCard(ExternalPartnershipModel p) {
+    final hasUrl = p.externalUrl != null && p.externalUrl!.trim().isNotEmpty;
+    final meta = <String>[
+      p.platformDisplayName,
+      p.offerTypeDisplayName,
+      if (p.validUntil != null) _dealValidLabel(p.validUntil!),
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: hasUrl ? () => _openDealUrl(p.externalUrl!) : null,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: _isDark
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : const Color(0xFFF8FBFD),
+              border: Border.all(
+                color: AppColors.orange.withValues(alpha: 0.30),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.orange.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(
+                    Icons.local_offer_outlined,
+                    color: AppColors.orange,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.offerLabel,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        meta,
+                        style: TextStyle(fontSize: 12, color: _textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                if (hasUrl)
+                  Icon(Icons.open_in_new_rounded, size: 17, color: _textFaint),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1863,6 +1932,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                               }
                             },
                           ),
+                        ],
+
+                        /// DEALS & DISCOUNTS (external partnerships) — above events
+                        if (_partnerships.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+                          _buildDealsSection(),
                         ],
 
                         /// UPCOMING EVENTS

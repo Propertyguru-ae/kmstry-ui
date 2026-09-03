@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/auth/presentation/change_password_page.
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/profile/presentation/manage_accounts_page.dart';
+import 'package:kmstry_frontend/features/data_export/presentation/data_export_page.dart';
 
 class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({super.key});
@@ -19,9 +20,11 @@ class AccountSettingsPage extends StatefulWidget {
 }
 
 class _AccountSettingsPageState extends State<AccountSettingsPage> {
+  // Temporarily hidden until account deactivation is implemented end-to-end.
+  static const bool _showAccountDeactivation = false;
   bool _deleting = false;
   bool _deactivating = false;
-  bool _showChangePasswordTile = true;
+  bool _showChangePasswordTile = false;
   bool _marketingEmailOptIn = false;
   bool _updatingMarketingOptIn = false;
   String? _accountEmail;
@@ -58,7 +61,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _showChangePasswordTile = true;
+        // Fail closed: these actions require a confirmed local password.
+        _showChangePasswordTile = false;
         _marketingEmailOptIn = false;
         _accountEmail = null;
         _loadingAccountInfo = false;
@@ -256,6 +260,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       );
     }
 
+    Widget sectionHeading(String label) => Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      child: Text(
+        label,
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
     final isDark = theme.brightness == Brightness.dark;
     final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
     final kBorder = isDark
@@ -287,8 +301,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       body: ListView(
         children: <Widget>[
           // ── Manage Accounts ──────────────────────────────────
+          sectionHeading('Account'),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: ListTile(
               onTap: () => Navigator.push(
                 context,
@@ -324,7 +339,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           ),
 
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: Text(
               'Account email',
               style: theme.textTheme.titleMedium?.copyWith(
@@ -360,7 +375,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
-              'App mode',
+              'Preferences',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -401,8 +416,9 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          // İlk açılışta satır kaybolup sonradan belirmesin:
-          // loading sürecinde de varsayılan olarak göster, sadece kesin bilgi gelince gizle.
+          sectionHeading('Security and communication'),
+          // Email/password changes currently require a local password. Social
+          // provider-only accounts must not be sent into that unusable flow.
           if (_showChangePasswordTile) ...[
             premiumTile(
               ListTile(
@@ -461,6 +477,24 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                 ),
               ),
             ),
+          sectionHeading('Your information and privacy'),
+          if (_showAccountDeactivation)
+            premiumTile(
+              ListTile(
+                leading: Icon(Icons.download_outlined, color: colors.primary),
+                title: const Text('Download your data'),
+                subtitle: const Text(
+                  'Create a private copy of your information',
+                ),
+                trailing: Icon(
+                  Icons.chevron_right_rounded,
+                  color: colors.onSurface.withValues(alpha: 0.45),
+                ),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const DataExportPage()),
+                ),
+              ),
+            ),
           premiumTile(
             ListTile(
               leading: Icon(Icons.privacy_tip_outlined, color: colors.primary),
@@ -483,6 +517,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
               onTap: () => _openPolicy('/terms'),
             ),
           ),
+          sectionHeading('Account control'),
           premiumTile(
             ListTile(
               leading: Icon(Icons.pause_circle_outline, color: deactivateColor),

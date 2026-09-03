@@ -23,6 +23,9 @@ import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/preview_screen.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 
 class MessageDetailPage extends StatefulWidget {
   /// When null, this is a new conversation; first send will create the chat.
@@ -907,12 +910,26 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         ? '[Photo]'
         : target.messageType == 'file'
         ? '[Document]'
-        : (target.text ?? '').trim();
+        : _visibleMessageBody(target.text ?? '');
     final compact = snippet.replaceAll(RegExp(r'\s+'), ' ');
     final trimmed = compact.length > 80
         ? '${compact.substring(0, 80)}...'
         : compact;
     return '↩️ $senderLabel: $trimmed';
+  }
+
+  /// Replying to an existing reply must quote the selected bubble's visible
+  /// body, not copy its embedded quote again. This keeps reply chains flat,
+  /// matching WhatsApp-style behaviour, and also cleans up legacy nested
+  /// client-side quotes when users reply to them.
+  String _visibleMessageBody(String rawMessage) {
+    var visible = rawMessage.trim();
+    for (var depth = 0; depth < 8; depth++) {
+      final parsed = _parseReplyMessage(visible);
+      if (parsed == null) break;
+      visible = parsed.body.trim();
+    }
+    return visible;
   }
 
   /// WhatsApp tarzı mesaj seçme moduna gir: kullanıcı isterse ek mesajları da
@@ -1594,37 +1611,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   Future<bool> _confirmDeleteMessage() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final colors = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          title: const Text('Delete message'),
-          content: const Text('This message will be permanently removed.'),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          actions: [
-            Row(
-              children: [
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppTheme.brandPrimary,
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                const Spacer(),
-                TextButton(
-                  style: TextButton.styleFrom(foregroundColor: colors.error),
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
+    return showDestructiveConfirmationDialog(
+      context,
+      title: 'Delete this message?',
+      message:
+          'This message will be removed from the conversation for everyone. This action cannot be undone.',
+      confirmLabel: 'Delete message',
+      icon: Icons.delete_outline_rounded,
     );
-    return result == true;
   }
 
   static const List<String> _reactionEmojis = [
@@ -2781,7 +2775,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                       ],
                     ),
                   )
-                : bubbleWithReactions;
+                : _SwipeToReply(
+                    enabled: _chat?.canSendMessages != false,
+                    onReply: () => _setReplyTarget(msg),
+                    child: bubbleWithReactions,
+                  );
             final item = showDate
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
@@ -3673,7 +3671,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         ? '📷 Photo'
         : target.messageType == 'file'
         ? '📄 ${target.fileName ?? 'Document'}'
-        : (target.text ?? '').trim();
+        : _visibleMessageBody(target.text ?? '');
     final senderLabel = target.isSentByMe(_currentUserId)
         ? 'You'
         : widget.otherName.split(' ').first;
@@ -3961,14 +3959,45 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       return;
     }
 
-    final XFile? picked;
+    File? pickedFile;
     try {
-      picked = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 82,
-      );
+      if (source == ImageSource.camera) {
+        final result = await Navigator.push<File>(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => const CameraScreen(
+              useFrontCamera: false,
+              optimizeForUpload: true,
+              allowVideo: false,
+              previewConfirmLabel: 'Send',
+              previewConfirmIcon: Icons.send_rounded,
+            ),
+          ),
+        );
+        pickedFile = result;
+      } else {
+        final picked = await ImagePicker().pickImage(
+          source: source,
+          maxWidth: 1600,
+          maxHeight: 1600,
+          imageQuality: 82,
+        );
+        if (picked != null && mounted) {
+          pickedFile = await Navigator.push<File>(
+            context,
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => PreviewScreen(
+                file: File(picked.path),
+                cancelLabel: 'Back',
+                confirmLabel: 'Send',
+                confirmIcon: Icons.send_rounded,
+              ),
+            ),
+          );
+        }
+      }
     } catch (e) {
       debugPrint('❌ image pick error: $e');
       if (!mounted) return;
@@ -3980,7 +4009,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       );
       return;
     }
-    if (picked == null || !mounted) return;
+    if (pickedFile == null || !mounted) return;
 
     final clientMessageId = _nextClientMessageId();
     final optimisticTempId = 'temp-$clientMessageId';
@@ -3991,7 +4020,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         id: optimisticTempId,
         messageType: 'image',
         text: null,
-        imageUrl: picked.path,
+        imageUrl: pickedFile.path,
         createdAt: DateTime.now(),
         senderId: _currentUserId,
         isMe: true,
@@ -4000,7 +4029,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
 
     try {
-      final url = await _repo.uploadChatImage(File(picked.path));
+      final url = await _repo.uploadChatImage(pickedFile);
       final sentMessage = await _repo.sendMessage(
         cid,
         messageType: 'image',
@@ -4033,6 +4062,115 @@ class _ParsedReplyMessage {
     required this.quote,
     required this.body,
   });
+}
+
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+  final bool enabled;
+
+  const _SwipeToReply({
+    required this.child,
+    required this.onReply,
+    required this.enabled,
+  });
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply> {
+  static const double _triggerDistance = 54;
+  static const double _maximumDistance = 72;
+  double _offset = 0;
+  bool _dragging = false;
+  bool _thresholdReached = false;
+
+  void _update(DragUpdateDetails details) {
+    if (!widget.enabled) return;
+    final next = (_offset + details.delta.dx)
+        .clamp(0.0, _maximumDistance)
+        .toDouble();
+    final reached = next >= _triggerDistance;
+    if (reached && !_thresholdReached) {
+      HapticFeedback.selectionClick();
+    }
+    setState(() {
+      _dragging = true;
+      _offset = next;
+      _thresholdReached = reached;
+    });
+  }
+
+  void _finish(DragEndDetails _) {
+    if (!widget.enabled) return;
+    final shouldReply = _thresholdReached;
+    setState(() {
+      _dragging = false;
+      _offset = 0;
+      _thresholdReached = false;
+    });
+    if (shouldReply) widget.onReply();
+  }
+
+  void _cancel() {
+    if (_offset == 0 && !_dragging) return;
+    setState(() {
+      _dragging = false;
+      _offset = 0;
+      _thresholdReached = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final progress = (_offset / _triggerDistance).clamp(0.0, 1.0).toDouble();
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: widget.enabled ? _update : null,
+      onHorizontalDragEnd: widget.enabled ? _finish : null,
+      onHorizontalDragCancel: widget.enabled ? _cancel : null,
+      child: Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          Positioned(
+            left: 8,
+            child: Opacity(
+              opacity: progress,
+              child: Transform.scale(
+                scale: 0.72 + (0.28 * progress),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.primary.withValues(alpha: 0.14),
+                    border: Border.all(
+                      color: colors.primary.withValues(alpha: 0.32),
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.reply_rounded,
+                    size: 21,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          AnimatedContainer(
+            duration: _dragging
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_offset, 0, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _EmojiCategory {

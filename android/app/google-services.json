@@ -28,7 +28,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:403759544454:android:6b3f376f72fd0f42293907",
         "android_client_info": {
-          "package_name": "com.brightminds.kmstry"
+          "package_name": "com.example.kmstry_frontend"
         }
       },
       "oauth_client": [],

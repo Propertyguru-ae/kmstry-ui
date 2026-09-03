@@ -917,6 +917,31 @@ class AuthRepository {
     );
   }
 
+  /// Account-level optional analytics preference shared by Personal and Venue
+  /// contexts. Essential security and crash diagnostics are not controlled by
+  /// this preference.
+  Future<Map<String, dynamic>> getPrivacyPreferences() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await _http.get(
+      '/users/me/privacy-preferences',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> setOptionalAnalyticsEnabled(bool enabled) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await _http.patch(
+      '/users/me/privacy-preferences',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {'optionalAnalyticsEnabled': enabled},
+    );
+    invalidateMeCache();
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<void> updatePermissions(Map<String, dynamic> data) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');

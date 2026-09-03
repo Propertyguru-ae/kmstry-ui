@@ -5,6 +5,8 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/ui/connection_error_view.dart';
+import 'package:kmstry_frontend/core/network/network_error.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -33,6 +35,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   List<ChatListItem> _chats = [];
   bool _loading = true;
   String? _error;
+  bool _errorOffline = false;
   String? _currentUserId;
   String _searchQuery = '';
   Timer? _searchDebounce;
@@ -284,6 +287,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       if (silent) return;
       setState(() {
         _error = e.toString();
+        _errorOffline = isOfflineError(e);
         _loading = false;
       });
     }
@@ -454,18 +458,10 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       );
     }
     if (_error != null && _chats.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('Could not load chats', style: theme.textTheme.bodyMedium),
-              const SizedBox(height: 12),
-              TextButton(onPressed: loadChats, child: const Text('Retry')),
-            ],
-          ),
-        ),
+      return ConnectionErrorView(
+        offline: _errorOffline,
+        title: _errorOffline ? null : 'Could not load chats',
+        onRetry: loadChats,
       );
     }
     final list = _buildFilteredChats();
@@ -886,47 +882,49 @@ class _MessagesEmptyState extends StatelessWidget {
                   height: 1.35,
                 ),
               ),
-              if (!hasQuery) ...[
-                const SizedBox(height: 18),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    gradient: const LinearGradient(
-                      colors: [_kKmstryBlue, _kKmstryTeal],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        blurRadius: 18,
-                        offset: const Offset(0, 8),
-                        color: _kKmstryBlue.withValues(alpha: 0.24),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.add_location_alt_rounded,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                      SizedBox(width: 7),
-                      Text(
-                        'Start with a check-in',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              // "Start with a check-in" CTA temporarily hidden (not removed) per
+              // product request. Re-enable by uncommenting the block below.
+              // if (!hasQuery) ...[
+              //   const SizedBox(height: 18),
+              //   Container(
+              //     padding: const EdgeInsets.symmetric(
+              //       horizontal: 14,
+              //       vertical: 9,
+              //     ),
+              //     decoration: BoxDecoration(
+              //       borderRadius: BorderRadius.circular(999),
+              //       gradient: const LinearGradient(
+              //         colors: [_kKmstryBlue, _kKmstryTeal],
+              //       ),
+              //       boxShadow: [
+              //         BoxShadow(
+              //           blurRadius: 18,
+              //           offset: const Offset(0, 8),
+              //           color: _kKmstryBlue.withValues(alpha: 0.24),
+              //         ),
+              //       ],
+              //     ),
+              //     child: const Row(
+              //       mainAxisSize: MainAxisSize.min,
+              //       children: [
+              //         Icon(
+              //           Icons.add_location_alt_rounded,
+              //           color: Colors.white,
+              //           size: 16,
+              //         ),
+              //         SizedBox(width: 7),
+              //         Text(
+              //           'Start with a check-in',
+              //           style: TextStyle(
+              //             color: Colors.white,
+              //             fontSize: 12.5,
+              //             fontWeight: FontWeight.w900,
+              //           ),
+              //         ),
+              //       ],
+              //     ),
+              //   ),
+              // ],
             ],
           ),
         ),

@@ -9,8 +9,8 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
+import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
@@ -612,7 +612,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SettingsActivityPage()),
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
     );
   }
 
@@ -830,18 +830,12 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           : null,
                       onTap: isPersonalActive
                           ? null
-                          : () async {
+                          : () {
+                              // Smooth in-place switch → lands on personal Profile.
                               Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'PERSONAL',
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {}
+                              AppShellNav.of(
+                                context,
+                              )?.switchToPersonalProfile();
                             },
                     ),
                   ...accountVenues.map((venue) {
@@ -900,19 +894,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           : null,
                       onTap: isActive
                           ? null
-                          : () async {
+                          : () {
+                              // Smooth in-place switch → lands on the venue's
+                              // Profile tab (no full shell rebuild → no dashboard).
                               Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'VENUE',
-                                  activeVenueId: venue.id,
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {}
+                              AppShellNav.of(
+                                context,
+                              )?.switchToVenueProfile(venue);
                             },
                     );
                   }),
@@ -994,7 +982,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const AccountSettingsPage(),
+                    builder: (_) => const SettingsPage(),
                   ),
                 );
               },

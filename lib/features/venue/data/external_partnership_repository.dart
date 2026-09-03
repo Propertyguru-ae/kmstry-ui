@@ -20,7 +20,13 @@ class ExternalPartnershipRepository {
   }
 
   Future<List<ExternalPartnershipModel>> getActivePartnerships(String venueId) async {
-    final data = await _api.get('/venues/$venueId/partnerships/public');
+    // The "/public" route still sits behind JwtAuthGuard (class-level), so send
+    // the viewer's token — any authenticated user may read a venue's active deals.
+    final headers = await _authHeaders();
+    final data = await _api.get(
+      '/venues/$venueId/partnerships/public',
+      headers: headers,
+    );
     return (data as List<dynamic>)
         .map((e) => ExternalPartnershipModel.fromJson(e as Map<String, dynamic>))
         .toList();

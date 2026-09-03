@@ -5,6 +5,7 @@ import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/ui/branded_notice.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -680,23 +681,25 @@ class _CheckInPageState extends State<CheckInPage> {
     }
 
     // Gerçek cihaz konumu — backend, gerçek (test dışı) venue'lerde bunu venue
-    // koordinatlarıyla karşılaştırıp 200m mesafe sınırını uygular. Alpha/Beta
+    // koordinatlarıyla karşılaştırıp mesafe/doğruluk sınırını uygular. Alpha/Beta
     // test venue'lerinde backend mesafe kontrolünü zaten atlıyor (is_test_venue).
     //
-    // HIZ: venue detay sayfası saniyeler önce taze bir GPS okuması yaptı ve OS
-    // bunu cache'ledi. Burada önce getLastKnownPosition'ı (neredeyse anında)
-    // kullanıyoruz; yoksa taze okumaya düşüyoruz. Backend kesin kontrolü zaten
-    // yapıyor, o yüzden anlık koordinat yeterli.
+    // Son onayda cached konum kullanılmaz: eski bir GPS fix'i kullanıcıyı
+    // yanlış mekânda gösterebilir. Taze high-accuracy fix backend'e accuracy ve
+    // capture time ile birlikte gönderilir.
     double latitude;
     double longitude;
+    double accuracyMeters;
+    DateTime locationCapturedAt;
     try {
-      Position? position = await Geolocator.getLastKnownPosition();
-      position ??= await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 8),
       );
       latitude = position.latitude;
       longitude = position.longitude;
+      accuracyMeters = position.accuracy;
+      locationCapturedAt = position.timestamp;
     } catch (_) {
       _submitLock = false;
       if (mounted) setState(() => _isSubmitting = false);
@@ -721,6 +724,8 @@ class _CheckInPageState extends State<CheckInPage> {
         venueId: widget.venueId,
         latitude: latitude,
         longitude: longitude,
+        accuracyMeters: accuracyMeters,
+        locationCapturedAt: locationCapturedAt,
         vibe: vibeText,
         whatBringsYou: _selectedWhatBrings.toList(),
         showOnProfile: _showOnProfile,
@@ -1483,24 +1488,24 @@ class _CheckinPhotoPreviewScreenState
     try {
       await Gal.putImage(widget.file.path);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Saved to gallery'),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
+      showBrandedNotice(
+        context,
+        title: 'Saved to gallery',
+        message: 'Your photo is now available in your photo library.',
+        tone: BrandedNoticeTone.success,
+        icon: Icons.download_done_rounded,
+        duration: const Duration(seconds: 3),
       );
     } on GalException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            e.type == GalExceptionType.accessDenied
-                ? 'Photo library permission is required to save.'
-                : 'Could not save. Please try again.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
+      showBrandedNotice(
+        context,
+        title: 'Photo not saved',
+        message: e.type == GalExceptionType.accessDenied
+            ? 'Allow photo library access in Settings, then try again.'
+            : 'We could not save this photo. Please try again.',
+        tone: BrandedNoticeTone.error,
+        icon: Icons.photo_library_outlined,
       );
     } finally {
       if (mounted) setState(() => _saving = false);
