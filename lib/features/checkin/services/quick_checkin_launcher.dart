@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/nearby_venue_sheet.dart';
@@ -22,7 +23,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.da
 ///    "You're nearby — select your venue" bottom sheet with the closest one
 ///    pre-highlighted.
 ///
-/// The backend 200 m distance guard on check-in creation stays the source of
+/// The backend 100 m distance guard on check-in creation stays the source of
 /// truth; these thresholds only govern the UX decision, never authorization.
 class QuickCheckinLauncher {
   QuickCheckinLauncher({
@@ -38,7 +39,7 @@ class QuickCheckinLauncher {
   final LocationPermissionService _permission;
   final VenueCheckinRepository _checkinRepo = VenueCheckinRepository();
 
-  // ── UX decision thresholds (not security — the backend 200 m guard is) ──
+  // ── UX decision thresholds (not security — the backend 100 m guard is) ──
   /// Closest venue must be within this to auto-open without the sheet.
   static const double _autoSelectMaxDistanceMeters = 25;
 
@@ -49,7 +50,8 @@ class QuickCheckinLauncher {
   static const double _maxAccuracyMeters = 30;
 
   /// Only venues within this are eligible to check into (matches backend guard).
-  static const double _checkinMaxDistanceMeters = 200;
+  static const double _checkinMaxDistanceMeters =
+      CheckinLocationPolicy.maxDistanceMeters;
 
   /// Candidate fetch radius — a bit wider than the guard so the sheet can also
   /// surface "just outside range" venues (shown disabled by the sheet).
@@ -88,7 +90,7 @@ class QuickCheckinLauncher {
 
     try {
       // Sheet için yaklaşık konum yeterli — check-in sayfası zaten yüksek
-      // doğrulukla yeniden ölçüp 200m guard'ını uyguluyor. Son bilinen konumu
+      // doğrulukla yeniden ölçüp backend guard'ını uyguluyor. Son bilinen konumu
       // hemen kullan; yoksa orta doğrulukla ve 6 sn timeout ile al.
       Position? position = await Geolocator.getLastKnownPosition();
       if (position == null) {

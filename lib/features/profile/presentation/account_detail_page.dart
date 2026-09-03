@@ -4,10 +4,10 @@ import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
-import 'package:kmstry_frontend/features/profile/presentation/notifications_settings_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/blocked_users_page.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/profile/presentation/blocked_users_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/notifications_settings_page.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_notifications_settings_page.dart';
 
 class AccountDetailPage extends StatefulWidget {
@@ -31,10 +31,10 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
   bool _isPremium = false;
   bool _isAnonymous = false;
   bool _togglingAnonymous = false;
+  int _blockedCount = 0;
   VenuePlan? _venuePlan;
   // Bu venue'nin tek OWNER'ı benim mi → "Leave venue" yerine "Delete venue".
   bool _isSoleOwner = false;
-  int _blockedCount = 0;
   // Gates the plan card so it renders once — avoids a "Free → Premium" flip (or
   // a late-appearing venue plan banner) while the account data loads.
   bool _planLoaded = false;
@@ -556,18 +556,70 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  // ── Who can see your account (personal only) ─────────
-                  Text(
-                    'WHO CAN SEE YOUR ACCOUNT',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
-                      color: colors.onSurface.withValues(alpha: 0.45),
+                ],
+
+                const SizedBox(height: 8),
+
+                // ── Notifications for THIS account ──
+                Container(
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: colors.primary.withValues(alpha: 0.12),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.notifications_none_rounded,
+                      color: colors.primary,
+                    ),
+                    title: Text(
+                      'Notifications',
+                      style: TextStyle(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      widget.isVenue
+                          ? 'Team updates and event activity'
+                          : 'Messages, invites and venue updates',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      final venueId = widget.venueId;
+                      if (widget.isVenue &&
+                          venueId != null &&
+                          venueId.isNotEmpty) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => VenueNotificationsSettingsPage(
+                              venueId: venueId,
+                              venueName: widget.accountName,
+                            ),
+                          ),
+                        );
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const NotificationsSettingsPage(),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ),
+
+                // ── Blocked (personal only) ──
+                if (!widget.isVenue) ...[
+                  const SizedBox(height: 12),
                   Container(
                     decoration: BoxDecoration(
                       color: colors.surface,
@@ -610,13 +662,13 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
                             builder: (_) => const BlockedUsersPage(),
                           ),
                         );
-                        // Refresh count on return (a user may have been unblocked).
                         if (!mounted) return;
                         try {
-                          final blocked = await MatchRepository()
-                              .getBlockedUsers();
-                          if (mounted)
+                          final blocked =
+                              await MatchRepository().getBlockedUsers();
+                          if (mounted) {
                             setState(() => _blockedCount = blocked.length);
+                          }
                         } catch (_) {}
                       },
                     ),
@@ -624,9 +676,6 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
                 ],
 
                 const SizedBox(height: 32),
-
-                // How you use KMSTRY — notifications for this account
-                _howYouUseSection(colors),
 
                 // Delete button
                 Container(
@@ -683,83 +732,4 @@ class _AccountDetailPageState extends State<AccountDetailPage> {
     );
   }
 
-  /// "How you use KMSTRY" — notification settings for THIS account. Personal
-  /// opens the personal categories; venue opens per-venue categories.
-  Widget _howYouUseSection(ColorScheme colors) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardBg = isDark
-        ? colors.surface.withValues(alpha: 0.92)
-        : const Color(0xFFF8FBFD);
-    final cardBorder = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : const Color(0xFFE6EEF4);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'HOW YOU USE KMSTRY',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-            color: colors.onSurface.withValues(alpha: 0.45),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cardBorder),
-          ),
-          child: ListTile(
-            leading: Icon(
-              Icons.notifications_none_rounded,
-              color: colors.primary,
-            ),
-            title: Text(
-              'Notifications',
-              style: TextStyle(
-                color: colors.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            subtitle: Text(
-              widget.isVenue
-                  ? 'Team updates and event activity'
-                  : 'Messages, invites, venue updates',
-              style: TextStyle(
-                color: colors.onSurface.withValues(alpha: 0.6),
-                fontSize: 13,
-              ),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              final venueId = widget.venueId;
-              if (widget.isVenue && venueId != null && venueId.isNotEmpty) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => VenueNotificationsSettingsPage(
-                      venueId: venueId,
-                      venueName: widget.accountName,
-                    ),
-                  ),
-                );
-              } else {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const NotificationsSettingsPage(),
-                  ),
-                );
-              }
-            },
-          ),
-        ),
-        const SizedBox(height: 24),
-      ],
-    );
-  }
 }

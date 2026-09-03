@@ -23,16 +23,16 @@ import 'package:kmstry_frontend/features/profile/presentation/profile_settings_p
 import 'package:kmstry_frontend/features/profile/presentation/edit_profile_page.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/people/presentation/friends_list_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
 import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
@@ -92,6 +92,7 @@ class _ProfilePageState extends State<ProfilePage>
   bool _isAnonymous = false; // profil yüklemesinden cache'lenir → anında kamera
   bool _openingVenueDetail = false;
   final Set<String> _updatingProfileVisibilityIds = {};
+  final Set<String> _deletingVisitedPlaceIds = {};
   List<StoryItem> _myStories = [];
   Set<String> _viewedStoryIds = {};
   final TextEditingController _vibeController = TextEditingController();
@@ -1364,8 +1365,11 @@ class _ProfilePageState extends State<ProfilePage>
                                   lastActiveContext: 'PERSONAL',
                                 );
                                 if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
+                                Navigator.of(context).pushAndRemoveUntil(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const AppShell(openProfileTab: true),
+                                  ),
                                   (r) => false,
                                 );
                               } catch (_) {}
@@ -1428,19 +1432,13 @@ class _ProfilePageState extends State<ProfilePage>
                           : null,
                       onTap: isActive
                           ? null
-                          : () async {
+                          : () {
+                              // Smooth in-place switch → lands on the venue's
+                              // Profile tab (no full shell rebuild).
                               Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'VENUE',
-                                  activeVenueId: venue.id,
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {}
+                              AppShellNav.of(
+                                context,
+                              )?.switchToVenueProfile(venue);
                             },
                     );
                   }),
@@ -1491,9 +1489,7 @@ class _ProfilePageState extends State<ProfilePage>
                 Navigator.pop(sheetCtx);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const AccountSettingsPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const SettingsPage()),
                 );
               },
             ),
@@ -1522,7 +1518,7 @@ class _ProfilePageState extends State<ProfilePage>
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SettingsActivityPage()),
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
     );
     if (mounted) await _loadProfile();
   }
@@ -2200,8 +2196,8 @@ class _ProfilePageState extends State<ProfilePage>
     // Kartlara sabit yükseklik ver → içerik farkı (ör. "Hidden from others")
     // kartları kesmez. Liste iç-scroll DEĞİL: shrinkWrap ile satır içi açılır,
     // sayfa tek parça kayar (altında boşluk/çift-scroll oluşmaz).
-    const tileHeight = 104.0;
-    const separatorHeight = 10.0;
+    const tileHeight = 94.0;
+    const separatorHeight = 9.0;
 
     return ListView.separated(
       padding: EdgeInsets.zero,
@@ -2230,29 +2226,70 @@ class _ProfilePageState extends State<ProfilePage>
     final photo = (place.venuePhoto ?? '').trim();
     final isVisible = place.showOnProfile;
     final isUpdating = _updatingProfileVisibilityIds.contains(place.id);
+    final isDeleting = _deletingVisitedPlaceIds.contains(place.id);
+    final accent = isDark ? AppColors.blueDark : AppColors.blueLight;
+    final error = Theme.of(context).colorScheme.error;
     return InkWell(
       onTap: () => _openVisitedVenueDetail(place),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(17),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF161C28) : const Color(0xFFF7F9FC),
-          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isDark
+                ? const [Color(0xFF101A2E), Color(0xFF0A1120)]
+                : const [Colors.white, Color(0xFFF3F8FC)],
+          ),
+          borderRadius: BorderRadius.circular(17),
           border: Border.all(
             color: isVisible
-                ? onSurface.withValues(alpha: 0.10)
-                : subColor.withValues(alpha: 0.18),
+                ? accent.withValues(alpha: isDark ? 0.30 : 0.22)
+                : subColor.withValues(alpha: 0.16),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isDark
+                  ? Colors.black.withValues(alpha: 0.22)
+                  : const Color(0xFF18324D).withValues(alpha: 0.08),
+              blurRadius: 13,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.center,
+            colors: [
+              accent.withValues(alpha: isVisible ? 0.08 : 0.025),
+              Colors.transparent,
+            ],
           ),
         ),
         child: Row(
           children: [
             Opacity(
               opacity: isVisible ? 1 : 0.48,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 58,
-                  height: 58,
+              child: Container(
+                width: 56,
+                height: 56,
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    colors: isVisible
+                        ? [AppColors.blue, AppColors.magenta]
+                        : [
+                            subColor.withValues(alpha: 0.35),
+                            subColor.withValues(alpha: 0.12),
+                          ],
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
                   child: photo.isNotEmpty
                       ? CachedImage(
                           photo,
@@ -2264,7 +2301,7 @@ class _ProfilePageState extends State<ProfilePage>
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2275,75 +2312,120 @@ class _ProfilePageState extends State<ProfilePage>
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: onSurface,
-                      fontSize: 15.5,
+                      fontSize: 14.5,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    _visitedPlaceSubtitle(place),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: subColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    _formatVisitedDate(place.checkedInAt),
-                    style: TextStyle(color: subColor, fontSize: 12.5),
-                  ),
-                  if (!isVisible) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.visibility_off_outlined,
-                          size: 14,
-                          color: subColor,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Hidden from others',
+                  Row(
+                    children: [
+                      Icon(Icons.place_outlined, size: 13, color: accent),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          _visitedPlaceSubtitle(place),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: subColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.schedule_rounded, size: 12, color: subColor),
+                      const SizedBox(width: 3),
+                      Text(
+                        _formatVisitedDate(place.checkedInAt),
+                        style: TextStyle(
+                          color: subColor,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 6),
-            IconButton(
-              tooltip: isVisible ? 'Hide from profile' : 'Show on my profile',
-              onPressed: isUpdating
-                  ? null
-                  : () => _toggleVisitedPlaceVisibility(place),
-              icon: isUpdating
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppTheme.brandPrimary,
-                      ),
-                    )
-                  : Icon(
-                      isVisible
-                          ? Icons.visibility_rounded
-                          : Icons.visibility_off_outlined,
-                      color: isVisible ? AppTheme.brandPrimary : subColor,
-                      size: 22,
-                    ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _visitedPlaceActionButton(
+                  tooltip: isVisible
+                      ? 'Hide from profile'
+                      : 'Show on my profile',
+                  backgroundColor: accent.withValues(alpha: 0.12),
+                  onPressed: (isUpdating || isDeleting)
+                      ? null
+                      : () => _toggleVisitedPlaceVisibility(place),
+                  icon: isUpdating
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.brandPrimary,
+                          ),
+                        )
+                      : Icon(
+                          isVisible
+                              ? Icons.visibility_rounded
+                              : Icons.visibility_off_outlined,
+                          color: isVisible ? AppTheme.brandPrimary : subColor,
+                          size: 22,
+                        ),
+                ),
+                const SizedBox(width: 5),
+                _visitedPlaceActionButton(
+                  tooltip: 'Delete visited place',
+                  backgroundColor: error.withValues(alpha: 0.10),
+                  onPressed: (isUpdating || isDeleting)
+                      ? null
+                      : () => _deleteVisitedPlace(place),
+                  icon: isDeleting
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: error,
+                          ),
+                        )
+                      : Icon(
+                          Icons.delete_outline_rounded,
+                          color: error,
+                          size: 22,
+                        ),
+                ),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _visitedPlaceActionButton({
+    required String tooltip,
+    required Color backgroundColor,
+    required VoidCallback? onPressed,
+    required Widget icon,
+  }) {
+    return DecoratedBox(
+      decoration: BoxDecoration(color: backgroundColor, shape: BoxShape.circle),
+      child: IconButton(
+        tooltip: tooltip,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        padding: EdgeInsets.zero,
+        onPressed: onPressed,
+        icon: icon,
       ),
     );
   }
@@ -2380,6 +2462,37 @@ class _ProfilePageState extends State<ProfilePage>
     } finally {
       if (mounted) {
         setState(() => _updatingProfileVisibilityIds.remove(place.id));
+      }
+    }
+  }
+
+  Future<void> _deleteVisitedPlace(CheckinVisitedPlace place) async {
+    if (_deletingVisitedPlaceIds.contains(place.id)) return;
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Delete this visited place?',
+      message:
+          '${place.venueName} and its associated check-in content will be permanently removed from your history. This cannot be undone.',
+      confirmLabel: 'Delete visited place',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _deletingVisitedPlaceIds.add(place.id));
+    try {
+      await _checkinRepo.deleteVisitedPlace(place.id);
+      if (!mounted) return;
+      setState(() {
+        _visitedPlaces.removeWhere((item) => item.id == place.id);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      await showPremiumErrorDialog(
+        context,
+        message: 'Visited place could not be deleted. Please try again.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _deletingVisitedPlaceIds.remove(place.id));
       }
     }
   }

@@ -43,6 +43,8 @@ class CheckinRepository {
     required String venueId,
     required double latitude,
     required double longitude,
+    double? accuracyMeters,
+    DateTime? locationCapturedAt,
     required String vibe,
     List<String>? whatBringsYou,
     bool showOnProfile = false,
@@ -58,6 +60,9 @@ class CheckinRepository {
       'checkin_method': 'gps',
       'latitude': latitude,
       'longitude': longitude,
+      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters,
+      if (locationCapturedAt != null)
+        'location_captured_at': locationCapturedAt.toUtc().toIso8601String(),
       'vibe': vibe,
       'show_on_profile': showOnProfile,
     };
@@ -98,6 +103,8 @@ class CheckinRepository {
     required String venueId,
     required double latitude,
     required double longitude,
+    double? accuracyMeters,
+    DateTime? locationCapturedAt,
     required String vibe,
     List<String>? whatBringsYou,
     bool showOnProfile = false,
@@ -113,6 +120,9 @@ class CheckinRepository {
       'checkin_method': 'gps',
       'latitude': latitude,
       'longitude': longitude,
+      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters,
+      if (locationCapturedAt != null)
+        'location_captured_at': locationCapturedAt.toUtc().toIso8601String(),
       'vibe': vibe,
       'show_on_profile': showOnProfile,
       if (selectedReasons.isNotEmpty) 'what_brings_to_kmstry': selectedReasons,
@@ -410,6 +420,16 @@ class CheckinRepository {
       '/checkins/$checkinId/profile-visibility',
       headers: {'Authorization': 'Bearer $token'},
       body: {'show_on_profile': showOnProfile},
+    );
+  }
+
+  Future<void> deleteVisitedPlace(String checkinId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _api.delete(
+      '/checkins/$checkinId/history',
+      headers: {'Authorization': 'Bearer $token'},
     );
   }
 

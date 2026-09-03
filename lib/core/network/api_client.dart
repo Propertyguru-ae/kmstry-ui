@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import '../config/app_config.dart';
 import 'api_exception.dart';
 
@@ -27,6 +28,33 @@ class ApiClient {
       }
     } catch (_) {}
     return const {};
+  }
+
+  /// App/device metadata headers the backend's App Check guard records into the
+  /// admin "User Logs" table (app version, build number, platform, OS version).
+  /// Sent on EVERY request — not just login — so a user's current build shows up
+  /// on their next app-open (`/auth/me`) after they update, without re-login.
+  /// Resolved once and cached for the app's lifetime (build info can't change
+  /// mid-session).
+  static Map<String, String>? _metadataCache;
+
+  Future<Map<String, String>> _appMetadataHeaders() async {
+    final cached = _metadataCache;
+    if (cached != null) return cached;
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final headers = <String, String>{
+        if (info.version.isNotEmpty) 'x-kmstry-app-version': info.version,
+        if (info.buildNumber.isNotEmpty)
+          'x-kmstry-build-number': info.buildNumber,
+        'x-kmstry-platform': Platform.operatingSystem,
+        'x-kmstry-os-version': Platform.operatingSystemVersion,
+      };
+      _metadataCache = headers;
+      return headers;
+    } catch (_) {
+      return const {};
+    }
   }
 
   // ── Silent token refresh ──────────────────────────────────────────────────
@@ -150,6 +178,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] POST $url');
@@ -198,6 +227,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] GET $url');
@@ -242,6 +272,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] PATCH $url');
@@ -294,6 +325,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] PUT $url');
@@ -341,6 +373,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] DELETE $url');

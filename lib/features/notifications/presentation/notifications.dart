@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/notifications/data/notification_model.d
 import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
+import 'package:kmstry_frontend/features/data_export/presentation/data_export_page.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
@@ -223,21 +224,41 @@ class _NotificationPageState extends State<NotificationPage> {
   Future<void> _onNotificationTap(NotificationModel n) async {
     final data = _profileContextData(n);
 
+    if (n.type == 'data_export_ready' || n.type == 'data_export_failed') {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const DataExportPage()));
+      return;
+    }
+
     if (n.type == 'venue_member_invite') {
-      final memberId = _firstNonEmptyString(data, const ['memberId', 'member_id']);
+      final memberId = _firstNonEmptyString(data, const [
+        'memberId',
+        'member_id',
+      ]);
       final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
       final role = _firstNonEmptyString(data, const ['role']);
-      final venueName = _firstNonEmptyString(data, const ['venueName', 'venue_name']);
-      final inviterName = _firstNonEmptyString(data, const ['inviterName', 'inviter_name']);
+      final venueName = _firstNonEmptyString(data, const [
+        'venueName',
+        'venue_name',
+      ]);
+      final inviterName = _firstNonEmptyString(data, const [
+        'inviterName',
+        'inviter_name',
+      ]);
       if (memberId != null && venueId != null) {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => VenueMemberStatusPage(
               venueId: venueId,
               memberId: memberId,
-              venueName: (venueName != null && venueName.isNotEmpty) ? venueName : 'Venue',
+              venueName: (venueName != null && venueName.isNotEmpty)
+                  ? venueName
+                  : 'Venue',
               role: (role != null && role.isNotEmpty) ? role : null,
-              inviterName: (inviterName != null && inviterName.isNotEmpty) ? inviterName : null,
+              inviterName: (inviterName != null && inviterName.isNotEmpty)
+                  ? inviterName
+                  : null,
             ),
           ),
         );
@@ -247,7 +268,9 @@ class _NotificationPageState extends State<NotificationPage> {
 
     if (n.type == 'venue_claim_rejected') {
       final venueId = _firstNonEmptyString(data, const ['venueId', 'venue_id']);
-      final venueName = _firstNonEmptyString(data, const ['venueName', 'venue_name']) ?? 'Venue';
+      final venueName =
+          _firstNonEmptyString(data, const ['venueName', 'venue_name']) ??
+          'Venue';
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => VenueClaimRejectedPage(
@@ -661,6 +684,10 @@ class _NotificationPageState extends State<NotificationPage> {
         return Icons.store_rounded;
       case 'venue_claim_rejected':
         return Icons.store_outlined;
+      case 'data_export_ready':
+        return Icons.download_done_rounded;
+      case 'data_export_failed':
+        return Icons.error_outline_rounded;
       default:
         return Icons.notifications_none;
     }
@@ -812,9 +839,7 @@ class _NotificationPageState extends State<NotificationPage> {
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: _kKmstryBlue.withValues(alpha: 0.22),
-                ),
+                border: Border.all(color: _kKmstryBlue.withValues(alpha: 0.22)),
               ),
               child: Icon(icon, size: 26, color: _kKmstryBlue),
             ),

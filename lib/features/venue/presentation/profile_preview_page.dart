@@ -1866,17 +1866,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return SizedBox(
       width: 184,
       height: 44,
-      child: OutlinedButton.icon(
+      child: FilledButton.icon(
         onPressed: _openChat,
         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 17),
         label: const Text('Message'),
-        style: OutlinedButton.styleFrom(
+        style: FilledButton.styleFrom(
           minimumSize: const Size(0, 44),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          foregroundColor: AppTheme.brandPrimary,
-          side: BorderSide(
-            color: AppTheme.brandPrimary.withValues(alpha: 0.62),
-          ),
+          backgroundColor: AppTheme.brandCta,
+          foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -2348,9 +2346,16 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return '${months[local.month - 1]} ${local.day} · $hour:$minute $period';
   }
 
+  // Guards against a rapid double-tap opening the venue detail page twice —
+  // the resolve step is async, so two taps can both push before the first
+  // navigation starts.
+  bool _openingVenueDetail = false;
+
   Future<void> _openVisitedVenueDetail(CheckinVisitedPlace place) async {
+    if (_openingVenueDetail) return;
     final venueId = (place.venueId ?? '').trim();
     if (venueId.isEmpty) return;
+    _openingVenueDetail = true;
     Venue? venue;
     try {
       final venueData = await _venueContextRepository.getVenueById(venueId);
@@ -2389,10 +2394,17 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           isInDb: true,
           canCheckin: true,
         );
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
-    );
+    if (!mounted) {
+      _openingVenueDetail = false;
+      return;
+    }
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
+      );
+    } finally {
+      _openingVenueDetail = false;
+    }
   }
 
   Widget _buildFriendNoMomentsState(bool isDark, Color subColor) {

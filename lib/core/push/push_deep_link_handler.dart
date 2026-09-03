@@ -13,6 +13,7 @@ import '../../features/venue/presentation/venue_people_page.dart';
 import '../../features/venue/presentation/venue_team_page.dart';
 import '../../features/venue/presentation/venue_claim_rejected_page.dart';
 import '../../core/venue/venue_session.dart';
+import '../../features/data_export/presentation/data_export_page.dart';
 
 /// FCM bildirimlerine dokunulduğunda (arka plan / kapalı uygulama)
 /// ilgili ekrana yönlendiren handler.
@@ -73,8 +74,7 @@ class PushDeepLinkHandler {
   Future<void> routeFromData(
     GlobalKey<NavigatorState> navigatorKey,
     Map<String, dynamic> data,
-  ) =>
-      _route(navigatorKey, data);
+  ) => _route(navigatorKey, data);
 
   Future<void> _route(
     GlobalKey<NavigatorState> navigatorKey,
@@ -91,10 +91,16 @@ class PushDeepLinkHandler {
         final chatId = (data['chatId'] ?? data['chat_id']) as String?;
         if (chatId == null || chatId.isEmpty) return;
         final otherUserId = _readString(data, const [
-          'senderId', 'sender_id', 'otherUserId', 'other_user_id',
+          'senderId',
+          'sender_id',
+          'otherUserId',
+          'other_user_id',
         ]);
         final otherName = _readString(data, const [
-          'senderName', 'sender_name', 'otherName', 'other_name',
+          'senderName',
+          'sender_name',
+          'otherName',
+          'other_name',
         ]);
         _openChat(nav, chatId, otherUserId: otherUserId, otherName: otherName);
 
@@ -104,52 +110,77 @@ class PushDeepLinkHandler {
       case 'liked_you':
         nav.pushNamed(AuthRoutes.notifications);
 
+      case 'data_export_ready':
+      case 'data_export_failed':
+        nav.push(MaterialPageRoute(builder: (_) => const DataExportPage()));
+
       case 'venue_claim_approved':
         // Venue context changed on the server — invalidate cache so authGate
         // re-fetches /me and routes the user to their new VENUE_HOME.
         AuthRepository.invalidateMeCache();
-        nav.pushNamedAndRemoveUntil(
-          AuthRoutes.authGate,
-          (route) => false,
-        );
+        nav.pushNamedAndRemoveUntil(AuthRoutes.authGate, (route) => false);
 
       case 'venue_claim_rejected':
         final rejectedVenueId = _readString(data, ['venueId', 'venue_id']);
-        final rejectedVenueName = _readString(data, ['venueName', 'venue_name']);
-        nav.push(MaterialPageRoute(
-          builder: (_) => VenueClaimRejectedPage(
-            venueId: rejectedVenueId,
-            venueName: rejectedVenueName.isNotEmpty ? rejectedVenueName : 'Venue',
+        final rejectedVenueName = _readString(data, [
+          'venueName',
+          'venue_name',
+        ]);
+        nav.push(
+          MaterialPageRoute(
+            builder: (_) => VenueClaimRejectedPage(
+              venueId: rejectedVenueId,
+              venueName: rejectedVenueName.isNotEmpty
+                  ? rejectedVenueName
+                  : 'Venue',
+            ),
           ),
-        ));
+        );
 
       case 'venue_member_invite':
-        final inviteMemberId = _readString(data, const ['memberId', 'member_id']);
+        final inviteMemberId = _readString(data, const [
+          'memberId',
+          'member_id',
+        ]);
         final inviteVenueId = _readString(data, const ['venueId', 'venue_id']);
         final inviteRole = _readString(data, const ['role']);
-        final inviteVenueName = _readString(data, const ['venueName', 'venue_name']);
-        final inviteInviterName = _readString(data, const ['inviterName', 'inviter_name']);
+        final inviteVenueName = _readString(data, const [
+          'venueName',
+          'venue_name',
+        ]);
+        final inviteInviterName = _readString(data, const [
+          'inviterName',
+          'inviter_name',
+        ]);
         if (inviteMemberId.isNotEmpty && inviteVenueId.isNotEmpty) {
-          nav.push(MaterialPageRoute(
-            builder: (_) => VenueMemberStatusPage(
-              venueId: inviteVenueId,
-              memberId: inviteMemberId,
-              venueName: inviteVenueName.isNotEmpty ? inviteVenueName : 'Venue',
-              role: inviteRole.isNotEmpty ? inviteRole : null,
-              inviterName: inviteInviterName.isNotEmpty ? inviteInviterName : null,
+          nav.push(
+            MaterialPageRoute(
+              builder: (_) => VenueMemberStatusPage(
+                venueId: inviteVenueId,
+                memberId: inviteMemberId,
+                venueName: inviteVenueName.isNotEmpty
+                    ? inviteVenueName
+                    : 'Venue',
+                role: inviteRole.isNotEmpty ? inviteRole : null,
+                inviterName: inviteInviterName.isNotEmpty
+                    ? inviteInviterName
+                    : null,
+              ),
             ),
-          ));
+          );
         }
 
       case 'venue_member_response':
         final responsVenueId = _readString(data, ['venueId', 'venue_id']);
         if (responsVenueId.isNotEmpty) {
-          nav.push(MaterialPageRoute(
-            builder: (_) => VenueTeamPage(
-              venueId: responsVenueId,
-              callerRole: VenueSession.instance.role,
+          nav.push(
+            MaterialPageRoute(
+              builder: (_) => VenueTeamPage(
+                venueId: responsVenueId,
+                callerRole: VenueSession.instance.role,
+              ),
             ),
-          ));
+          );
         } else {
           nav.pushNamed(AuthRoutes.notifications);
         }
@@ -157,12 +188,14 @@ class PushDeepLinkHandler {
       case 'venue_member_role_changed':
         final roleChangeVenueId = _readString(data, ['venueId', 'venue_id']);
         if (roleChangeVenueId.isNotEmpty) {
-          nav.push(MaterialPageRoute(
-            builder: (_) => VenueTeamPage(
-              venueId: roleChangeVenueId,
-              callerRole: VenueSession.instance.role,
+          nav.push(
+            MaterialPageRoute(
+              builder: (_) => VenueTeamPage(
+                venueId: roleChangeVenueId,
+                callerRole: VenueSession.instance.role,
+              ),
             ),
-          ));
+          );
         } else {
           nav.pushNamed(AuthRoutes.notifications);
         }

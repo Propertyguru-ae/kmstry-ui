@@ -1853,25 +1853,25 @@ class _FollowedEventCard extends StatelessWidget {
                         height: 36,
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: colors.primary,
-                            borderRadius: BorderRadius.circular(999),
+                            color: AppColors.blue,
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                          child: Row(
+                          child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
                                 'View details',
                                 style: TextStyle(
-                                  color: colors.onPrimary,
+                                  color: Colors.white,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              const SizedBox(width: 4),
+                              SizedBox(width: 4),
                               Icon(
                                 Icons.arrow_forward_rounded,
                                 size: 15,
-                                color: colors.onPrimary,
+                                color: Colors.white,
                               ),
                             ],
                           ),
