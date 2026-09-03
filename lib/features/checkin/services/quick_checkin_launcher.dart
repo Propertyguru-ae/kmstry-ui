@@ -3,7 +3,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
+import 'package:kmstry_frontend/core/network/network_error.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/core/ui/branded_notice.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/nearby_venue_sheet.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
@@ -128,10 +130,28 @@ class QuickCheckinLauncher {
       List<Venue> markers;
       try {
         markers = await markersFuture;
-      } catch (_) {
+      } catch (error) {
         closeLoading();
         if (context.mounted) {
-          _showSnack(context, 'Could not load nearby venues. Try again.');
+          if (isOfflineError(error)) {
+            showBrandedNotice(
+              context,
+              title: 'You\'re offline',
+              message:
+                  'Reconnect, then tap quick check-in again to find nearby venues.',
+              tone: BrandedNoticeTone.warning,
+              icon: Icons.wifi_off_rounded,
+            );
+          } else {
+            showBrandedNotice(
+              context,
+              title: 'Nearby venues unavailable',
+              message:
+                  'We couldn\'t load places around you. Please try again in a moment.',
+              tone: BrandedNoticeTone.error,
+              icon: Icons.location_searching_rounded,
+            );
+          }
         }
         return;
       }
@@ -314,8 +334,12 @@ class QuickCheckinLauncher {
   }
 
   void _showSnack(BuildContext context, String message) {
-    ScaffoldMessenger.of(
+    showBrandedNotice(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      title: 'Quick check-in',
+      message: message,
+      tone: BrandedNoticeTone.warning,
+      icon: Icons.location_on_outlined,
+    );
   }
 }
