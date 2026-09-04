@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:http/http.dart' as http;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2084,38 +2082,24 @@ class _VenueMapViewState extends State<VenueMapView> {
     }
   }
 
-  static const _googleApiKey = 'AIzaSyAW_tmPFyMqvhpZn9Fieq2iUXxX3we-F70';
-
   Future<List<_PlaceSuggestion>> _fetchPlaceSuggestions({
     required String query,
     required LatLng location,
   }) async {
     try {
-      final uri = Uri.https(
-        'maps.googleapis.com',
-        '/maps/api/place/autocomplete/json',
-        {'input': query, 'language': 'tr', 'key': _googleApiKey},
+      final predictions = await _venueRepository.searchPlaceSuggestions(
+        input: query,
+        language: 'tr',
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return const [];
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final predictions = data['predictions'] as List? ?? [];
       return predictions
           .take(4)
-          .map((p) {
-            final map = p as Map<String, dynamic>;
-            return _PlaceSuggestion(
-              placeId: map['place_id']?.toString() ?? '',
-              mainText:
-                  (map['structured_formatting']?['main_text'] ??
-                          map['description'] ??
-                          '')
-                      .toString(),
-              secondaryText:
-                  (map['structured_formatting']?['secondary_text'] ?? '')
-                      .toString(),
-            );
-          })
+          .map(
+            (p) => _PlaceSuggestion(
+              placeId: p.placeId,
+              mainText: p.mainText,
+              secondaryText: p.secondaryText,
+            ),
+          )
           .where((s) => s.placeId.isNotEmpty)
           .toList();
     } catch (_) {
@@ -2133,23 +2117,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
 
     try {
-      final uri = Uri.https(
-        'maps.googleapis.com',
-        '/maps/api/place/details/json',
-        {
-          'place_id': suggestion.placeId,
-          'fields': 'geometry',
-          'key': _googleApiKey,
-        },
+      final location = await _venueRepository.getPlaceGeometry(
+        suggestion.placeId,
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return;
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final location = data['result']?['geometry']?['location'];
-      if (location == null) return;
-      final lat = (location['lat'] as num).toDouble();
-      final lng = (location['lng'] as num).toDouble();
-      final target = LatLng(lat, lng);
+      final target = LatLng(location.latitude, location.longitude);
 
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
@@ -2189,21 +2160,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _recomputeClusters(force: true);
 
     try {
-      final uri =
-          Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
-            'place_id': suggestion.place.placeId,
-            'fields': 'geometry',
-            'key': _googleApiKey,
-          });
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return;
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final location = data['result']?['geometry']?['location'];
-      if (location == null) return;
-      final target = LatLng(
-        (location['lat'] as num).toDouble(),
-        (location['lng'] as num).toDouble(),
+      final location = await _venueRepository.getPlaceGeometry(
+        suggestion.place.placeId,
       );
+      final target = LatLng(location.latitude, location.longitude);
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(target: target, zoom: 15),

@@ -20,6 +20,8 @@ class ChatMessage {
   final String messageType; // "text" | "image" | "file"
   final String? text;
   final String? imageUrl;
+  final int? imageWidth;
+  final int? imageHeight;
   final String? fileUrl;
   final String? fileName;
   final DateTime createdAt;
@@ -36,6 +38,8 @@ class ChatMessage {
     required this.messageType,
     this.text,
     this.imageUrl,
+    this.imageWidth,
+    this.imageHeight,
     this.fileUrl,
     this.fileName,
     required this.createdAt,
@@ -60,6 +64,8 @@ class ChatMessage {
           json['message_type'] as String? ?? json['messageType'] as String? ?? 'text',
       text: json['text'] as String?,
       imageUrl: json['image_url'] as String? ?? json['imageUrl'] as String?,
+      imageWidth: _parseInt(json['image_width'] ?? json['imageWidth']),
+      imageHeight: _parseInt(json['image_height'] ?? json['imageHeight']),
       fileUrl: json['file_url'] as String? ?? json['fileUrl'] as String?,
       fileName: json['file_name'] as String? ?? json['fileName'] as String?,
       createdAt: createdAtRaw != null
@@ -88,6 +94,13 @@ class ChatMessage {
     );
   }
 
+  static int? _parseInt(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw.toString());
+  }
+
   static DateTime? _parseDateTime(dynamic raw) {
     if (raw == null) return null;
     if (raw is String) return DateTime.tryParse(raw);
@@ -106,6 +119,8 @@ class ChatMessage {
     String? messageType,
     String? text,
     String? imageUrl,
+    int? imageWidth,
+    int? imageHeight,
     String? fileUrl,
     String? fileName,
     DateTime? createdAt,
@@ -122,6 +137,8 @@ class ChatMessage {
       messageType: messageType ?? this.messageType,
       text: text ?? this.text,
       imageUrl: imageUrl ?? this.imageUrl,
+      imageWidth: imageWidth ?? this.imageWidth,
+      imageHeight: imageHeight ?? this.imageHeight,
       fileUrl: fileUrl ?? this.fileUrl,
       fileName: fileName ?? this.fileName,
       createdAt: createdAt ?? this.createdAt,

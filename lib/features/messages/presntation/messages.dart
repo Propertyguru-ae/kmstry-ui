@@ -42,6 +42,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   int _requestId = 0;
   DateTime? _lastFetchTime;
   final Set<String> _deletingChatIds = <String>{};
+  final Set<String> _prefetchedChatIds = <String>{};
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
   Timer? _realtimeRefreshDebounce;
@@ -51,6 +52,11 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     debugPrint('💬 [Messages] Listener baglaniyor');
+    final cachedChats = _repo.cachedChats;
+    if (cachedChats != null) {
+      _chats = cachedChats;
+      _loading = false;
+    }
     _bindRealtimeStreams();
     unawaited(_connectRealtime());
     _loadCurrentUser();
@@ -73,7 +79,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     unawaited(_connectRealtime());
-    _scheduleRealtimeRefresh();
+    _scheduleRealtimeRefresh(force: true);
   }
 
   void _bindRealtimeStreams() {
@@ -93,27 +99,30 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         case 'chat.unread.updated':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] Local update yok, fallback refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'chat.updated':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] chat.updated local update yok, refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'message.created':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] message.created fallback refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'message.updated':
         case 'message.deleted':
         case 'chat.read':
         case 'socket.reconnected':
           debugPrint('💬 [Messages] Liste refresh tetiklendi');
-          _scheduleRealtimeRefresh();
+          _scheduleRealtimeRefresh(force: true);
           return;
       }
     });
@@ -125,12 +134,12 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     await _realtime.connectWithToken(token: token);
   }
 
-  void _scheduleRealtimeRefresh() {
+  void _scheduleRealtimeRefresh({bool force = false}) {
     _realtimeRefreshDebounce?.cancel();
     _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 220), () {
       if (!mounted) return;
       debugPrint('💬 [Messages] GET /chats refresh calisti');
-      loadChats(silent: true);
+      loadChats(silent: true, force: force);
     });
   }
 
@@ -164,23 +173,53 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     return null;
   }
 
+  Map<String, dynamic>? _readMapField(Map<String, dynamic> map, String key) {
+    final value = map[key];
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return value.map((k, v) => MapEntry(k.toString(), v));
+    return null;
+  }
+
+  String? _messagePreviewFromPayload(Map<String, dynamic> message) {
+    final messageType = _readStringField(message, const [
+      'messageType',
+      'message_type',
+    ]);
+    final text = _readStringField(message, const ['text']);
+    if (messageType == 'image') return '[Photo]';
+    if (messageType == 'file') return '[Document]';
+    if (text != null) return text.length > 100 ? text.substring(0, 100) : text;
+    return null;
+  }
+
   bool _applyChatRowUpdate(Map<String, dynamic> payload) {
-    final chatId = _readStringField(payload, const ['chatId', 'chat_id']);
+    final message = _readMapField(payload, 'message');
+    final chatId =
+        _readStringField(payload, const ['chatId', 'chat_id']) ??
+        (message == null
+            ? null
+            : _readStringField(message, const ['chatId', 'chat_id']));
     if (chatId == null) return false;
     final unread = _readIntField(payload, const [
       'unreadCount',
       'unread_count',
     ]);
-    final preview = _readStringField(payload, const [
-      'lastMessagePreview',
-      'last_message_preview',
-    ]);
-    final lastMessageAt = _readDateField(payload, const [
-      'lastMessageAt',
-      'last_message_at',
-      'createdAt',
-      'created_at',
-    ]);
+    final preview =
+        _readStringField(payload, const [
+          'lastMessagePreview',
+          'last_message_preview',
+        ]) ??
+        (message == null ? null : _messagePreviewFromPayload(message));
+    final lastMessageAt =
+        _readDateField(payload, const [
+          'lastMessageAt',
+          'last_message_at',
+          'createdAt',
+          'created_at',
+        ]) ??
+        (message == null
+            ? null
+            : _readDateField(message, const ['createdAt', 'created_at']));
     final hasAnyPatchData =
         unread != null || preview != null || lastMessageAt != null;
     if (!hasAnyPatchData) return false;
@@ -188,10 +227,20 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final index = _chats.indexWhere((chat) => chat.id == chatId);
     if (index < 0) return false;
     final current = _chats[index];
+    final messageSenderId = message == null
+        ? null
+        : _readStringField(message, const ['senderId', 'sender_id']);
+    final nextUnread =
+        unread ??
+        (messageSenderId != null &&
+                _currentUserId != null &&
+                messageSenderId != _currentUserId
+            ? current.unreadCount + 1
+            : current.unreadCount);
     final updated = ChatListItem(
       id: current.id,
       lastMessageAt: lastMessageAt ?? current.lastMessageAt,
-      unreadCount: unread ?? current.unreadCount,
+      unreadCount: nextUnread,
       lastMessagePreview: preview ?? current.lastMessagePreview,
       otherUser: current.otherUser,
       user1: current.user1,
@@ -256,9 +305,10 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> loadChats({bool silent = false}) async {
+  Future<void> loadChats({bool silent = false, bool force = false}) async {
     final now = DateTime.now();
-    if (silent &&
+    if (!force &&
+        silent &&
         _lastFetchTime != null &&
         now.difference(_lastFetchTime!) < const Duration(seconds: 3)) {
       return;
@@ -281,6 +331,9 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         _loading = false;
         _error = null;
       });
+      if (activeQuery.isEmpty) {
+        unawaited(_prefetchRecentChatDetails(list));
+      }
     } catch (e) {
       debugPrint('❌ getChats error: $e');
       if (!mounted || requestId != _requestId) return;
@@ -290,6 +343,22 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         _errorOffline = isOfflineError(e);
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _prefetchRecentChatDetails(List<ChatListItem> chats) async {
+    final recentChats = chats
+        .where((chat) => !_prefetchedChatIds.contains(chat.id))
+        .take(6)
+        .toList(growable: false);
+    for (final chat in recentChats) {
+      if (!mounted) return;
+      _prefetchedChatIds.add(chat.id);
+      try {
+        await _repo.getChat(chat.id, markRead: false, take: 30);
+      } catch (_) {
+        _prefetchedChatIds.remove(chat.id);
+      }
     }
   }
 

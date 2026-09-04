@@ -1038,16 +1038,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   /// Centre navbar check-in action — a flat icon, consistent with the other
   /// destination icons (no filled background).
-  Widget _buildCheckinNavButton(ThemeData theme) {
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: Center(
-        child: Icon(
-          Icons.add_location_alt_rounded,
-          color: _navInactiveColor(theme),
-          size: 28,
-        ),
+  Widget _buildCheckinNavButton(ThemeData theme, bool active) {
+    // Merkez birincil aksiyon: modal (sheet açılınca navbar kapanır) olduğu için
+    // anlık "seçili" durumu gösterilemez; bu yüzden ikon HER ZAMAN pembe→turuncu
+    // gradyanla dolu → diğer gri ikonlardan ayrışır, öne çıkar.
+    return _NavIconShell(
+      active: active,
+      child: _navGradientIcon(
+        // Seçili olmayan diğer ikonlarla aynı renk (gradyan/dolgu yok).
+        Icons.add_location_alt_outlined,
+        active: false,
+        size: 27,
+        theme: theme,
       ),
     );
   }
@@ -1128,8 +1130,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageIcon(Color color) {
-    final icon = Icon(Icons.chat_bubble_outline, size: 27, color: color);
+  Widget _buildMessageIcon({required bool active, required ThemeData theme}) {
+    // Aktifken diğer sekmeler gibi pembe→turuncu gradyan; rozet kendi renginde.
+    final icon = _navGradientIcon(
+      Icons.chat_bubble_outline,
+      active: active,
+      size: 27,
+      theme: theme,
+    );
     if (_unreadDmCount <= 0) {
       return icon;
     }
@@ -1167,13 +1175,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return isDark ? const Color(0xFF6F7D96) : const Color(0xFF7A879A);
   }
 
-  /// Aktif sekme ikon rengi. Dark mode'da beyaz; light mode'da navbar beyaz
-  /// olduğu için beyaz görünmez olurdu → logo mavisi kullanılır.
-  Color _navActiveColor(ThemeData theme) {
-    final isDark = theme.brightness == Brightness.dark;
-    return isDark ? Colors.white : AppColors.blue;
-  }
-
   /// Builds a nav-icon closure so an icon's active/inactive rendering stays
   /// coupled to its tab (no index math).
   Widget Function(bool) _navIconBuilder(
@@ -1183,11 +1184,35 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   ) {
     return (bool active) => _NavIconShell(
       active: active,
-      child: Icon(
+      child: _navGradientIcon(
         active ? filled : outlined,
+        active: active,
         size: active ? 28 : 27,
-        color: active ? _navActiveColor(theme) : _navInactiveColor(theme),
+        theme: theme,
       ),
+    );
+  }
+
+  /// Nav icon: pasifken sade renk, aktifken içi pembe→turuncu (dot rengi) dolu.
+  Widget _navGradientIcon(
+    IconData icon, {
+    required bool active,
+    required double size,
+    required ThemeData theme,
+  }) {
+    final iconWidget = Icon(
+      icon,
+      size: size,
+      color: active ? Colors.white : _navInactiveColor(theme),
+    );
+    if (!active) return iconWidget;
+    return ShaderMask(
+      shaderCallback: (rect) => const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [AppColors.magentaDark, AppColors.orange],
+      ).createShader(rect),
+      child: iconWidget,
     );
   }
 
@@ -1209,7 +1234,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _NavTab(
         // Centre action: opens the quick check-in flow. Never a destination.
         page: const PersonalHomePage(),
-        icon: (_) => _buildCheckinNavButton(theme),
+        icon: (active) => _buildCheckinNavButton(theme, active),
         action: () => QuickCheckinLauncher().launch(context),
       ),
       _NavTab(
@@ -1217,9 +1242,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         page: DmListPage(key: _dmListKey),
         icon: (active) => _NavIconShell(
           active: active,
-          child: _buildMessageIcon(
-            active ? _navActiveColor(theme) : _navInactiveColor(theme),
-          ),
+          child: _buildMessageIcon(active: active, theme: theme),
         ),
         onSelected: () {
           _dmListKey.currentState?.loadChats();
@@ -1291,20 +1314,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     final List<Widget> items = [
       for (var i = 0; i < tabs.length; i++)
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            final action = tabs[i].action;
-            if (action != null) {
-              action();
-            } else {
-              _onItemTapped(i, tabs[i].onSelected);
-            }
-          },
-          child: SizedBox.expand(
-            child: Center(child: tabs[i].icon(safeIndex == i)),
+        if (tabs[i].action != null)
+          // Aksiyon butonu (ör. hızlı check-in): FAB gibi basılınca kısa
+          // ölçek animasyonu ile geri bildirim.
+          _PressableScale(
+            onTap: tabs[i].action!,
+            child: SizedBox.expand(
+              child: Center(child: tabs[i].icon(safeIndex == i)),
+            ),
+          )
+        else
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _onItemTapped(i, tabs[i].onSelected),
+            child: SizedBox.expand(
+              child: Center(child: tabs[i].icon(safeIndex == i)),
+            ),
           ),
-        ),
     ];
 
     return Container(
@@ -1353,10 +1379,13 @@ class _NavIconShell extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               width: active ? 5 : 0,
               height: active ? 5 : 0,
+              // Aktif sayfa göstergesi: logodan ayrışsın diye pembe→turuncu.
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [AppColors.blue, AppColors.teal],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.magentaDark, AppColors.orange],
                 ),
               ),
             ),
@@ -1467,4 +1496,43 @@ class _NavTab {
     this.action,
     this.id,
   });
+}
+
+/// FAB tarzı basılma geri bildirimi: dokununca kısa süre küçülüp bırakılınca
+/// eski boyutuna döner. Nav'daki aksiyon butonları (hızlı check-in) için.
+class _PressableScale extends StatefulWidget {
+  const _PressableScale({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_PressableScale> createState() => _PressableScaleState();
+}
+
+class _PressableScaleState extends State<_PressableScale> {
+  double _scale = 1.0;
+
+  void _setScale(double value) {
+    if (mounted) setState(() => _scale = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _setScale(0.84),
+      onTapUp: (_) {
+        _setScale(1.0);
+        widget.onTap();
+      },
+      onTapCancel: () => _setScale(1.0),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
+    );
+  }
 }
