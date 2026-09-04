@@ -57,6 +57,19 @@ class PreviewScreen extends StatefulWidget {
   final bool? isFrontCamera;
   final double? screenAr;
 
+  /// How the image fills the preview. Camera/story shots are full-bleed
+  /// (`cover`); gallery photos of arbitrary aspect ratios should use `contain`
+  /// so the whole picture is shown instead of a zoomed-in crop.
+  final BoxFit imageFit;
+
+  /// Whether the "add text" overlay tool is available. Off for e.g. sending a
+  /// gallery photo in chat, where captioning isn't offered.
+  final bool allowText;
+
+  /// Whether the "download/save" tool is shown. Off when the source is already
+  /// the user's gallery (no point re-saving it).
+  final bool allowDownload;
+
   const PreviewScreen({
     super.key,
     required this.file,
@@ -65,6 +78,9 @@ class PreviewScreen extends StatefulWidget {
     this.cancelLabel = 'Retake',
     this.confirmLabel = 'Use',
     this.confirmIcon,
+    this.imageFit = BoxFit.cover,
+    this.allowText = true,
+    this.allowDownload = true,
   });
 
   @override
@@ -286,31 +302,35 @@ class _PreviewScreenState extends State<PreviewScreen> {
           Positioned.fill(
             child: RepaintBoundary(
               key: _composeKey,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    // Ham ön-kamera fotoğrafını gösterirken aynala (kamera
-                    // önizlemesi de aynalıydı); işlenmiş dosya zaten aynalı.
-                    child: Transform(
-                      alignment: Alignment.center,
-                      transform: _mirrorInstant
-                          ? (Matrix4.identity()
-                              ..scaleByDouble(-1.0, 1.0, 1.0, 1.0))
-                          : Matrix4.identity(),
-                      child: Image.file(
-                        _displayFile,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
+              child: ColoredBox(
+                color: Colors.black,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      // Ham ön-kamera fotoğrafını gösterirken aynala (kamera
+                      // önizlemesi de aynalıydı); işlenmiş dosya zaten aynalı.
+                      child: Transform(
+                        alignment: Alignment.center,
+                        transform: _mirrorInstant
+                            ? (Matrix4.identity()
+                                ..scaleByDouble(-1.0, 1.0, 1.0, 1.0))
+                            : Matrix4.identity(),
+                        child: Image.file(
+                          _displayFile,
+                          fit: widget.imageFit,
+                          gaplessPlayback: true,
+                        ),
                       ),
                     ),
-                  ),
-                  if (_hasText && !_editing) _buildPlacedText(screen),
-                ],
+                    if (_hasText && !_editing) _buildPlacedText(screen),
+                  ],
+                ),
               ),
             ),
           ),
 
-          // Sağ üst araçlar.
+          // Sağ üst araçlar: X (kapat) — kamera açılışındaki X ile aynı yerde —
+          // ardından (varsa) Tt ve indirme aynı hizada alt alta.
           if (!_editing)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
@@ -318,15 +338,24 @@ class _PreviewScreenState extends State<PreviewScreen> {
               child: Column(
                 children: [
                   _ToolButton(
-                    icon: Icons.text_fields_rounded,
-                    onTap: _saving || _confirming ? null : _openEditor,
+                    icon: Icons.close_rounded,
+                    onTap: _saving || _confirming
+                        ? null
+                        : () => Navigator.pop(context, null),
                   ),
-                  const SizedBox(height: 12),
-                  _ToolButton(
-                    icon: Icons.download_rounded,
-                    onTap: _saving || _confirming ? null : _download,
-                    loading: _saving,
-                  ),
+                  if (widget.allowText) const SizedBox(height: 12),
+                  if (widget.allowText)
+                    _ToolButton(
+                      icon: Icons.text_fields_rounded,
+                      onTap: _saving || _confirming ? null : _openEditor,
+                    ),
+                  if (widget.allowDownload) const SizedBox(height: 12),
+                  if (widget.allowDownload)
+                    _ToolButton(
+                      icon: Icons.download_rounded,
+                      onTap: _saving || _confirming ? null : _download,
+                      loading: _saving,
+                    ),
                 ],
               ),
             ),
@@ -633,24 +662,21 @@ class _PreviewActionButton extends StatelessWidget {
       opacity: enabled || loading ? 1 : 0.48,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          gradient: primary
-              ? const LinearGradient(
-                  colors: [AppColors.blueDark, AppColors.magentaDark],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                )
-              : null,
-          color: primary ? null : AppColors.darkSurface.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(17),
+          // Primary (Use/Send): uygulama mavisi. Secondary: fotoğraf üstünde
+          // her iki modda okunur yarı-saydam koyu pill + ince beyaz kenar.
+          color: primary
+              ? AppColors.blue
+              : Colors.black.withValues(alpha: 0.40),
+          borderRadius: BorderRadius.circular(14),
           border: primary
               ? null
-              : Border.all(color: AppColors.blueDark.withValues(alpha: 0.5)),
+              : Border.all(color: Colors.white.withValues(alpha: 0.28)),
           boxShadow: primary && enabled
               ? [
                   BoxShadow(
-                    color: AppColors.magentaDark.withValues(alpha: 0.24),
-                    blurRadius: 18,
-                    offset: const Offset(0, 7),
+                    color: AppColors.blue.withValues(alpha: 0.35),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
                   ),
                 ]
               : null,
@@ -658,7 +684,7 @@ class _PreviewActionButton extends StatelessWidget {
         child: ElevatedButton(
           onPressed: onPressed,
           style: ElevatedButton.styleFrom(
-            minimumSize: const Size(0, 54),
+            minimumSize: const Size(0, 46),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             elevation: 0,
             shadowColor: Colors.transparent,
@@ -667,13 +693,13 @@ class _PreviewActionButton extends StatelessWidget {
             foregroundColor: Colors.white,
             disabledForegroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(17),
+              borderRadius: BorderRadius.circular(14),
             ),
           ),
           child: loading
               ? const SizedBox(
-                  width: 21,
-                  height: 21,
+                  width: 19,
+                  height: 19,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.2,
                     color: Colors.white,
@@ -683,15 +709,16 @@ class _PreviewActionButton extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(icon, size: 20),
-                    const SizedBox(width: 8),
+                    Icon(icon, size: 18),
+                    const SizedBox(width: 7),
                     Flexible(
                       child: Text(
                         label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: 0.1,
                         ),
                       ),

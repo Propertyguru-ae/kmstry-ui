@@ -14,8 +14,19 @@ import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 
 class ChatRepository {
   final ApiClient _api = ApiClient();
+  static List<ChatListItem>? _cachedChats;
+  static final Map<String, ChatDetail> _cachedChatDetails =
+      <String, ChatDetail>{};
 
   Future<String?> _token() => SecureStorage.getAccessToken();
+
+  List<ChatListItem>? get cachedChats {
+    final chats = _cachedChats;
+    if (chats == null || chats.isEmpty) return null;
+    return List<ChatListItem>.from(chats);
+  }
+
+  ChatDetail? cachedChat(String chatId) => _cachedChatDetails[chatId];
 
   /// GET /chats — list of active chats with last_message_at, sorted by last_message_at.
   Future<List<ChatListItem>> getChats() async {
@@ -26,7 +37,9 @@ class ChatRepository {
       '/chats',
       headers: {'Authorization': 'Bearer $token'},
     );
-    return _parseChatList(data);
+    final chats = _parseChatList(data);
+    _cachedChats = chats;
+    return chats;
   }
 
   /// GET /chats/search?query=... — chat list filtered by participant name.
@@ -112,7 +125,9 @@ class ChatRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
 
-    return ChatDetail.fromJson(data as Map<String, dynamic>);
+    final detail = ChatDetail.fromJson(data as Map<String, dynamic>);
+    _cachedChatDetails[chatId] = detail;
+    return detail;
   }
 
   /// PATCH /chats/:id/read — mark chat as read (optional if using markRead=true on GET).
@@ -194,6 +209,8 @@ class ChatRepository {
     required String messageType,
     String? text,
     String? imageUrl,
+    int? imageWidth,
+    int? imageHeight,
     String? fileUrl,
     String? fileName,
     String? clientMessageId,
@@ -207,6 +224,12 @@ class ChatRepository {
     }
     if (messageType == 'image' && imageUrl != null) {
       body['image_url'] = imageUrl;
+      if (imageWidth != null && imageWidth > 0) {
+        body['image_width'] = imageWidth;
+      }
+      if (imageHeight != null && imageHeight > 0) {
+        body['image_height'] = imageHeight;
+      }
     }
     if (messageType == 'file' && fileUrl != null) {
       body['file_url'] = fileUrl;

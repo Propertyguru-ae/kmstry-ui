@@ -47,6 +47,46 @@ class NearbyVenuesResponse {
   }
 }
 
+class PlaceSuggestion {
+  final String placeId;
+  final String mainText;
+  final String secondaryText;
+
+  const PlaceSuggestion({
+    required this.placeId,
+    required this.mainText,
+    required this.secondaryText,
+  });
+
+  factory PlaceSuggestion.fromJson(Map<String, dynamic> json) {
+    return PlaceSuggestion(
+      placeId: json['placeId']?.toString() ?? '',
+      mainText: json['mainText']?.toString() ?? '',
+      secondaryText: json['secondaryText']?.toString() ?? '',
+    );
+  }
+}
+
+class PlaceGeometry {
+  final String placeId;
+  final double latitude;
+  final double longitude;
+
+  const PlaceGeometry({
+    required this.placeId,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  factory PlaceGeometry.fromJson(Map<String, dynamic> json) {
+    return PlaceGeometry(
+      placeId: json['placeId']?.toString() ?? '',
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+    );
+  }
+}
+
 class VenueRepository {
   final ApiClient _api = ApiClient();
 
@@ -132,6 +172,37 @@ class VenueRepository {
     return _parseVenueList(data);
   }
 
+  Future<List<PlaceSuggestion>> searchPlaceSuggestions({
+    required String input,
+    String language = 'en',
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+    final path =
+        '/venues/places/autocomplete?input=${Uri.encodeQueryComponent(input)}&language=${Uri.encodeQueryComponent(language)}';
+
+    final data = await _api.get(path, headers: headers);
+    final predictions = (data['predictions'] as List? ?? [])
+        .map((e) => PlaceSuggestion.fromJson(Map<String, dynamic>.from(e)))
+        .where((suggestion) => suggestion.placeId.isNotEmpty)
+        .toList();
+    return predictions;
+  }
+
+  Future<PlaceGeometry> getPlaceGeometry(String placeId) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+    final path =
+        '/venues/places/details?placeId=${Uri.encodeQueryComponent(placeId)}';
+
+    final data = await _api.get(path, headers: headers);
+    return PlaceGeometry.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
   /// Trending Now — son 7 günde en çok aranan venue'ler (recommended ile aynı şekil).
   Future<List<Venue>> getTrendingVenues({
     double? latitude,
@@ -149,10 +220,7 @@ class VenueRepository {
       if (longitude != null) 'longitude=$longitude',
     ].join('&');
 
-    final data = await _api.get(
-      '/venues/trending?$params',
-      headers: headers,
-    );
+    final data = await _api.get('/venues/trending?$params', headers: headers);
 
     return _parseVenueList(data);
   }

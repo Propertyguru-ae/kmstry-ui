@@ -22,6 +22,7 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/camera/presentation/preview_screen.dart';
@@ -62,6 +63,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   String? _currentUserId;
   bool _loadingMore = false;
   bool _hasReachedEndOfMessages = false;
+  bool _messageListReady = false;
   final Set<String> _deletingMessageIds = <String>{};
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
@@ -106,13 +108,24 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     _chatId = _normalizeChatId(widget.chatId);
     _bindRealtimeStreams();
     _loadCurrentUser();
+    _scrollController.addListener(_onScroll);
     if (_chatId != null) {
+      final cachedChat = _repo.cachedChat(_chatId!);
+      if (cachedChat != null) {
+        _chat = cachedChat;
+        _loading = false;
+        _messageListReady = true;
+        _isOtherOnline = cachedChat.otherUser?.isOnline ?? false;
+        _refreshCursorFromMessages(cachedChat.messages);
+      }
       _loadChat();
       unawaited(_connectRealtimeIfPossible());
     } else {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _messageListReady = true;
+      });
     }
-    _scrollController.addListener(_onScroll);
   }
 
   @override
@@ -206,6 +219,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       ? widget.otherUserId
       : (_chat?.displayOtherUser?.id ?? '');
 
+  bool _isMessageSentByMe(ChatMessage message) {
+    if (message.isMe != null) return message.isMe!;
+
+    final currentUserId = _currentUserId;
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      return message.isSentByMe(currentUserId);
+    }
+
+    final otherUserId = _effectiveOtherUserId;
+    final senderId = message.senderId;
+    if (senderId == null || senderId.isEmpty || otherUserId.isEmpty) {
+      return false;
+    }
+    return senderId != otherUserId;
+  }
+
   void _bindRealtimeStreams() {
     _realtimeEventsSub = _realtime.events.listen(_handleRealtimeEvent);
     _realtimeStateSub = _realtime.connectionState.listen((state) {
@@ -220,10 +249,15 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   void _onScroll() {
     _updateFloatingDateForScroll();
-    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages) {
+    if (!_messageListReady ||
+        _loadingMore ||
+        _loading ||
+        _chat == null ||
+        _hasReachedEndOfMessages) {
       return;
     }
-    if (_scrollController.offset <= 100 && _scrollController.hasClients) {
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 100) {
       _loadMoreMessages();
     }
   }
@@ -271,16 +305,19 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   void _scrollToBottom({bool animated = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
+      const target = 0.0;
       if (animated) {
-        _scrollController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-        );
-      } else {
-        _scrollController.jumpTo(target);
+        final distance = _scrollController.offset.abs();
+        if (distance > 0 && distance < 600) {
+          _scrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+          return;
+        }
       }
+      _scrollController.jumpTo(target);
     });
   }
 
@@ -290,6 +327,50 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   // Klavye zaten resizeToAvoidBottomInset ile ele alınıyor; sadece küçük bir
   // nefes payı yeterli.
   double _messageListBottomPadding() => 12;
+
+  double _estimatedMessageHeight(ChatMessage message) {
+    if (message.messageType == 'image' && message.imageUrl != null) {
+      final width = message.imageWidth;
+      final height = message.imageHeight;
+      if (width != null && width > 0 && height != null && height > 0) {
+        final ratio = height / width;
+        return (300 * ratio).clamp(160, 330).toDouble() + 12;
+      }
+      return 260;
+    }
+    if (message.messageType == 'file') return 86;
+
+    final body = _visibleMessageBody(message.text ?? '');
+    final lineCount = (body.length / 34).ceil().clamp(1, 8);
+    final replyPreviewExtra = _parseReplyMessage(message.text ?? '') != null
+        ? 58
+        : 0;
+    return 34 + (lineCount * 22) + replyPreviewExtra + 12;
+  }
+
+  bool _shouldTopAlignConversation(
+    List<ChatMessage> orderedMessages,
+    double viewportHeight,
+  ) {
+    if (_loadingMore ||
+        orderedMessages.isEmpty ||
+        orderedMessages.length > 12) {
+      return false;
+    }
+
+    var estimatedHeight = 14.0 + _messageListBottomPadding();
+    DateTime? previousDate;
+    for (final message in orderedMessages) {
+      if (previousDate == null ||
+          !_isSameDay(previousDate, message.createdAt)) {
+        estimatedHeight += 56;
+      }
+      estimatedHeight += _estimatedMessageHeight(message);
+      previousDate = message.createdAt;
+    }
+
+    return estimatedHeight < viewportHeight - 18;
+  }
 
   Future<void> _loadCurrentUser() async {
     try {
@@ -460,7 +541,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           Map<String, dynamic>.from(rawMessage),
         );
         _mergeOrInsertMessage(message);
-        if (!message.isSentByMe(_currentUserId)) {
+        if (!_isMessageSentByMe(message)) {
           _scheduleReadReceipt();
         }
         return;
@@ -698,16 +779,18 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   Future<void> _loadChat({bool silent = false}) async {
     final cid = _chatId;
     if (cid == null) return;
+    final isInitialLoad = _chat == null;
     // silent: mevcut mesajları ekranda tutarak arka planda tazele (resume'da
     // spinner flicker'ı olmasın). Sadece ilk yüklemede tam loading gösterilir.
     if (!silent || _chat == null) {
       setState(() {
         _loading = true;
         _error = null;
+        if (isInitialLoad) _messageListReady = false;
       });
     }
     try {
-      final detail = await _repo.getChat(cid, markRead: true);
+      final detail = await _repo.getChat(cid, markRead: true, take: 30);
       if (!mounted) return;
       setState(() {
         // Per-message read_at is carried on each message, so "Seen" persists
@@ -720,6 +803,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         _isOtherOnline = detail.otherUser?.isOnline ?? false;
       });
       _refreshCursorFromMessages(detail.messages);
+      _messageListReady = true;
       _scrollToBottom();
     } catch (e) {
       debugPrint('❌ getChat error: $e');
@@ -786,6 +870,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// Instant send: the optimistic bubble is placed and the input is cleared
   /// synchronously, then the network round-trip runs in the background. The
   /// send button is never gated on the request — chat must feel immediate.
+  /// Reads the intrinsic pixel size of an image file (best-effort). Returns
+  /// (null, null) if it can't be decoded.
+  Future<(int?, int?)> _decodeImageSize(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final descriptor = await ImageDescriptor.encoded(
+        await ImmutableBuffer.fromUint8List(bytes),
+      );
+      final w = descriptor.width;
+      final h = descriptor.height;
+      descriptor.dispose();
+      if (w > 0 && h > 0) return (w, h);
+    } catch (_) {}
+    return (null, null);
+  }
+
   void _sendMessage() {
     if (_chat?.canSendMessages == false) return;
     final rawText = _messageController.text.trim();
@@ -903,7 +1003,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// Basit client-side quote satırı (gerçek reply_to_id yok — backend'e
   /// düz metin olarak gider, karşı tarafta da normal metin gibi görünür).
   String _replyQuoteLine(ChatMessage target) {
-    final senderLabel = target.isSentByMe(_currentUserId)
+    final senderLabel = _isMessageSentByMe(target)
         ? 'You'
         : widget.otherName.split(' ').first;
     final snippet = target.messageType == 'image'
@@ -1728,7 +1828,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final time = _formatTime(message.createdAt);
     final isSeenByOther = isMe && message.readAt != null;
     if (message.messageType == 'image' && message.imageUrl != null) {
-      return _buildImageBubble(message.imageUrl!, isMe, time, isSeenByOther);
+      return _buildImageBubble(
+        message.imageUrl!,
+        isMe,
+        time,
+        isSeenByOther,
+        imageWidth: message.imageWidth,
+        imageHeight: message.imageHeight,
+      );
     }
     if (message.messageType == 'file' && message.fileUrl != null) {
       return _buildFileBubble(
@@ -2650,164 +2757,196 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
     final ordered = List<ChatMessage>.from(messages)
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final visibleMessages = ordered.reversed.toList(growable: false);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final topAlignConversation = _shouldTopAlignConversation(
+          ordered,
+          constraints.maxHeight,
+        );
+        final renderedMessages = topAlignConversation
+            ? ordered
+            : visibleMessages;
 
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(14, 14, 14, _messageListBottomPadding()),
-          itemCount: ordered.length + (_loadingMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (_loadingMore && index == 0) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Center(
-                  child: SizedBox(
-                    height: 24,
-                    width: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              );
-            }
-            final msgIndex = _loadingMore ? index - 1 : index;
-            final msg = ordered[msgIndex];
-            final isMe = msg.isSentByMe(_currentUserId);
-            final time = _formatTime(msg.createdAt);
-            // Per-message read receipt: each of my messages shows "Seen" only when
-            // the recipient actually read *that* message (read_at set). No shared
-            // pointer, so reads made with receipts off never leak.
-            final isSeenByOther = isMe && msg.readAt != null;
-            final content = msg.messageType == 'image' && msg.imageUrl != null
-                ? msg.imageUrl!
-                : (msg.text ?? '');
-            final showDate =
-                msgIndex == 0 ||
-                !_isSameDay(ordered[msgIndex - 1].createdAt, msg.createdAt);
-            final bubbleKey = _keyFor(msg.id);
-            final bubble = msg.messageType == 'image' && msg.imageUrl != null
-                ? GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    onTap: _forwardSelectionMode
-                        ? null
-                        : () => _openFullscreenImage(
-                            msg.imageUrl!,
-                            heroTag: 'chat-media-${msg.id}',
-                          ),
-                    child: _buildImageBubble(
-                      msg.imageUrl!,
-                      isMe,
-                      time,
-                      isSeenByOther,
-                      bubbleKey: bubbleKey,
-                      heroTag: 'chat-media-${msg.id}',
-                    ),
-                  )
-                : msg.messageType == 'file' && msg.fileUrl != null
-                ? GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    onTap: _forwardSelectionMode
-                        ? null
-                        : () => unawaited(_openFileUrl(msg.fileUrl!)),
-                    child: _buildFileBubble(
-                      fileUrl: msg.fileUrl!,
-                      fileName: msg.fileName ?? 'Document',
-                      isMe: isMe,
-                      time: time,
-                      isSeenByOther: isSeenByOther,
-                      bubbleKey: bubbleKey,
-                    ),
-                  )
-                : GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    child: _buildMessageBubble(
-                      message: content,
-                      isMe: isMe,
-                      time: time,
-                      isSeenByOther: isSeenByOther,
-                      edited: msg.editedAt != null,
-                      bubbleKey: bubbleKey,
-                    ),
-                  );
-            // Reaction chip'leri balonun altına hafif bindirilmiş gösterilir.
-            final bubbleWithReactions = msg.reactions.isEmpty
-                ? bubble
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: isMe
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      bubble,
-                      Transform.translate(
-                        offset: const Offset(0, -14),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: _buildReactionChips(msg),
-                        ),
+        return Stack(
+          children: [
+            ListView.builder(
+              controller: _scrollController,
+              reverse: !topAlignConversation,
+              // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                14,
+                14,
+                14,
+                _messageListBottomPadding(),
+              ),
+              itemCount: renderedMessages.length + (_loadingMore ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (_loadingMore && index == renderedMessages.length) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(
+                      child: SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                    ],
+                    ),
                   );
-            final selectableBubble = _forwardSelectionMode
-                ? GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _toggleForwardSelection(msg),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10, right: 8),
-                          child: _buildForwardMessageSelector(
-                            selected: _forwardSelectedMessageIds.contains(
-                              msg.id,
+                }
+                final msgIndex = index;
+                final msg = renderedMessages[msgIndex];
+                final isMe = _isMessageSentByMe(msg);
+                final time = _formatTime(msg.createdAt);
+                // Per-message read receipt: each of my messages shows "Seen" only when
+                // the recipient actually read *that* message (read_at set). No shared
+                // pointer, so reads made with receipts off never leak.
+                final isSeenByOther = isMe && msg.readAt != null;
+                final content =
+                    msg.messageType == 'image' && msg.imageUrl != null
+                    ? msg.imageUrl!
+                    : (msg.text ?? '');
+                final showDate = topAlignConversation
+                    ? msgIndex == 0 ||
+                          !_isSameDay(
+                            renderedMessages[msgIndex - 1].createdAt,
+                            msg.createdAt,
+                          )
+                    : msgIndex == renderedMessages.length - 1 ||
+                          !_isSameDay(
+                            renderedMessages[msgIndex + 1].createdAt,
+                            msg.createdAt,
+                          );
+                final bubbleKey = _keyFor(msg.id);
+                final bubble =
+                    msg.messageType == 'image' && msg.imageUrl != null
+                    ? GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        onTap: _forwardSelectionMode
+                            ? null
+                            : () => _openFullscreenImage(
+                                msg.imageUrl!,
+                                heroTag: 'chat-media-${msg.id}',
+                              ),
+                        child: _buildImageBubble(
+                          msg.imageUrl!,
+                          isMe,
+                          time,
+                          isSeenByOther,
+                          bubbleKey: bubbleKey,
+                          heroTag: 'chat-media-${msg.id}',
+                          imageWidth: msg.imageWidth,
+                          imageHeight: msg.imageHeight,
+                        ),
+                      )
+                    : msg.messageType == 'file' && msg.fileUrl != null
+                    ? GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        onTap: _forwardSelectionMode
+                            ? null
+                            : () => unawaited(_openFileUrl(msg.fileUrl!)),
+                        child: _buildFileBubble(
+                          fileUrl: msg.fileUrl!,
+                          fileName: msg.fileName ?? 'Document',
+                          isMe: isMe,
+                          time: time,
+                          isSeenByOther: isSeenByOther,
+                          bubbleKey: bubbleKey,
+                        ),
+                      )
+                    : GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        child: _buildMessageBubble(
+                          message: content,
+                          isMe: isMe,
+                          time: time,
+                          isSeenByOther: isSeenByOther,
+                          edited: msg.editedAt != null,
+                          bubbleKey: bubbleKey,
+                        ),
+                      );
+                // Reaction chip'leri balonun altına hafif bindirilmiş gösterilir.
+                final bubbleWithReactions = msg.reactions.isEmpty
+                    ? bubble
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: isMe
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        children: [
+                          bubble,
+                          Transform.translate(
+                            offset: const Offset(0, -14),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              child: _buildReactionChips(msg),
                             ),
                           ),
+                        ],
+                      );
+                final selectableBubble = _forwardSelectionMode
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _toggleForwardSelection(msg),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10, right: 8),
+                              child: _buildForwardMessageSelector(
+                                selected: _forwardSelectedMessageIds.contains(
+                                  msg.id,
+                                ),
+                              ),
+                            ),
+                            Expanded(child: bubbleWithReactions),
+                          ],
                         ),
-                        Expanded(child: bubbleWithReactions),
-                      ],
+                      )
+                    : _SwipeToReply(
+                        enabled: _chat?.canSendMessages != false,
+                        onReply: () => _setReplyTarget(msg),
+                        child: bubbleWithReactions,
+                      );
+                final item = showDate
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildDateSeparator(msg.createdAt),
+                          selectableBubble,
+                        ],
+                      )
+                    : selectableBubble;
+                return KeyedSubtree(key: _itemKeyFor(msg.id), child: item);
+              },
+            ),
+            if (_floatingDateText != null)
+              Positioned(
+                top: 12,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: _showFloatingDate ? 1 : 0,
+                    duration: const Duration(milliseconds: 140),
+                    child: Center(
+                      child: _buildFloatingDateChip(_floatingDateText!),
                     ),
-                  )
-                : _SwipeToReply(
-                    enabled: _chat?.canSendMessages != false,
-                    onReply: () => _setReplyTarget(msg),
-                    child: bubbleWithReactions,
-                  );
-            final item = showDate
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildDateSeparator(msg.createdAt),
-                      selectableBubble,
-                    ],
-                  )
-                : selectableBubble;
-            return KeyedSubtree(key: _itemKeyFor(msg.id), child: item);
-          },
-        ),
-        if (_floatingDateText != null)
-          Positioned(
-            top: 12,
-            left: 0,
-            right: 0,
-            child: IgnorePointer(
-              child: AnimatedOpacity(
-                opacity: _showFloatingDate ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: Center(
-                  child: _buildFloatingDateChip(_floatingDateText!),
+                  ),
                 ),
               ),
-            ),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 
@@ -3332,6 +3471,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     bool isSeenByOther, {
     Key? bubbleKey,
     String? heroTag,
+    int? imageWidth,
+    int? imageHeight,
   }) {
     final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
     final bubbleRadius = _messageBubbleRadius(isMe);
@@ -3352,49 +3493,90 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               heroTag,
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
-                child: imageUrl.startsWith('http')
-                    ? CachedImage(
-                        imageUrl,
-                        width: min(
-                          MediaQuery.of(context).size.width * 0.62,
-                          238,
+                // WhatsApp tarzı: sabit kare değil — resmin kendi en-boy oranına
+                // göre boyutlanır (max genişlik/yükseklik sınırları içinde), böylece
+                // fotoğrafın tamamı kırpılmadan görünür.
+                child: Builder(
+                  builder: (context) {
+                    final maxW = min(
+                      MediaQuery.of(context).size.width * 0.68,
+                      280.0,
+                    );
+                    final maxH = MediaQuery.of(context).size.height * 0.5;
+
+                    // Boyut biliniyorsa (backend/optimistic) kutuyu resmin
+                    // en-boy oranında ÖNCEDEN ayarla → placeholder gerçek kutu
+                    // boyutunda olur, resim gelince zıplama/kayma olmaz.
+                    double boxW = maxW;
+                    // Her balona build anında SABİT yükseklik ver → liste
+                    // yüksekliği ilk frame'den kesin, maxScrollExtent doğru,
+                    // alta kaydırma tam dibe oturur ve resim gelince kaymaz.
+                    // Boyut biliniyorsa gerçek oran; bilinmiyorsa makul varsayılan.
+                    double boxH = maxW * 0.75;
+                    if (imageWidth != null &&
+                        imageHeight != null &&
+                        imageWidth > 0 &&
+                        imageHeight > 0) {
+                      boxW = maxW;
+                      boxH = maxW * imageHeight / imageWidth;
+                      if (boxH > maxH) {
+                        boxH = maxH;
+                        boxW = maxH * imageWidth / imageHeight;
+                      }
+                    }
+
+                    Widget placeholder = Container(
+                      width: boxW,
+                      height: boxH,
+                      color: Colors.white.withValues(alpha: 0.06),
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white70,
                         ),
-                        height: min(
-                          MediaQuery.of(context).size.width * 0.62,
-                          238,
-                        ),
-                        fit: BoxFit.cover,
-                        errorWidget: (context) =>
-                            const Icon(Icons.broken_image, size: 48),
-                      )
-                    : Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Image.file(
-                            File(imageUrl),
-                            width: min(
-                              MediaQuery.of(context).size.width * 0.62,
-                              238,
-                            ),
-                            height: min(
-                              MediaQuery.of(context).size.width * 0.62,
-                              238,
-                            ),
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Icon(Icons.broken_image, size: 48),
-                          ),
-                          const SizedBox(
-                            width: 34,
-                            height: 34,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
                       ),
+                    );
+
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: maxH),
+                      // http olmayan url = henüz yüklenmemiş lokal dosya.
+                      child: imageUrl.startsWith('http')
+                          ? CachedImage(
+                              imageUrl,
+                              width: boxW,
+                              height: boxH,
+                              fit: BoxFit.cover,
+                              placeholder: (context) => placeholder,
+                              errorWidget: (context) =>
+                                  const Icon(Icons.broken_image, size: 48),
+                            )
+                          : Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Image.file(
+                                  File(imageUrl),
+                                  width: boxW,
+                                  height: boxH,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(Icons.broken_image, size: 48),
+                                ),
+                                const SizedBox(
+                                  width: 34,
+                                  height: 34,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    );
+                  },
+                ),
               ),
             ),
             Positioned(
@@ -3672,7 +3854,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         : target.messageType == 'file'
         ? '📄 ${target.fileName ?? 'Document'}'
         : _visibleMessageBody(target.text ?? '');
-    final senderLabel = target.isSentByMe(_currentUserId)
+    final senderLabel = _isMessageSentByMe(target)
         ? 'You'
         : widget.otherName.split(' ').first;
     return Container(
@@ -3972,6 +4154,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               allowVideo: false,
               previewConfirmLabel: 'Send',
               previewConfirmIcon: Icons.send_rounded,
+              // Sohbet fotoğrafı doğal oranında (4:3) gitsin — ekran oranına
+              // (ince/uzun) kırpılmasın.
+              cropToScreen: false,
             ),
           ),
         );
@@ -3993,6 +4178,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 cancelLabel: 'Back',
                 confirmLabel: 'Send',
                 confirmIcon: Icons.send_rounded,
+                // Gallery photos have arbitrary aspect ratios — show the whole
+                // image instead of a zoomed-in crop.
+                imageFit: BoxFit.contain,
+                // Sending a gallery photo: no caption tool and no re-download
+                // (it's already in the user's gallery).
+                allowText: false,
+                allowDownload: false,
               ),
             ),
           );
@@ -4011,6 +4203,18 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
     if (pickedFile == null || !mounted) return;
 
+    final uploadFile = await MediaCompressor.compressImage(
+      pickedFile,
+      maxDimension: 1280,
+      quality: 78,
+    );
+    if (!mounted) return;
+
+    // Resmin gerçek boyutunu decode et → hem optimistic balon hem backend'e
+    // gönderilir, böylece alıcıda resim indirilmeden önce doğru en-boy kutusu
+    // ayrılır (layout kaymaz, scroll bozulmaz).
+    final (imgW, imgH) = await _decodeImageSize(uploadFile);
+
     final clientMessageId = _nextClientMessageId();
     final optimisticTempId = 'temp-$clientMessageId';
     // Lokal dosya yolu image_url olarak konur; bubble http olmayanı Image.file
@@ -4020,7 +4224,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         id: optimisticTempId,
         messageType: 'image',
         text: null,
-        imageUrl: pickedFile.path,
+        imageUrl: uploadFile.path,
+        imageWidth: imgW,
+        imageHeight: imgH,
         createdAt: DateTime.now(),
         senderId: _currentUserId,
         isMe: true,
@@ -4029,11 +4235,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
 
     try {
-      final url = await _repo.uploadChatImage(pickedFile);
+      final url = await _repo.uploadChatImage(uploadFile);
       final sentMessage = await _repo.sendMessage(
         cid,
         messageType: 'image',
         imageUrl: url,
+        imageWidth: imgW,
+        imageHeight: imgH,
         clientMessageId: clientMessageId,
       );
       if (!mounted) return;
