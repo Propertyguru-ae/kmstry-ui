@@ -2,7 +2,9 @@ import 'dart:developer';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
@@ -41,6 +43,17 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
   VideoPlayerController? _videoController;
   int _setupSeq = 0;
 
+  Widget _withTextOverlay(CheckinProfileMedia item, Widget child) {
+    if (item.textOverlay == null) return child;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        MediaTextOverlayView(overlay: item.textOverlay!),
+      ],
+    );
+  }
+
   int _safeInitialIndex(List<CheckinProfileMedia> media, int requestedIndex) {
     if (media.isEmpty) return 0;
     if (requestedIndex < 0) return 0;
@@ -76,9 +89,33 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
     if (item.mediaType != MediaType.video) return;
 
-    final controller = VideoPlayerController.networkUrl(Uri.parse(item.url));
+    var mediaUrl = item.url;
+    final reference = item.mediaReference;
+    if (reference != null &&
+        reference.canRefresh &&
+        (mediaUrl.isEmpty ||
+            reference.expiresAt?.isBefore(
+                  DateTime.now().add(const Duration(seconds: 10)),
+                ) ==
+                true)) {
+      final refreshed = await SignedMediaResolver.instance.refreshOnce(
+        reference,
+      );
+      if (refreshed != null && refreshed.url.isNotEmpty) {
+        mediaUrl = refreshed.url;
+      }
+    }
+    if (mediaUrl.isEmpty || seq != _setupSeq) return;
 
-    await controller.initialize();
+    final controller = VideoPlayerController.networkUrl(Uri.parse(mediaUrl));
+
+    try {
+      await controller.initialize();
+    } catch (error) {
+      log('Moment video initialize error: $error');
+      await controller.dispose();
+      return;
+    }
 
     // Eğer bu arada yeni bir setup çağrısı geldiyse bu sonucu kullanma
     if (seq != _setupSeq) {
@@ -212,7 +249,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
     if (shouldCrop != true || !mounted) return;
 
-    final localFile = await _downloadMediaToTemp(selected.url);
+    final localFile = await _downloadMediaToTemp(selected);
     if (!mounted) return;
     if (localFile == null) {
       throw Exception('Could not download selected featured photo for crop');
@@ -225,9 +262,26 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     _hasChanged = true;
   }
 
-  Future<File?> _downloadMediaToTemp(String url) async {
+  Future<File?> _downloadMediaToTemp(CheckinProfileMedia media) async {
     try {
-      final response = await http.get(Uri.parse(url));
+      var mediaUrl = media.url;
+      final reference = media.mediaReference;
+      if (reference != null &&
+          reference.canRefresh &&
+          (mediaUrl.isEmpty ||
+              reference.expiresAt?.isBefore(
+                    DateTime.now().add(const Duration(seconds: 10)),
+                  ) ==
+                  true)) {
+        final refreshed = await SignedMediaResolver.instance.refreshOnce(
+          reference,
+        );
+        if (refreshed != null && refreshed.url.isNotEmpty) {
+          mediaUrl = refreshed.url;
+        }
+      }
+      if (mediaUrl.isEmpty) return null;
+      final response = await http.get(Uri.parse(mediaUrl));
       if (response.statusCode >= 400) return null;
       final dir = await getTemporaryDirectory();
       final file = File(
@@ -364,8 +418,15 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
 
               // 🖼 PHOTO
               if (item.mediaType == MediaType.photo) {
-                return SizedBox.expand(
-                  child: CachedImage(item.url, fit: BoxFit.cover),
+                return _withTextOverlay(
+                  item,
+                  SizedBox.expand(
+                    child: CachedImage(
+                      item.url,
+                      mediaReference: item.mediaReference,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
                 );
               }
 
@@ -373,14 +434,17 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
               if (_videoController != null &&
                   _videoController!.value.isInitialized &&
                   _currentIndex == index) {
-                return SizedBox.expand(
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    clipBehavior: Clip.hardEdge,
-                    child: SizedBox(
-                      width: _videoController!.value.size.width,
-                      height: _videoController!.value.size.height,
-                      child: VideoPlayer(_videoController!),
+                return _withTextOverlay(
+                  item,
+                  SizedBox.expand(
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      clipBehavior: Clip.hardEdge,
+                      child: SizedBox(
+                        width: _videoController!.value.size.width,
+                        height: _videoController!.value.size.height,
+                        child: VideoPlayer(_videoController!),
+                      ),
                     ),
                   ),
                 );

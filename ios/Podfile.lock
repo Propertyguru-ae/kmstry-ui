@@ -54,15 +54,15 @@ PODS:
   - Firebase/Messaging (12.17.0):
     - Firebase/CoreOnly
     - FirebaseMessaging (~> 12.17.0)
-  - firebase_app_check (0.4.6):
+  - firebase_app_check (0.4.7):
     - Firebase/CoreOnly (~> 12.17.0)
     - firebase_core
     - FirebaseAppCheck (~> 12.17.0)
     - Flutter
-  - firebase_core (4.13.0):
+  - firebase_core (4.14.0):
     - Firebase/CoreOnly (= 12.17.0)
     - Flutter
-  - firebase_messaging (16.5.0):
+  - firebase_messaging (16.6.0):
     - Firebase/Messaging (= 12.17.0)
     - firebase_core
     - Flutter
@@ -118,7 +118,7 @@ PODS:
   - google_maps_flutter_ios (0.0.1):
     - Flutter
     - Google-Maps-iOS-Utils (< 7.0, >= 5.0)
-    - GoogleMaps (< 10.0, >= 8.4)
+    - GoogleMaps (< 11.0, >= 8.4)
   - google_sign_in_ios (0.0.1):
     - AppAuth (>= 1.7.4)
     - Flutter
@@ -197,7 +197,7 @@ PODS:
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
-  - permission_handler_apple (9.3.0):
+  - permission_handler_apple (9.4.8):
     - Flutter
   - PromisesObjC (2.4.1)
   - PromisesSwift (2.4.1):
@@ -365,9 +365,9 @@ SPEC CHECKSUMS:
   DKPhotoGallery: b3834fecb755ee09a593d7c9e389d8b5d6deed60
   file_picker: a0560bc09d61de87f12d246fc47d2119e6ef37be
   Firebase: e8400c058702940d53f31fc0653e4e7a06332326
-  firebase_app_check: 5da86a4ec92047b87f16009122e2c0e23864516e
-  firebase_core: c94f9efeed0ded590b7eecaf6110a374eb865d7a
-  firebase_messaging: 00bcc97454f71d0dbe0a8adc6f2abf952320cfb2
+  firebase_app_check: ceae15a6bd553cab32fe39736a3fb0f8c628462b
+  firebase_core: 45b73eac7de405a29bba8c89178a5868e8351770
+  firebase_messaging: 6e398c4e11cb43d3f4237d061b3c5e8005a7a73a
   FirebaseAppCheck: 64d364d08ad1f6e8e084f7183c802df0a69eba3c
   FirebaseAppCheckInterop: 6d4cd7b9df8047da8cfc98c3fef4618bab2a8e0d
   FirebaseCore: 52d4512296984a44a8c8870c6494870fc7aeee2f
@@ -383,7 +383,7 @@ SPEC CHECKSUMS:
   gal: baecd024ebfd13c441269ca7404792a7152fde89
   geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
   Google-Maps-iOS-Utils: 0a484b05ed21d88c9f9ebbacb007956edd508a96
-  google_maps_flutter_ios: 0291eb2aa252298a769b04d075e4a9d747ff7264
+  google_maps_flutter_ios: 0cf046caf50b00d95071f79e8031fcd5ef902beb
   google_sign_in_ios: b48bb9af78576358a168361173155596c845f0b9
   GoogleDataTransport: a24e58982ab3ba2f64d79613e027fe7f57e88539
   GoogleMaps: 0608099d4870cac8754bdba9b6953db543432438
@@ -398,7 +398,7 @@ SPEC CHECKSUMS:
   open_filex: 432f3cd11432da3e39f47fcc0df2b1603854eff1
   package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
-  permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
+  permission_handler_apple: 92d754bbaa7361d436db2d6c3c1c2a0fdcec462e
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba

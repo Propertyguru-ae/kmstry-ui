@@ -8,8 +8,10 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 
 /// Instagram tarzı "Edit Profile" ekranı — çalışır.
@@ -126,7 +128,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
         setState(() {
           _checkinAvatarUrl = newUrl;
           _pickedPhoto = null;
+          // Geri dönünce profil sayfası yeniden yüklensin diye değişikliği işaretle;
+          // navbar'ın da taze avatarı çekmesi için /auth/me cache'ini geçersiz kıl.
+          _photoChanged = true;
         });
+        AuthRepository.invalidateMeCache();
+        // Check-in id'si değişmedi ama avatarı değişti → navbar'ı koşulsuz uyar,
+        // /auth/me'yi taze çekip yeni imzalı avatarı göstersin.
+        ActiveCheckinService().notifyMediaUpdated();
       }
     } catch (e) {
       if (mounted) {
@@ -148,6 +157,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   // ── Fotoğraf ────────────────────────────────────────────────────────────
   Future<void> _changePhoto() async {
+    // Devam eden bir yükleme/silme varken tekrar tetiklenmesini engelle
+    // (çift dokunma → çift yükleme / yarış durumu).
+    if (_uploadingPhoto || _removingPhoto) return;
     try {
       final picked = await _picker.pickImage(
         source: ImageSource.gallery,
@@ -170,6 +182,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
           _uploadingPhoto = false;
           _photoChanged = true;
         });
+        // Navbar'ı taze avatarla güncelle (/auth/me cache'ini geçersiz kıl + uyar).
+        AuthRepository.invalidateMeCache();
+        ActiveCheckinService().notifyMediaUpdated();
       }
     } catch (_) {
       if (!mounted) return;
@@ -185,27 +200,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Future<void> _removeProfilePhoto() async {
     if (_photoUrl.isEmpty && _pickedPhoto == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove profile photo?'),
-        content: const Text(
-          'Your active check-in avatar will not be affected.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              'Remove',
-              style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-            ),
-          ),
-        ],
-      ),
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Remove profile photo?',
+      message: 'Your active check-in avatar will not be affected.',
+      confirmLabel: 'Remove',
+      icon: Icons.person_off_rounded,
     );
     if (confirmed != true || !mounted) return;
 
@@ -222,6 +222,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _removingPhoto = false;
         _photoChanged = true;
       });
+      // Navbar'ı güncelle: foto silindi → kalıcı foto yoksa check-in/placeholder avatarına döner.
+      AuthRepository.invalidateMeCache();
+      ActiveCheckinService().notifyMediaUpdated();
       showSuccessSnackBar(
         context,
         message: 'Profile photo removed',
@@ -311,6 +314,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     try {
       await _auth.upsertPersonalProfile(data);
       AuthRepository.invalidateMeCache();
+      // Foto/isim değişikliği sonrası navbar avatarını da tazele (kaydet akışı).
+      ActiveCheckinService().notifyMediaUpdated();
       if (!mounted) return;
       Navigator.pop(context, true);
     } on ApiException catch (e) {

@@ -13,6 +13,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_memory_cache.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/messages/presntation/message_settings_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
@@ -46,6 +47,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
   Timer? _realtimeRefreshDebounce;
+  StreamSubscription<String>? _cacheChangesSub;
 
   @override
   void initState() {
@@ -58,9 +60,21 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       _loading = false;
     }
     _bindRealtimeStreams();
+    _cacheChangesSub = _repo.cacheChanges.listen((_) {
+      if (!mounted) return;
+      final cached = _repo.cachedChats;
+      if (cached == null) return;
+      setState(() {
+        // Preserve server-side search membership, but update matching rows now.
+        _chats = ChatMemoryCache.reconcileRows(_chats, cached);
+      });
+    });
     unawaited(_connectRealtime());
-    _loadCurrentUser();
-    loadChats();
+    // Önce mevcut kullanıcı id'sini yükle, SONRA listeyi çek: aksi halde liste
+    // currentUserId gelmeden çizilip "karşı taraf"ı yanlış (kendi hesabın)
+    // seçebiliyordu. Backend artık other_user gönderiyor ama bu sıralama, o
+    // düşmeden önceki eski istemci davranışına karşı da ikinci bir güvence.
+    unawaited(_loadCurrentUser().whenComplete(loadChats));
   }
 
   @override
@@ -68,6 +82,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     debugPrint('💬 [Messages] Listener temizleniyor');
     _realtimeEventsSub?.cancel();
+    _cacheChangesSub?.cancel();
     _realtimeStateSub?.cancel();
     _realtimeRefreshDebounce?.cancel();
     _searchDebounce?.cancel();
@@ -188,6 +203,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final text = _readStringField(message, const ['text']);
     if (messageType == 'image') return '[Photo]';
     if (messageType == 'file') return '[Document]';
+    if (messageType == 'venue') return '[Venue]';
     if (text != null) return text.length > 100 ? text.substring(0, 100) : text;
     return null;
   }
@@ -239,27 +255,28 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
             : current.unreadCount);
     final updated = ChatListItem(
       id: current.id,
-      lastMessageAt: lastMessageAt ?? current.lastMessageAt,
+      lastMessageAt:
+          lastMessageAt == null ||
+              (current.lastMessageAt?.isAfter(lastMessageAt) ?? false)
+          ? current.lastMessageAt
+          : lastMessageAt,
       unreadCount: nextUnread,
-      lastMessagePreview: preview ?? current.lastMessagePreview,
+      lastMessagePreview:
+          lastMessageAt != null &&
+              (current.lastMessageAt?.isAfter(lastMessageAt) ?? false)
+          ? current.lastMessagePreview
+          : preview ?? current.lastMessagePreview,
       otherUser: current.otherUser,
       user1: current.user1,
       user2: current.user2,
+      isBlocked: current.isBlocked,
     );
 
     if (!mounted) return true;
     setState(() {
       final next = List<ChatListItem>.from(_chats);
       next[index] = updated;
-      next.sort((a, b) {
-        final ad = a.lastMessageAt;
-        final bd = b.lastMessageAt;
-        if (ad == null && bd == null) return 0;
-        if (ad == null) return 1;
-        if (bd == null) return -1;
-        return bd.compareTo(ad);
-      });
-      _chats = next;
+      _chats = ChatMemoryCache.sorted(next);
     });
     debugPrint(
       '💬 [Messages] Local row guncellendi: chatId=$chatId unread=${updated.unreadCount}',
@@ -316,6 +333,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     _lastFetchTime = now;
     final activeQuery = _searchQuery.trim();
     final requestId = ++_requestId;
+    final rowsAtRequestStart = {for (final row in _chats) row.id: row};
     if (!silent) {
       setState(() {
         _loading = true;
@@ -327,7 +345,12 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 
       if (!mounted || requestId != _requestId) return;
       setState(() {
-        _chats = list;
+        _chats = ChatMemoryCache.reconcileRows(
+          list,
+          _chats
+              .where((row) => !identical(row, rowsAtRequestStart[row.id]))
+              .toList(),
+        );
         _loading = false;
         _error = null;
       });
@@ -542,9 +565,17 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       onRefresh: loadChats,
       child: ListView.builder(
         itemCount: list.length,
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String>) return null;
+          final index = list.indexWhere((chat) => chat.id == key.value);
+          return index < 0 ? null : index;
+        },
         itemBuilder: (context, index) {
           final chat = list[index];
-          return _buildChatTile(chat, isDark, theme);
+          return KeyedSubtree(
+            key: ValueKey(chat.id),
+            child: _buildChatTile(chat, isDark, theme),
+          );
         },
       ),
     );
@@ -830,6 +861,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
                     otherUserId: other?.id ?? '',
                     otherName: name,
                     otherPhotoUrl: other?.photo ?? '',
+                    initialUnreadCount: chat.unreadCount,
                   ),
                 ),
               );

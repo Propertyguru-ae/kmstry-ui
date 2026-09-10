@@ -757,14 +757,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
+      // isScrollControlled: varsayılan ~9/16 ekran sınırını kaldırır — sabit
+      // footer + venue listesi o sınırı birkaç px aşıp "bottom overflow"
+      // veriyordu. maxHeight ile de aşırı uzamayı engelliyoruz; venue listesi
+      // zaten Flexible olduğundan çok hesap varsa içeride scroll olur.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Handle bar
               Container(
                 width: 40,
@@ -979,6 +988,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
               const SizedBox(height: 8),
             ],
+            ),
           ),
         );
       },

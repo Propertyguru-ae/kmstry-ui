@@ -259,8 +259,8 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                                       _Chip(
                                         icon: Icons.people_outline_rounded,
                                         label: _capacity != null
-                                            ? '$_rsvpCount / $_capacity attending'
-                                            : '$_rsvpCount attending',
+                                            ? '$_rsvpCount / $_capacity interested'
+                                            : '$_rsvpCount interested',
                                         color: isFull ? _kRed : _kMavi,
                                         isDark: isDark,
                                       ),
@@ -527,10 +527,10 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     final label = earlyLocked
         ? '$_opensInLabel · KMSTRY+ early'
         : _userHasRsvp
-            ? "You're attending — Cancel"
+            ? 'Remove from my calendar'
             : isFull
                 ? 'Event is full'
-                : 'Attend';
+                : 'Add to my calendar';
     final icon = earlyLocked
         ? Icons.lock_clock_rounded
         : _userHasRsvp
@@ -903,7 +903,7 @@ class _AttendeesRow extends StatelessWidget {
                 ),
               ),
               TextSpan(
-                text: ' attending',
+                text: ' interested',
                 style: TextStyle(fontSize: 12, color: kFaint),
               ),
             ],

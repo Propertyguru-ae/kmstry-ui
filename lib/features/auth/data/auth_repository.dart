@@ -3,6 +3,8 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/app_request_headers.dart';
+import '../../../core/network/multipart_upload.dart';
 import 'auth_api.dart';
 import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -825,11 +827,11 @@ class AuthRepository {
       Uri.parse('${AppConfig.baseUrl}/users/me/photo'),
     );
 
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
 
     if (response.statusCode >= 400) {
       throw Exception('Upload failed');
@@ -844,7 +846,7 @@ class AuthRepository {
       Uri.parse('${AppConfig.baseUrl}/users/me/photo'),
     );
 
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     request.files.add(
       await http.MultipartFile.fromPath(
@@ -854,7 +856,7 @@ class AuthRepository {
       ),
     );
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
 
     if (response.statusCode >= 400) {
       final body = await response.stream.bytesToString();

@@ -156,7 +156,7 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                                 icon: Icons.people_outline_rounded,
                                 label: event.capacity != null
                                     ? '${event.rsvpCount} / ${event.capacity}'
-                                    : '${event.rsvpCount} attending',
+                                    : '${event.rsvpCount} interested',
                                 color: isFull ? _kRed : _kMavi,
                                 isDark: isDark,
                               ),
@@ -257,7 +257,7 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                           const SizedBox(height: 20),
                           _DotTitle(
                             color: _kTurkuaz,
-                            label: 'Attendees',
+                            label: 'Interested',
                             kText: kText,
                             count: _attendees?.length ?? event.rsvpCount,
                           ),
@@ -1026,7 +1026,7 @@ class _AttendeeList extends StatelessWidget {
           border: Border.all(color: kBorder),
         ),
         child: Text(
-          'No attendees yet.',
+          'No interested guests yet.',
           style: TextStyle(fontSize: 13, color: kSub),
         ),
       );

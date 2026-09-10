@@ -247,7 +247,11 @@ class _ProfilePageState extends State<ProfilePage>
       return SizedBox(
         width: thumbWidth,
         height: thumbHeight,
-        child: CachedImage(media.url, fit: BoxFit.cover),
+        child: CachedImage(
+          media.url,
+          mediaReference: media.mediaReference,
+          fit: BoxFit.cover,
+        ),
       );
     }
 
@@ -1304,6 +1308,10 @@ class _ProfilePageState extends State<ProfilePage>
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
+      // isScrollControlled: varsayılan ~9/16 ekran sınırı, sabit footer + hesap
+      // listesiyle aşılıp "bottom overflow" veriyordu. Sheet'i içeriğe göre
+      // boyutlar; hesap listesi zaten iç ConstrainedBox ile sınırlı.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1482,7 +1490,7 @@ class _ProfilePageState extends State<ProfilePage>
                 color: colors.onSurface,
               ),
               title: Text(
-                'Go to Accounts Center',
+                'Go to Settings',
                 style: TextStyle(color: colors.onSurface),
               ),
               onTap: () {
@@ -2817,6 +2825,7 @@ class _ProfilePageState extends State<ProfilePage>
     }
     return CachedImage(
       media.url,
+      mediaReference: media.mediaReference,
       fit: BoxFit.cover,
       errorWidget: (_) => Container(color: const Color(0xFF1E1E1E)),
     );

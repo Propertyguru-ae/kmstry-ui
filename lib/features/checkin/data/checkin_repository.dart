@@ -5,6 +5,8 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:http_parser/http_parser.dart' as http_parser;
@@ -178,13 +180,13 @@ class CheckinRepository {
 
     final request = http.MultipartRequest('POST', uri);
 
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
 
     request.fields['isFeatured'] = isFeatured.toString();
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
     final responseBody = await response.stream.bytesToString();
 
     if (response.statusCode >= 400) {
@@ -200,7 +202,7 @@ class CheckinRepository {
 
     final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/avatar');
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
     final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
     final mimeSplit = mimeType.split('/');
     request.files.add(
@@ -212,7 +214,7 @@ class CheckinRepository {
       ),
     );
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
     final responseBody = await response.stream.bytesToString();
 
     if (response.statusCode >= 400) {
@@ -239,7 +241,7 @@ class CheckinRepository {
 
     final request = http.MultipartRequest('POST', uri);
 
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     // ✅ MIME TYPE FIX
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
@@ -258,7 +260,7 @@ class CheckinRepository {
       request.fields['textOverlay'] = textOverlayJson;
     }
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
     final responseBody = await response.stream.bytesToString();
 
     if (response.statusCode >= 400) {
@@ -300,9 +302,21 @@ class CheckinRepository {
     // (tüketici başlamadan iç buffer doluyordu). Dosyayı belleğe okuyup tek
     // seferde PUT ediyoruz — sıkıştırılmış video/720px foto için boyut güvenli.
     final bytes = await file.readAsBytes();
-    final response = await http
-        .put(Uri.parse(target.uploadUrl), headers: target.headers, body: bytes)
-        .timeout(const Duration(minutes: 2));
+    final client = http.Client();
+    late final http.Response response;
+    try {
+      response = await client
+          .put(
+            Uri.parse(target.uploadUrl),
+            headers: target.headers,
+            body: bytes,
+          )
+          .timeout(const Duration(minutes: 2));
+    } finally {
+      // A timeout must also abort the underlying socket. The shared top-level
+      // http.put helper cannot be explicitly closed by the caller.
+      client.close();
+    }
 
     if (response.statusCode >= 400) {
       throw Exception(

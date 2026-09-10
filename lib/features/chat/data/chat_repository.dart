@@ -7,29 +7,43 @@ import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_detail_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
+import 'chat_memory_cache.dart';
+import 'chat_image_cache.dart';
 
 class ChatRepository {
-  final ApiClient _api = ApiClient();
-  static List<ChatListItem>? _cachedChats;
-  static final Map<String, ChatDetail> _cachedChatDetails =
-      <String, ChatDetail>{};
+  ChatRepository({
+    ApiClient? api,
+    ChatMemoryCache? cache,
+    Future<String?> Function()? tokenProvider,
+  }) : _api = api ?? ApiClient(),
+       _cache = cache ?? ChatMemoryCache.shared,
+       _tokenProvider = tokenProvider ?? SecureStorage.getAccessToken;
+  final ApiClient _api;
+  final ChatMemoryCache _cache;
+  final Future<String?> Function() _tokenProvider;
+  Stream<String> get cacheChanges => _cache.changes;
+  void rememberChat(ChatDetail detail) => _cache.remember(detail);
 
-  Future<String?> _token() => SecureStorage.getAccessToken();
+  Future<String?> _token() => _tokenProvider();
 
   List<ChatListItem>? get cachedChats {
-    final chats = _cachedChats;
+    final chats = _cache.chats;
     if (chats == null || chats.isEmpty) return null;
     return List<ChatListItem>.from(chats);
   }
 
-  ChatDetail? cachedChat(String chatId) => _cachedChatDetails[chatId];
+  ChatDetail? cachedChat(String chatId) => _cache.detail(chatId);
 
   /// GET /chats — list of active chats with last_message_at, sorted by last_message_at.
   Future<List<ChatListItem>> getChats() async {
+    final generation = _cache.generation;
+    final snapshot = _cache.chats;
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
@@ -38,8 +52,9 @@ class ChatRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
     final chats = _parseChatList(data);
-    _cachedChats = chats;
-    return chats;
+    return generation == _cache.generation
+        ? _cache.acceptRows(chats, snapshot: snapshot)
+        : chats;
   }
 
   /// GET /chats/search?query=... — chat list filtered by participant name.
@@ -110,6 +125,8 @@ class ChatRepository {
     String? beforeId,
     int? take,
   }) async {
+    final generation = _cache.generation;
+    final snapshot = _cache.detail(chatId);
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
@@ -126,8 +143,9 @@ class ChatRepository {
     );
 
     final detail = ChatDetail.fromJson(data as Map<String, dynamic>);
-    _cachedChatDetails[chatId] = detail;
-    return detail;
+    // History pages are not the latest page: never replace its warm snapshot.
+    if (beforeId != null || generation != _cache.generation) return detail;
+    return _cache.acceptDetail(detail, snapshot);
   }
 
   /// PATCH /chats/:id/read — mark chat as read (optional if using markRead=true on GET).
@@ -142,14 +160,14 @@ class ChatRepository {
     );
   }
 
-  /// POST /chats/upload-image — chat fotoğrafını yükler, kalıcı URL döner.
-  Future<String> uploadChatImage(File file) async {
+  /// POST /chats/upload-image — private chat fotoğrafını yükler.
+  Future<({String url, String objectKey})> uploadChatImage(File file) async {
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
     final uri = Uri.parse('${AppConfig.baseUrl}/chats/upload-image');
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeSplit = mimeType.split('/');
@@ -161,7 +179,7 @@ class ChatRepository {
       ),
     );
 
-    final streamed = await request.send();
+    final streamed = await sendMultipartRequest(request);
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode >= 400) {
       throw Exception('Image upload failed (${streamed.statusCode}): $body');
@@ -169,17 +187,23 @@ class ChatRepository {
     final json = jsonDecode(body) as Map<String, dynamic>;
     final url = (json['url'] ?? '').toString();
     if (url.isEmpty) throw Exception('Upload response missing url');
-    return url;
+    final objectKey = (json['object_key'] ?? '').toString();
+    if (objectKey.isEmpty) {
+      throw Exception('Upload response missing object key');
+    }
+    return (url: url, objectKey: objectKey);
   }
 
   /// POST /chats/upload-file — chat belgesini yükler, {url, file_name} döner.
-  Future<({String url, String fileName})> uploadChatFile(File file) async {
+  Future<({String url, String objectKey, String fileName})> uploadChatFile(
+    File file,
+  ) async {
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
     final uri = Uri.parse('${AppConfig.baseUrl}/chats/upload-file');
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeSplit = mimeType.split('/');
@@ -191,7 +215,7 @@ class ChatRepository {
       ),
     );
 
-    final streamed = await request.send();
+    final streamed = await sendMultipartRequest(request);
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode >= 400) {
       throw Exception('File upload failed (${streamed.statusCode}): $body');
@@ -199,22 +223,43 @@ class ChatRepository {
     final json = jsonDecode(body) as Map<String, dynamic>;
     final url = (json['url'] ?? '').toString();
     if (url.isEmpty) throw Exception('Upload response missing url');
+    final objectKey = (json['object_key'] ?? '').toString();
+    if (objectKey.isEmpty) {
+      throw Exception('Upload response missing object key');
+    }
     final fileName = (json['file_name'] ?? '').toString();
-    return (url: url, fileName: fileName);
+    return (url: url, objectKey: objectKey, fileName: fileName);
   }
 
-  /// POST /chats/:id/messages — send text, image or file message.
+  /// POST /chats/:id/messages — send text, image, file or venue card.
   Future<ChatMessage> sendMessage(
     String chatId, {
     required String messageType,
     String? text,
     String? imageUrl,
+    String? imageObjectKey,
     int? imageWidth,
     int? imageHeight,
     String? fileUrl,
+    String? fileObjectKey,
     String? fileName,
     String? clientMessageId,
+    String? replyToId,
+    String? venueId,
+    File? localUploadedImage,
   }) async {
+    final generation = _cache.generation;
+    Future<ChatMessage> confirmed(dynamic data) async {
+      final message = ChatMessage.fromJson(data as Map<String, dynamic>);
+      if (localUploadedImage != null && generation == _cache.generation) {
+        await cacheUploadedChatImage(message, localUploadedImage);
+      }
+      if (generation == _cache.generation) {
+        _cache.confirmedMessage(chatId, message);
+      }
+      return message;
+    }
+
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
@@ -224,6 +269,9 @@ class ChatRepository {
     }
     if (messageType == 'image' && imageUrl != null) {
       body['image_url'] = imageUrl;
+      if (imageObjectKey != null && imageObjectKey.trim().isNotEmpty) {
+        body['image_object_key'] = imageObjectKey.trim();
+      }
       if (imageWidth != null && imageWidth > 0) {
         body['image_width'] = imageWidth;
       }
@@ -233,12 +281,21 @@ class ChatRepository {
     }
     if (messageType == 'file' && fileUrl != null) {
       body['file_url'] = fileUrl;
+      if (fileObjectKey != null && fileObjectKey.trim().isNotEmpty) {
+        body['file_object_key'] = fileObjectKey.trim();
+      }
       if (fileName != null && fileName.trim().isNotEmpty) {
         body['file_name'] = fileName.trim();
       }
     }
+    if (messageType == 'venue' && venueId != null) {
+      body['venue_id'] = venueId;
+    }
     if (clientMessageId != null && clientMessageId.trim().isNotEmpty) {
       body['client_message_id'] = clientMessageId.trim();
+    }
+    if (replyToId != null && replyToId.trim().isNotEmpty) {
+      body['reply_to_id'] = replyToId.trim();
     }
 
     Future<dynamic> postMessage(Map<String, dynamic> payload) {
@@ -251,12 +308,12 @@ class ChatRepository {
 
     try {
       final data = await postMessage(body);
-      return ChatMessage.fromJson(data as Map<String, dynamic>);
+      return confirmed(data);
     } on ApiException catch (e) {
       if (e.statusCode == 429) {
         await Future.delayed(const Duration(milliseconds: 900));
         final retryData = await postMessage(body);
-        return ChatMessage.fromJson(retryData as Map<String, dynamic>);
+        return confirmed(retryData);
       }
 
       // Backward compatibility: some backend versions still reject client_message_id.
@@ -270,7 +327,7 @@ class ChatRepository {
       final fallbackBody = Map<String, dynamic>.from(body)
         ..remove('client_message_id');
       final fallbackData = await postMessage(fallbackBody);
-      return ChatMessage.fromJson(fallbackData as Map<String, dynamic>);
+      return confirmed(fallbackData);
     }
   }
 
@@ -359,6 +416,7 @@ class ChatRepository {
       '/chats/$chatId/messages/$messageId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    _cache.removeMessage(chatId, messageId);
   }
 
   /// DELETE /chats/:id — soft delete chat for current user.
@@ -369,6 +427,7 @@ class ChatRepository {
       '/chats/$chatId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    _cache.removeChat(chatId);
   }
 }
 

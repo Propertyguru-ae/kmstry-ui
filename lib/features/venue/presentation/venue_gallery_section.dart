@@ -7,8 +7,10 @@ import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
 
 const _kMagenta = Color(0xFFE020D8);
@@ -254,19 +256,10 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
       children: [
         // Header
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Row(
             children: [
-              Icon(Icons.photo_library_outlined, size: 18, color: kText),
-              const SizedBox(width: 8),
-              Text(
-                'Gallery',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: kText,
-                ),
-              ),
+              venueSectionTitle(context, AppColors.teal, 'Photos & Videos'),
               if (_items.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 Container(
@@ -343,7 +336,7 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
           )
         else if (_items.isEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 30),

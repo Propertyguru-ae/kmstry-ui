@@ -399,6 +399,170 @@ Future<bool> showCheckinExpiredDialog(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GENERIC PREMIUM PROMPT DIALOG (positive CTA)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Uygulama geneli premium bilgilendirme/CTA dialog'u — gradient ikon tile'ı,
+/// kalın başlık, açıklama, gradient birincil buton + hafif "not now" butonu.
+/// Birincil butona basılırsa `true`, iptal/dismiss'te `false` döner.
+Future<bool> showPremiumPromptDialog(
+  BuildContext context, {
+  required IconData icon,
+  required String title,
+  required String message,
+  required String confirmLabel,
+  String cancelLabel = 'Not now',
+  IconData? confirmIcon,
+}) async {
+  if (!context.mounted) return false;
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+
+  final result = await showDialog<bool>(
+    context: context,
+    barrierColor: Colors.black.withValues(alpha: 0.55),
+    builder: (ctx) {
+      final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+      final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+      final bodyColor = isDark
+          ? const Color(0xFFB4C2D8)
+          : AppColors.lightTextSecondary;
+
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.05),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
+                blurRadius: 34,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.blue, AppColors.magenta],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.magenta.withValues(alpha: 0.35),
+                        blurRadius: 22,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 32),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: bodyColor,
+                    fontSize: 14.5,
+                    height: 1.4,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: const LinearGradient(
+                        colors: [AppColors.blue, AppColors.magenta],
+                      ),
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => Navigator.pop(ctx, true),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (confirmIcon != null) ...[
+                                Icon(
+                                  confirmIcon,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(
+                                confirmLabel,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(44),
+                    foregroundColor: bodyColor,
+                  ),
+                  child: Text(
+                    cancelLabel,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+  return result == true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STORY SHARED CELEBRATION CARD
 // ─────────────────────────────────────────────────────────────────────────────
 
