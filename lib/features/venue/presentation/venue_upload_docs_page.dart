@@ -8,38 +8,37 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 
 // Renksiz sabitler — tema bağımsız
-const _kBlue   = AppColors.blue;
+const _kBlue = AppColors.blue;
 const _kBlueLt = AppColors.blueDark;
 const _kPurple = AppColors.magentaDark;
-const _kSec    = Color(0xFF5B6F8D);
-const _kTeal   = Color(0xFF00BFB3);
+const _kSec = Color(0xFF5B6F8D);
+const _kTeal = Color(0xFF00BFB3);
 
 class VenueUploadDocsPage extends StatefulWidget {
   final String venueName;
 
-  const VenueUploadDocsPage({
-    super.key,
-    required this.venueName,
-  });
+  const VenueUploadDocsPage({super.key, required this.venueName});
 
   @override
   State<VenueUploadDocsPage> createState() => _VenueUploadDocsPageState();
 }
 
 class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
-  final _repo   = VenueRepository();
+  final _repo = VenueRepository();
   final _picker = ImagePicker();
 
   String? _licenceUrl;
   String? _videoUrl;
-  bool _uploadingLicence    = false;
-  bool _uploadingVideo      = false;
-  bool _submitting          = false;
+  bool _uploadingLicence = false;
+  bool _uploadingVideo = false;
+  bool _submitting = false;
   bool _showValidationError = false;
 
   Future<void> _pickLicence() async {
@@ -55,7 +54,10 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
     try {
       final url = await _uploadFile(File(path), 'licence');
       if (!mounted) return;
-      setState(() { _licenceUrl = url; _showValidationError = false; });
+      setState(() {
+        _licenceUrl = url;
+        _showValidationError = false;
+      });
     } catch (e) {
       if (!mounted) return;
       _showError('Could not upload trade licence. Please try again.');
@@ -68,13 +70,19 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
     if (_uploadingVideo) return;
     final source = await _showVideoSourceSheet();
     if (source == null) return;
-    final xfile = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 2));
+    final xfile = await _picker.pickVideo(
+      source: source,
+      maxDuration: const Duration(minutes: 2),
+    );
     if (xfile == null) return;
     setState(() => _uploadingVideo = true);
     try {
       final url = await _uploadFile(File(xfile.path), 'video');
       if (!mounted) return;
-      setState(() { _videoUrl = url; _showValidationError = false; });
+      setState(() {
+        _videoUrl = url;
+        _showValidationError = false;
+      });
     } catch (e) {
       if (!mounted) return;
       _showError('Could not upload video. Please try again.');
@@ -86,7 +94,7 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
   Future<ImageSource?> _showVideoSourceSheet() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final kSheet = isDark ? const Color(0xFF0B1322) : Colors.white;
-    final kText  = isDark ? Colors.white : const Color(0xFF111827);
+    final kText = isDark ? Colors.white : const Color(0xFF111827);
     return showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: kSheet,
@@ -99,7 +107,8 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
           children: [
             const SizedBox(height: 12),
             Container(
-              width: 32, height: 4,
+              width: 32,
+              height: 4,
               decoration: BoxDecoration(
                 color: isDark ? Colors.white12 : Colors.black12,
                 borderRadius: BorderRadius.circular(2),
@@ -112,8 +121,14 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),
             ListTile(
-              leading: const Icon(Icons.video_library_outlined, color: _kBlueLt),
-              title: Text('Choose from gallery', style: TextStyle(color: kText)),
+              leading: const Icon(
+                Icons.video_library_outlined,
+                color: _kBlueLt,
+              ),
+              title: Text(
+                'Choose from gallery',
+                style: TextStyle(color: kText),
+              ),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
             const SizedBox(height: 8),
@@ -126,15 +141,19 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
   Future<String> _uploadFile(File file, String type) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
-    final uri = Uri.parse('${AppConfig.baseUrl}/venues/claim-draft/upload?type=$type');
+    final uri = Uri.parse(
+      '${AppConfig.baseUrl}/venues/claim-draft/upload?type=$type',
+    );
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token'
+      ..headers.addAll(await AppRequestHeaders.build(accessToken: token))
       ..files.add(await http.MultipartFile.fromPath('file', file.path));
-    final streamed = await request.send();
+    final streamed = await sendMultipartRequest(request);
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode >= 400) {
       Map<String, dynamic> data = {};
-      try { data = Map<String, dynamic>.from(jsonDecode(body) as Map); } catch (_) {}
+      try {
+        data = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      } catch (_) {}
       throw ApiException(statusCode: streamed.statusCode, data: data);
     }
     final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
@@ -182,7 +201,8 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 72, height: 72,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
                   color: _kTeal.withValues(alpha: 0.12),
                   border: Border.all(color: _kTeal.withValues(alpha: 0.30)),
@@ -191,9 +211,15 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                 child: const Icon(Icons.check_rounded, size: 34, color: _kTeal),
               ),
               const SizedBox(height: 20),
-              Text('Documents Submitted!',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800,
-                      color: kTitle, letterSpacing: -0.3)),
+              Text(
+                'Documents Submitted!',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: kTitle,
+                  letterSpacing: -0.3,
+                ),
+              ),
               const SizedBox(height: 10),
               const Text(
                 'Our team will review your ownership claim and get back to you soon.',
@@ -214,9 +240,14 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                     borderRadius: BorderRadius.circular(13),
                   ),
                   child: const Center(
-                    child: Text('Back to Home',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
-                            color: Colors.white)),
+                    child: Text(
+                      'Back to Home',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -240,14 +271,16 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark  = Theme.of(context).brightness == Brightness.dark;
-    final kBg     = isDark ? const Color(0xFF06091A) : Colors.white;
-    final kSheet  = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
     final kBorder = isDark ? const Color(0xFF1E3060) : const Color(0xFFD9E1EA);
-    final kHandle = isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08);
-    final kTitle  = isDark ? Colors.white : const Color(0xFF111827);
+    final kHandle = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.08);
+    final kTitle = isDark ? Colors.white : const Color(0xFF111827);
     final kSubtitle = isDark ? const Color(0xFFB1B4BB) : Colors.black54;
-    final top     = MediaQuery.of(context).padding.top;
+    final top = MediaQuery.of(context).padding.top;
 
     return Scaffold(
       backgroundColor: kBg,
@@ -266,53 +299,67 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: isDark
-                          ? [const Color(0xFF0D1F4A), const Color(0xFF1A0D3A), kBg]
-                          : [const Color(0xFFE8F0FF), const Color(0xFFF0E8FF), kBg],
+                          ? [
+                              const Color(0xFF0D1F4A),
+                              const Color(0xFF1A0D3A),
+                              kBg,
+                            ]
+                          : [
+                              const Color(0xFFE8F0FF),
+                              const Color(0xFFF0E8FF),
+                              kBg,
+                            ],
                       stops: const [0.0, 0.5, 1.0],
                     ),
                   ),
-                  child: Stack(children: [
-                    Positioned(
-                      left: -20, top: 30,
-                      child: Transform.rotate(
-                        angle: -8 * math.pi / 180,
-                        child: Container(
-                          width: 120, height: 80,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.04)
-                                : Colors.white.withValues(alpha: 0.60),
-                            border: Border.all(
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: -20,
+                        top: 30,
+                        child: Transform.rotate(
+                          angle: -8 * math.pi / 180,
+                          child: Container(
+                            width: 120,
+                            height: 80,
+                            decoration: BoxDecoration(
                               color: isDark
-                                  ? Colors.white.withValues(alpha: 0.06)
-                                  : _kBlue.withValues(alpha: 0.10),
+                                  ? Colors.white.withValues(alpha: 0.04)
+                                  : Colors.white.withValues(alpha: 0.60),
+                              border: Border.all(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.06)
+                                    : _kBlue.withValues(alpha: 0.10),
+                              ),
+                              borderRadius: BorderRadius.circular(14),
                             ),
-                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      right: -10, top: 20,
-                      child: Transform.rotate(
-                        angle: 6 * math.pi / 180,
-                        child: Container(
-                          width: 100, height: 70,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.04)
-                                : Colors.white.withValues(alpha: 0.60),
-                            border: Border.all(
+                      Positioned(
+                        right: -10,
+                        top: 20,
+                        child: Transform.rotate(
+                          angle: 6 * math.pi / 180,
+                          child: Container(
+                            width: 100,
+                            height: 70,
+                            decoration: BoxDecoration(
                               color: isDark
-                                  ? Colors.white.withValues(alpha: 0.06)
-                                  : _kBlue.withValues(alpha: 0.10),
+                                  ? Colors.white.withValues(alpha: 0.04)
+                                  : Colors.white.withValues(alpha: 0.60),
+                              border: Border.all(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.06)
+                                    : _kBlue.withValues(alpha: 0.10),
+                              ),
+                              borderRadius: BorderRadius.circular(14),
                             ),
-                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
                       ),
-                    ),
-                  ]),
+                    ],
+                  ),
                 ),
                 // Fade overlay to bg
                 Container(
@@ -352,7 +399,8 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
-                              width: 22, height: 22,
+                              width: 22,
+                              height: 22,
                               decoration: BoxDecoration(
                                 color: isDark
                                     ? const Color(0xFF1A2A50)
@@ -360,17 +408,24 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                                 shape: BoxShape.circle,
                               ),
                               child: Center(
-                                child: Icon(Icons.store_outlined, size: 12,
-                                    color: isDark ? _kBlueLt : _kBlue),
+                                child: Icon(
+                                  Icons.store_outlined,
+                                  size: 12,
+                                  color: isDark ? _kBlueLt : _kBlue,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 7),
-                            Text(widget.venueName,
-                                style: TextStyle(
-                                    fontSize: 11, fontWeight: FontWeight.w600,
-                                    color: isDark
-                                        ? const Color(0xFFBCC5D1)
-                                        : const Color(0xFF111827))),
+                            Text(
+                              widget.venueName,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? const Color(0xFFBCC5D1)
+                                    : const Color(0xFF111827),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -386,7 +441,9 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
             child: Container(
               decoration: BoxDecoration(
                 color: kSheet,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(26),
+                ),
                 border: Border(top: BorderSide(color: kBorder)),
               ),
               child: SingleChildScrollView(
@@ -397,7 +454,8 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                     // Handle
                     Center(
                       child: Container(
-                        width: 32, height: 4,
+                        width: 32,
+                        height: 4,
                         margin: const EdgeInsets.only(bottom: 20),
                         decoration: BoxDecoration(
                           color: kHandle,
@@ -409,8 +467,13 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                     // Title
                     RichText(
                       text: TextSpan(
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800,
-                            color: kTitle, letterSpacing: -0.5, height: 1.2),
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: kTitle,
+                          letterSpacing: -0.5,
+                          height: 1.2,
+                        ),
                         children: [
                           const TextSpan(text: 'Almost in.\nUpload to '),
                           WidgetSpan(
@@ -421,9 +484,15 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                                 colors: [_kBlueLt, _kPurple],
                               ).createShader(b),
                               blendMode: BlendMode.srcIn,
-                              child: const Text('unlock.',
-                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800,
-                                      color: Colors.white, letterSpacing: -0.5)),
+                              child: const Text(
+                                'unlock.',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -432,14 +501,23 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                     const SizedBox(height: 8),
                     Text(
                       'Your claim is registered. Upload your documents to complete verification and get full access to your venue account.',
-                      style: TextStyle(fontSize: 12.5, color: kSubtitle, height: 1.6),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: kSubtitle,
+                        height: 1.6,
+                      ),
                     ),
                     const SizedBox(height: 20),
 
-                    Text('DOCUMENTS NEEDED',
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
-                            letterSpacing: 1.0,
-                            color: isDark ? _kSec : const Color(0xFF5D6B7B))),
+                    Text(
+                      'DOCUMENTS NEEDED',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.0,
+                        color: isDark ? _kSec : const Color(0xFF5D6B7B),
+                      ),
+                    ),
                     const SizedBox(height: 10),
 
                     _DocCard(
@@ -471,7 +549,9 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                       decoration: BoxDecoration(
                         color: _kBlue.withValues(alpha: isDark ? 0.07 : 0.06),
-                        border: Border.all(color: _kBlue.withValues(alpha: 0.15)),
+                        border: Border.all(
+                          color: _kBlue.withValues(alpha: 0.15),
+                        ),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Column(
@@ -479,22 +559,40 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                         children: [
                           Row(
                             children: [
-                              const Icon(Icons.auto_awesome, size: 13, color: _kBlueLt),
+                              const Icon(
+                                Icons.auto_awesome,
+                                size: 13,
+                                color: _kBlueLt,
+                              ),
                               const SizedBox(width: 6),
-                              Text("After verification you'll unlock",
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-                                      color: isDark ? _kBlueLt : _kBlue)),
+                              Text(
+                                "After verification you'll unlock",
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: isDark ? _kBlueLt : _kBlue,
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),
-                          _TeaserItem(icon: Icons.bar_chart_outlined,
-                              label: 'Venue analytics & guest insights', isDark: isDark),
+                          _TeaserItem(
+                            icon: Icons.bar_chart_outlined,
+                            label: 'Venue analytics & guest insights',
+                            isDark: isDark,
+                          ),
                           const SizedBox(height: 6),
-                          _TeaserItem(icon: Icons.campaign_outlined,
-                              label: 'Promotions & event management', isDark: isDark),
+                          _TeaserItem(
+                            icon: Icons.campaign_outlined,
+                            label: 'Promotions & event management',
+                            isDark: isDark,
+                          ),
                           const SizedBox(height: 6),
-                          _TeaserItem(icon: Icons.star_outline,
-                              label: 'Review management & responses', isDark: isDark),
+                          _TeaserItem(
+                            icon: Icons.star_outline,
+                            label: 'Review management & responses',
+                            isDark: isDark,
+                          ),
                         ],
                       ),
                     ),
@@ -506,17 +604,21 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Row(
                           children: [
-                            const Icon(Icons.error_outline_rounded,
-                                size: 14, color: Color(0xFFFF6B6B)),
+                            const Icon(
+                              Icons.error_outline_rounded,
+                              size: 14,
+                              color: Color(0xFFFF6B6B),
+                            ),
                             const SizedBox(width: 6),
                             Text(
                               _licenceUrl == null
                                   ? 'Please upload your trade licence first.'
                                   : 'Please upload your ownership video first.',
                               style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFFFF6B6B)),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFFF6B6B),
+                              ),
                             ),
                           ],
                         ),
@@ -535,19 +637,31 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                         child: _submitting
                             ? const Center(
                                 child: SizedBox(
-                                  width: 20, height: 20,
+                                  width: 20,
+                                  height: 20,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white),
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               )
                             : const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.upload_outlined, size: 16, color: Colors.white),
+                                  Icon(
+                                    Icons.upload_outlined,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
                                   SizedBox(width: 8),
-                                  Text('Submit Documents',
-                                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                                          color: Colors.white)),
+                                  Text(
+                                    'Submit Documents',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                 ],
                               ),
                       ),
@@ -562,13 +676,21 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                         padding: const EdgeInsets.symmetric(vertical: 13),
                         decoration: BoxDecoration(
                           border: Border.all(
-                              color: isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA)),
+                            color: isDark
+                                ? const Color(0xFF162040)
+                                : const Color(0xFFD9E1EA),
+                          ),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: const Center(
-                          child: Text("I'll do this later",
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                  color: _kSec)),
+                          child: Text(
+                            "I'll do this later",
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _kSec,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -600,18 +722,23 @@ class _SpinningLockRingState extends State<_SpinningLockRing>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 12))
-      ..repeat();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    )..repeat();
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isDark  = widget.isDark;
-    final kBg     = isDark ? const Color(0xFF06091A) : Colors.white;
-    final ringBg  = isDark
+    final isDark = widget.isDark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final ringBg = isDark
         ? kBg.withValues(alpha: 0.80)
         : Colors.white.withValues(alpha: 0.85);
     final innerGrad = isDark
@@ -625,7 +752,8 @@ class _SpinningLockRingState extends State<_SpinningLockRing>
         : _kBlue.withValues(alpha: 0.12);
 
     return SizedBox(
-      width: 90, height: 90,
+      width: 90,
+      height: 90,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -640,7 +768,8 @@ class _SpinningLockRingState extends State<_SpinningLockRing>
             ),
           ),
           Container(
-            width: 80, height: 80,
+            width: 80,
+            height: 80,
             decoration: BoxDecoration(
               color: ringBg,
               border: Border.all(color: ringBorder),
@@ -648,7 +777,8 @@ class _SpinningLockRingState extends State<_SpinningLockRing>
             ),
             child: Center(
               child: Container(
-                width: 60, height: 60,
+                width: 60,
+                height: 60,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
@@ -658,7 +788,11 @@ class _SpinningLockRingState extends State<_SpinningLockRing>
                   border: Border.all(color: innerBorder),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.lock_outline_rounded, size: 26, color: _kPurple),
+                child: const Icon(
+                  Icons.lock_outline_rounded,
+                  size: 26,
+                  color: _kPurple,
+                ),
               ),
             ),
           ),
@@ -681,10 +815,13 @@ class _DashedCirclePainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     for (int i = 0; i < dashCount; i++) {
       final startAngle = i * dashAngle;
-      final endAngle   = startAngle + dashAngle * 0.45;
+      final endAngle = startAngle + dashAngle * 0.45;
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: r),
-        startAngle, endAngle - startAngle, false, paint,
+        startAngle,
+        endAngle - startAngle,
+        false,
+        paint,
       );
     }
   }
@@ -721,24 +858,26 @@ class _DocCard extends StatelessWidget {
     final Color bgColor = uploaded
         ? (isDark ? const Color(0xFF051E1E) : const Color(0xFFF0FAFA))
         : (required
-            ? (isDark ? const Color(0xFF0D1A30) : Colors.white)
-            : (isDark ? const Color(0xFF0A1428) : const Color(0xFFF8FAFF)));
+              ? (isDark ? const Color(0xFF0D1A30) : Colors.white)
+              : (isDark ? const Color(0xFF0A1428) : const Color(0xFFF8FAFF)));
     final Color border = uploaded
         ? _kTeal.withValues(alpha: isDark ? 0.35 : 0.45)
         : (required
-            ? (isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA))
-            : (isDark ? const Color(0xFF162040) : const Color(0xFFE8EEF5)));
+              ? (isDark ? const Color(0xFF1E3A6A) : const Color(0xFFD9E1EA))
+              : (isDark ? const Color(0xFF162040) : const Color(0xFFE8EEF5)));
     final Color iconBg = uploaded
         ? _kTeal.withValues(alpha: 0.15)
         : (required
-            ? (isDark ? const Color(0xFF1540A0) : const Color(0xFFDCEAFF))
-            : (isDark ? const Color(0xFF162040) : const Color(0xFFF0F4FA)));
+              ? (isDark ? const Color(0xFF1540A0) : const Color(0xFFDCEAFF))
+              : (isDark ? const Color(0xFF162040) : const Color(0xFFF0F4FA)));
     final Color iconColor = uploaded
         ? _kTeal
         : (required
-            ? (isDark ? const Color(0xFF90B8FF) : _kBlueLt)
-            : (isDark ? const Color(0xFF3A5880) : const Color(0xFF5D6B7B)));
-    final Color nameColor = isDark ? const Color(0xFFC8D8F0) : const Color(0xFF111827);
+              ? (isDark ? const Color(0xFF90B8FF) : _kBlueLt)
+              : (isDark ? const Color(0xFF3A5880) : const Color(0xFF5D6B7B)));
+    final Color nameColor = isDark
+        ? const Color(0xFFC8D8F0)
+        : const Color(0xFF111827);
 
     return GestureDetector(
       onTap: loading ? null : onTap,
@@ -746,25 +885,47 @@ class _DocCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
         decoration: BoxDecoration(
           color: bgColor,
-          border: Border.all(color: border, width: 1.5,
-              strokeAlign: BorderSide.strokeAlignInside),
+          border: Border.all(
+            color: border,
+            width: 1.5,
+            strokeAlign: BorderSide.strokeAlignInside,
+          ),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: isDark ? null : [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 6, offset: const Offset(0, 2)),
-          ],
+          boxShadow: isDark
+              ? null
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
         ),
         child: Row(
           children: [
             Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(13)),
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(13),
+              ),
               child: loading
                   ? const Center(
-                      child: SizedBox(width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: _kBlueLt)))
-                  : Icon(uploaded ? Icons.check_circle_outline : icon,
-                      size: 19, color: iconColor),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _kBlueLt,
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      uploaded ? Icons.check_circle_outline : icon,
+                      size: 19,
+                      color: iconColor,
+                    ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -773,84 +934,126 @@ class _DocCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Text(name,
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                              color: nameColor)),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: nameColor,
+                        ),
+                      ),
                       const SizedBox(width: 5),
                       if (uploaded)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: _kTeal.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Text('UPLOADED',
-                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
-                                  color: _kTeal)),
+                          child: const Text(
+                            'UPLOADED',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: _kTeal,
+                            ),
+                          ),
                         )
                       else
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: required
-                                ? const Color(0xFFEA5050).withValues(alpha: 0.15)
+                                ? const Color(
+                                    0xFFEA5050,
+                                  ).withValues(alpha: 0.15)
                                 : (isDark
-                                    ? Colors.white.withValues(alpha: 0.05)
-                                    : Colors.black.withValues(alpha: 0.05)),
+                                      ? Colors.white.withValues(alpha: 0.05)
+                                      : Colors.black.withValues(alpha: 0.05)),
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: Text(required ? 'REQUIRED' : 'OPTIONAL',
-                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
-                                  color: required
-                                      ? const Color(0xFFF08080)
-                                      : _kSec)),
+                          child: Text(
+                            required ? 'REQUIRED' : 'OPTIONAL',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: required ? const Color(0xFFF08080) : _kSec,
+                            ),
+                          ),
                         ),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Row(
-                    children: formats.map((f) => Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: uploaded
-                              ? _kTeal.withValues(alpha: 0.10)
-                              : (required
-                                  ? _kBlue.withValues(alpha: 0.15)
-                                  : (isDark
-                                      ? Colors.white.withValues(alpha: 0.04)
-                                      : Colors.black.withValues(alpha: 0.05))),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(f,
-                            style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600,
+                    children: formats
+                        .map(
+                          (f) => Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
                                 color: uploaded
-                                    ? _kTeal
-                                    : (required ? _kBlueLt : _kSec))),
-                      ),
-                    )).toList(),
+                                    ? _kTeal.withValues(alpha: 0.10)
+                                    : (required
+                                          ? _kBlue.withValues(alpha: 0.15)
+                                          : (isDark
+                                                ? Colors.white.withValues(
+                                                    alpha: 0.04,
+                                                  )
+                                                : Colors.black.withValues(
+                                                    alpha: 0.05,
+                                                  ))),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                f,
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: uploaded
+                                      ? _kTeal
+                                      : (required ? _kBlueLt : _kSec),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
               ),
             ),
             if (!uploaded)
               Container(
-                width: 34, height: 34,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   color: required
                       ? _kBlue.withValues(alpha: 0.20)
                       : (isDark
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : Colors.black.withValues(alpha: 0.05)),
+                            ? Colors.white.withValues(alpha: 0.05)
+                            : Colors.black.withValues(alpha: 0.05)),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.upload_outlined, size: 16,
-                    color: required ? _kBlueLt : _kSec),
+                child: Icon(
+                  Icons.upload_outlined,
+                  size: 16,
+                  color: required ? _kBlueLt : _kSec,
+                ),
               )
             else
               Container(
-                width: 34, height: 34,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   color: _kTeal.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
@@ -870,7 +1073,11 @@ class _TeaserItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool isDark;
-  const _TeaserItem({required this.icon, required this.label, required this.isDark});
+  const _TeaserItem({
+    required this.icon,
+    required this.label,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {

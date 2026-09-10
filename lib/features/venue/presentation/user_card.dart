@@ -37,6 +37,7 @@ class UserCard extends StatelessWidget {
             children: [
               CachedImage(
                 imageUrl,
+                mediaReference: user.featuredMediaReference,
                 fit: BoxFit.cover,
                 placeholder: (context) => Container(
                   color: colors.onSurface.withValues(alpha: 0.05),

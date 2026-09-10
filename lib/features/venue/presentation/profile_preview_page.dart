@@ -1651,26 +1651,31 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ),
       ),
       const SizedBox(height: 14),
-      _buildProfileContentTabs(onSurface, subColor, isDark),
-      const SizedBox(height: 16),
-      if (_selectedProfileTab == 0) ...[
-        _buildMomentsTabContent(
-          moments: moments,
-          canOpenVenue: canOpenVenue,
-          isDark: isDark,
-          subColor: subColor,
-          onSurface: onSurface,
-        ),
-        // "Suggested for you" bölümü gizlendi.
-        // ignore: dead_code
-        if (false && _showSuggestedForYou && moments.isEmpty)
-          _buildSuggestedForYou(onSurface, subColor, isDark),
-      ] else if (visitedPlaces.isEmpty)
-        _buildVisitedPlacesEmptyState(
-          isDark: isDark,
-          subColor: subColor,
-          onSurface: onSurface,
-        ),
+      // Engellenen kullanıcının moment'ları ve gidilen mekanları gizlenir.
+      if (_isBlocked)
+        _buildBlockedProfileNotice(onSurface, subColor)
+      else ...[
+        _buildProfileContentTabs(onSurface, subColor, isDark),
+        const SizedBox(height: 16),
+        if (_selectedProfileTab == 0) ...[
+          _buildMomentsTabContent(
+            moments: moments,
+            canOpenVenue: canOpenVenue,
+            isDark: isDark,
+            subColor: subColor,
+            onSurface: onSurface,
+          ),
+          // "Suggested for you" bölümü gizlendi.
+          // ignore: dead_code
+          if (false && _showSuggestedForYou && moments.isEmpty)
+            _buildSuggestedForYou(onSurface, subColor, isDark),
+        ] else if (visitedPlaces.isEmpty)
+          _buildVisitedPlacesEmptyState(
+            isDark: isDark,
+            subColor: subColor,
+            onSurface: onSurface,
+          ),
+      ],
     ];
 
     return Scaffold(
@@ -1723,7 +1728,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ),
                     sliver: SliverList.list(children: profileContent),
                   ),
-                  if (_selectedProfileTab == 1 && visitedPlaces.isNotEmpty)
+                  if (!_isBlocked &&
+                      _selectedProfileTab == 1 &&
+                      visitedPlaces.isNotEmpty)
                     _buildVisitedPlacesSliver(
                       places: visitedPlaces,
                       isDark: isDark,
@@ -2172,6 +2179,37 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return _buildFriendNoMomentsState(isDark, subColor);
   }
 
+  /// Engellenen kullanıcının profil içeriği (moment'lar / gidilen mekanlar)
+  /// yerine gösterilen bilgilendirme.
+  Widget _buildBlockedProfileNotice(Color onSurface, Color subColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.block_rounded, size: 46, color: subColor),
+            const SizedBox(height: 12),
+            Text(
+              'You blocked this user',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Their moments and visited places are hidden. Unblock to see their profile again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildVisitedPlacesEmptyState({
     required bool isDark,
     required Color subColor,
@@ -2591,7 +2629,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       width: width,
       height: height,
       child: media.mediaType == MediaType.photo
-          ? CachedImage(media.url, fit: BoxFit.cover)
+          ? CachedImage(
+              media.url,
+              mediaReference: media.mediaReference,
+              fit: BoxFit.cover,
+            )
           : _buildVideoCover(media: media, fit: BoxFit.cover, iconSize: 30),
     );
 

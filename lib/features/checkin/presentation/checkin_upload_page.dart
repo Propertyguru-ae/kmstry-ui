@@ -861,22 +861,17 @@ class _CheckInPageState extends State<CheckInPage> {
 
     final overlayJson = item.textOverlay?.toJsonString();
 
-    // 2️⃣ Doğrudan Spaces'e (presigned URL) yükle — dosya backend'e uğramaz,
-    //    daha hızlı ve backend'i yormaz. Herhangi bir aşama başarısız olursa
-    //    stabil multipart yoluna düşerek yüklemeyi garanti altına alırız.
+    // 2️⃣ Doğrudan Spaces'e (presigned URL) yükle — dosya backend'e uğramaz.
+    //    Yalnızca dosya Spaces'e ulaşmadan önceki hatalarda multipart'a düş.
+    //    PUT başarılı olduktan sonra confirm geçici olarak başarısızsa aynı
+    //    dosyayı ikinci kez yüklemek yerine idempotent confirm'i yeniden dene.
+    CheckinMediaUploadTarget? target;
     try {
-      final target = await _repo.createCheckinMediaUploadUrl(
+      target = await _repo.createCheckinMediaUploadUrl(
         checkinId: checkinId,
         file: fileToUpload,
       );
       await _repo.uploadFileToSignedUrl(target: target, file: fileToUpload);
-      await _repo.confirmCheckinMediaUpload(
-        checkinId: checkinId,
-        target: target,
-        file: fileToUpload,
-        isFeatured: isFeatured,
-        textOverlayJson: overlayJson,
-      );
     } catch (e) {
       debugPrint('⚠️ Direct upload failed, falling back to multipart: $e');
       await _repo.uploadCheckinMedia(
@@ -885,6 +880,29 @@ class _CheckInPageState extends State<CheckInPage> {
         isFeatured: isFeatured,
         textOverlayJson: overlayJson,
       );
+      return;
+    }
+
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await _repo.confirmCheckinMediaUpload(
+          checkinId: checkinId,
+          target: target,
+          file: fileToUpload,
+          isFeatured: isFeatured,
+          textOverlayJson: overlayJson,
+        );
+        return;
+      } catch (e) {
+        if (attempt == 2) rethrow;
+        debugPrint(
+          '⚠️ Direct upload confirmation failed; retrying '
+          '(${attempt + 1}/2): $e',
+        );
+        await Future<void>.delayed(
+          Duration(milliseconds: attempt == 0 ? 500 : 1500),
+        );
+      }
     }
   }
 
@@ -945,7 +963,13 @@ class _CheckInPageState extends State<CheckInPage> {
           ),
         ),
       ),
-      body: Stack(
+      // Bio (veya başka bir alan) dışında herhangi bir yere dokununca klavyeyi
+      // kapat. translucent: çocuk widget'lar kendi tıklamalarını alır, yalnızca
+      // boş alandaki dokunuşlar unfocus'u tetikler.
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Stack(
         children: [
           SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1226,6 +1250,7 @@ class _CheckInPageState extends State<CheckInPage> {
           // ── Upload progress overlay ─────────────────────────────────────
           if (_isSubmitting) _buildUploadOverlay(theme),
         ],
+        ),
       ),
     );
   }

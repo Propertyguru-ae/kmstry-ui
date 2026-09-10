@@ -30,6 +30,7 @@ class NotificationPermissionService {
       case AuthorizationStatus.provisional:
         return NotificationSystemStatus.provisional;
       case AuthorizationStatus.denied:
+      case AuthorizationStatus.deniedPermanently:
         return NotificationSystemStatus.denied;
       case AuthorizationStatus.notDetermined:
         return NotificationSystemStatus.notDetermined;

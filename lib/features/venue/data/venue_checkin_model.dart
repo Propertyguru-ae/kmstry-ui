@@ -1,3 +1,5 @@
+import '../../../core/media/media_reference.dart';
+
 class VenueCheckin {
   final String id;
   final String userId;
@@ -5,6 +7,7 @@ class VenueCheckin {
   final String userPhoto;
   final String? featuredPhoto;
   final bool isFeaturedVideo;
+  final MediaReference? featuredMediaReference;
 
   VenueCheckin({
     required this.id,
@@ -13,6 +16,7 @@ class VenueCheckin {
     required this.userPhoto,
     this.featuredPhoto,
     this.isFeaturedVideo = false,
+    this.featuredMediaReference,
   });
 
   factory VenueCheckin.fromJson(Map<String, dynamic> json) {
@@ -22,6 +26,7 @@ class VenueCheckin {
 
     String? featuredPhoto;
     bool isFeaturedVideo = false;
+    MediaReference? featuredMediaReference;
 
     if (media.isNotEmpty) {
       final normalizedMedia = media.whereType<Map>().map((e) {
@@ -38,9 +43,16 @@ class VenueCheckin {
             .toLowerCase();
         isFeaturedVideo = mediaType == 'video';
 
+        final parsedReference = MediaReference.fromJson(
+          featured,
+          fallbackId: featured['id']?.toString() ?? '',
+          legacyUrlKeys: const ['url'],
+        );
+
         if (isFeaturedVideo) {
           final thumbnail =
-              (featured['thumbnail_url'] ?? featured['thumbnailUrl']) as String?;
+              (featured['thumbnail_url'] ?? featured['thumbnailUrl'])
+                  as String?;
           if (thumbnail != null && thumbnail.isNotEmpty) {
             featuredPhoto = thumbnail;
           }
@@ -48,6 +60,7 @@ class VenueCheckin {
           final url = featured['url'] as String?;
           if (url != null && url.isNotEmpty) {
             featuredPhoto = url;
+            featuredMediaReference = parsedReference;
           }
         }
       }
@@ -79,6 +92,7 @@ class VenueCheckin {
           user['photo'] ?? 'https://via.placeholder.com/300x300.png?text=User',
       featuredPhoto: featuredPhoto,
       isFeaturedVideo: isFeaturedVideo,
+      featuredMediaReference: featuredMediaReference,
     );
   }
 }
