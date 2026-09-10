@@ -72,7 +72,7 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
       );
       if (mounted) setState(() => _event = updated);
     } catch (_) {}
-    if (_canViewAttendees) _loadAttendees();
+    if (_canViewAttendees) await _loadAttendees();
     widget.onChanged?.call();
   }
 
@@ -103,9 +103,14 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
       backgroundColor: kBg,
       body: Stack(
         children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.only(bottom: 40),
-            child: Column(
+          RefreshIndicator(
+            onRefresh: _reloadEvent,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
+              padding: const EdgeInsets.only(bottom: 40),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── COVER HERO ─────────────────────────────────────────────
@@ -312,6 +317,7 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                   ),
                 ),
               ],
+              ),
             ),
           ),
 

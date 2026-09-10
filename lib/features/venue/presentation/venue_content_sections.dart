@@ -5,6 +5,7 @@ import 'package:kmstry_frontend/features/venue/data/external_partnership_model.d
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_deal_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 
 /// Venue detay ve venue profil sayfalarında AYNI görünen, salt-görüntü içerik
 /// bölümleri. Tek kaynak olması için burada tutulur (deals chip'leri, upcoming
@@ -15,9 +16,8 @@ import 'package:kmstry_frontend/features/venue/presentation/personal_event_detai
 bool _isDark(BuildContext c) => Theme.of(c).brightness == Brightness.dark;
 Color _cardSurface(BuildContext c) =>
     _isDark(c) ? const Color(0xFF0D1525) : const Color(0xFFF4F7FB);
-Color _cardBorder(BuildContext c) => _isDark(c)
-    ? const Color(0xFF162040)
-    : Colors.black.withValues(alpha: 0.08);
+Color _cardBorder(BuildContext c) =>
+    _isDark(c) ? const Color(0xFF162040) : Colors.black.withValues(alpha: 0.08);
 Color _textPrimary(BuildContext c) =>
     _isDark(c) ? Colors.white : const Color(0xFF0F172A);
 Color _textFaint(BuildContext c) =>
@@ -146,6 +146,7 @@ class VenueUpcomingEventsSection extends StatelessWidget {
   final String venueName;
   final String? venueAddress;
   final String? venuePhotoUrl;
+  final bool openAsVenueMember;
 
   const VenueUpcomingEventsSection({
     super.key,
@@ -154,6 +155,7 @@ class VenueUpcomingEventsSection extends StatelessWidget {
     required this.venueName,
     this.venueAddress,
     this.venuePhotoUrl,
+    this.openAsVenueMember = false,
   });
 
   /// Bu haftanın (önümüzdeki 7 gün) upcoming event'lerini süzer: bitmemiş VE
@@ -203,13 +205,15 @@ class VenueUpcomingEventsSection extends StatelessWidget {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => PersonalEventDetailPage(
-            event: event,
-            venueId: venueId,
-            venueName: venueName,
-            venueAddress: venueAddress,
-            venuePhotoUrl: venuePhotoUrl,
-          ),
+          builder: (_) => openAsVenueMember
+              ? VenueEventDetailPage(event: event, venueId: venueId)
+              : PersonalEventDetailPage(
+                  event: event,
+                  venueId: venueId,
+                  venueName: venueName,
+                  venueAddress: venueAddress,
+                  venuePhotoUrl: venuePhotoUrl,
+                ),
         ),
       ),
       child: Container(

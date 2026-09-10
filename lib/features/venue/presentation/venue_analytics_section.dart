@@ -22,10 +22,10 @@ class VenueAnalyticsSection extends StatefulWidget {
   const VenueAnalyticsSection({super.key, required this.venueId});
 
   @override
-  State<VenueAnalyticsSection> createState() => _VenueAnalyticsSectionState();
+  State<VenueAnalyticsSection> createState() => VenueAnalyticsSectionState();
 }
 
-class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
+class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
   final _repo = VenueOwnerRepository();
   String _range = '7d';
   bool _loading = true;
@@ -82,6 +82,8 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
       });
     }
   }
+
+  Future<void> refresh() => _load();
 
   void _changeRange(String r) {
     if (r == _range && !_isCustom) return;

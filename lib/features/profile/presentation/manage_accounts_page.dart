@@ -79,9 +79,14 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
       ),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: colors.primary))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                padding: const EdgeInsets.all(16),
+                children: [
 
                 // ── Add Venue Account ────────────────────────────
                 _ActionCard(
@@ -214,7 +219,8 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                 ],
 
                 const SizedBox(height: 32),
-              ],
+                ],
+              ),
             ),
     );
   }

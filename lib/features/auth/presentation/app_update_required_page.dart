@@ -121,7 +121,7 @@ class _AppUpdateRequiredPageState extends State<AppUpdateRequiredPage> {
                     ),
                     const SizedBox(height: 22),
                     Text(
-                      'Update KMSTRY',
+                      'Update required',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.headlineSmall?.copyWith(
                         color: text,
@@ -130,7 +130,7 @@ class _AppUpdateRequiredPageState extends State<AppUpdateRequiredPage> {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'A newer version is required to keep KMSTRY secure and working smoothly.',
+                      'Please update KMSTRY to continue. This version is no longer supported.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: secondary,
@@ -169,7 +169,7 @@ class _AppUpdateRequiredPageState extends State<AppUpdateRequiredPage> {
                                 ),
                               )
                             : const Text(
-                                'Update now',
+                                'Update KMSTRY',
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w800,

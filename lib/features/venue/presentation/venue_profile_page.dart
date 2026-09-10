@@ -125,10 +125,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     });
   }
 
-  Future<void> _loadVenueProfile() async {
-    setState(() => _loading = true);
+  Future<void> _loadVenueProfile({bool showLoading = true}) async {
+    if (showLoading) setState(() => _loading = true);
     try {
-      final me = await AuthRepository().getMe();
+      final me = await AuthRepository().getMe(forceRefresh: !showLoading);
       final ctx = MeContextModel.fromMe(me);
       final username = me['username']?.toString();
       final fullName = (me['fullName'] ?? me['full_name'])?.toString();
@@ -183,9 +183,11 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
         // Permission'ları yükle (async, UI'ı bloklamaz)
         VenueSession.instance.load(venueId, resolvedRole);
         // Story state'i sadece boşsa yükle — viewer kapanınca optimistic update korunur
-        if (_avatarStories.isEmpty) _loadAvatarStories(venueId);
-        // Deals & discounts (best-effort, UI'ı bloklamaz).
-        _loadPartnerships(venueId);
+        if (showLoading) {
+          if (_avatarStories.isEmpty) _loadAvatarStories(venueId);
+          // Deals & discounts (best-effort, UI'ı bloklamaz).
+          _loadPartnerships(venueId);
+        }
       } else {
         if (!mounted) return;
         setState(() {
@@ -198,6 +200,16 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshVenueProfile() async {
+    await _loadVenueProfile(showLoading: false);
+    final venueId = _venue?.id;
+    if (venueId == null || venueId.isEmpty) return;
+    await Future.wait<void>([
+      _loadAvatarStories(venueId),
+      _loadPartnerships(venueId),
+    ]);
   }
 
   Future<void> _loadPartnerships(String venueId) async {
@@ -1065,9 +1077,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
-              child: ConstrainedBox(
+            return RefreshIndicator(
+              onRefresh: _refreshVenueProfile,
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1336,6 +1352,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           venueName: venue.name,
                           venueAddress: venue.address,
                           venuePhotoUrl: venue.photo,
+                          openAsVenueMember: true,
                         ),
                       ),
                     ],
@@ -1347,6 +1364,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           16,
                     ),
                   ],
+                ),
                 ),
               ),
             );
