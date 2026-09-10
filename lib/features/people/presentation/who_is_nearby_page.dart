@@ -243,6 +243,7 @@ class _NearbyUserCard extends StatelessWidget {
           if (imageUrl.isNotEmpty)
             CachedImage(
               imageUrl,
+              mediaReference: item.featuredMediaReference,
               fit: BoxFit.cover,
               errorWidget: (context) => _placeholder(),
             )

@@ -49,16 +49,35 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       ? widget.listVenueId!
       : widget.venue.id;
 
-  void _loadCheckins() {
+  Future<void> _loadCheckins() async {
+    final peopleFuture = _repo.getWhoIsHere(
+      _effectiveVenueIdForList,
+      filter: _filter.isEmpty ? null : _filter,
+    );
+    final statsFuture = _venueContextRepo.getVenueCheckinStats(
+      _effectiveVenueIdForList,
+    );
     setState(() {
-      _future = _repo.getWhoIsHere(
-        _effectiveVenueIdForList,
-        filter: _filter.isEmpty ? null : _filter,
-      );
-      _statsFuture = _venueContextRepo.getVenueCheckinStats(
-        _effectiveVenueIdForList,
-      );
+      _future = peopleFuture;
+      _statsFuture = statsFuture;
     });
+    try {
+      await Future.wait<Object>([peopleFuture, statsFuture]);
+    } catch (_) {
+      // FutureBuilder mevcut hata durumunu göstermeye devam eder.
+    }
+  }
+
+  Widget _refreshableFill(Widget child) {
+    return LayoutBuilder(
+      builder: (context, constraints) => RefreshIndicator(
+        onRefresh: _loadCheckins,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(height: constraints.maxHeight, child: child),
+        ),
+      ),
+    );
   }
 
   /// Advanced Filters (KMSTRY+): gate before opening the editor so free users
@@ -274,7 +293,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
 
                 if (snapshot.hasError) {
                   debugPrint('❌ VenuePeople error: ${snapshot.error}');
-                  return Center(
+                  return _refreshableFill(Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24.0),
                       child: Column(
@@ -318,46 +337,55 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
                         ],
                       ),
                     ),
-                  );
+                  ));
                 }
 
                 final people = snapshot.data!;
 
                 if (people.isEmpty) {
-                  return _PeopleEmptyState(
-                    filtered: _filter.isNotEmpty,
-                    onClear: _clearFilters,
+                  return _refreshableFill(
+                    _PeopleEmptyState(
+                      filtered: _filter.isNotEmpty,
+                      onClear: _clearFilters,
+                    ),
                   );
                 }
 
-                return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(6, 6, 6, 16),
-                  itemCount: people.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 4,
-                    crossAxisSpacing: 4,
-                    childAspectRatio: 0.72,
-                  ),
-                  itemBuilder: (context, index) {
-                    final person = people[index];
+                return RefreshIndicator(
+                  onRefresh: _loadCheckins,
+                  child: GridView.builder(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(6, 6, 6, 16),
+                    itemCount: people.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 4,
+                          crossAxisSpacing: 4,
+                          childAspectRatio: 0.72,
+                        ),
+                    itemBuilder: (context, index) {
+                      final person = people[index];
 
-                    return UserCard(
-                      user: person,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ProfilePreviewPage(
-                              checkinId: person.id,
-                              venueId: _effectiveVenueIdForList,
-                              hideVenueInfo: true,
+                      return UserCard(
+                        user: person,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ProfilePreviewPage(
+                                checkinId: person.id,
+                                venueId: _effectiveVenueIdForList,
+                                hideVenueInfo: true,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    );
-                  },
+                          );
+                        },
+                      );
+                    },
+                  ),
                 );
               },
             ),

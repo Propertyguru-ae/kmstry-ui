@@ -3,6 +3,7 @@ class VenueAnalytics {
   final String range;
   final int totalCheckins;
   final int uniqueVisitors;
+  final AnalyticsPrivacy privacy;
   final AnalyticsRepeat repeat;
   final List<AnalyticsDayCount> checkinsByDay;
   final List<AnalyticsHourCount> peakHours;
@@ -14,6 +15,7 @@ class VenueAnalytics {
     required this.range,
     required this.totalCheckins,
     required this.uniqueVisitors,
+    required this.privacy,
     required this.repeat,
     required this.checkinsByDay,
     required this.peakHours,
@@ -24,10 +26,18 @@ class VenueAnalytics {
 
   factory VenueAnalytics.fromJson(Map<String, dynamic> json) {
     final totals = Map<String, dynamic>.from(json['totals'] as Map? ?? {});
+    final privacyJson = json['privacy'];
+    final hasPrivacyMetadata = privacyJson is Map;
     return VenueAnalytics(
       range: json['range']?.toString() ?? '7d',
       totalCheckins: (totals['totalCheckins'] as num?)?.toInt() ?? 0,
       uniqueVisitors: (totals['uniqueVisitors'] as num?)?.toInt() ?? 0,
+      privacy: AnalyticsPrivacy.fromJson(
+        hasPrivacyMetadata
+            ? Map<String, dynamic>.from(privacyJson)
+            : const <String, dynamic>{},
+        legacyResponse: !hasPrivacyMetadata,
+      ),
       repeat: AnalyticsRepeat.fromJson(
         Map<String, dynamic>.from(json['repeatVisitors'] as Map? ?? {}),
       ),
@@ -54,6 +64,44 @@ class VenueAnalytics {
   }
 }
 
+class AnalyticsPrivacy {
+  final bool repeatMetricsAvailable;
+  final bool demographicsAvailable;
+  final int minimumRepeatCohortSize;
+  final int minimumDemographicCohortSize;
+  final int minimumVisibleCellCount;
+
+  const AnalyticsPrivacy({
+    required this.repeatMetricsAvailable,
+    required this.demographicsAvailable,
+    required this.minimumRepeatCohortSize,
+    required this.minimumDemographicCohortSize,
+    required this.minimumVisibleCellCount,
+  });
+
+  factory AnalyticsPrivacy.fromJson(
+    Map<String, dynamic> json, {
+    required bool legacyResponse,
+  }) {
+    return AnalyticsPrivacy(
+      // Older backend responses had no privacy contract. Preserve their
+      // existing rendering until the protected backend is deployed.
+      repeatMetricsAvailable: legacyResponse
+          ? true
+          : json['repeatMetricsAvailable'] == true,
+      demographicsAvailable: legacyResponse
+          ? true
+          : json['demographicsAvailable'] == true,
+      minimumRepeatCohortSize:
+          (json['minimumRepeatCohortSize'] as num?)?.toInt() ?? 5,
+      minimumDemographicCohortSize:
+          (json['minimumDemographicCohortSize'] as num?)?.toInt() ?? 10,
+      minimumVisibleCellCount:
+          (json['minimumVisibleCellCount'] as num?)?.toInt() ?? 3,
+    );
+  }
+}
+
 class AnalyticsIntent {
   final String intent; // enum key, örn. NEW_PEOPLE
   final int count;
@@ -72,7 +120,8 @@ class AnalyticsIntent {
     'LOOKING_FOR_FUN',
   ];
 
-  factory AnalyticsIntent.fromJson(Map<String, dynamic> json) => AnalyticsIntent(
+  factory AnalyticsIntent.fromJson(Map<String, dynamic> json) =>
+      AnalyticsIntent(
         intent: json['intent']?.toString() ?? '',
         count: (json['count'] as num?)?.toInt() ?? 0,
       );
@@ -116,7 +165,8 @@ class AnalyticsRepeat {
   int get total => newVisitors + returningVisitors;
   int get repeatPercent => (repeatRate * 100).round();
 
-  factory AnalyticsRepeat.fromJson(Map<String, dynamic> json) => AnalyticsRepeat(
+  factory AnalyticsRepeat.fromJson(Map<String, dynamic> json) =>
+      AnalyticsRepeat(
         newVisitors: (json['newVisitors'] as num?)?.toInt() ?? 0,
         returningVisitors: (json['returningVisitors'] as num?)?.toInt() ?? 0,
         repeatRate: (json['repeatRate'] as num?)?.toDouble() ?? 0.0,
@@ -129,7 +179,8 @@ class AnalyticsDayCount {
 
   const AnalyticsDayCount({required this.date, required this.count});
 
-  factory AnalyticsDayCount.fromJson(Map<String, dynamic> json) => AnalyticsDayCount(
+  factory AnalyticsDayCount.fromJson(Map<String, dynamic> json) =>
+      AnalyticsDayCount(
         date: json['date']?.toString() ?? '',
         count: (json['count'] as num?)?.toInt() ?? 0,
       );
@@ -141,7 +192,8 @@ class AnalyticsHourCount {
 
   const AnalyticsHourCount({required this.hour, required this.count});
 
-  factory AnalyticsHourCount.fromJson(Map<String, dynamic> json) => AnalyticsHourCount(
+  factory AnalyticsHourCount.fromJson(Map<String, dynamic> json) =>
+      AnalyticsHourCount(
         hour: (json['hour'] as num?)?.toInt() ?? 0,
         count: (json['count'] as num?)?.toInt() ?? 0,
       );
@@ -151,15 +203,23 @@ class AnalyticsGender {
   final int male;
   final int female;
   final int other;
+  final int withheldCount;
 
-  const AnalyticsGender({required this.male, required this.female, required this.other});
+  const AnalyticsGender({
+    required this.male,
+    required this.female,
+    required this.other,
+    this.withheldCount = 0,
+  });
 
   int get total => male + female + other;
 
-  factory AnalyticsGender.fromJson(Map<String, dynamic> json) => AnalyticsGender(
+  factory AnalyticsGender.fromJson(Map<String, dynamic> json) =>
+      AnalyticsGender(
         male: (json['male'] as num?)?.toInt() ?? 0,
         female: (json['female'] as num?)?.toInt() ?? 0,
         other: (json['other'] as num?)?.toInt() ?? 0,
+        withheldCount: (json['withheldCount'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -169,7 +229,8 @@ class AnalyticsAgeBucket {
 
   const AnalyticsAgeBucket({required this.bucket, required this.count});
 
-  factory AnalyticsAgeBucket.fromJson(Map<String, dynamic> json) => AnalyticsAgeBucket(
+  factory AnalyticsAgeBucket.fromJson(Map<String, dynamic> json) =>
+      AnalyticsAgeBucket(
         bucket: json['bucket']?.toString() ?? '',
         count: (json['count'] as num?)?.toInt() ?? 0,
       );
@@ -197,8 +258,12 @@ class WeeklyReport {
     final metrics = Map<String, dynamic>.from(json['metrics'] as Map? ?? {});
     return WeeklyReport(
       id: json['id']?.toString() ?? '',
-      periodStart: DateTime.tryParse(json['periodStart']?.toString() ?? '') ?? DateTime.now(),
-      periodEnd: DateTime.tryParse(json['periodEnd']?.toString() ?? '') ?? DateTime.now(),
+      periodStart:
+          DateTime.tryParse(json['periodStart']?.toString() ?? '') ??
+          DateTime.now(),
+      periodEnd:
+          DateTime.tryParse(json['periodEnd']?.toString() ?? '') ??
+          DateTime.now(),
       pdfUrl: json['pdfUrl']?.toString(),
       totalCheckins: (metrics['totalCheckins'] as num?)?.toInt() ?? 0,
       uniqueVisitors: (metrics['uniqueVisitors'] as num?)?.toInt() ?? 0,

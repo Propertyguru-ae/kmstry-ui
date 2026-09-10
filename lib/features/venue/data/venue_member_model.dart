@@ -53,6 +53,7 @@ enum VenuePermission {
   memberManage,
   roleManage,
   partnershipManage,
+  menuManage,
 }
 
 extension VenuePermissionExt on VenuePermission {
@@ -88,6 +89,8 @@ extension VenuePermissionExt on VenuePermission {
         return 'ROLE_MANAGE';
       case VenuePermission.partnershipManage:
         return 'PARTNERSHIP_MANAGE';
+      case VenuePermission.menuManage:
+        return 'MENU_MANAGE';
     }
   }
 
@@ -123,6 +126,8 @@ extension VenuePermissionExt on VenuePermission {
         return 'Manage roles & permissions';
       case VenuePermission.partnershipManage:
         return 'Manage partnerships';
+      case VenuePermission.menuManage:
+        return 'Add / manage menu';
     }
   }
 

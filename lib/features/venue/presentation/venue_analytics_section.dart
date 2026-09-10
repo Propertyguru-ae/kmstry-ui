@@ -22,10 +22,10 @@ class VenueAnalyticsSection extends StatefulWidget {
   const VenueAnalyticsSection({super.key, required this.venueId});
 
   @override
-  State<VenueAnalyticsSection> createState() => _VenueAnalyticsSectionState();
+  State<VenueAnalyticsSection> createState() => VenueAnalyticsSectionState();
 }
 
-class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
+class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
   final _repo = VenueOwnerRepository();
   String _range = '7d';
   bool _loading = true;
@@ -58,8 +58,11 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
     });
     try {
       final data = _isCustom
-          ? await _repo.getAnalytics(widget.venueId,
-              from: _ymd(_customFrom!), to: _ymd(_customTo!))
+          ? await _repo.getAnalytics(
+              widget.venueId,
+              from: _ymd(_customFrom!),
+              to: _ymd(_customTo!),
+            )
           : await _repo.getAnalytics(widget.venueId, range: _range);
       List<WeeklyReport> reports = _reports;
       try {
@@ -80,6 +83,8 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
     }
   }
 
+  Future<void> refresh() => _load();
+
   void _changeRange(String r) {
     if (r == _range && !_isCustom) return;
     setState(() {
@@ -96,10 +101,14 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
       context: context,
       firstDate: DateTime(now.year - 2),
       lastDate: now,
-      initialEntryMode: DatePickerEntryMode.calendarOnly, // takvimden seç, kalem yok
+      initialEntryMode:
+          DatePickerEntryMode.calendarOnly, // takvimden seç, kalem yok
       initialDateRange: _isCustom
           ? DateTimeRange(start: _customFrom!, end: _customTo!)
-          : DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now),
+          : DateTimeRange(
+              start: now.subtract(const Duration(days: 6)),
+              end: now,
+            ),
       helpText: 'Select date range',
       saveText: 'Apply',
       builder: (ctx, child) {
@@ -132,9 +141,9 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
   Future<void> _openReport(WeeklyReport r) async {
     final url = r.pdfUrl;
     if (url == null || url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PDF not ready yet')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('PDF not ready yet')));
       return;
     }
     if (_downloadingId != null) return;
@@ -144,7 +153,8 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
       final dir = await getTemporaryDirectory();
       String d(DateTime x) =>
           '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
-      final fileName = 'KMSTRY Weekly Report (${d(r.periodStart)} - ${d(r.periodEnd)}).pdf';
+      final fileName =
+          'KMSTRY Weekly Report (${d(r.periodStart)} - ${d(r.periodEnd)}).pdf';
       final path = '${dir.path}/$fileName';
       await Dio().download(url, path);
       final res = await OpenFilex.open(path);
@@ -187,9 +197,14 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
                   child: GestureDetector(
                     onTap: () => _changeRange(e.key),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
-                        color: selected ? _kBlue : colors.surfaceContainerHighest,
+                        color: selected
+                            ? _kBlue
+                            : colors.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -197,7 +212,9 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: selected ? Colors.white : colors.onSurface.withValues(alpha: 0.7),
+                          color: selected
+                              ? Colors.white
+                              : colors.onSurface.withValues(alpha: 0.7),
                         ),
                       ),
                     ),
@@ -209,15 +226,22 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
                 child: GestureDetector(
                   onTap: _pickCustomRange,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: _isCustom ? _kBlue : colors.surfaceContainerHighest,
+                      color: _isCustom
+                          ? _kBlue
+                          : colors.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
                       Icons.calendar_month_rounded,
                       size: 16,
-                      color: _isCustom ? Colors.white : colors.onSurface.withValues(alpha: 0.7),
+                      color: _isCustom
+                          ? Colors.white
+                          : colors.onSurface.withValues(alpha: 0.7),
                     ),
                   ),
                 ),
@@ -234,7 +258,11 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
                 const SizedBox(width: 4),
                 Text(
                   '${_fmtShort(_customFrom!)} – ${_fmtShort(_customTo!)}',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kBlue),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _kBlue,
+                  ),
                 ),
               ],
             ),
@@ -293,13 +321,23 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
       const SizedBox(height: 8),
       Text(
         '${d.uniqueVisitors} people checked in ${d.totalCheckins} times in this period.',
-        style: TextStyle(fontSize: 11.5, color: colors.onSurface.withValues(alpha: 0.6)),
+        style: TextStyle(
+          fontSize: 11.5,
+          color: colors.onSurface.withValues(alpha: 0.6),
+        ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
         title: 'New vs Returning Visitors',
-        subtitle: 'of ${d.uniqueVisitors} unique people · ${d.repeat.repeatPercent}% visited before',
-        child: d.repeat.total == 0
+        subtitle: d.privacy.repeatMetricsAvailable
+            ? 'of ${d.uniqueVisitors} unique people · ${d.repeat.repeatPercent}% visited before'
+            : null,
+        child: !d.privacy.repeatMetricsAvailable
+            ? _PrivacyProtectedChart(
+                minimumVisitors: d.privacy.minimumRepeatCohortSize,
+                insightLabel: 'Returning visitor insights',
+              )
+            : d.repeat.total == 0
             ? const _EmptyChart()
             : SizedBox(height: 180, child: _RepeatDonut(repeat: d.repeat)),
       ),
@@ -309,11 +347,14 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
         subtitle: _isCustom
             ? 'Grouped by period (tap a bar)'
             : (_range == '7d'
-                ? 'Daily check-ins — tap a bar'
-                : 'Grouped by period (one bar = several days) — tap a bar'),
+                  ? 'Daily check-ins — tap a bar'
+                  : 'Grouped by period (one bar = several days) — tap a bar'),
         child: d.checkinsByDay.isEmpty
             ? const _EmptyChart()
-            : SizedBox(height: 180, child: _TrendChart(points: d.checkinsByDay, color: _kBlue)),
+            : SizedBox(
+                height: 180,
+                child: _TrendChart(points: d.checkinsByDay, color: _kBlue),
+              ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
@@ -321,27 +362,69 @@ class _VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
         subtitle: 'Check-ins by hour (UTC)',
         child: d.peakHours.every((h) => h.count == 0)
             ? const _EmptyChart()
-            : SizedBox(height: 180, child: _PeakHoursChart(hours: d.peakHours, color: _kOrange)),
+            : SizedBox(
+                height: 180,
+                child: _PeakHoursChart(hours: d.peakHours, color: _kOrange),
+              ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
         title: 'Gender',
-        child: d.gender.total == 0
+        child: !d.privacy.demographicsAvailable
+            ? _PrivacyProtectedChart(
+                minimumVisitors: d.privacy.minimumDemographicCohortSize,
+                insightLabel: 'Demographic insights',
+              )
+            : d.gender.total == 0
             ? const _EmptyChart()
-            : SizedBox(height: 180, child: _GenderDonut(gender: d.gender)),
+            : Column(
+                children: [
+                  SizedBox(height: 180, child: _GenderDonut(gender: d.gender)),
+                  _SmallGroupsNotice(
+                    minimumCount: d.privacy.minimumVisibleCellCount,
+                  ),
+                ],
+              ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
         title: 'Age',
-        child: d.ageBreakdown.every((a) => a.count == 0)
+        child: !d.privacy.demographicsAvailable
+            ? _PrivacyProtectedChart(
+                minimumVisitors: d.privacy.minimumDemographicCohortSize,
+                insightLabel: 'Demographic insights',
+              )
+            : d.ageBreakdown.every((a) => a.count == 0)
             ? const _EmptyChart()
-            : SizedBox(height: 180, child: _AgeChart(buckets: d.ageBreakdown, color: _kPurple)),
+            : Column(
+                children: [
+                  SizedBox(
+                    height: 180,
+                    child: _AgeChart(buckets: d.ageBreakdown, color: _kPurple),
+                  ),
+                  _SmallGroupsNotice(
+                    minimumCount: d.privacy.minimumVisibleCellCount,
+                  ),
+                ],
+              ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
         title: 'Visit Intents',
         subtitle: 'What visitors selected at check-in',
-        child: _IntentBars(intents: d.topIntents),
+        child: !d.privacy.demographicsAvailable
+            ? _PrivacyProtectedChart(
+                minimumVisitors: d.privacy.minimumDemographicCohortSize,
+                insightLabel: 'Visit intent insights',
+              )
+            : Column(
+                children: [
+                  _IntentBars(intents: d.topIntents),
+                  _SmallGroupsNotice(
+                    minimumCount: d.privacy.minimumVisibleCellCount,
+                  ),
+                ],
+              ),
       ),
       const SizedBox(height: 16),
       _ChartCard(
@@ -389,20 +472,21 @@ _Scale _axisScale(int rawMax) {
 }
 
 AxisTitles _intLeftTitles(double step) => AxisTitles(
-      sideTitles: SideTitles(
-        showTitles: true,
-        interval: step,
-        reservedSize: 30,
-        getTitlesWidget: (v, meta) {
-          if ((v % step).abs() > 0.01) return const SizedBox.shrink();
-          return Text(v.toInt().toString(), style: const TextStyle(fontSize: 9));
-        },
-      ),
-    );
+  sideTitles: SideTitles(
+    showTitles: true,
+    interval: step,
+    reservedSize: 30,
+    getTitlesWidget: (v, meta) {
+      if ((v % step).abs() > 0.01) return const SizedBox.shrink();
+      return Text(v.toInt().toString(), style: const TextStyle(fontSize: 9));
+    },
+  ),
+);
 
 // ── Trend chart — always bars; adaptive day/period grouping + tap tooltip ─────
 
-String _shortDate(String date) => date.length >= 10 ? date.substring(5) : date; // MM-DD
+String _shortDate(String date) =>
+    date.length >= 10 ? date.substring(5) : date; // MM-DD
 
 class _TrendBucket {
   final String start;
@@ -412,8 +496,9 @@ class _TrendBucket {
 
   bool get isSingleDay => start == end;
   String get axisLabel => _shortDate(start);
-  String get tooltipRange =>
-      isSingleDay ? _shortDate(start) : '${_shortDate(start)} → ${_shortDate(end)}';
+  String get tooltipRange => isSingleDay
+      ? _shortDate(start)
+      : '${_shortDate(start)} → ${_shortDate(end)}';
 }
 
 class _TrendChart extends StatelessWidget {
@@ -438,29 +523,45 @@ class _TrendChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final buckets = _bucketize();
-    final rawMax = buckets.map((b) => b.count).fold<int>(0, (a, b) => a > b ? a : b);
+    final rawMax = buckets
+        .map((b) => b.count)
+        .fold<int>(0, (a, b) => a > b ? a : b);
     final scale = _axisScale(rawMax);
     final labelEvery = (buckets.length / 6).ceil().clamp(1, buckets.length);
-    final barWidth = buckets.length <= 7 ? 16.0 : (buckets.length <= 10 ? 12.0 : 9.0);
+    final barWidth = buckets.length <= 7
+        ? 16.0
+        : (buckets.length <= 10 ? 12.0 : 9.0);
 
     return BarChart(
       BarChartData(
         maxY: scale.maxY,
         alignment: BarChartAlignment.spaceAround,
-        gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: scale.step),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: scale.step,
+        ),
         borderData: FlBorderData(show: false),
         barTouchData: BarTouchData(
           touchTooltipData: BarTouchTooltipData(
             getTooltipColor: (_) => Colors.black87,
             getTooltipItem: (group, gi, rod, ri) => BarTooltipItem(
               '${buckets[group.x].tooltipRange}\n${rod.toY.toInt()} check-ins',
-              const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+              const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           leftTitles: _intLeftTitles(scale.step),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
@@ -468,11 +569,16 @@ class _TrendChart extends StatelessWidget {
               interval: 1,
               getTitlesWidget: (value, meta) {
                 final i = value.toInt();
-                if (i < 0 || i >= buckets.length) return const SizedBox.shrink();
+                if (i < 0 || i >= buckets.length) {
+                  return const SizedBox.shrink();
+                }
                 if (i % labelEvery != 0) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(buckets[i].axisLabel, style: const TextStyle(fontSize: 9)),
+                  child: Text(
+                    buckets[i].axisLabel,
+                    style: const TextStyle(fontSize: 9),
+                  ),
                 );
               },
             ),
@@ -480,14 +586,19 @@ class _TrendChart extends StatelessWidget {
         ),
         barGroups: [
           for (var i = 0; i < buckets.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(
-                toY: buckets[i].count.toDouble(),
-                color: color,
-                width: barWidth,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
-              ),
-            ]),
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: buckets[i].count.toDouble(),
+                  color: color,
+                  width: barWidth,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(3),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -503,25 +614,39 @@ class _PeakHoursChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rawMax = hours.map((h) => h.count).fold<int>(0, (a, b) => a > b ? a : b);
+    final rawMax = hours
+        .map((h) => h.count)
+        .fold<int>(0, (a, b) => a > b ? a : b);
     final scale = _axisScale(rawMax);
     return BarChart(
       BarChartData(
         maxY: scale.maxY,
-        gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: scale.step),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: scale.step,
+        ),
         borderData: FlBorderData(show: false),
         barTouchData: BarTouchData(
           touchTooltipData: BarTouchTooltipData(
             getTooltipColor: (_) => Colors.black87,
             getTooltipItem: (group, gi, rod, ri) => BarTooltipItem(
               '${group.x}:00\n${rod.toY.toInt()} check-ins',
-              const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+              const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           leftTitles: _intLeftTitles(scale.step),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
@@ -532,7 +657,7 @@ class _PeakHoursChart extends StatelessWidget {
                 if (h % 4 != 0) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text('${h}:00', style: const TextStyle(fontSize: 9)),
+                  child: Text('$h:00', style: const TextStyle(fontSize: 9)),
                 );
               },
             ),
@@ -540,14 +665,19 @@ class _PeakHoursChart extends StatelessWidget {
         ),
         barGroups: [
           for (final h in hours)
-            BarChartGroupData(x: h.hour, barRods: [
-              BarChartRodData(
-                toY: h.count.toDouble(),
-                color: color,
-                width: 6,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
-              ),
-            ]),
+            BarChartGroupData(
+              x: h.hour,
+              barRods: [
+                BarChartRodData(
+                  toY: h.count.toDouble(),
+                  color: color,
+                  width: 6,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(2),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -570,7 +700,11 @@ class _RepeatDonut extends StatelessWidget {
           color: _kTeal,
           title: '${(repeat.returningVisitors / total * 100).round()}%',
           radius: 48,
-          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+          titleStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
       if (repeat.newVisitors > 0)
         PieChartSectionData(
@@ -578,21 +712,33 @@ class _RepeatDonut extends StatelessWidget {
           color: _kBlue,
           title: '${(repeat.newVisitors / total * 100).round()}%',
           radius: 48,
-          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+          titleStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
     ];
     return Row(
       children: [
         Expanded(
           child: PieChart(
-            PieChartData(sections: sections, centerSpaceRadius: 34, sectionsSpace: 2),
+            PieChartData(
+              sections: sections,
+              centerSpaceRadius: 34,
+              sectionsSpace: 2,
+            ),
           ),
         ),
         Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _LegendDot(color: _kTeal, label: 'Returning', value: repeat.returningVisitors),
+            _LegendDot(
+              color: _kTeal,
+              label: 'Returning',
+              value: repeat.returningVisitors,
+            ),
             const SizedBox(height: 8),
             _LegendDot(color: _kBlue, label: 'New', value: repeat.newVisitors),
           ],
@@ -619,7 +765,11 @@ class _GenderDonut extends StatelessWidget {
           color: _kMagenta,
           title: '${(gender.female / total * 100).round()}%',
           radius: 48,
-          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+          titleStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
       if (gender.male > 0)
         PieChartSectionData(
@@ -627,7 +777,11 @@ class _GenderDonut extends StatelessWidget {
           color: _kBlue,
           title: '${(gender.male / total * 100).round()}%',
           radius: 48,
-          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+          titleStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
       if (gender.other > 0)
         PieChartSectionData(
@@ -635,14 +789,22 @@ class _GenderDonut extends StatelessWidget {
           color: Colors.grey,
           title: '${(gender.other / total * 100).round()}%',
           radius: 48,
-          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+          titleStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
         ),
     ];
     return Row(
       children: [
         Expanded(
           child: PieChart(
-            PieChartData(sections: sections, centerSpaceRadius: 34, sectionsSpace: 2),
+            PieChartData(
+              sections: sections,
+              centerSpaceRadius: 34,
+              sectionsSpace: 2,
+            ),
           ),
         ),
         Column(
@@ -654,7 +816,11 @@ class _GenderDonut extends StatelessWidget {
             _LegendDot(color: _kBlue, label: 'Male', value: gender.male),
             if (gender.other > 0) ...[
               const SizedBox(height: 8),
-              _LegendDot(color: Colors.grey, label: 'Other', value: gender.other),
+              _LegendDot(
+                color: Colors.grey,
+                label: 'Other',
+                value: gender.other,
+              ),
             ],
           ],
         ),
@@ -668,16 +834,27 @@ class _LegendDot extends StatelessWidget {
   final Color color;
   final String label;
   final int value;
-  const _LegendDot({required this.color, required this.label, required this.value});
+  const _LegendDot({
+    required this.color,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
         const SizedBox(width: 6),
-        Text('$label  $value', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(
+          '$label  $value',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
       ],
     );
   }
@@ -692,27 +869,44 @@ class _AgeChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visible = buckets.where((b) => b.bucket != 'unknown' || b.count > 0).toList();
-    final rawMax = visible.map((b) => b.count).fold<int>(0, (a, b) => a > b ? a : b);
+    final visible = buckets
+        .where((b) => b.bucket != 'unknown' || b.count > 0)
+        .toList();
+    final rawMax = visible
+        .map((b) => b.count)
+        .fold<int>(0, (a, b) => a > b ? a : b);
     final scale = _axisScale(rawMax);
     return BarChart(
       BarChartData(
         maxY: scale.maxY,
-        gridData: FlGridData(show: true, drawVerticalLine: false, horizontalInterval: scale.step),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: scale.step,
+        ),
         borderData: FlBorderData(show: false),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           leftTitles: _intLeftTitles(scale.step),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
               getTitlesWidget: (value, meta) {
                 final i = value.toInt();
-                if (i < 0 || i >= visible.length) return const SizedBox.shrink();
+                if (i < 0 || i >= visible.length) {
+                  return const SizedBox.shrink();
+                }
                 return Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(visible[i].bucket, style: const TextStyle(fontSize: 9)),
+                  child: Text(
+                    visible[i].bucket,
+                    style: const TextStyle(fontSize: 9),
+                  ),
                 );
               },
             ),
@@ -720,14 +914,19 @@ class _AgeChart extends StatelessWidget {
         ),
         barGroups: [
           for (var i = 0; i < visible.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(
-                toY: visible[i].count.toDouble(),
-                color: color,
-                width: 22,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-              ),
-            ]),
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: visible[i].count.toDouble(),
+                  color: color,
+                  width: 22,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(4),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -749,12 +948,15 @@ class _IntentBars extends StatelessWidget {
     for (final it in intents) {
       if (counts.containsKey(it.intent)) counts[it.intent] = it.count;
     }
-    final all = counts.entries
-        .map((e) => AnalyticsIntent(intent: e.key, count: e.value))
-        .toList()
-      ..sort((a, b) => b.count.compareTo(a.count));
+    final all =
+        counts.entries
+            .map((e) => AnalyticsIntent(intent: e.key, count: e.value))
+            .toList()
+          ..sort((a, b) => b.count.compareTo(a.count));
 
-    final maxCount = all.map((i) => i.count).fold<int>(0, (a, b) => a > b ? a : b);
+    final maxCount = all
+        .map((i) => i.count)
+        .fold<int>(0, (a, b) => a > b ? a : b);
     final top = all.take(8).toList();
     return Column(
       children: top.map((it) {
@@ -767,7 +969,10 @@ class _IntentBars extends StatelessWidget {
                 width: 120,
                 child: Text(
                   it.label,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -789,7 +994,10 @@ class _IntentBars extends StatelessWidget {
                 child: Text(
                   it.count.toString(),
                   textAlign: TextAlign.right,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -831,11 +1039,27 @@ class _SummaryCard extends StatelessWidget {
         children: [
           Icon(icon, color: color, size: 22),
           const SizedBox(height: 10),
-          Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 2),
-          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colors.onSurface.withValues(alpha: 0.7))),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
           if (hint != null)
-            Text(hint!, style: TextStyle(fontSize: 10.5, color: colors.onSurface.withValues(alpha: 0.45))),
+            Text(
+              hint!,
+              style: TextStyle(
+                fontSize: 10.5,
+                color: colors.onSurface.withValues(alpha: 0.45),
+              ),
+            ),
         ],
       ),
     );
@@ -862,10 +1086,19 @@ class _ChartCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          ),
           if (subtitle != null) ...[
             const SizedBox(height: 2),
-            Text(subtitle!, style: TextStyle(fontSize: 11, color: colors.onSurface.withValues(alpha: 0.5))),
+            Text(
+              subtitle!,
+              style: TextStyle(
+                fontSize: 11,
+                color: colors.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
           ],
           const SizedBox(height: 14),
           child,
@@ -886,8 +1119,93 @@ class _EmptyChart extends StatelessWidget {
       child: Center(
         child: Text(
           'No data for this range',
-          style: TextStyle(color: colors.onSurface.withValues(alpha: 0.4), fontSize: 13),
+          style: TextStyle(
+            color: colors.onSurface.withValues(alpha: 0.4),
+            fontSize: 13,
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _PrivacyProtectedChart extends StatelessWidget {
+  final int minimumVisitors;
+  final String insightLabel;
+
+  const _PrivacyProtectedChart({
+    required this.minimumVisitors,
+    required this.insightLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 120),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _kBlue.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _kBlue.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.shield_outlined, color: _kBlue, size: 25),
+          const SizedBox(height: 9),
+          const Text(
+            'Not enough visitor data',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            '$insightLabel become available after at least $minimumVisitors unique visitors to help protect visitor privacy.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              height: 1.35,
+              fontSize: 12,
+              color: colors.onSurface.withValues(alpha: 0.62),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SmallGroupsNotice extends StatelessWidget {
+  final int minimumCount;
+
+  const _SmallGroupsNotice({required this.minimumCount});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.lock_outline_rounded,
+            size: 13,
+            color: colors.onSurface.withValues(alpha: 0.45),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              'Groups smaller than $minimumCount are withheld for privacy.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10.5,
+                color: colors.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -897,7 +1215,11 @@ class _ReportRow extends StatelessWidget {
   final WeeklyReport report;
   final bool downloading;
   final VoidCallback onDownload;
-  const _ReportRow({required this.report, required this.downloading, required this.onDownload});
+  const _ReportRow({
+    required this.report,
+    required this.downloading,
+    required this.onDownload,
+  });
 
   String _fmt(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
@@ -917,11 +1239,17 @@ class _ReportRow extends StatelessWidget {
               children: [
                 Text(
                   '${_fmt(report.periodStart)} – ${_fmt(report.periodEnd)}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 Text(
                   '${report.totalCheckins} check-ins · ${report.uniqueVisitors} visitors',
-                  style: TextStyle(fontSize: 11, color: colors.onSurface.withValues(alpha: 0.55)),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.onSurface.withValues(alpha: 0.55),
+                  ),
                 ),
               ],
             ),

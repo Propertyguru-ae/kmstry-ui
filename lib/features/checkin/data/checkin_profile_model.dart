@@ -1,3 +1,6 @@
+import '../../../core/media/media_reference.dart';
+import '../../media/media_text_overlay.dart';
+
 enum MediaType { photo, video }
 
 class CheckinProfileMedia {
@@ -7,6 +10,8 @@ class CheckinProfileMedia {
   final bool isFeatured;
   final String? thumbnailUrl;
   final int? durationSeconds;
+  final MediaReference? mediaReference;
+  final MediaTextOverlay? textOverlay;
 
   CheckinProfileMedia({
     required this.id,
@@ -15,6 +20,8 @@ class CheckinProfileMedia {
     required this.isFeatured,
     this.thumbnailUrl,
     this.durationSeconds,
+    this.mediaReference,
+    this.textOverlay,
   });
 
   factory CheckinProfileMedia.fromJson(Map<String, dynamic> json) {
@@ -27,9 +34,16 @@ class CheckinProfileMedia {
     } else if (rawDuration != null) {
       duration = int.tryParse(rawDuration.toString());
     }
+    final id = json['id']?.toString() ?? '';
+    final mediaReference = MediaReference.fromJson(
+      json,
+      fallbackId: id,
+      legacyUrlKeys: const ['url'],
+    );
     return CheckinProfileMedia(
-      id: json['id']?.toString() ?? '',
-      url: json['url']?.toString() ?? '',
+      id: id,
+      url: mediaReference.url,
+      mediaReference: mediaReference,
       mediaType:
           (normalizedType == 'video' ||
               normalizedType?.startsWith('video/') == true)
@@ -38,6 +52,9 @@ class CheckinProfileMedia {
       isFeatured: json['is_featured'] == true || json['isFeatured'] == true,
       thumbnailUrl: (json['thumbnail_url'] ?? json['thumbnailUrl'])?.toString(),
       durationSeconds: duration,
+      textOverlay: MediaTextOverlay.fromJson(
+        json['text_overlay'] ?? json['textOverlay'],
+      ),
     );
   }
 
@@ -49,6 +66,7 @@ class CheckinProfileMedia {
     bool? isFeatured,
     String? thumbnailUrl,
     int? durationSeconds,
+    MediaReference? mediaReference,
   }) {
     return CheckinProfileMedia(
       id: id ?? this.id,
@@ -57,6 +75,8 @@ class CheckinProfileMedia {
       isFeatured: isFeatured ?? this.isFeatured,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       durationSeconds: durationSeconds ?? this.durationSeconds,
+      mediaReference: mediaReference ?? this.mediaReference,
+      textOverlay: textOverlay,
     );
   }
 }

@@ -26,6 +26,7 @@ import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
 import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
@@ -33,7 +34,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_p
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_owner_guests_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_manage_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
 class AppShell extends StatefulWidget {
@@ -45,11 +46,17 @@ class AppShell extends StatefulWidget {
   /// Passed straight through to venue tabs so they don't re-fetch context.
   final String? initialVenueId;
 
+  /// When true the shell opens on the active context's Profile tab instead of
+  /// Home — used when the user switches account from the profile screen so they
+  /// stay on Profile rather than being dropped on Home.
+  final bool openProfileTab;
+
   const AppShell({
     super.key,
     this.initialIndex = 0,
     this.initialIsVenueContext = false,
     this.initialVenueId,
+    this.openProfileTab = false,
   });
 
   @override
@@ -58,6 +65,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
+  bool _openProfilePending = false;
   String _userInitial = '?';
   String? _userAvatarUrl;
   int _unreadNotificationCount = 0;
@@ -94,6 +102,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+    _openProfilePending = widget.openProfileTab;
     // Apply auth-gate context immediately so the first frame is correct.
     if (widget.initialIsVenueContext) {
       _isVenueContext = true;
@@ -121,7 +130,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     CheckinPingManager.I.configure(
       getLocation: () async {
         // Low accuracy (network/cell-based) konum, sınıra yakın gerçek
-        // check-in'lerde 200m'yi yanlışlıkla aşıp check-in'i erken kapatabiliyordu.
+        // check-in'lerde mesafe sınırını yanlışlıkla aşıp check-in'i erken kapatabiliyordu.
         final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
         );
@@ -158,7 +167,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   /// Aktif check-in olmadığında: backend'e "yenilenebilir son check-in" sor;
-  /// varsa ve mevcut konum ≤200m ise yenileme dialog'unu göster. Konum yoksa
+  /// varsa ve mevcut konum izin verilen mesafedeyse yenileme dialog'unu göster. Konum yoksa
   /// (izin/GPS) sessizce atlar — açılışta zorla GPS istemez.
   Future<void> _maybePromptColdStartRenewal() async {
     try {
@@ -175,7 +184,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         r.venueLatitude,
         r.venueLongitude,
       );
-      if (distance > 200 || !mounted) return;
+      if (distance > CheckinLocationPolicy.maxDistanceMeters || !mounted) {
+        return;
+      }
 
       await _showCheckinRenewalDialog(
         CheckinRenewalInfo(
@@ -675,7 +686,32 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
   }
 
-  Future<void> _switchToVenue(MemberVenue venue) async {
+  /// In-place switch to the personal context landing on the Profile tab — the
+  /// smooth counterpart of [_switchToVenue] for the profile-screen switcher.
+  Future<void> _switchToPersonalProfile() async {
+    await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+    if (!mounted) return;
+    if (!_hasPersonalProfile) {
+      // No personal profile yet → let the gate handle onboarding.
+      Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
+      return;
+    }
+    setState(() {
+      _isVenueContext = false;
+      _activeVenueId = null;
+      _activeAccount = 'Personal';
+      _currentIndex = 0;
+      _openProfilePending = true;
+    });
+    AuthRepository.invalidateMeCache();
+    _loadUserInitial();
+    _loadUnreadNotificationCount();
+  }
+
+  Future<void> _switchToVenue(
+    MemberVenue venue, {
+    bool openProfile = false,
+  }) async {
     await AuthRepository().switchContext(
       lastActiveContext: 'VENUE',
       activeVenueId: venue.id,
@@ -686,7 +722,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _activeAccount = venue.name;
       _activeVenueId = venue.id;
       _currentIndex = 0;
+      // Land on the venue Profile tab when the switch came from the profile
+      // screen (consumed in build via the stable tab id).
+      _openProfilePending = openProfile;
     });
+    // Refresh the new venue's context (session, permissions, member list) so the
+    // freshly-keyed venue pages render the right venue, not the previous one.
+    AuthRepository.invalidateMeCache();
+    _loadUserInitial();
     _loadUnreadNotificationCount();
   }
 
@@ -714,14 +757,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
+      // isScrollControlled: varsayılan ~9/16 ekran sınırını kaldırır — sabit
+      // footer + venue listesi o sınırı birkaç px aşıp "bottom overflow"
+      // veriyordu. maxHeight ile de aşırı uzamayı engelliyoruz; venue listesi
+      // zaten Flexible olduğundan çok hesap varsa içeride scroll olur.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Handle bar
               Container(
                 width: 40,
@@ -882,9 +934,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.of(this.context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const AccountSettingsPage(),
-                    ),
+                    MaterialPageRoute(builder: (_) => const SettingsPage()),
                   );
                 },
               ),
@@ -938,6 +988,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
               const SizedBox(height: 8),
             ],
+            ),
           ),
         );
       },
@@ -951,9 +1002,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final tabs = _isVenueContext
         ? _venueTabs(isDark, theme)
         : _personalTabs(isDark, theme);
+    // One-shot: open the active context's Profile tab (used after an account
+    // switch initiated from the profile screen).
+    if (_openProfilePending) {
+      _openProfilePending = false;
+      final profileId = _isVenueContext
+          ? kVenueProfileTabId
+          : kPersonalProfileTabId;
+      final profileIndex = tabs.indexWhere((t) => t.id == profileId);
+      if (profileIndex >= 0) _currentIndex = profileIndex;
+    }
     final safeIndex = _currentIndex >= tabs.length
         ? tabs.length - 1
         : _currentIndex;
+    final isPersonalDiscoverTab = tabs[safeIndex].id == kPersonalDiscoverTabId;
 
     return NotificationUnreadScope(
       unreadCount: _unreadNotificationCount,
@@ -968,8 +1030,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           final i = tabs.indexWhere((t) => t.id == id);
           if (i >= 0) _onItemTapped(i);
         },
+        switchToVenueProfile: (venue) =>
+            _switchToVenue(venue, openProfile: true),
+        switchToPersonalProfile: _switchToPersonalProfile,
         child: Scaffold(
           extendBody: true,
+          // Keep the map viewport fixed while the place-search keyboard is
+          // open. Resizing the native map view shifts its camera and briefly
+          // exposes the Scaffold background behind the search field.
+          resizeToAvoidBottomInset: !isPersonalDiscoverTab,
           body: tabs[safeIndex].page,
           bottomNavigationBar: _buildNavBar(tabs, safeIndex, isDark, theme),
         ),
@@ -977,49 +1046,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  /// Centre navbar check-in button — a filled accent circle so it reads as the
-  /// primary action, distinct from the flat destination icons around it.
-  Widget _buildCheckinNavButton(ThemeData theme) {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: const LinearGradient(
-          colors: [AppColors.blue, AppColors.teal],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.blue.withValues(alpha: 0.34),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: AppColors.teal.withValues(alpha: 0.18),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
-          ),
-        ],
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-            ),
-          ),
-          const Icon(
-            Icons.add_location_alt_rounded,
-            color: Colors.white,
-            size: 25,
-          ),
-        ],
+  /// Centre navbar check-in action — a flat icon, consistent with the other
+  /// destination icons (no filled background).
+  Widget _buildCheckinNavButton(ThemeData theme, bool active) {
+    // Merkez birincil aksiyon: modal (sheet açılınca navbar kapanır) olduğu için
+    // anlık "seçili" durumu gösterilemez; bu yüzden ikon HER ZAMAN pembe→turuncu
+    // gradyanla dolu → diğer gri ikonlardan ayrışır, öne çıkar.
+    return _NavIconShell(
+      active: active,
+      child: _navGradientIcon(
+        // Seçili olmayan diğer ikonlarla aynı renk (gradyan/dolgu yok).
+        Icons.add_location_alt_outlined,
+        active: false,
+        size: 27,
+        theme: theme,
       ),
     );
   }
@@ -1100,8 +1140,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageIcon(Color color) {
-    final icon = Icon(Icons.chat_bubble_outline, size: 27, color: color);
+  Widget _buildMessageIcon({required bool active, required ThemeData theme}) {
+    // Aktifken diğer sekmeler gibi pembe→turuncu gradyan; rozet kendi renginde.
+    final icon = _navGradientIcon(
+      Icons.chat_bubble_outline,
+      active: active,
+      size: 27,
+      theme: theme,
+    );
     if (_unreadDmCount <= 0) {
       return icon;
     }
@@ -1139,13 +1185,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return isDark ? const Color(0xFF6F7D96) : const Color(0xFF7A879A);
   }
 
-  /// Aktif sekme ikon rengi. Dark mode'da beyaz; light mode'da navbar beyaz
-  /// olduğu için beyaz görünmez olurdu → logo mavisi kullanılır.
-  Color _navActiveColor(ThemeData theme) {
-    final isDark = theme.brightness == Brightness.dark;
-    return isDark ? Colors.white : AppColors.blue;
-  }
-
   /// Builds a nav-icon closure so an icon's active/inactive rendering stays
   /// coupled to its tab (no index math).
   Widget Function(bool) _navIconBuilder(
@@ -1155,11 +1194,35 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   ) {
     return (bool active) => _NavIconShell(
       active: active,
-      child: Icon(
+      child: _navGradientIcon(
         active ? filled : outlined,
+        active: active,
         size: active ? 28 : 27,
-        color: active ? _navActiveColor(theme) : _navInactiveColor(theme),
+        theme: theme,
       ),
+    );
+  }
+
+  /// Nav icon: pasifken sade renk, aktifken içi pembe→turuncu (dot rengi) dolu.
+  Widget _navGradientIcon(
+    IconData icon, {
+    required bool active,
+    required double size,
+    required ThemeData theme,
+  }) {
+    final iconWidget = Icon(
+      icon,
+      size: size,
+      color: active ? Colors.white : _navInactiveColor(theme),
+    );
+    if (!active) return iconWidget;
+    return ShaderMask(
+      shaderCallback: (rect) => const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [AppColors.magentaDark, AppColors.orange],
+      ).createShader(rect),
+      child: iconWidget,
     );
   }
 
@@ -1181,7 +1244,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _NavTab(
         // Centre action: opens the quick check-in flow. Never a destination.
         page: const PersonalHomePage(),
-        icon: (_) => _buildCheckinNavButton(theme),
+        icon: (active) => _buildCheckinNavButton(theme, active),
         action: () => QuickCheckinLauncher().launch(context),
       ),
       _NavTab(
@@ -1189,9 +1252,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         page: DmListPage(key: _dmListKey),
         icon: (active) => _NavIconShell(
           active: active,
-          child: _buildMessageIcon(
-            active ? _navActiveColor(theme) : _navInactiveColor(theme),
-          ),
+          child: _buildMessageIcon(active: active, theme: theme),
         ),
         onSelected: () {
           _dmListKey.currentState?.loadChats();
@@ -1215,12 +1276,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return [
       _NavTab(
         id: kVenueHomeTabId,
-        page: VenueAccountHomePage(venueId: _activeVenueId),
+        page: VenueAccountHomePage(
+          key: ValueKey('venueHome_$_activeVenueId'),
+          venueId: _activeVenueId,
+        ),
         icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
       ),
       _NavTab(
         id: kVenueGuestsTabId,
         page: VenueOwnerGuestsPage(
+          key: ValueKey('venueGuests_$_activeVenueId'),
           venueId: _activeVenueId,
           isPendingClaim: _isPendingClaim,
           isRejectedClaim: _isRejectedClaim,
@@ -1229,12 +1294,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
       _NavTab(
         id: kVenueManageTabId,
-        page: VenueManagePage(venueId: _activeVenueId),
+        page: VenueManagePage(
+          key: ValueKey('venueManage_$_activeVenueId'),
+          venueId: _activeVenueId,
+        ),
         icon: _navIconBuilder(Icons.grid_view, Icons.grid_view_outlined, theme),
       ),
       _NavTab(
         id: kVenueProfileTabId,
         page: VenueProfilePage(
+          key: ValueKey('venueProfile_$_activeVenueId'),
           activeVenueName: _activeAccount == 'Personal' ? null : _activeAccount,
           venueNames: _memberVenues.map((v) => v.name).toList(),
           venueId: _activeVenueId,
@@ -1255,20 +1324,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     final List<Widget> items = [
       for (var i = 0; i < tabs.length; i++)
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            final action = tabs[i].action;
-            if (action != null) {
-              action();
-            } else {
-              _onItemTapped(i, tabs[i].onSelected);
-            }
-          },
-          child: SizedBox.expand(
-            child: Center(child: tabs[i].icon(safeIndex == i)),
+        if (tabs[i].action != null)
+          // Aksiyon butonu (ör. hızlı check-in): FAB gibi basılınca kısa
+          // ölçek animasyonu ile geri bildirim.
+          _PressableScale(
+            onTap: tabs[i].action!,
+            child: SizedBox.expand(
+              child: Center(child: tabs[i].icon(safeIndex == i)),
+            ),
+          )
+        else
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _onItemTapped(i, tabs[i].onSelected),
+            child: SizedBox.expand(
+              child: Center(child: tabs[i].icon(safeIndex == i)),
+            ),
           ),
-        ),
     ];
 
     return Container(
@@ -1317,10 +1389,13 @@ class _NavIconShell extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               width: active ? 5 : 0,
               height: active ? 5 : 0,
+              // Aktif sayfa göstergesi: logodan ayrışsın diye pembe→turuncu.
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [AppColors.blue, AppColors.teal],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.magentaDark, AppColors.orange],
                 ),
               ),
             ),
@@ -1373,10 +1448,20 @@ class AppShellNav extends InheritedWidget {
   /// Kimlik bulunamazsa hiçbir şey yapmaz — güvenli.
   final void Function(String id) selectTabId;
 
+  /// Switches the active account to [venue] in place (no navigation) and lands
+  /// on the venue's Profile tab — used by the profile-screen account switcher so
+  /// the transition stays smooth and keeps the user on Profile.
+  final void Function(MemberVenue venue) switchToVenueProfile;
+
+  /// Switches to the personal context in place and lands on the Profile tab.
+  final VoidCallback switchToPersonalProfile;
+
   const AppShellNav({
     super.key,
     required this.selectTab,
     required this.selectTabId,
+    required this.switchToVenueProfile,
+    required this.switchToPersonalProfile,
     required super.child,
   });
 
@@ -1421,4 +1506,43 @@ class _NavTab {
     this.action,
     this.id,
   });
+}
+
+/// FAB tarzı basılma geri bildirimi: dokununca kısa süre küçülüp bırakılınca
+/// eski boyutuna döner. Nav'daki aksiyon butonları (hızlı check-in) için.
+class _PressableScale extends StatefulWidget {
+  const _PressableScale({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_PressableScale> createState() => _PressableScaleState();
+}
+
+class _PressableScaleState extends State<_PressableScale> {
+  double _scale = 1.0;
+
+  void _setScale(double value) {
+    if (mounted) setState(() => _scale = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _setScale(0.84),
+      onTapUp: (_) {
+        _setScale(1.0);
+        widget.onTap();
+      },
+      onTapCancel: () => _setScale(1.0),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
+    );
+  }
 }

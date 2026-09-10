@@ -17,6 +17,9 @@ import 'core/push/push_background_handler.dart';
 import 'core/push/push_manager.dart';
 import 'core/push/push_deep_link_handler.dart';
 import 'core/linking/app_links_bootstrap.dart';
+import 'core/config/app_config.dart';
+import 'core/network/api_client.dart';
+import 'core/update/app_update_coordinator.dart';
 
 late List<CameraDescription> cameras;
 
@@ -26,6 +29,10 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Fail immediately if a release build was produced without explicit,
+  // production-safe API and public-site origins.
+  AppConfig.validateForStartup();
 
   // Must be registered before Firebase.initializeApp so the background isolate
   // can find the handler when the app is terminated.
@@ -87,6 +94,8 @@ Future<void> main() async {
 
   // Wire up silent 401 token-refresh interceptor.
   AuthRepository.init(navigatorKey: navigatorKey);
+  AppUpdateCoordinator.instance.init(navigatorKey);
+  ApiClient.onUpdateRequired = AppUpdateCoordinator.instance.show;
 
   runApp(
     ChangeNotifierProvider(

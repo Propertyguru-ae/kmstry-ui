@@ -1651,26 +1651,31 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         ),
       ),
       const SizedBox(height: 14),
-      _buildProfileContentTabs(onSurface, subColor, isDark),
-      const SizedBox(height: 16),
-      if (_selectedProfileTab == 0) ...[
-        _buildMomentsTabContent(
-          moments: moments,
-          canOpenVenue: canOpenVenue,
-          isDark: isDark,
-          subColor: subColor,
-          onSurface: onSurface,
-        ),
-        // "Suggested for you" bölümü gizlendi.
-        // ignore: dead_code
-        if (false && _showSuggestedForYou && moments.isEmpty)
-          _buildSuggestedForYou(onSurface, subColor, isDark),
-      ] else if (visitedPlaces.isEmpty)
-        _buildVisitedPlacesEmptyState(
-          isDark: isDark,
-          subColor: subColor,
-          onSurface: onSurface,
-        ),
+      // Engellenen kullanıcının moment'ları ve gidilen mekanları gizlenir.
+      if (_isBlocked)
+        _buildBlockedProfileNotice(onSurface, subColor)
+      else ...[
+        _buildProfileContentTabs(onSurface, subColor, isDark),
+        const SizedBox(height: 16),
+        if (_selectedProfileTab == 0) ...[
+          _buildMomentsTabContent(
+            moments: moments,
+            canOpenVenue: canOpenVenue,
+            isDark: isDark,
+            subColor: subColor,
+            onSurface: onSurface,
+          ),
+          // "Suggested for you" bölümü gizlendi.
+          // ignore: dead_code
+          if (false && _showSuggestedForYou && moments.isEmpty)
+            _buildSuggestedForYou(onSurface, subColor, isDark),
+        ] else if (visitedPlaces.isEmpty)
+          _buildVisitedPlacesEmptyState(
+            isDark: isDark,
+            subColor: subColor,
+            onSurface: onSurface,
+          ),
+      ],
     ];
 
     return Scaffold(
@@ -1709,9 +1714,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
 
             Expanded(
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
+              child: RefreshIndicator(
+                onRefresh: _loadProfile,
+                child: CustomScrollView(
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  slivers: [
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(
                       20,
@@ -1723,14 +1732,17 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ),
                     sliver: SliverList.list(children: profileContent),
                   ),
-                  if (_selectedProfileTab == 1 && visitedPlaces.isNotEmpty)
+                  if (!_isBlocked &&
+                      _selectedProfileTab == 1 &&
+                      visitedPlaces.isNotEmpty)
                     _buildVisitedPlacesSliver(
                       places: visitedPlaces,
                       isDark: isDark,
                       subColor: subColor,
                       onSurface: onSurface,
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -1866,17 +1878,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return SizedBox(
       width: 184,
       height: 44,
-      child: OutlinedButton.icon(
+      child: FilledButton.icon(
         onPressed: _openChat,
         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 17),
         label: const Text('Message'),
-        style: OutlinedButton.styleFrom(
+        style: FilledButton.styleFrom(
           minimumSize: const Size(0, 44),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          foregroundColor: AppTheme.brandPrimary,
-          side: BorderSide(
-            color: AppTheme.brandPrimary.withValues(alpha: 0.62),
-          ),
+          backgroundColor: AppTheme.brandCta,
+          foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -2174,6 +2184,37 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return _buildFriendNoMomentsState(isDark, subColor);
   }
 
+  /// Engellenen kullanıcının profil içeriği (moment'lar / gidilen mekanlar)
+  /// yerine gösterilen bilgilendirme.
+  Widget _buildBlockedProfileNotice(Color onSurface, Color subColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.block_rounded, size: 46, color: subColor),
+            const SizedBox(height: 12),
+            Text(
+              'You blocked this user',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Their moments and visited places are hidden. Unblock to see their profile again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildVisitedPlacesEmptyState({
     required bool isDark,
     required Color subColor,
@@ -2348,9 +2389,16 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return '${months[local.month - 1]} ${local.day} · $hour:$minute $period';
   }
 
+  // Guards against a rapid double-tap opening the venue detail page twice —
+  // the resolve step is async, so two taps can both push before the first
+  // navigation starts.
+  bool _openingVenueDetail = false;
+
   Future<void> _openVisitedVenueDetail(CheckinVisitedPlace place) async {
+    if (_openingVenueDetail) return;
     final venueId = (place.venueId ?? '').trim();
     if (venueId.isEmpty) return;
+    _openingVenueDetail = true;
     Venue? venue;
     try {
       final venueData = await _venueContextRepository.getVenueById(venueId);
@@ -2389,10 +2437,17 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           isInDb: true,
           canCheckin: true,
         );
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
-    );
+    if (!mounted) {
+      _openingVenueDetail = false;
+      return;
+    }
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
+      );
+    } finally {
+      _openingVenueDetail = false;
+    }
   }
 
   Widget _buildFriendNoMomentsState(bool isDark, Color subColor) {
@@ -2579,7 +2634,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       width: width,
       height: height,
       child: media.mediaType == MediaType.photo
-          ? CachedImage(media.url, fit: BoxFit.cover)
+          ? CachedImage(
+              media.url,
+              mediaReference: media.mediaReference,
+              fit: BoxFit.cover,
+            )
           : _buildVideoCover(media: media, fit: BoxFit.cover, iconSize: 30),
     );
 

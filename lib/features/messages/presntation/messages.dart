@@ -5,12 +5,15 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/ui/connection_error_view.dart';
+import 'package:kmstry_frontend/core/network/network_error.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_memory_cache.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/messages/presntation/message_settings_page.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
@@ -33,25 +36,45 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   List<ChatListItem> _chats = [];
   bool _loading = true;
   String? _error;
+  bool _errorOffline = false;
   String? _currentUserId;
   String _searchQuery = '';
   Timer? _searchDebounce;
   int _requestId = 0;
   DateTime? _lastFetchTime;
   final Set<String> _deletingChatIds = <String>{};
+  final Set<String> _prefetchedChatIds = <String>{};
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
   Timer? _realtimeRefreshDebounce;
+  StreamSubscription<String>? _cacheChangesSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     debugPrint('💬 [Messages] Listener baglaniyor');
+    final cachedChats = _repo.cachedChats;
+    if (cachedChats != null) {
+      _chats = cachedChats;
+      _loading = false;
+    }
     _bindRealtimeStreams();
+    _cacheChangesSub = _repo.cacheChanges.listen((_) {
+      if (!mounted) return;
+      final cached = _repo.cachedChats;
+      if (cached == null) return;
+      setState(() {
+        // Preserve server-side search membership, but update matching rows now.
+        _chats = ChatMemoryCache.reconcileRows(_chats, cached);
+      });
+    });
     unawaited(_connectRealtime());
-    _loadCurrentUser();
-    loadChats();
+    // Önce mevcut kullanıcı id'sini yükle, SONRA listeyi çek: aksi halde liste
+    // currentUserId gelmeden çizilip "karşı taraf"ı yanlış (kendi hesabın)
+    // seçebiliyordu. Backend artık other_user gönderiyor ama bu sıralama, o
+    // düşmeden önceki eski istemci davranışına karşı da ikinci bir güvence.
+    unawaited(_loadCurrentUser().whenComplete(loadChats));
   }
 
   @override
@@ -59,6 +82,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     debugPrint('💬 [Messages] Listener temizleniyor');
     _realtimeEventsSub?.cancel();
+    _cacheChangesSub?.cancel();
     _realtimeStateSub?.cancel();
     _realtimeRefreshDebounce?.cancel();
     _searchDebounce?.cancel();
@@ -70,7 +94,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     unawaited(_connectRealtime());
-    _scheduleRealtimeRefresh();
+    _scheduleRealtimeRefresh(force: true);
   }
 
   void _bindRealtimeStreams() {
@@ -90,27 +114,30 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         case 'chat.unread.updated':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] Local update yok, fallback refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'chat.updated':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] chat.updated local update yok, refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'message.created':
           if (!_applyChatRowUpdate(envelope.payload)) {
             debugPrint('💬 [Messages] message.created fallback refresh');
-            _scheduleRealtimeRefresh();
+            _scheduleRealtimeRefresh(force: true);
           }
+          _scheduleRealtimeRefresh(force: true);
           return;
         case 'message.updated':
         case 'message.deleted':
         case 'chat.read':
         case 'socket.reconnected':
           debugPrint('💬 [Messages] Liste refresh tetiklendi');
-          _scheduleRealtimeRefresh();
+          _scheduleRealtimeRefresh(force: true);
           return;
       }
     });
@@ -122,12 +149,12 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     await _realtime.connectWithToken(token: token);
   }
 
-  void _scheduleRealtimeRefresh() {
+  void _scheduleRealtimeRefresh({bool force = false}) {
     _realtimeRefreshDebounce?.cancel();
     _realtimeRefreshDebounce = Timer(const Duration(milliseconds: 220), () {
       if (!mounted) return;
       debugPrint('💬 [Messages] GET /chats refresh calisti');
-      loadChats(silent: true);
+      loadChats(silent: true, force: force);
     });
   }
 
@@ -161,23 +188,54 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     return null;
   }
 
+  Map<String, dynamic>? _readMapField(Map<String, dynamic> map, String key) {
+    final value = map[key];
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return value.map((k, v) => MapEntry(k.toString(), v));
+    return null;
+  }
+
+  String? _messagePreviewFromPayload(Map<String, dynamic> message) {
+    final messageType = _readStringField(message, const [
+      'messageType',
+      'message_type',
+    ]);
+    final text = _readStringField(message, const ['text']);
+    if (messageType == 'image') return '[Photo]';
+    if (messageType == 'file') return '[Document]';
+    if (messageType == 'venue') return '[Venue]';
+    if (text != null) return text.length > 100 ? text.substring(0, 100) : text;
+    return null;
+  }
+
   bool _applyChatRowUpdate(Map<String, dynamic> payload) {
-    final chatId = _readStringField(payload, const ['chatId', 'chat_id']);
+    final message = _readMapField(payload, 'message');
+    final chatId =
+        _readStringField(payload, const ['chatId', 'chat_id']) ??
+        (message == null
+            ? null
+            : _readStringField(message, const ['chatId', 'chat_id']));
     if (chatId == null) return false;
     final unread = _readIntField(payload, const [
       'unreadCount',
       'unread_count',
     ]);
-    final preview = _readStringField(payload, const [
-      'lastMessagePreview',
-      'last_message_preview',
-    ]);
-    final lastMessageAt = _readDateField(payload, const [
-      'lastMessageAt',
-      'last_message_at',
-      'createdAt',
-      'created_at',
-    ]);
+    final preview =
+        _readStringField(payload, const [
+          'lastMessagePreview',
+          'last_message_preview',
+        ]) ??
+        (message == null ? null : _messagePreviewFromPayload(message));
+    final lastMessageAt =
+        _readDateField(payload, const [
+          'lastMessageAt',
+          'last_message_at',
+          'createdAt',
+          'created_at',
+        ]) ??
+        (message == null
+            ? null
+            : _readDateField(message, const ['createdAt', 'created_at']));
     final hasAnyPatchData =
         unread != null || preview != null || lastMessageAt != null;
     if (!hasAnyPatchData) return false;
@@ -185,29 +243,40 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     final index = _chats.indexWhere((chat) => chat.id == chatId);
     if (index < 0) return false;
     final current = _chats[index];
+    final messageSenderId = message == null
+        ? null
+        : _readStringField(message, const ['senderId', 'sender_id']);
+    final nextUnread =
+        unread ??
+        (messageSenderId != null &&
+                _currentUserId != null &&
+                messageSenderId != _currentUserId
+            ? current.unreadCount + 1
+            : current.unreadCount);
     final updated = ChatListItem(
       id: current.id,
-      lastMessageAt: lastMessageAt ?? current.lastMessageAt,
-      unreadCount: unread ?? current.unreadCount,
-      lastMessagePreview: preview ?? current.lastMessagePreview,
+      lastMessageAt:
+          lastMessageAt == null ||
+              (current.lastMessageAt?.isAfter(lastMessageAt) ?? false)
+          ? current.lastMessageAt
+          : lastMessageAt,
+      unreadCount: nextUnread,
+      lastMessagePreview:
+          lastMessageAt != null &&
+              (current.lastMessageAt?.isAfter(lastMessageAt) ?? false)
+          ? current.lastMessagePreview
+          : preview ?? current.lastMessagePreview,
       otherUser: current.otherUser,
       user1: current.user1,
       user2: current.user2,
+      isBlocked: current.isBlocked,
     );
 
     if (!mounted) return true;
     setState(() {
       final next = List<ChatListItem>.from(_chats);
       next[index] = updated;
-      next.sort((a, b) {
-        final ad = a.lastMessageAt;
-        final bd = b.lastMessageAt;
-        if (ad == null && bd == null) return 0;
-        if (ad == null) return 1;
-        if (bd == null) return -1;
-        return bd.compareTo(ad);
-      });
-      _chats = next;
+      _chats = ChatMemoryCache.sorted(next);
     });
     debugPrint(
       '💬 [Messages] Local row guncellendi: chatId=$chatId unread=${updated.unreadCount}',
@@ -253,9 +322,10 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> loadChats({bool silent = false}) async {
+  Future<void> loadChats({bool silent = false, bool force = false}) async {
     final now = DateTime.now();
-    if (silent &&
+    if (!force &&
+        silent &&
         _lastFetchTime != null &&
         now.difference(_lastFetchTime!) < const Duration(seconds: 3)) {
       return;
@@ -263,6 +333,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     _lastFetchTime = now;
     final activeQuery = _searchQuery.trim();
     final requestId = ++_requestId;
+    final rowsAtRequestStart = {for (final row in _chats) row.id: row};
     if (!silent) {
       setState(() {
         _loading = true;
@@ -274,18 +345,43 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
 
       if (!mounted || requestId != _requestId) return;
       setState(() {
-        _chats = list;
+        _chats = ChatMemoryCache.reconcileRows(
+          list,
+          _chats
+              .where((row) => !identical(row, rowsAtRequestStart[row.id]))
+              .toList(),
+        );
         _loading = false;
         _error = null;
       });
+      if (activeQuery.isEmpty) {
+        unawaited(_prefetchRecentChatDetails(list));
+      }
     } catch (e) {
       debugPrint('❌ getChats error: $e');
       if (!mounted || requestId != _requestId) return;
       if (silent) return;
       setState(() {
         _error = e.toString();
+        _errorOffline = isOfflineError(e);
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _prefetchRecentChatDetails(List<ChatListItem> chats) async {
+    final recentChats = chats
+        .where((chat) => !_prefetchedChatIds.contains(chat.id))
+        .take(6)
+        .toList(growable: false);
+    for (final chat in recentChats) {
+      if (!mounted) return;
+      _prefetchedChatIds.add(chat.id);
+      try {
+        await _repo.getChat(chat.id, markRead: false, take: 30);
+      } catch (_) {
+        _prefetchedChatIds.remove(chat.id);
+      }
     }
   }
 
@@ -454,18 +550,10 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       );
     }
     if (_error != null && _chats.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('Could not load chats', style: theme.textTheme.bodyMedium),
-              const SizedBox(height: 12),
-              TextButton(onPressed: loadChats, child: const Text('Retry')),
-            ],
-          ),
-        ),
+      return ConnectionErrorView(
+        offline: _errorOffline,
+        title: _errorOffline ? null : 'Could not load chats',
+        onRetry: loadChats,
       );
     }
     final list = _buildFilteredChats();
@@ -477,9 +565,17 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       onRefresh: loadChats,
       child: ListView.builder(
         itemCount: list.length,
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String>) return null;
+          final index = list.indexWhere((chat) => chat.id == key.value);
+          return index < 0 ? null : index;
+        },
         itemBuilder: (context, index) {
           final chat = list[index];
-          return _buildChatTile(chat, isDark, theme);
+          return KeyedSubtree(
+            key: ValueKey(chat.id),
+            child: _buildChatTile(chat, isDark, theme),
+          );
         },
       ),
     );
@@ -765,6 +861,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
                     otherUserId: other?.id ?? '',
                     otherName: name,
                     otherPhotoUrl: other?.photo ?? '',
+                    initialUnreadCount: chat.unreadCount,
                   ),
                 ),
               );
@@ -886,47 +983,49 @@ class _MessagesEmptyState extends StatelessWidget {
                   height: 1.35,
                 ),
               ),
-              if (!hasQuery) ...[
-                const SizedBox(height: 18),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    gradient: const LinearGradient(
-                      colors: [_kKmstryBlue, _kKmstryTeal],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        blurRadius: 18,
-                        offset: const Offset(0, 8),
-                        color: _kKmstryBlue.withValues(alpha: 0.24),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.add_location_alt_rounded,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                      SizedBox(width: 7),
-                      Text(
-                        'Start with a check-in',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              // "Start with a check-in" CTA temporarily hidden (not removed) per
+              // product request. Re-enable by uncommenting the block below.
+              // if (!hasQuery) ...[
+              //   const SizedBox(height: 18),
+              //   Container(
+              //     padding: const EdgeInsets.symmetric(
+              //       horizontal: 14,
+              //       vertical: 9,
+              //     ),
+              //     decoration: BoxDecoration(
+              //       borderRadius: BorderRadius.circular(999),
+              //       gradient: const LinearGradient(
+              //         colors: [_kKmstryBlue, _kKmstryTeal],
+              //       ),
+              //       boxShadow: [
+              //         BoxShadow(
+              //           blurRadius: 18,
+              //           offset: const Offset(0, 8),
+              //           color: _kKmstryBlue.withValues(alpha: 0.24),
+              //         ),
+              //       ],
+              //     ),
+              //     child: const Row(
+              //       mainAxisSize: MainAxisSize.min,
+              //       children: [
+              //         Icon(
+              //           Icons.add_location_alt_rounded,
+              //           color: Colors.white,
+              //           size: 16,
+              //         ),
+              //         SizedBox(width: 7),
+              //         Text(
+              //           'Start with a check-in',
+              //           style: TextStyle(
+              //             color: Colors.white,
+              //             fontSize: 12.5,
+              //             fontWeight: FontWeight.w900,
+              //           ),
+              //         ),
+              //       ],
+              //     ),
+              //   ),
+              // ],
             ],
           ),
         ),

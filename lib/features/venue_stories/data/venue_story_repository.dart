@@ -6,6 +6,8 @@ import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_story_model.dart';
 
@@ -26,7 +28,7 @@ class VenueStoryRepository {
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/venue-stories');
 
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeSplit = mimeType.split('/');
@@ -40,7 +42,7 @@ class VenueStoryRepository {
     );
     request.fields['media_type'] = mediaType;
 
-    final streamed = await request.send();
+    final streamed = await sendMultipartRequest(request);
     final body = await streamed.stream.bytesToString();
 
     if (streamed.statusCode >= 400) {

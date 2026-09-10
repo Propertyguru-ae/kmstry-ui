@@ -1,3 +1,5 @@
+import '../../../core/media/media_reference.dart';
+
 class VenueStoryItem {
   final String id;
   final String mediaUrl;
@@ -8,6 +10,7 @@ class VenueStoryItem {
   final DateTime createdAt;
   final bool viewedByMe;
   final int viewCount;
+  final MediaReference? mediaReference;
 
   const VenueStoryItem({
     required this.id,
@@ -19,12 +22,20 @@ class VenueStoryItem {
     required this.createdAt,
     this.viewedByMe = false,
     this.viewCount = 0,
+    this.mediaReference,
   });
 
   factory VenueStoryItem.fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String;
+    final mediaReference = MediaReference.fromJson(
+      json,
+      fallbackId: id,
+      legacyUrlKeys: const ['media_url', 'mediaUrl'],
+    );
     return VenueStoryItem(
-      id: json['id'] as String,
-      mediaUrl: json['media_url'] as String,
+      id: id,
+      mediaUrl: mediaReference.url,
+      mediaReference: mediaReference,
       mediaType: json['media_type'] as String,
       thumbnailUrl: json['thumbnail_url'] as String?,
       durationSecs: json['duration_secs'] as int?,
@@ -36,11 +47,16 @@ class VenueStoryItem {
   }
 
   VenueStoryItem copyWith({bool? viewedByMe}) => VenueStoryItem(
-    id: id, mediaUrl: mediaUrl, mediaType: mediaType,
-    thumbnailUrl: thumbnailUrl, durationSecs: durationSecs,
-    expiresAt: expiresAt, createdAt: createdAt,
+    id: id,
+    mediaUrl: mediaUrl,
+    mediaType: mediaType,
+    thumbnailUrl: thumbnailUrl,
+    durationSecs: durationSecs,
+    expiresAt: expiresAt,
+    createdAt: createdAt,
     viewedByMe: viewedByMe ?? this.viewedByMe,
     viewCount: viewCount,
+    mediaReference: mediaReference,
   );
 
   bool get isVideo => mediaType == 'video';

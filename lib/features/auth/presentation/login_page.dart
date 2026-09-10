@@ -46,6 +46,12 @@ class _LoginPageState extends State<LoginPage> {
         message.contains('consent is required for first-time social login');
   }
 
+  bool _isAppUpdateRequiredError(Object error) {
+    return error is ApiException &&
+        error.statusCode == 426 &&
+        error.data['errorCode'] == 'APP_UPDATE_REQUIRED';
+  }
+
   Future<void> _openPolicy(String path) async {
     final uri = Uri.parse('${AppConfig.siteBaseUrl}$path');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -361,6 +367,9 @@ class _LoginPageState extends State<LoginPage> {
   /// E-posta zaten kayıtlıysa tutarlı "Sign In" sheet'ini, aksi halde genel
   /// hata diyaloğunu gösterir.
   Future<void> _showLoginError(BuildContext ctx, Object error) async {
+    // ApiClient already replaces the current route with the mandatory update
+    // screen. Do not show a second, misleading login error on top of it.
+    if (_isAppUpdateRequiredError(error)) return;
     if (isEmailAlreadyInUseError(error)) {
       await showAccountExistsSheet(ctx);
       return;
@@ -514,6 +523,7 @@ class _LoginPageState extends State<LoginPage> {
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
     } catch (e) {
+      if (_isAppUpdateRequiredError(e)) return;
       if (e is ApiException) {
         final code = e.data['errorCode'];
 

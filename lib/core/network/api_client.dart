@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
+import 'app_request_headers.dart';
 import 'api_exception.dart';
 
 class ApiClient {
@@ -15,19 +15,16 @@ class ApiClient {
   /// App Check guard'ı bunu doğrulayıp bot/script isteklerini eler. Token
   /// alınamazsa boş döner — normal akışı bozmaz (backend `off`/`monitor`
   /// modunda zaten geçer; `enforce` modunda ise gerçek app zaten token üretir).
-  Future<Map<String, String>> _appCheckHeader() async {
-    try {
-      // Önce cache'teki token; yoksa (henüz üretilmediyse) bir kez zorla çek.
-      var token = await FirebaseAppCheck.instance.getToken();
-      if (token == null || token.isEmpty) {
-        token = await FirebaseAppCheck.instance.getToken(true);
-      }
-      if (token != null && token.isNotEmpty) {
-        return {'X-Firebase-AppCheck': token};
-      }
-    } catch (_) {}
-    return const {};
-  }
+  Future<Map<String, String>> _appCheckHeader() => AppRequestHeaders.appCheck();
+
+  /// App/device metadata headers the backend's App Check guard records into the
+  /// admin "User Logs" table (app version, build number, platform, OS version).
+  /// Sent on EVERY request — not just login — so a user's current build shows up
+  /// on their next app-open (`/auth/me`) after they update, without re-login.
+  /// Resolved once and cached for the app's lifetime (build info can't change
+  /// mid-session).
+  Future<Map<String, String>> _appMetadataHeaders() =>
+      AppRequestHeaders.appMetadata();
 
   // ── Silent token refresh ──────────────────────────────────────────────────
   /// Registered once by AuthRepository.init().
@@ -36,6 +33,9 @@ class ApiClient {
 
   /// Called when refresh fails — should clear storage and navigate to login.
   static Future<void> Function()? onSessionExpired;
+
+  /// Global forced-update navigation, registered once during app bootstrap.
+  static Future<void> Function(Map<String, dynamic> payload)? onUpdateRequired;
 
   /// In-flight refresh future — prevents parallel refresh calls.
   static Future<String?>? _activeRefresh;
@@ -69,6 +69,16 @@ class ApiClient {
     } catch (_) {
       return body;
     }
+  }
+
+  Future<Never> _throwApiException(int statusCode, dynamic data) async {
+    final payload = data is Map
+        ? Map<String, dynamic>.from(data)
+        : <String, dynamic>{'message': data?.toString() ?? 'Request failed'};
+    if (statusCode == 426 && payload['errorCode'] == 'APP_UPDATE_REQUIRED') {
+      await onUpdateRequired?.call(payload);
+    }
+    throw ApiException(statusCode: statusCode, data: payload);
   }
 
   /// Replaces/adds Authorization header with the new token.
@@ -135,7 +145,7 @@ class ApiClient {
       if (retryResp.statusCode == 401) {
         await onSessionExpired?.call();
       }
-      throw ApiException(statusCode: retryResp.statusCode, data: retryData);
+      return _throwApiException(retryResp.statusCode, retryData);
     }
     return retryData;
   }
@@ -150,6 +160,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] POST $url');
@@ -177,7 +188,7 @@ class ApiClient {
 
       final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
-        throw ApiException(statusCode: response.statusCode, data: data);
+        return _throwApiException(response.statusCode, data);
       }
       return data;
     } on SocketException catch (e) {
@@ -192,21 +203,24 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> get(String path, {Map<String, String>? headers}) async {
+  Future<dynamic> get(
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] GET $url');
     _log('🌐 [HTTP] headers = ${_truncate(headers)}');
 
     try {
-      final response = await _client
-          .get(url, headers: merged)
-          .timeout(const Duration(seconds: 10));
+      final response = await _client.get(url, headers: merged).timeout(timeout);
 
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
@@ -216,14 +230,13 @@ class ApiClient {
           response,
           path,
           headers,
-          (h) =>
-              _client.get(url, headers: h).timeout(const Duration(seconds: 10)),
+          (h) => _client.get(url, headers: h).timeout(timeout),
         );
       }
 
       final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
-        throw ApiException(statusCode: response.statusCode, data: data);
+        return _throwApiException(response.statusCode, data);
       }
       return data;
     } catch (e) {
@@ -242,6 +255,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] PATCH $url');
@@ -269,7 +283,7 @@ class ApiClient {
 
       final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
-        throw ApiException(statusCode: response.statusCode, data: data);
+        return _throwApiException(response.statusCode, data);
       }
       return data;
     } on SocketException catch (e) {
@@ -294,6 +308,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] PUT $url');
@@ -320,7 +335,7 @@ class ApiClient {
 
       final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
-        throw ApiException(statusCode: response.statusCode, data: data);
+        return _throwApiException(response.statusCode, data);
       }
       return data;
     } on SocketException catch (e) {
@@ -341,6 +356,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       ...?headers,
       ...(await _appCheckHeader()),
+      ...(await _appMetadataHeaders()),
     };
 
     _log('🌐 [HTTP] DELETE $url');
@@ -366,7 +382,7 @@ class ApiClient {
 
       final data = _tryDecode(response.body);
       if (response.statusCode >= 400) {
-        throw ApiException(statusCode: response.statusCode, data: data);
+        return _throwApiException(response.statusCode, data);
       }
       return data;
     } on SocketException catch (e) {

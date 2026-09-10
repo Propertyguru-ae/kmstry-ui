@@ -7,6 +7,8 @@ import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_gallery_model.dart';
 
@@ -44,7 +46,7 @@ class VenueGalleryRepository {
 
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/gallery');
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeParts = mimeType.split('/');
@@ -69,7 +71,7 @@ class VenueGalleryRepository {
       );
     }
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
     final body = await response.stream.bytesToString();
     if (response.statusCode >= 400) {
       throw Exception('Upload failed (${response.statusCode}): $body');

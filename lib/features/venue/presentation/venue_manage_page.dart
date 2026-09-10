@@ -12,7 +12,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_analytics_scre
 import 'package:kmstry_frontend/features/venue/presentation/venue_offers_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_events_list_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 
 /// Manage hub — venue yönetim bölümlerinin tek menüsü (mobil "sidebar").
 class VenueManagePage extends StatefulWidget {
@@ -215,7 +215,7 @@ class _VenueManagePageState extends State<VenueManagePage> {
               title: 'Settings',
               subtitle: 'Account & activity',
               onTap: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const SettingsActivityPage(),
+                builder: (_) => const SettingsPage(),
               )),
             ),
             ],

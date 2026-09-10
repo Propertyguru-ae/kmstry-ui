@@ -3,18 +3,28 @@ import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_deal_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_menu_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
@@ -29,6 +39,8 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_c
 
 import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -47,6 +59,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   final _venueContextRepo = VenueContextRepository();
   final _storyRepo = StoryRepository();
   final _venueStoryRepo = VenueStoryRepository();
+  final _partnershipRepo = ExternalPartnershipRepository();
+  final _chatRepo = ChatRepository();
+  List<ExternalPartnershipModel> _partnerships = const [];
   int _storyTrayRefreshCount = 0;
   bool _storyUploading = false;
   bool _hasMyStoryHere =
@@ -58,6 +73,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   String? _activeCheckinId;
   String? _activeCheckinVenueId;
   String? _activeCheckinVenuePlaceId;
+  String? _activeCheckinUserPhoto;
+  String? _activeCheckinFeaturedPhoto;
   bool _checkingOut = false;
   String? _resolvedVenueIdForCurrentDetail;
   bool _loadingActiveCheckin = true;
@@ -74,11 +91,15 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int _galleryCount = 0; // VenueGalleryStrip'ten gelen foto/video adedi
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
 
-  // Backend'deki 200m check-in mesafe sınırıyla aynı değer (checkins.service.ts).
-  static const double _kCheckinMaxDistanceMeters = 200;
+  // Açılır/kapanır bölümlerin durumu (varsayılan açık).
+  bool _eventsExpanded = true;
+
+  // Tüm mobil check-in girişleri aynı yakınlık politikasını kullanır.
+  static const double _kCheckinMaxDistanceMeters =
+      CheckinLocationPolicy.maxDistanceMeters;
 
   /// null = henüz doğrulanmadı → buton pasif kalır. Sadece kesin olarak
-  /// venue'nün 200m içinde olduğu ölçülünce true olur ("fail-closed").
+  /// venue'nün izin verilen mesafede olduğu ölçülünce true olur ("fail-closed").
   bool? _isNearVenue;
   bool _checkingProximity = true;
 
@@ -133,6 +154,21 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       if (!mounted) return;
       unawaited(_checkProximity(useFreshGps: true));
     });
+  }
+
+  Future<void> _refreshVenuePage() async {
+    if (mounted) {
+      setState(() => _storyTrayRefreshCount++);
+    }
+    await Future.wait<void>([
+      _loadVenueDetails(),
+      _loadEnrichedVenueData(),
+      _loadActiveCheckin(),
+      _refreshCheckinStats(),
+      _loadHeaderStories(),
+      _loadAnonymousStatus(),
+      _checkProximity(useFreshGps: true),
+    ]);
   }
 
   /// Gerçek venue'lerde kullanıcının fiziksel olarak mekânda olup olmadığını
@@ -327,6 +363,13 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     } catch (e) {
       debugPrint('⚠️ Could not load enriched venue data: $e');
     }
+    // Deals & discounts (external partnerships) — public, best-effort.
+    try {
+      final partnerships = await _partnershipRepo.getActivePartnerships(
+        widget.venue.id,
+      );
+      if (mounted) setState(() => _partnerships = partnerships);
+    } catch (_) {}
   }
 
   Future<void> _loadVenueDetails() async {
@@ -445,6 +488,57 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
+  /// Açılır/kapanır bölüm: başlığa dokununca [expanded] toggle olur, içerik
+  /// yumuşak bir animasyonla açılıp kapanır. Başlık sağında dönen bir chevron.
+  Widget _buildCollapsibleSection({
+    required Color dotColor,
+    required String title,
+    required bool expanded,
+    required VoidCallback onToggle,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: _sectionTitle(
+                dotColor,
+                title,
+                trailing: AnimatedRotation(
+                  turns: expanded ? 0.5 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 22,
+                    color: _isDark ? const Color(0xFFC8D8F0) : _textMuted,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox(width: double.infinity, height: 0),
+          secondChild: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [const SizedBox(height: 10), ...children],
+          ),
+          crossFadeState: expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 220),
+          sizeCurve: Curves.easeInOut,
+        ),
+      ],
+    );
+  }
+
   /// Check-in yapmış ama henüz story paylaşmamış kullanıcıya, "Your story"
   /// baloncuğunun ne olduğunu açıklayan ve paylaşmaya teşvik eden bilgi kartı.
   Widget _buildShareStoryHint() {
@@ -508,112 +602,71 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
-  /// Bu venue'da henüz hiç story yokken, check-in yapmamış kullanıcıyı ilk
-  /// story'yi paylaşmaya teşvik eden boş-durum kartı. Basınca check-in akışı.
+  /// Bu venue'da henüz hiç story yokken, check-in yapmamış kullanıcıyı
+  /// bilgilendiren boş-durum kartı. Salt bilgilendirme — tıklanabilir değil.
   Widget _buildFirstStoryCta() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
-        onTap: _openCheckinFlow,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-              colors: [
-                AppColors.blue.withValues(alpha: _isDark ? 0.16 : 0.10),
-                AppColors.teal.withValues(alpha: _isDark ? 0.14 : 0.08),
-              ],
-            ),
-            border: Border.all(color: AppColors.blue.withValues(alpha: 0.35)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppColors.blue, AppColors.teal],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(13),
-                    ),
-                    child: const Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 20,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Be the first to share a story!',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: _textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'No stories here yet. Check in and show everyone the vibe.',
-                          style: TextStyle(fontSize: 11.5, color: _textMuted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // "Check in" — check-in butonuyla aynı blue→teal gradient.
-              _actionButton(
-                height: 44,
-                onTap: _openCheckinFlow,
-                gradient: const LinearGradient(
-                  colors: [AppColors.blue, AppColors.teal],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.blue.withValues(alpha: 0.34),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.add_location_alt_rounded,
-                      size: 17,
-                      color: Colors.white,
-                    ),
-                    SizedBox(width: 7),
-                    Text(
-                      'Check in',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              AppColors.blue.withValues(alpha: _isDark ? 0.16 : 0.10),
+              AppColors.teal.withValues(alpha: _isDark ? 0.14 : 0.08),
             ],
           ),
+          border: Border.all(color: AppColors.blue.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppColors.blue, AppColors.teal],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Be the first to share a story!',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: _textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'No stories here yet. Check in and show everyone the vibe.',
+                        style: TextStyle(fontSize: 11.5, color: _textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -660,17 +713,25 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final following = _isFollowing;
     return _actionButton(
       onTap: _followLoading ? null : _toggleFollow,
-      background: following
-          ? AppColors.teal.withValues(alpha: 0.12)
-          : AppColors.teal,
-      borderColor: following ? AppColors.teal.withValues(alpha: 0.34) : null,
+      // Follow ve Following aynı sakin kart stilini kullanır; durum değişince
+      // buton zıplamaz, yalnızca ikon ve metin güncellenir.
+      background: AppColors.teal.withValues(alpha: 0.12),
+      borderColor: AppColors.teal.withValues(alpha: 0.34),
+      boxShadow: [
+        BoxShadow(
+          color: AppColors.teal.withValues(alpha: _isDark ? 0.30 : 0.20),
+          blurRadius: 17,
+          spreadRadius: 0.5,
+          offset: const Offset(0, 5),
+        ),
+      ],
       child: _followLoading
           ? SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: following ? AppColors.teal : Colors.white,
+                color: AppColors.teal,
               ),
             )
           : Row(
@@ -679,7 +740,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 Icon(
                   following ? Icons.check_rounded : Icons.add_rounded,
                   size: 16,
-                  color: following ? AppColors.teal : Colors.white,
+                  color: AppColors.teal,
                 ),
                 const SizedBox(width: 6),
                 Text(
@@ -687,7 +748,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: following ? AppColors.teal : Colors.white,
+                    color: AppColors.teal,
                   ),
                 ),
               ],
@@ -723,6 +784,447 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
+  Widget _buildMenuButton({double height = 46}) {
+    // Menu, KMSTRY logosundaki pembe vurgu rengini kullanır.
+    const outline = AppColors.magenta;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final content = isDark ? const Color(0xFFFF73E8) : const Color(0xFFB0008F);
+    return _actionButton(
+      height: height,
+      onTap: () => _openMenu(),
+      background: outline.withValues(alpha: isDark ? 0.18 : 0.12),
+      borderColor: outline.withValues(alpha: 0.45),
+      boxShadow: [
+        BoxShadow(
+          color: outline.withValues(alpha: isDark ? 0.34 : 0.22),
+          blurRadius: 18,
+          spreadRadius: 0.5,
+          offset: const Offset(0, 5),
+        ),
+      ],
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.restaurant_menu_outlined, size: 16, color: content),
+          const SizedBox(width: 6),
+          Text(
+            'Menu',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: content,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShareButton() {
+    return _actionButton(
+      onTap: () => unawaited(_shareVenue()),
+      background: _cardSurface,
+      borderColor: _cardBorder,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.ios_share_rounded, size: 16, color: AppColors.blue),
+          const SizedBox(width: 6),
+          Text(
+            'Share',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: _textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _shareVenue() async {
+    final cachedChats = _chatRepo.cachedChats;
+    final chatsFuture = cachedChats != null
+        ? Future<List<ChatListItem>>.value(cachedChats)
+        : _chatRepo.getChats();
+    // Google kaynaklı mekanlarda DB venue kimliği gerekiyorsa çözümlemeyi
+    // sheet açılır açılmaz başlat; kullanıcı sohbet seçerken ağ gecikmesi
+    // paralel ilerlesin.
+    final venueIdFuture = _resolvedVenueIdForCurrentDetail != null
+        ? Future<String>.value(_resolvedVenueIdForCurrentDetail!)
+        : (widget.venue.isInDb && widget.venue.id.isNotEmpty)
+        ? Future<String>.value(widget.venue.id)
+        : _resolveVenueIdForCheckin();
+    // Kullanıcı sheet'i kapatırsa çözümleme hatası sahipsiz bir Future olarak
+    // raporlanmasın; seçim yapılırsa aynı Future yine gerçek hatayı taşır.
+    unawaited(venueIdFuture.catchError((_) => ''));
+    var query = '';
+    var venueSent = false;
+    var sendingChatId = '';
+    final selectedChat = await showModalBottomSheet<ChatListItem>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _pageBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        final media = MediaQuery.of(sheetContext);
+        final availableHeight = media.size.height - media.viewInsets.bottom;
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+          child: StatefulBuilder(
+            builder: (context, setSheetState) => SizedBox(
+              height: availableHeight * 0.72,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 4,
+                      margin: const EdgeInsets.only(top: 10, bottom: 14),
+                      decoration: BoxDecoration(
+                        color: _textFaint.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppColors.blue, AppColors.magenta],
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Icon(
+                              Icons.ios_share_rounded,
+                              color: Colors.white,
+                              size: 21,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Share venue',
+                                  style: TextStyle(
+                                    color: _textPrimary,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  'Send ${widget.venue.name} in KMSTRY',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: _textMuted,
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                      child: TextField(
+                        onChanged: (value) => setSheetState(
+                          () => query = value.trim().toLowerCase(),
+                        ),
+                        style: TextStyle(color: _textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'Search conversations',
+                          hintStyle: TextStyle(color: _textFaint),
+                          prefixIcon: Icon(
+                            Icons.search_rounded,
+                            color: _textMuted,
+                          ),
+                          filled: true,
+                          fillColor: _cardSurface,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: _cardBorder),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: _cardBorder),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: FutureBuilder<List<ChatListItem>>(
+                        future: chatsFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.blue,
+                                strokeWidth: 2.4,
+                              ),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Center(
+                              child: Text(
+                                'Conversations could not be loaded.',
+                                style: TextStyle(color: _textMuted),
+                              ),
+                            );
+                          }
+                          final chats =
+                              (snapshot.data ?? const <ChatListItem>[])
+                                  .where((chat) => !chat.isBlocked)
+                                  .where((chat) {
+                                    final user =
+                                        chat.otherUser ??
+                                        chat.user1 ??
+                                        chat.user2;
+                                    return query.isEmpty ||
+                                        (user?.fullName ?? '')
+                                            .toLowerCase()
+                                            .contains(query);
+                                  })
+                                  .toList();
+                          if (chats.isEmpty) {
+                            return Center(
+                              child: Text(
+                                query.isEmpty
+                                    ? 'Start a conversation to share this venue.'
+                                    : 'No conversation found.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: _textMuted),
+                              ),
+                            );
+                          }
+                          return ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            itemCount: chats.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 3),
+                            itemBuilder: (context, index) {
+                              final chat = chats[index];
+                              final user =
+                                  chat.otherUser ?? chat.user1 ?? chat.user2;
+                              final photo = user?.photo?.trim() ?? '';
+                              return ListTile(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                onTap: () async {
+                                  if (sendingChatId.isNotEmpty) return;
+                                  FocusManager.instance.primaryFocus?.unfocus();
+                                  setSheetState(() => sendingChatId = chat.id);
+                                  try {
+                                    final venueId = await venueIdFuture;
+                                    await _chatRepo.sendMessage(
+                                      chat.id,
+                                      messageType: 'venue',
+                                      venueId: venueId,
+                                      clientMessageId:
+                                          'venue-${DateTime.now().microsecondsSinceEpoch}',
+                                    );
+                                    venueSent = true;
+                                    if (sheetContext.mounted) {
+                                      Navigator.pop(sheetContext, chat);
+                                    }
+                                  } catch (_) {
+                                    if (sheetContext.mounted) {
+                                      setSheetState(() => sendingChatId = '');
+                                      await showPremiumErrorDialog(
+                                        sheetContext,
+                                        title: 'Could not share venue',
+                                        message:
+                                            'The venue was not sent. Please try again.',
+                                      );
+                                    }
+                                  }
+                                },
+                                leading: CircleAvatar(
+                                  radius: 22,
+                                  backgroundColor: AppColors.blue.withValues(
+                                    alpha: 0.15,
+                                  ),
+                                  backgroundImage: photo.isNotEmpty
+                                      ? NetworkImage(photo)
+                                      : null,
+                                  child: photo.isEmpty
+                                      ? Text(
+                                          (user?.fullName?.trim().isNotEmpty ??
+                                                  false)
+                                              ? user!.fullName!
+                                                    .trim()[0]
+                                                    .toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: AppColors.blue,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                                title: Text(
+                                  user?.fullName?.trim().isNotEmpty == true
+                                      ? user!.fullName!.trim()
+                                      : 'KMSTRY user',
+                                  style: TextStyle(
+                                    color: _textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                trailing: sendingChatId == chat.id
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.2,
+                                          color: AppColors.blue,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.send_rounded,
+                                        color: AppColors.blue,
+                                        size: 20,
+                                      ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+                      decoration: BoxDecoration(
+                        color: _cardSurface.withValues(alpha: 0.72),
+                        border: Border(top: BorderSide(color: _cardBorder)),
+                      ),
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          Navigator.pop(sheetContext);
+                          unawaited(_shareVenueExternally());
+                        },
+                        icon: const Icon(Icons.ios_share_rounded, size: 18),
+                        label: const Text('Share outside KMSTRY'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(50),
+                          foregroundColor: Colors.white,
+                          backgroundColor: AppColors.blue,
+                          overlayColor: Colors.white.withValues(alpha: 0.12),
+                          shadowColor: AppColors.blue.withValues(alpha: 0.62),
+                          elevation: 8,
+                          textStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (selectedChat == null || !mounted) return;
+    if (venueSent) {
+      showSuccessSnackBar(
+        context,
+        message: '${widget.venue.name} sent.',
+        icon: Icons.send_rounded,
+      );
+    }
+  }
+
+  Future<void> _shareVenueExternally() async {
+    final venue = widget.venue;
+    final mapsUri = Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': '${venue.latitude},${venue.longitude}',
+      if (venue.placeId != null && venue.placeId!.trim().isNotEmpty)
+        'query_place_id': venue.placeId!.trim(),
+    });
+    final location = [
+      venue.address.trim(),
+      venue.city.trim(),
+    ].where((part) => part.isNotEmpty).toSet().join(', ');
+    final box = context.findRenderObject() as RenderBox?;
+    final shareText =
+        'Check out ${venue.name} on KMSTRY${location.isEmpty ? '' : '\n$location'}\n$mapsUri';
+    await SharePlus.instance.share(
+      ShareParams(
+        title: venue.name,
+        subject: 'Check out ${venue.name} on KMSTRY',
+        text: shareText,
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ),
+    );
+  }
+
+  /// Venue'nün menüsü uygulamada tutulmadığı için, mekanın adı+konumuyla bir web
+  /// aramasını dış tarayıcıda açar — kullanıcıyı mekanın menüsüne ulaştırır.
+  Future<void> _openMenu() async {
+    final v = widget.venue;
+
+    // Mekanın uygulama içi menüsü varsa onu aç (salt-okunur). Yoksa Google'a düş.
+    if (v.isInDb && v.id.isNotEmpty) {
+      try {
+        final items = await VenueMenuRepository().getMenu(v.id);
+        if (!mounted) return;
+        if (items.isNotEmpty) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => VenueMenuPage(
+                venueId: v.id,
+                venueName: v.name,
+                canManage: false,
+              ),
+            ),
+          );
+          return;
+        }
+      } catch (_) {
+        // Menü çekilemezse sessizce Google fallback'e geç.
+      }
+    }
+
+    if (!mounted) return;
+    final query = '${v.name} ${v.address} ${v.city} menu'
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final uri = Uri.https('www.google.com', '/search', {'q': query});
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      await showPremiumErrorDialog(
+        context,
+        message: 'Could not open the menu.',
+      );
+    }
+  }
+
   Future<void> _loadActiveCheckin() async {
     try {
       final activeCheckin = await _repo.getActiveCheckin();
@@ -735,6 +1237,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
           _activeCheckinId = null;
           _activeCheckinVenueId = null;
           _activeCheckinVenuePlaceId = null;
+          _activeCheckinUserPhoto = null;
+          _activeCheckinFeaturedPhoto = null;
           _loadingActiveCheckin = false;
         });
         return;
@@ -744,6 +1248,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         _activeCheckinId = activeCheckin?.id;
         _activeCheckinVenueId = activeVenueId;
         _activeCheckinVenuePlaceId = null;
+        _activeCheckinUserPhoto = activeCheckin?.userPhoto;
+        _activeCheckinFeaturedPhoto = activeCheckin?.featuredPhoto;
         // Stay loading until we can decide "here" vs elsewhere (avoid wrong "Check in first").
       });
 
@@ -918,7 +1424,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   /// Zaten bu venue'da aktif check-in varsa mesafe kontrolü uygulanmaz
   /// (kullanıcı zaten orada, sadece "Who's here?"e gidiyor). Yeni check-in
-  /// için buton SADECE konum doğrulanıp venue'nün 200m içinde olduğu
+  /// için buton SADECE konum doğrulanıp venue'nün izin verilen mesafede olduğu
   /// kesinleşince aktif olur — doğrulanana kadar ve venue dışındaysa pasif
   /// kalır, "You're not at this venue" yazar.
   Widget _buildCheckinButton(bool hasActiveCheckinHere) {
@@ -1192,14 +1698,85 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
-  Widget _buildUpcomingEventsSection(List<VenueUpcomingEvent> events) {
+  /// Deals & discounts (external partnerships) — tek satırda, yatay kaydırılabilir
+  /// chip'ler (personal profildeki gibi). Chip yalnızca platform adını gösterir
+  /// (Fazaa, Cobone…); dokununca detay sayfası açılır.
+  Widget _buildDealsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(AppColors.orange, 'Upcoming Events'),
+        _sectionTitle(AppColors.orange, 'Deals & discounts'),
         const SizedBox(height: 10),
-        ...events.map((event) => _buildEventCard(event)),
+        SizedBox(
+          height: 38,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.zero,
+            itemCount: _partnerships.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 8),
+            itemBuilder: (context, i) => _buildDealChip(_partnerships[i]),
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildDealChip(ExternalPartnershipModel p) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _openDealDetail(p),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: _isDark
+                ? Colors.white.withValues(alpha: 0.04)
+                : const Color(0xFFF8FBFD),
+            border: Border.all(color: AppColors.orange.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.local_offer_outlined,
+                color: AppColors.orange,
+                size: 15,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                p.platformDisplayName,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openDealDetail(ExternalPartnershipModel p) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            VenueDealDetailPage(deal: p, venueName: widget.venue.name),
+      ),
+    );
+  }
+
+  Widget _buildUpcomingEventsSection(List<VenueUpcomingEvent> events) {
+    return _buildCollapsibleSection(
+      dotColor: AppColors.orange,
+      title: 'Upcoming Events',
+      expanded: _eventsExpanded,
+      onToggle: () => setState(() => _eventsExpanded = !_eventsExpanded),
+      children: events.map((event) => _buildEventCard(event)).toList(),
     );
   }
 
@@ -1506,386 +2083,419 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       body: Stack(
         children: [
           // ── Scrollable content ──────────────────────────────────────────
-          SingleChildScrollView(
-            padding: EdgeInsets.zero,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir
-                SizedBox(
-                  height: 210,
-                  width: double.infinity,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CachedImage(
-                        _safeDisplayPhotoUrl(widget.venue.photoUrl),
-                        fit: BoxFit.cover,
-                      ),
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Container(
-                          height: 120,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, _pageBg],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                /// COVER ALTI — cover'ı örtmek için 28px yukarı çekilir
-                Transform.translate(
-                  offset: const Offset(0, -28),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+          RefreshIndicator(
+            onRefresh: _refreshVenuePage,
+            color: AppColors.blueDark,
+            backgroundColor: _pageBg,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
+              padding: EdgeInsets.zero,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir
+                  SizedBox(
+                    height: 210,
+                    width: double.infinity,
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        /// IDENTITY — avatar + isim + durum
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            _VenueDetailAvatarRing(
-                              photoUrl: widget.venue.photoUrl,
-                              hasStories: _headerStories.isNotEmpty,
-                              allSeen:
-                                  _headerStories.isNotEmpty &&
-                                  _headerStories.every((s) => s.viewedByMe),
-                              onTap: _headerStories.isNotEmpty
-                                  ? _openStoryViewer
-                                  : null,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      widget.venue.name,
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w800,
-                                        height: 1.1,
-                                        letterSpacing: -0.3,
-                                        color: _textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Row(
-                                      children: [
-                                        Container(
-                                          width: 7,
-                                          height: 7,
-                                          decoration: BoxDecoration(
-                                            color: statusDotColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Flexible(
-                                          child: Text(
-                                            widget.venue.status,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: _textMuted,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                        CachedImage(
+                          _safeDisplayPhotoUrl(widget.venue.photoUrl),
+                          fit: BoxFit.cover,
                         ),
-
-                        /// CHECK-IN İSTATİSTİK SATIRI (varsa)
-                        if (_displayCheckinTotal != null) ...[
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _headerCount(
-                                Icons.people_rounded,
-                                '$_displayCheckinTotal',
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Container(
+                            height: 120,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Colors.transparent, _pageBg],
                               ),
-                              ..._headerGenderPcts(),
-                            ],
-                          ),
-                        ],
-
-                        const SizedBox(height: 14),
-
-                        /// ADDRESS
-                        if (address.isNotEmpty) ...[
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(
-                                Icons.location_on_rounded,
-                                size: 15,
-                                color: AppColors.blue,
-                              ),
-                              const SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  address,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: _textMuted,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                        ],
-
-                        /// OPEN / RATING / HOURS
-                        if (opening != null || rating != null)
-                          Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            spacing: 14,
-                            runSpacing: 6,
-                            children: [
-                              if (opening != null)
-                                Text(
-                                  isOpen ? 'Open now' : 'Closed',
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: isOpen
-                                        ? AppColors.teal
-                                        : AppColors.orange,
-                                  ),
-                                ),
-                              if (rating != null)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.star_rounded,
-                                      color: Color(0xFFFFC24B),
-                                      size: 15,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      (rating as num).toStringAsFixed(1),
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: _textMuted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                        if (weekdayText != null && weekdayText.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            weekdayText[DateTime.now().weekday - 1],
-                            style: TextStyle(fontSize: 12, color: _textFaint),
-                          ),
-                        ],
-
-                        /// "İlk check-in ol" daveti
-                        if (_displayCheckinTotal == null &&
-                            !_loadingCheckinStats) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'Be the first to check in.',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: _textMuted,
                             ),
                           ),
-                        ],
-
-                        const SizedBox(height: 14),
-
-                        /// ACTIONS — Follow · Directions (satır) + Check in (tam)
-                        Row(
-                          children: [
-                            if (followAvailable) ...[
-                              Expanded(child: _buildFollowButton()),
-                              const SizedBox(width: 9),
-                            ],
-                            Expanded(child: _buildDirectionsButton()),
-                          ],
                         ),
-                        const SizedBox(height: 9),
-                        _buildCheckinButton(hasActiveCheckinHere),
-
-                        /// CHECK OUT — sadece bu venue'da aktif check-in varken
-                        if (hasActiveCheckinHere) ...[
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            width: double.infinity,
-                            child: TextButton(
-                              onPressed: _checkingOut
-                                  ? null
-                                  : () async {
-                                      final confirmed = await showDialog<bool>(
-                                        context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text('Check out?'),
-                                          content: const Text(
-                                            'You will leave this venue and your check-in will end.',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, false),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx, true),
-                                              child: const Text('Check out'),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                      if (confirmed == true) await _checkout();
-                                    },
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.redAccent,
-                              ),
-                              child: _checkingOut
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Text('Check out'),
-                            ),
-                          ),
-                        ],
-
-                        /// STORY TRAY
-                        if (_resolvedVenueIdForCurrentDetail != null) ...[
-                          const SizedBox(height: 18),
-                          _sectionTitle(AppColors.magenta, 'Stories'),
-                          // Check-in'li ama henüz story paylaşmamış kullanıcıyı
-                          // teşvik et + baloncuğun ne olduğunu açıkla.
-                          if (hasActiveCheckinHere &&
-                              _storyStateKnown &&
-                              !_hasMyStoryHere &&
-                              !_storyUploading &&
-                              !_isAnonymous) ...[
-                            const SizedBox(height: 8),
-                            _buildShareStoryHint(),
-                          ],
-                          const SizedBox(height: 10),
-                          // Hiç story yok + kullanıcı burada check-in'li değil →
-                          // ilk story'yi paylaşmaya teşvik eden CTA.
-                          if (_noStoriesHere &&
-                              !hasActiveCheckinHere &&
-                              !_isAnonymous)
-                            _buildFirstStoryCta(),
-                          StoryTray(
-                            key: ValueKey(
-                              '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
-                            ),
-                            venueId: _resolvedVenueIdForCurrentDetail!,
-                            isUploading: _storyUploading,
-                            onAddStory: hasActiveCheckinHere
-                                ? _openAddStory
-                                : null,
-                            anonymousLocked: _isAnonymous,
-                            onMyStoryStateChanged: (hasMine) {
-                              if (mounted &&
-                                  (hasMine != _hasMyStoryHere ||
-                                      !_storyStateKnown)) {
-                                setState(() {
-                                  _hasMyStoryHere = hasMine;
-                                  _storyStateKnown = true;
-                                });
-                              }
-                            },
-                            onStoriesEmptyChanged: (isEmpty) {
-                              if (mounted && isEmpty != _noStoriesHere) {
-                                setState(() => _noStoriesHere = isEmpty);
-                              }
-                            },
-                          ),
-                        ],
-
-                        /// ABOUT
-                        if (_enrichedVenueData?['description'] != null &&
-                            (_enrichedVenueData!['description'] as String)
-                                .isNotEmpty) ...[
-                          const SizedBox(height: 18),
-                          _buildDescriptionSection(
-                            _enrichedVenueData!['description'] as String,
-                          ),
-                        ],
-
-                        /// PHOTOS & VIDEOS (galeri — boşsa başlıkla birlikte gizlenir)
-                        if (widget.venue.isInDb &&
-                            widget.venue.id.isNotEmpty) ...[
-                          if (_galleryCount > 0) ...[
-                            const SizedBox(height: 18),
-                            _sectionTitle(
-                              AppColors.teal,
-                              'Photos & Videos',
-                              trailing: Text(
-                                '$_galleryCount',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.teal,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                          ],
-                          VenueGalleryStrip(
-                            venueId: widget.venue.id,
-                            onCountChanged: (count) {
-                              if (mounted && count != _galleryCount) {
-                                setState(() => _galleryCount = count);
-                              }
-                            },
-                          ),
-                        ],
-
-                        /// UPCOMING EVENTS
-                        if (_enrichedVenueData?['upcomingEvents'] is List &&
-                            (_enrichedVenueData!['upcomingEvents'] as List)
-                                .isNotEmpty) ...[
-                          const SizedBox(height: 18),
-                          _buildUpcomingEventsSection(
-                            (_enrichedVenueData!['upcomingEvents'] as List)
-                                .whereType<Map>()
-                                .map(
-                                  (e) => VenueUpcomingEvent.fromJson(
-                                    Map<String, dynamic>.from(e),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ],
                       ],
                     ),
                   ),
-                ),
-              ],
+
+                  /// COVER ALTI — cover'ı örtmek için 28px yukarı çekilir
+                  Transform.translate(
+                    offset: const Offset(0, -28),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          /// IDENTITY — avatar + isim + durum
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              _VenueDetailAvatarRing(
+                                photoUrl: widget.venue.photoUrl,
+                                hasStories: _headerStories.isNotEmpty,
+                                allSeen:
+                                    _headerStories.isNotEmpty &&
+                                    _headerStories.every((s) => s.viewedByMe),
+                                onTap: _headerStories.isNotEmpty
+                                    ? _openStoryViewer
+                                    : null,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        widget.venue.name,
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w800,
+                                          height: 1.1,
+                                          letterSpacing: -0.3,
+                                          color: _textPrimary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Row(
+                                        children: [
+                                          Container(
+                                            width: 7,
+                                            height: 7,
+                                            decoration: BoxDecoration(
+                                              color: statusDotColor,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Flexible(
+                                            child: Text(
+                                              widget.venue.status,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: _textMuted,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          /// CHECK-IN İSTATİSTİK SATIRI (varsa)
+                          if (_displayCheckinTotal != null) ...[
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                _headerCount(
+                                  Icons.people_rounded,
+                                  '$_displayCheckinTotal',
+                                ),
+                                ..._headerGenderPcts(),
+                              ],
+                            ),
+                          ],
+
+                          const SizedBox(height: 14),
+
+                          /// ADDRESS
+                          if (address.isNotEmpty) ...[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(
+                                  Icons.location_on_rounded,
+                                  size: 15,
+                                  color: AppColors.blue,
+                                ),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                  child: Text(
+                                    address,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: _textMuted,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+
+                          /// OPEN / RATING / HOURS
+                          if (opening != null || rating != null)
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 14,
+                              runSpacing: 6,
+                              children: [
+                                if (opening != null)
+                                  Text(
+                                    isOpen ? 'Open now' : 'Closed',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: isOpen
+                                          ? AppColors.teal
+                                          : AppColors.orange,
+                                    ),
+                                  ),
+                                if (rating != null)
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(
+                                        Icons.star_rounded,
+                                        color: Color(0xFFFFC24B),
+                                        size: 15,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        (rating as num).toStringAsFixed(1),
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: _textMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          if (weekdayText != null &&
+                              weekdayText.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              weekdayText[DateTime.now().weekday - 1],
+                              style: TextStyle(fontSize: 12, color: _textFaint),
+                            ),
+                          ],
+
+                          /// "İlk check-in ol" daveti
+                          if (_displayCheckinTotal == null &&
+                              !_loadingCheckinStats) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Be the first to check in.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _textMuted,
+                              ),
+                            ),
+                          ],
+
+                          const SizedBox(height: 14),
+
+                          /// ACTIONS — Follow · Directions · Share (satır), ardından
+                          /// Menu ve Check in tam genişlikte.
+                          Row(
+                            children: [
+                              if (followAvailable) ...[
+                                Expanded(child: _buildFollowButton()),
+                                const SizedBox(width: 9),
+                              ],
+                              Expanded(child: _buildDirectionsButton()),
+                              const SizedBox(width: 9),
+                              Expanded(child: _buildShareButton()),
+                            ],
+                          ),
+                          if (VenueFeatureVisibility.menu) ...[
+                            const SizedBox(height: 9),
+                            SizedBox(
+                              width: double.infinity,
+                              child: _buildMenuButton(height: 48),
+                            ),
+                          ],
+                          const SizedBox(height: 9),
+                          _buildCheckinButton(hasActiveCheckinHere),
+
+                          /// CHECK OUT — sadece bu venue'da aktif check-in varken
+                          if (hasActiveCheckinHere) ...[
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: TextButton(
+                                onPressed: _checkingOut
+                                    ? null
+                                    : () async {
+                                        final confirmed =
+                                            await showDestructiveConfirmationDialog(
+                                              context,
+                                              title: 'Check out?',
+                                              message:
+                                                  'You will leave this venue and your check-in will end.',
+                                              confirmLabel: 'Check out',
+                                              icon: Icons.logout_rounded,
+                                            );
+                                        if (confirmed == true)
+                                          await _checkout();
+                                      },
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.redAccent,
+                                ),
+                                child: _checkingOut
+                                    ? const SizedBox(
+                                        height: 16,
+                                        width: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Text('Check out'),
+                              ),
+                            ),
+                          ],
+
+                          /// STORY TRAY
+                          if (_resolvedVenueIdForCurrentDetail != null) ...[
+                            const SizedBox(height: 18),
+                            _sectionTitle(AppColors.magenta, 'Stories'),
+                            // Check-in'li ama henüz story paylaşmamış kullanıcıyı
+                            // teşvik et + baloncuğun ne olduğunu açıkla.
+                            if (hasActiveCheckinHere &&
+                                _storyStateKnown &&
+                                !_hasMyStoryHere &&
+                                !_storyUploading &&
+                                !_isAnonymous) ...[
+                              const SizedBox(height: 8),
+                              _buildShareStoryHint(),
+                            ],
+                            const SizedBox(height: 10),
+                            // Hiç story yok + kullanıcı burada check-in'li değil →
+                            // ilk story'yi paylaşmaya teşvik eden CTA.
+                            if (_noStoriesHere &&
+                                !hasActiveCheckinHere &&
+                                !_isAnonymous)
+                              _buildFirstStoryCta(),
+                            StoryTray(
+                              key: ValueKey(
+                                '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
+                              ),
+                              venueId: _resolvedVenueIdForCurrentDetail!,
+                              isUploading: _storyUploading,
+                              onAddStory: hasActiveCheckinHere
+                                  ? _openAddStory
+                                  : null,
+                              anonymousLocked: _isAnonymous,
+                              myPhotoUrl:
+                                  (_activeCheckinUserPhoto?.isNotEmpty ?? false)
+                                  ? _activeCheckinUserPhoto
+                                  : _activeCheckinFeaturedPhoto,
+                              onMyStoryStateChanged: (hasMine) {
+                                if (mounted &&
+                                    (hasMine != _hasMyStoryHere ||
+                                        !_storyStateKnown)) {
+                                  setState(() {
+                                    _hasMyStoryHere = hasMine;
+                                    _storyStateKnown = true;
+                                  });
+                                }
+                              },
+                              onStoriesEmptyChanged: (isEmpty) {
+                                if (mounted && isEmpty != _noStoriesHere) {
+                                  setState(() => _noStoriesHere = isEmpty);
+                                }
+                              },
+                            ),
+                          ],
+
+                          /// ABOUT
+                          if (_enrichedVenueData?['description'] != null &&
+                              (_enrichedVenueData!['description'] as String)
+                                  .isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            _buildDescriptionSection(
+                              _enrichedVenueData!['description'] as String,
+                            ),
+                          ],
+
+                          /// DEALS & DISCOUNTS (external partnerships) — About altında,
+                          /// tek satır kaydırılabilir chip'ler.
+                          if (_partnerships.isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            _buildDealsSection(),
+                          ],
+
+                          /// PHOTOS & VIDEOS (galeri — boşsa başlıkla birlikte gizlenir)
+                          if (widget.venue.isInDb &&
+                              widget.venue.id.isNotEmpty) ...[
+                            if (_galleryCount > 0) ...[
+                              const SizedBox(height: 18),
+                              _sectionTitle(
+                                AppColors.teal,
+                                'Photos & Videos',
+                                trailing: Text(
+                                  '$_galleryCount',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.teal,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            VenueGalleryStrip(
+                              venueId: widget.venue.id,
+                              onCountChanged: (count) {
+                                if (mounted && count != _galleryCount) {
+                                  setState(() => _galleryCount = count);
+                                }
+                              },
+                            ),
+                          ],
+
+                          /// UPCOMING EVENTS — yalnızca bu haftanın (7 gün) event'leri.
+                          if (_enrichedVenueData?['upcomingEvents']
+                              is List) ...[
+                            Builder(
+                              builder: (context) {
+                                final weekly =
+                                    VenueUpcomingEventsSection.weeklyUpcoming(
+                                      (_enrichedVenueData!['upcomingEvents']
+                                              as List)
+                                          .whereType<Map>()
+                                          .map(
+                                            (e) => VenueUpcomingEvent.fromJson(
+                                              Map<String, dynamic>.from(e),
+                                            ),
+                                          )
+                                          .toList(),
+                                    );
+                                if (weekly.isEmpty)
+                                  return const SizedBox.shrink();
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const SizedBox(height: 18),
+                                    _buildUpcomingEventsSection(weekly),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 

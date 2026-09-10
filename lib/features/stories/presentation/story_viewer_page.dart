@@ -2,6 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../data/story_model.dart';
+import 'story_display_timer.dart';
+import '../../../core/ui/cached_image.dart';
+import '../../../core/ui/destructive_confirmation_dialog.dart';
+import '../../../core/media/signed_media_resolver.dart';
 import '../../media/media_text_overlay.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
@@ -53,7 +57,7 @@ class StoryViewerPage extends StatefulWidget {
 }
 
 class _StoryViewerPageState extends State<StoryViewerPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final _repo = StoryRepository();
 
   late int _groupIndex;
@@ -62,10 +66,13 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   int _pollToken = 0; // her placeholder yüklemesinde artar → eski polling iptal
 
   AnimationController? _progressController;
+  StoryDisplayTimer? _displayTimer;
   VideoPlayerController? _videoController;
   bool _videoReady = false;
   bool _advancing = false;
   bool _loadingStory = false;
+  bool _interactionPaused = false;
+  bool _appPaused = false;
   DateTime? _storyPressStartedAt;
   double _storyVerticalDragOffset = 0;
   bool _closingStory = false;
@@ -87,6 +94,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _groups = List<StoryGroup>.from(widget.groups);
     _groupIndex = widget.initialGroupIndex;
     _storyIndex = widget.initialStoryIndex;
@@ -152,6 +160,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _displayTimer?.dispose();
     _progressController?.dispose();
     _videoController?.dispose();
     super.dispose();
@@ -159,8 +169,12 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
   Future<void> _loadStory() async {
     _advancing = false;
+    _interactionPaused = false;
     _loadingStory = true;
     _progressKey++;
+    final loadKey = _progressKey;
+    _displayTimer?.dispose();
+    _displayTimer = null;
     _pollToken++; // navigasyon/yeni story → eski polling iptal
     _progressController?.dispose();
     _progressController = null;
@@ -199,25 +213,43 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _precacheNextStory();
 
     if (story.isVideo) {
-      final vc = VideoPlayerController.networkUrl(Uri.parse(story.mediaUrl));
+      // Signed URL süresi (neredeyse) dolmuşsa, controller'ı oluşturmadan önce
+      // tek-seferlik yeniden imzala — aksi halde expired URL ile video açılmaz.
+      var videoUrl = story.mediaUrl;
+      final ref = story.mediaReference;
+      if (ref != null &&
+          ref.canRefresh &&
+          (videoUrl.isEmpty ||
+              (ref.expiresAt != null &&
+                  ref.expiresAt!.isBefore(
+                    DateTime.now().add(const Duration(seconds: 10)),
+                  )))) {
+        final refreshed = await SignedMediaResolver.instance.refreshOnce(ref);
+        if (refreshed != null && refreshed.url.isNotEmpty) {
+          videoUrl = refreshed.url;
+        }
+      }
+      if (videoUrl.isEmpty) {
+        if (!mounted || loadKey != _progressKey || _closingStory) return;
+        _loadingStory = false;
+        _startTimedStory();
+        return;
+      }
+      if (!mounted || loadKey != _progressKey || _closingStory) return;
+      final vc = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
       _videoController = vc;
       try {
         await vc.initialize();
       } catch (e) {
         debugPrint('❌ Video initialize error: $e');
-        if (!mounted) return;
+        if (!mounted || loadKey != _progressKey || _closingStory) return;
         _loadingStory = false;
-        final fallback =
-            AnimationController(vsync: this, duration: _photoDuration)
-              ..addStatusListener((s) {
-                if (s == AnimationStatus.completed) _advance();
-              });
-        setState(() => _progressController = fallback);
-        fallback.forward();
+        _startTimedStory();
         return;
       }
-      if (!mounted) return;
+      if (!mounted || loadKey != _progressKey || _closingStory) return;
       await vc.setLooping(false);
+      if (!mounted || loadKey != _progressKey || _closingStory) return;
       // Bitiş tespiti: video pozisyonu sona ulaşınca _advance()
       vc.addListener(() {
         if (_videoController != vc) return; // bu vc artık aktif değil
@@ -232,17 +264,30 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       });
       _loadingStory = false;
       setState(() => _videoReady = true);
-      await vc.play();
+      if (!_interactionPaused && !_appPaused) await vc.play();
     } else {
       _loadingStory = false;
-      final progress =
-          AnimationController(vsync: this, duration: _photoDuration)
-            ..addStatusListener((s) {
-              if (s == AnimationStatus.completed) _advance();
-            });
-      setState(() => _progressController = progress);
-      progress.forward();
+      _startTimedStory();
     }
+  }
+
+  void _startTimedStory() {
+    final loadKey = _progressKey;
+    final progress = AnimationController(
+      vsync: this,
+      duration: _photoDuration,
+      // Visual only. The independent timer below owns auto-advance.
+      // Preserve its time scale; reduced-motion rendering is stepped below.
+      animationBehavior: AnimationBehavior.preserve,
+    );
+    _displayTimer = StoryDisplayTimer(
+      duration: _photoDuration,
+      onComplete: () {
+        if (mounted && !_closingStory && loadKey == _progressKey) _advance();
+      },
+    );
+    setState(() => _progressController = progress);
+    _resumePlaybackIfAllowed();
   }
 
   Future<void> _pollForUploadedStory() async {
@@ -326,7 +371,14 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   }
 
   void _advance() {
-    if (!mounted || _advancing || _loadingStory) return;
+    if (!mounted ||
+        _closingStory ||
+        _advancing ||
+        _loadingStory ||
+        _appPaused ||
+        _interactionPaused) {
+      return;
+    }
     _advancing = true;
     if (_storyIndex < _currentGroup.stories.length - 1) {
       setState(() => _storyIndex++);
@@ -338,11 +390,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       });
       _loadStory();
     } else {
-      widget.onClose?.call(_storyIndex, true);
-      Navigator.pop(
-        context,
-        StoryViewerResult(lastStoryIndex: _storyIndex, allFinished: true),
-      );
+      _closeStory(allFinished: true);
     }
   }
 
@@ -372,24 +420,14 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     if (!_canDeleteCurrentStory) return;
     final story = _currentStory;
     _pauseProgress();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete story?'),
-        content: const Text('This story will be permanently deleted.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Delete story?',
+      message: 'This story will be permanently deleted and can’t be undone.',
+      confirmLabel: 'Delete story',
+      icon: Icons.delete_outline_rounded,
     );
-    if (confirmed != true) {
+    if (!confirmed) {
       _resumeProgress();
       return;
     }
@@ -434,15 +472,36 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   }
 
   void _pauseProgress() {
-    if (_loadingStory) return;
+    _interactionPaused = true;
+    _stopPlayback();
+  }
+
+  void _stopPlayback() {
+    _displayTimer?.pause();
     _progressController?.stop();
     _videoController?.pause();
   }
 
   void _resumeProgress() {
-    if (_loadingStory) return;
+    _interactionPaused = false;
+    _resumePlaybackIfAllowed();
+  }
+
+  void _resumePlaybackIfAllowed() {
+    if (_loadingStory || _closingStory || _appPaused || _interactionPaused) return;
+    _displayTimer?.resume();
     _progressController?.forward();
     _videoController?.play();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appPaused = state != AppLifecycleState.resumed;
+    if (_appPaused) {
+      _stopPlayback();
+    } else {
+      _resumePlaybackIfAllowed();
+    }
   }
 
   void _handleStoryPressStart(TapDownDetails _) {
@@ -470,6 +529,9 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   void _closeStory({bool allFinished = false}) {
     if (!mounted || _closingStory) return;
     _closingStory = true;
+    _displayTimer?.dispose();
+    _progressController?.stop();
+    _videoController?.pause();
     widget.onClose?.call(_storyIndex, allFinished);
     Navigator.pop(
       context,
@@ -576,27 +638,16 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                           else
                             const SizedBox.shrink()
                         else
-                          Image.network(
+                          // Signed URL: CachedImage, mediaReference ile URL
+                          // expire olursa tek-seferlik yeniden imzalar. Arkadaki
+                          // thumbnail placeholder olarak kalsın diye şeffaf.
+                          CachedImage(
                             story.mediaUrl,
+                            mediaReference: story.mediaReference,
                             fit: BoxFit.cover,
                             width: double.infinity,
                             height: double.infinity,
-                            // Yüklenene kadar thumbnail görünsün; gelince yumuşak fade.
-                            frameBuilder:
-                                (
-                                  context,
-                                  child,
-                                  frame,
-                                  wasSynchronouslyLoaded,
-                                ) {
-                                  if (wasSynchronouslyLoaded) return child;
-                                  return AnimatedOpacity(
-                                    opacity: frame == null ? 0 : 1,
-                                    duration: const Duration(milliseconds: 200),
-                                    curve: Curves.easeOut,
-                                    child: child,
-                                  );
-                                },
+                            placeholder: (_) => const SizedBox.shrink(),
                           ),
                       ],
                     ),
@@ -648,7 +699,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                         child: _ProgressBar(
                           completed: i < _storyIndex,
                           active: i == _storyIndex,
-                          controller: (i == _storyIndex && !story.isVideo)
+                          controller: (i == _storyIndex)
                               ? _progressController
                               : null,
                           videoController:
@@ -811,6 +862,38 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                   ),
                 ),
               ),
+            // ── DELETE (bottom-right) — kendi story'n / venue owner ───────────
+            if (_canDeleteCurrentStory)
+              Positioned(
+                right: 16,
+                bottom:
+                    MediaQuery.of(context).padding.bottom +
+                    ((widget.venueId != null &&
+                            widget.showViewers &&
+                            !story.isUploadingPlaceholder)
+                        ? 76
+                        : 28),
+                child: GestureDetector(
+                  onTap: _deleteCurrentStory,
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+
             // ── USER ROW — tap zone'lardan sonra: çarpı butonu tıklanabilir ──
             SafeArea(
               child: Padding(
@@ -845,16 +928,6 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                         ],
                       ),
                     ),
-                    if (widget.canDelete &&
-                        widget.venueId != null &&
-                        !story.isUploadingPlaceholder)
-                      IconButton(
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: Colors.white,
-                        ),
-                        onPressed: _deleteCurrentStory,
-                      ),
                     if (_canReportStoryOwner(group, story))
                       IconButton(
                         icon: const Icon(Icons.more_vert, color: Colors.white),
@@ -963,11 +1036,13 @@ class _ProgressBar extends StatelessWidget {
                 },
               )
             : active && controller != null
-            // Foto: AnimationController ile ilerler
+            // Visual progress only; never controls the story lifetime.
             ? AnimatedBuilder(
                 animation: controller!,
                 builder: (ctx, child) => LinearProgressIndicator(
-                  value: controller!.value,
+                  value: MediaQuery.disableAnimationsOf(ctx)
+                      ? (controller!.value * 5).floor() / 5
+                      : controller!.value,
                   backgroundColor: Colors.white30,
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
                 ),

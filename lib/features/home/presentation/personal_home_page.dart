@@ -479,32 +479,21 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   /// Check-in yokken: story paylaşmak için önce check-in gerektiğini anlatan
   /// etkileyici bilgilendirme + "yakındaki mekanlar" CTA'sı. (App-geneli dialog
   /// stili: ikon-başlıklı AlertDialog, tema şekli.)
-  void _showCheckinToShareDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.auto_awesome_rounded, size: 28),
-        title: const Text('Share your moment'),
-        content: const Text(
-          "Check in to a venue first — that's where your story comes alive for "
-          'everyone there. Find a spot near you and start sharing!',
-        ),
-        // Her ikisi de text buton → yanyana sığar.
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Not now'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              QuickCheckinLauncher().launch(context);
-            },
-            child: const Text('Browse nearby spots'),
-          ),
-        ],
-      ),
+  void _showCheckinToShareDialog() async {
+    final go = await showPremiumPromptDialog(
+      context,
+      icon: Icons.auto_awesome_rounded,
+      title: 'Share your moment',
+      message:
+          "Check in to a venue first — that's where your story comes alive "
+          'for everyone there. Find a spot near you and start sharing!',
+      confirmLabel: 'Browse nearby spots',
+      confirmIcon: Icons.explore_rounded,
+      cancelLabel: 'Not now',
     );
+    if (go && mounted) {
+      QuickCheckinLauncher().launch(context);
+    }
   }
 
   /// Aktif check-in varken: kamera aç → çekilen medyayı story olarak paylaş.
@@ -931,7 +920,10 @@ class _StoriesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // İlk item her zaman "Your story" balonu.
-    final showEmptyHint = stories.isEmpty;
+    // Bilgilendirme ipucu YALNIZCA kullanıcı henüz story paylaşmadıysa VE
+    // arkadaşları/mekanları da hiç story paylaşmamışsa gösterilir. Kullanıcı
+    // kendi story'sini paylaşınca ("Your story" balonu doldu) ipucu kalkar.
+    final showEmptyHint = stories.isEmpty && !hasMyStory;
     final itemCount = stories.length + 1 + (showEmptyHint ? 1 : 0);
     return SizedBox(
       height: 104,
@@ -1021,8 +1013,8 @@ class _StoryUnlockHint extends StatelessWidget {
           Expanded(
             child: Text(
               hasActiveCheckin
-                  ? 'Share your first moment here.'
-                  : 'Check in to unlock moments.',
+                  ? 'Share your first story here.'
+                  : 'Check in to unlock stories.',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -1853,25 +1845,25 @@ class _FollowedEventCard extends StatelessWidget {
                         height: 36,
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: colors.primary,
-                            borderRadius: BorderRadius.circular(999),
+                            color: AppColors.blue,
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                          child: Row(
+                          child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
                                 'View details',
                                 style: TextStyle(
-                                  color: colors.onPrimary,
+                                  color: Colors.white,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              const SizedBox(width: 4),
+                              SizedBox(width: 4),
                               Icon(
                                 Icons.arrow_forward_rounded,
                                 size: 15,
-                                color: colors.onPrimary,
+                                color: Colors.white,
                               ),
                             ],
                           ),
