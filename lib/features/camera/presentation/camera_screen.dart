@@ -20,11 +20,23 @@ import '../data/volume_shutter.dart';
 class CameraScreen extends StatefulWidget {
   final bool useFrontCamera;
   final bool optimizeForUpload;
+  final bool allowVideo;
+  final String previewConfirmLabel;
+  final IconData? previewConfirmIcon;
+
+  /// Story/full-screen captures are center-cropped to the phone's tall screen
+  /// aspect (BoxFit.cover look). Chat photos should keep the camera's natural
+  /// aspect (e.g. 4:3) — set false so the shot isn't cropped into a thin strip.
+  final bool cropToScreen;
 
   const CameraScreen({
     super.key,
     this.useFrontCamera = false,
     this.optimizeForUpload = false,
+    this.allowVideo = true,
+    this.previewConfirmLabel = 'Use',
+    this.previewConfirmIcon,
+    this.cropToScreen = true,
   });
 
   @override
@@ -237,7 +249,7 @@ class _CameraScreenState extends State<CameraScreen>
       // 3) Kamera önizlemesinde görülen alanla birebir eşleştir
       //    (preview BoxFit.cover ile ekranı dolduruyordu → aynı center-crop).
       final imageAr = fixed.width / fixed.height;
-      if ((imageAr - screenAr).abs() > 0.005) {
+      if (widget.cropToScreen && (imageAr - screenAr).abs() > 0.005) {
         if (imageAr > screenAr) {
           final newW = (fixed.height * screenAr).round();
           final x = ((fixed.width - newW) / 2).round();
@@ -294,6 +306,10 @@ class _CameraScreenState extends State<CameraScreen>
           isFrontCamera:
               _currentCamera.lensDirection == CameraLensDirection.front,
           screenAr: screenAr,
+          confirmLabel: widget.previewConfirmLabel,
+          confirmIcon: widget.previewConfirmIcon,
+          // Kırpılmamış (doğal oranlı) foto tam görünsün diye contain.
+          imageFit: widget.cropToScreen ? BoxFit.cover : BoxFit.contain,
         ),
       ),
     );
@@ -593,23 +609,29 @@ class _CameraScreenState extends State<CameraScreen>
                     }
                     await _takePicture();
                   },
-                  onLongPressStart: (_) {
-                    if (_isRecording) return;
-                    _longPressActive = true;
-                    unawaited(_startVideo(fromGesture: true));
-                  },
-                  onLongPressEnd: (_) {
-                    _longPressActive = false;
-                    if (_gestureRecording) {
-                      unawaited(_stopVideo());
-                    }
-                  },
-                  onLongPressCancel: () {
-                    _longPressActive = false;
-                    if (_gestureRecording) {
-                      unawaited(_stopVideo());
-                    }
-                  },
+                  onLongPressStart: widget.allowVideo
+                      ? (_) {
+                          if (_isRecording) return;
+                          _longPressActive = true;
+                          unawaited(_startVideo(fromGesture: true));
+                        }
+                      : null,
+                  onLongPressEnd: widget.allowVideo
+                      ? (_) {
+                          _longPressActive = false;
+                          if (_gestureRecording) {
+                            unawaited(_stopVideo());
+                          }
+                        }
+                      : null,
+                  onLongPressCancel: widget.allowVideo
+                      ? () {
+                          _longPressActive = false;
+                          if (_gestureRecording) {
+                            unawaited(_stopVideo());
+                          }
+                        }
+                      : null,
                   child: AnimatedBuilder(
                     animation: _ringController,
                     builder: (context, child) {

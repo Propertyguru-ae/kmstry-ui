@@ -8,9 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:kmstry_frontend/main.dart' show navigatorKey;
+import 'package:kmstry_frontend/core/network/network_error.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -22,7 +28,11 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/preview_screen.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 
 class MessageDetailPage extends StatefulWidget {
   /// When null, this is a new conversation; first send will create the chat.
@@ -31,12 +41,17 @@ class MessageDetailPage extends StatefulWidget {
   final String otherName;
   final String otherPhotoUrl;
 
+  /// Sohbet listesinden gelen okunmamış sayısı — "Unread messages" ayracını
+  /// ilk okunmamış mesajın üstüne koymak için (0 = ayraç yok).
+  final int initialUnreadCount;
+
   const MessageDetailPage({
     super.key,
     this.chatId,
     required this.otherUserId,
     required this.otherName,
     required this.otherPhotoUrl,
+    this.initialUnreadCount = 0,
   });
 
   @override
@@ -59,6 +74,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   String? _currentUserId;
   bool _loadingMore = false;
   bool _hasReachedEndOfMessages = false;
+  bool _messageListReady = false;
+  // Jump-to-bottom FAB: yukarı kaydırınca beliren, okunmamış rozetli aşağı-ok.
+  bool _showJumpToBottom = false;
+  int _unreadWhileScrolledUp = 0;
+  bool _conversationReversed = true;
+  // "Unread messages" ayracı: ilk okunmamış mesajın id'si (bir kez hesaplanır).
+  String? _firstUnreadMessageId;
+  bool _unreadDividerResolved = false;
   final Set<String> _deletingMessageIds = <String>{};
   StreamSubscription<ChatRealtimeEnvelope>? _realtimeEventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _realtimeStateSub;
@@ -89,8 +112,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   String? _floatingDateText;
   bool _showFloatingDate = false;
 
-  // Client-side "quote" reply: gerçek reply_to_id backend'de yok, gönderirken
-  // metnin başına referans satırı eklenir (basit ama işlevsel WhatsApp benzeri UX).
+  /// Alıntı balonuna dokununca zıplanan orijinal mesaj kısa süre vurgulanır.
+  String? _highlightedMessageId;
+  StreamSubscription<String>? _cacheChangesSub;
+  int _chatLoadRequest = 0;
+  final Map<String, String> _confirmedImagePreviews = {};
+
+  // Reply: alıntı balonu için görünür metne referans satırı gömülür VE yapısal
+  // reply_to_id gönderilir (balona dokununca orijinale zıplamak için).
   ChatMessage? _replyingTo;
   bool _forwardSelectionMode = false;
   final Set<String> _forwardSelectedMessageIds = <String>{};
@@ -101,19 +130,43 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     WidgetsBinding.instance.addObserver(this);
     debugPrint('💬 [Detail] Listener baglaniyor');
     _chatId = _normalizeChatId(widget.chatId);
+    _cacheChangesSub = _repo.cacheChanges.listen((id) {
+      if (!mounted || id != _chatId) return;
+      final cached = _repo.cachedChat(id);
+      if (cached == null) return;
+      final visibleIds = _chat?.messages.map((m) => m.id).toSet() ?? <String>{};
+      final shouldScroll = _isNearBottom();
+      for (final message in cached.messages) {
+        if (!visibleIds.contains(message.id)) {
+          _mergeOrInsertMessage(message, shouldScroll: shouldScroll);
+        }
+      }
+    });
     _bindRealtimeStreams();
     _loadCurrentUser();
+    _scrollController.addListener(_onScroll);
     if (_chatId != null) {
-      _loadChat();
+      final cachedChat = _repo.cachedChat(_chatId!);
+      if (cachedChat != null) {
+        _chat = cachedChat;
+        _loading = false;
+        _messageListReady = true;
+        _isOtherOnline = cachedChat.otherUser?.isOnline ?? false;
+        _refreshCursorFromMessages(cachedChat.messages);
+      }
+      _loadChat(silent: cachedChat != null);
       unawaited(_connectRealtimeIfPossible());
     } else {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _messageListReady = true;
+      });
     }
-    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    _cacheChangesSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     debugPrint('💬 [Detail] Listener temizleniyor');
     final cid = _chatId;
@@ -203,6 +256,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       ? widget.otherUserId
       : (_chat?.displayOtherUser?.id ?? '');
 
+  bool _isMessageSentByMe(ChatMessage message) {
+    if (message.isMe != null) return message.isMe!;
+
+    final currentUserId = _currentUserId;
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      return message.isSentByMe(currentUserId);
+    }
+
+    final otherUserId = _effectiveOtherUserId;
+    final senderId = message.senderId;
+    if (senderId == null || senderId.isEmpty || otherUserId.isEmpty) {
+      return false;
+    }
+    return senderId != otherUserId;
+  }
+
   void _bindRealtimeStreams() {
     _realtimeEventsSub = _realtime.events.listen(_handleRealtimeEvent);
     _realtimeStateSub = _realtime.connectionState.listen((state) {
@@ -217,10 +286,16 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   void _onScroll() {
     _updateFloatingDateForScroll();
-    if (_loadingMore || _loading || _chat == null || _hasReachedEndOfMessages) {
+    _updateJumpToBottomVisibility();
+    if (!_messageListReady ||
+        _loadingMore ||
+        _loading ||
+        _chat == null ||
+        _hasReachedEndOfMessages) {
       return;
     }
-    if (_scrollController.offset <= 100 && _scrollController.hasClients) {
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 100) {
       _loadMoreMessages();
     }
   }
@@ -268,16 +343,19 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   void _scrollToBottom({bool animated = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
+      const target = 0.0;
       if (animated) {
-        _scrollController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-        );
-      } else {
-        _scrollController.jumpTo(target);
+        final distance = _scrollController.offset.abs();
+        if (distance > 0 && distance < 600) {
+          _scrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+          return;
+        }
       }
+      _scrollController.jumpTo(target);
     });
   }
 
@@ -287,6 +365,51 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   // Klavye zaten resizeToAvoidBottomInset ile ele alınıyor; sadece küçük bir
   // nefes payı yeterli.
   double _messageListBottomPadding() => 12;
+
+  double _estimatedMessageHeight(ChatMessage message) {
+    if (message.messageType == 'image' && message.imageUrl != null) {
+      final width = message.imageWidth;
+      final height = message.imageHeight;
+      if (width != null && width > 0 && height != null && height > 0) {
+        final ratio = height / width;
+        return (300 * ratio).clamp(160, 330).toDouble() + 12;
+      }
+      return 260;
+    }
+    if (message.messageType == 'file') return 86;
+    if (message.messageType == 'venue') return 305;
+
+    final body = _visibleMessageBody(message.text ?? '');
+    final lineCount = (body.length / 34).ceil().clamp(1, 8);
+    final replyPreviewExtra = _parseReplyMessage(message.text ?? '') != null
+        ? 58
+        : 0;
+    return 34 + (lineCount * 22) + replyPreviewExtra + 12;
+  }
+
+  bool _shouldTopAlignConversation(
+    List<ChatMessage> orderedMessages,
+    double viewportHeight,
+  ) {
+    if (_loadingMore ||
+        orderedMessages.isEmpty ||
+        orderedMessages.length > 12) {
+      return false;
+    }
+
+    var estimatedHeight = 14.0 + _messageListBottomPadding();
+    DateTime? previousDate;
+    for (final message in orderedMessages) {
+      if (previousDate == null ||
+          !_isSameDay(previousDate, message.createdAt)) {
+        estimatedHeight += 56;
+      }
+      estimatedHeight += _estimatedMessageHeight(message);
+      previousDate = message.createdAt;
+    }
+
+    return estimatedHeight < viewportHeight - 18;
+  }
 
   Future<void> _loadCurrentUser() async {
     try {
@@ -415,6 +538,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     } catch (_) {}
   }
 
+  /// Reversed listede "en yeni" (görsel dip) offset≈0'dır. 150px'den fazla
+  /// yukarıdaysa jump-to-bottom FAB'ı göster; dibe dönünce gizle + okunmamış
+  /// sayacını sıfırla.
+  void _updateJumpToBottomVisibility() {
+    if (!_scrollController.hasClients) return;
+    final atNewest = !_conversationReversed || _scrollController.offset <= 150;
+    final show = _conversationReversed && !atNewest;
+    if (show != _showJumpToBottom ||
+        (atNewest && _unreadWhileScrolledUp != 0)) {
+      setState(() {
+        _showJumpToBottom = show;
+        if (atNewest) _unreadWhileScrolledUp = 0;
+      });
+    }
+  }
+
   /// Liste en alta yakın mı (son mesajlar görünüyor mu)?
   bool _isNearBottom() {
     if (!_scrollController.hasClients) return true;
@@ -457,8 +596,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           Map<String, dynamic>.from(rawMessage),
         );
         _mergeOrInsertMessage(message);
-        if (!message.isSentByMe(_currentUserId)) {
+        if (!_isMessageSentByMe(message)) {
           _scheduleReadReceipt();
+          // Kullanıcı yukarıda geçmişi okuyorsa yeni gelen mesajı FAB rozetinde say.
+          if (_conversationReversed &&
+              _scrollController.hasClients &&
+              _scrollController.offset > 150) {
+            setState(() => _unreadWhileScrolledUp += 1);
+          }
         }
         return;
       case 'message.updated':
@@ -562,6 +707,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     setState(() {
       _chat = _chat!.copyWith(messages: next);
     });
+    _repo.rememberChat(_chat!);
   }
 
   /// Stamp the given messages as read (per-message "Seen"), keeping the earliest
@@ -594,6 +740,20 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   void _mergeOrInsertMessage(ChatMessage incoming, {bool shouldScroll = true}) {
     final current = _chat;
+    if (incoming.messageType == 'image' &&
+        !incoming.id.startsWith('temp-') &&
+        incoming.clientMessageId != null &&
+        current != null) {
+      for (final pending in current.messages) {
+        if (pending.id.startsWith('temp-') &&
+            pending.clientMessageId == incoming.clientMessageId &&
+            pending.imageUrl != null &&
+            !pending.imageUrl!.startsWith('http')) {
+          _confirmedImagePreviews[incoming.id] = pending.imageUrl!;
+          break;
+        }
+      }
+    }
     if (current == null) {
       setState(() {
         _chat = ChatDetail(
@@ -608,6 +768,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         );
       });
       _touchCursor(incoming.createdAt);
+      _repo.rememberChat(_chat!);
       if (shouldScroll) _scrollToBottom(animated: true);
       return;
     }
@@ -639,6 +800,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     setState(() {
       _chat = current.copyWith(messages: messages);
     });
+    _repo.rememberChat(_chat!);
     _touchCursor(incoming.createdAt);
     if (shouldScroll) _scrollToBottom(animated: true);
   }
@@ -695,21 +857,37 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   Future<void> _loadChat({bool silent = false}) async {
     final cid = _chatId;
     if (cid == null) return;
+    final request = ++_chatLoadRequest;
+    final isInitialLoad = _chat == null;
     // silent: mevcut mesajları ekranda tutarak arka planda tazele (resume'da
     // spinner flicker'ı olmasın). Sadece ilk yüklemede tam loading gösterilir.
     if (!silent || _chat == null) {
       setState(() {
         _loading = true;
         _error = null;
+        if (isInitialLoad) _messageListReady = false;
       });
     }
     try {
-      final detail = await _repo.getChat(cid, markRead: true);
-      if (!mounted) return;
+      final detail = await _repo.getChat(cid, markRead: true, take: 30);
+      if (!mounted || request != _chatLoadRequest) return;
       setState(() {
         // Per-message read_at is carried on each message, so "Seen" persists
         // across reopens with no extra hydration.
-        _chat = detail;
+        final pending =
+            _chat?.messages
+                .where(
+                  (m) =>
+                      m.id.startsWith('temp-') &&
+                      !detail.messages.any(
+                        (confirmed) =>
+                            m.clientMessageId != null &&
+                            confirmed.clientMessageId == m.clientMessageId,
+                      ),
+                )
+                .toList() ??
+            <ChatMessage>[];
+        _chat = detail.copyWith(messages: [...detail.messages, ...pending]);
         _loading = false;
         // Sunucudan gelen gerçek presence — sayfa yeni açıldığında henüz bir
         // realtime presence eventi gelmemiş olabilir, varsayılan "true" yanlış
@@ -717,15 +895,34 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         _isOtherOnline = detail.otherUser?.isOnline ?? false;
       });
       _refreshCursorFromMessages(detail.messages);
+      _resolveUnreadDivider(detail.messages);
+      _messageListReady = true;
       _scrollToBottom();
     } catch (e) {
       debugPrint('❌ getChat error: $e');
-      if (!mounted) return;
+      if (!mounted || request != _chatLoadRequest) return;
       setState(() {
-        _error = e.toString();
+        if (_chat == null) _error = e.toString();
         _loading = false;
       });
     }
+  }
+
+  /// İlk açılışta "Unread messages" ayracının konumunu bir kez hesaplar:
+  /// sohbet listesinden gelen okunmamış sayısı kadar SON GELEN (karşı taraf)
+  /// mesajın en eskisinin üstüne konur. Yalnızca ilk yükleme; sonradan gelen
+  /// realtime mesajlar ayracı kaydırmaz.
+  void _resolveUnreadDivider(List<ChatMessage> messages) {
+    if (_unreadDividerResolved) return;
+    _unreadDividerResolved = true;
+    final count = widget.initialUnreadCount;
+    if (count <= 0) return;
+    final ordered = List<ChatMessage>.from(messages)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    // Yalnızca karşı tarafın mesajları okunmamış sayılır.
+    final incoming = ordered.where((m) => !_isMessageSentByMe(m)).toList();
+    if (incoming.length < count) return;
+    _firstUnreadMessageId = incoming[incoming.length - count].id;
   }
 
   /// Pagination: load older messages when user scrolls to top using before_id.
@@ -783,6 +980,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// Instant send: the optimistic bubble is placed and the input is cleared
   /// synchronously, then the network round-trip runs in the background. The
   /// send button is never gated on the request — chat must feel immediate.
+  /// Reads the intrinsic pixel size of an image file (best-effort). Returns
+  /// (null, null) if it can't be decoded.
+  Future<(int?, int?)> _decodeImageSize(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final descriptor = await ImageDescriptor.encoded(
+        await ImmutableBuffer.fromUint8List(bytes),
+      );
+      final w = descriptor.width;
+      final h = descriptor.height;
+      descriptor.dispose();
+      if (w > 0 && h > 0) return (w, h);
+    } catch (_) {}
+    return (null, null);
+  }
+
   void _sendMessage() {
     if (_chat?.canSendMessages == false) return;
     final rawText = _messageController.text.trim();
@@ -803,6 +1016,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final text = replyTarget == null
         ? rawText
         : '${_replyQuoteLine(replyTarget)}\n$rawText';
+    // Yapısal reply id: alıntı balonuna dokununca orijinale zıplamak için.
+    final replyToId = replyTarget?.id;
 
     _messageController.clear();
     if (replyTarget != null) setState(() => _replyingTo = null);
@@ -820,10 +1035,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         senderId: _currentUserId,
         isMe: true,
         clientMessageId: clientMessageId,
+        replyToId: replyToId,
       ),
     );
 
-    unawaited(_deliverMessage(cid, text, clientMessageId, optimisticTempId));
+    unawaited(
+      _deliverMessage(cid, text, clientMessageId, optimisticTempId, replyToId),
+    );
   }
 
   Future<void> _deliverMessage(
@@ -831,6 +1049,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     String text,
     String clientMessageId,
     String optimisticTempId,
+    String? replyToId,
   ) async {
     try {
       final sentMessage = await _repo.sendMessage(
@@ -838,6 +1057,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         messageType: 'text',
         text: text,
         clientMessageId: clientMessageId,
+        replyToId: replyToId,
       );
       if (!mounted) return;
       _removeMessageById(optimisticTempId);
@@ -845,11 +1065,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     } catch (e) {
       debugPrint('❌ sendMessage error: $e');
       if (!mounted) return;
-      _removeMessageById(optimisticTempId);
-      _messageController.text = text;
-      // Karşı taraf bloklandıysa / sohbet artık aktif değilse: sohbeti tazele
-      // (input kilitlensin) ve generic hata yerine anlaşılır mesaj göster.
+      // Blok / inaktif sohbet: retry işe yaramaz → balonu kaldır, metni geri ver,
+      // sohbeti tazele (input kilitlensin) ve anlaşılır uyarı göster.
       if (_isBlockedOrInactiveError(e)) {
+        _removeMessageById(optimisticTempId);
+        _messageController.text = text;
         unawaited(_loadChat());
         await showPremiumErrorDialog(
           context,
@@ -859,13 +1079,45 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         );
         return;
       }
-      if (_isTooManyRequestsError(e)) {
-        return;
-      }
-      await showPremiumErrorDialog(
-        context,
-        message:
-            'Message could not be sent: ${e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '')}',
+      // Diğer tüm hatalar (ağ/timeout/5xx/429): WhatsApp gibi balonu KORU ve
+      // "başarısız" işaretle → kullanıcı kırmızı "!"ye dokunup tekrar gönderir.
+      // Metin input'a geri atılmaz, dialog çıkmaz — mesaj "kaybolmaz".
+      _markMessageFailed(optimisticTempId);
+    }
+  }
+
+  /// Optimistik mesajı "gönderilemedi" işaretler (balon kalır).
+  void _markMessageFailed(String messageId) {
+    final chat = _chat;
+    if (chat == null) return;
+    final next = chat.messages
+        .map((m) => m.id == messageId ? m.copyWith(sendFailed: true) : m)
+        .toList();
+    setState(() => _chat = chat.copyWith(messages: next));
+  }
+
+  /// Başarısız bir mesajı yeniden gönderir: aynı client_message_id ile (backend
+  /// idempotent dedupe eder), balonu "gönderiliyor" durumuna alıp tekrar dener.
+  Future<void> _retryFailedMessage(ChatMessage message) async {
+    final cid = _normalizeChatId(_chatId);
+    if (cid == null || !message.sendFailed) return;
+    // "Gönderiliyor" durumuna al (kırmızı "!" kaybolsun).
+    final chat = _chat;
+    if (chat != null) {
+      final next = chat.messages
+          .map((m) => m.id == message.id ? m.copyWith(sendFailed: false) : m)
+          .toList();
+      setState(() => _chat = chat.copyWith(messages: next));
+    }
+    if (message.messageType == 'text') {
+      unawaited(
+        _deliverMessage(
+          cid,
+          message.text ?? '',
+          message.clientMessageId ?? _nextClientMessageId(),
+          message.id,
+          message.replyToId,
+        ),
       );
     }
   }
@@ -887,6 +1139,108 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         s.contains('429');
   }
 
+  /// Alıntı balonuna dokununca yapısal reply_to_id ile orijinal mesaja zıplar
+  /// ve kısa bir vurgu (highlight) uygular. Hedef eski bir sayfadaysa önce o
+  /// sayfalar yüklenir; ListView hedef satırı henüz oluşturmamışsa tahmini
+  /// konumuna gidilerek satır oluşturulduktan sonra kesin hizalama yapılır.
+  Future<void> _jumpToMessage(String messageId) async {
+    final targetId = messageId.trim();
+    if (targetId.isEmpty || _chat == null) return;
+
+    var containsTarget = _chat!.messages.any((m) => m.id == targetId);
+    var pagesLoaded = 0;
+    while (!containsTarget && !_hasReachedEndOfMessages && pagesLoaded < 20) {
+      final beforeCount = _chat!.messages.length;
+      await _loadMoreMessages();
+      if (!mounted || _chat == null) return;
+      pagesLoaded += 1;
+      containsTarget = _chat!.messages.any((m) => m.id == targetId);
+      if (_chat!.messages.length == beforeCount) break;
+    }
+    if (!containsTarget || !mounted) return;
+
+    await _revealMessageItem(targetId);
+    if (!mounted) return;
+    final ctx = _messageItemKeys[targetId]?.currentContext;
+    if (ctx == null || !ctx.mounted) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeInOut,
+      alignment: 0.3,
+    );
+    if (!mounted) return;
+    setState(() => _highlightedMessageId = targetId);
+    await Future.delayed(const Duration(milliseconds: 1300));
+    if (mounted && _highlightedMessageId == targetId) {
+      setState(() => _highlightedMessageId = null);
+    }
+  }
+
+  /// `ListView.builder` ekran dışındaki mesajları üretmediği için doğrudan
+  /// ensureVisible yeterli değildir. Gerçekte oluşturulmuş mesaj indekslerini
+  /// izleyip hedefe doğru viewport adımlarıyla ilerler; dinamik balon yükseklikleri
+  /// nedeniyle tahmini offset'in yanlış mesaja düşmesini önler.
+  Future<void> _revealMessageItem(String messageId) async {
+    if (_messageItemKeys[messageId]?.currentContext != null ||
+        !_scrollController.hasClients ||
+        _chat == null) {
+      return;
+    }
+
+    final ordered = List<ChatMessage>.from(_chat!.messages)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final rendered = _conversationReversed
+        ? ordered.reversed.toList(growable: false)
+        : ordered;
+    final targetIndex = rendered.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (targetIndex < 0) return;
+
+    for (var attempt = 0; attempt < 120; attempt += 1) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || _messageItemKeys[messageId]?.currentContext != null) {
+        return;
+      }
+      if (!_scrollController.hasClients) return;
+
+      final builtIndices = <int>[];
+      for (var index = 0; index < rendered.length; index += 1) {
+        if (_messageItemKeys[rendered[index].id]?.currentContext != null) {
+          builtIndices.add(index);
+        }
+      }
+
+      final position = _scrollController.position;
+      if (builtIndices.isEmpty) {
+        final fraction = rendered.length <= 1
+            ? 0.0
+            : targetIndex / (rendered.length - 1);
+        _scrollController.jumpTo(
+          (position.maxScrollExtent * fraction).clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          ),
+        );
+        continue;
+      }
+
+      final direction = targetIndex > builtIndices.last
+          ? 1.0
+          : targetIndex < builtIndices.first
+          ? -1.0
+          : 0.0;
+      if (direction == 0) continue;
+
+      final nextOffset =
+          (position.pixels + direction * position.viewportDimension * 0.82)
+              .clamp(position.minScrollExtent, position.maxScrollExtent);
+      if ((nextOffset - position.pixels).abs() < 0.5) return;
+      _scrollController.jumpTo(nextOffset);
+    }
+  }
+
   void _setReplyTarget(ChatMessage message) {
     if (!mounted) return;
     setState(() => _replyingTo = message);
@@ -897,22 +1251,39 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     setState(() => _replyingTo = null);
   }
 
-  /// Basit client-side quote satırı (gerçek reply_to_id yok — backend'e
-  /// düz metin olarak gider, karşı tarafta da normal metin gibi görünür).
+  /// Alıntı balonunun GÖRÜNEN metnini üretir (gönderen etiketi + kısa alıntı),
+  /// mesaj metnine gömülür. Zıplama ise ayrı taşınan yapısal reply_to_id ile
+  /// yapılır — bu satır yalnızca görsel alıntıyı sağlar.
   String _replyQuoteLine(ChatMessage target) {
-    final senderLabel = target.isSentByMe(_currentUserId)
+    final senderLabel = _isMessageSentByMe(target)
         ? 'You'
         : widget.otherName.split(' ').first;
     final snippet = target.messageType == 'image'
         ? '[Photo]'
         : target.messageType == 'file'
         ? '[Document]'
-        : (target.text ?? '').trim();
+        : target.messageType == 'venue'
+        ? '[Venue] ${target.venue?.name ?? ''}'.trim()
+        : _visibleMessageBody(target.text ?? '');
     final compact = snippet.replaceAll(RegExp(r'\s+'), ' ');
     final trimmed = compact.length > 80
         ? '${compact.substring(0, 80)}...'
         : compact;
     return '↩️ $senderLabel: $trimmed';
+  }
+
+  /// Replying to an existing reply must quote the selected bubble's visible
+  /// body, not copy its embedded quote again. This keeps reply chains flat,
+  /// matching WhatsApp-style behaviour, and also cleans up legacy nested
+  /// client-side quotes when users reply to them.
+  String _visibleMessageBody(String rawMessage) {
+    var visible = rawMessage.trim();
+    for (var depth = 0; depth < 8; depth++) {
+      final parsed = _parseReplyMessage(visible);
+      if (parsed == null) break;
+      visible = parsed.body.trim();
+    }
+    return visible;
   }
 
   /// WhatsApp tarzı mesaj seçme moduna gir: kullanıcı isterse ek mesajları da
@@ -963,16 +1334,24 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   Future<void> _forwardSelectedMessages() async {
     final messages = _selectedForwardMessages();
     if (messages.isEmpty) return;
-    final forwardedTarget = await _openForwardRecipientSheet(messages);
+    final selection = await _openForwardRecipientSheet(messages);
     if (!mounted) return;
     _exitForwardSelection();
-    if (forwardedTarget != null) {
-      _openForwardedChat(forwardedTarget);
+    if (selection == null) return;
+    final (targets, note) = selection;
+    if (targets.isEmpty) return;
+
+    // Optimistik & hızlı: tek hedefte anında o sohbete geç. Teslimat arka
+    // planda; kullanıcı gönderimin bitmesini beklemez.
+    if (targets.length == 1) {
+      _openForwardedChat(targets.first);
     }
+    unawaited(_deliverForward(targets, messages, note));
   }
 
-  /// Başka sohbete ilet: hedef sohbetleri seçtirir, aynı içerikleri gönderir.
-  Future<ChatListItem?> _openForwardRecipientSheet(
+  /// Başka sohbete ilet: hedef sohbetleri seçtirir; SEÇİMİ döndürür (gönderim
+  /// çağıran tarafta, arka planda yapılır).
+  Future<(List<ChatListItem>, String)?> _openForwardRecipientSheet(
     List<ChatMessage> messages,
   ) async {
     // Sheet'i beklemeden hemen aç, sohbet listesi arka planda gelsin — önceden
@@ -1018,7 +1397,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               );
             }
             final chats = (snapshot.data ?? const <ChatListItem>[])
-                .where((c) => c.id != _chatId)
+                // Bloklu sohbetlere mesaj gönderilemez → forward hedefi olarak
+                // hiç gösterme (mevcut sohbeti de listeden çıkar).
+                .where((c) => c.id != _chatId && !c.isBlocked)
                 .toList();
             if (chats.isEmpty) {
               return SizedBox(
@@ -1056,52 +1437,76 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                   child: SafeArea(
                     child: Column(
                       children: [
+                        Container(
+                          margin: const EdgeInsets.only(top: 10, bottom: 2),
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: _mutedTextColor.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(18, 16, 18, 10),
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                           child: Row(
                             children: [
                               _buildForwardCircleButton(
                                 icon: Icons.close_rounded,
-                                onPressed: () => Navigator.pop(sheetContext),
+                                onPressed: () {
+                                  FocusManager.instance.primaryFocus?.unfocus();
+                                  Navigator.pop(sheetContext);
+                                },
                               ),
-                              const Spacer(),
-                              Text(
-                                'Send to',
-                                style: TextStyle(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const Spacer(),
-                              Opacity(
-                                opacity: 0.38,
-                                child: IgnorePointer(
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: _isDarkMode
-                                          ? Colors.white.withValues(alpha: 0.08)
-                                          : const Color(0xFFF0F4F8),
-                                      borderRadius: BorderRadius.circular(22),
-                                      border: Border.all(color: _dividerColor),
-                                    ),
-                                    child: Text(
-                                      'New group',
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurface,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ShaderMask(
+                                      shaderCallback: (rect) =>
+                                          const LinearGradient(
+                                            colors: [
+                                              AppColors.blue,
+                                              AppColors.magenta,
+                                            ],
+                                          ).createShader(rect),
+                                      child: const Text(
+                                        'Forward to',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 19,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
                                     ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      messages.length == 1
+                                          ? '1 message selected'
+                                          : '${messages.length} messages selected',
+                                      style: TextStyle(
+                                        color: _mutedTextColor,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.all(9),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.blue.withValues(
+                                    alpha: _isDarkMode ? 0.16 : 0.10,
                                   ),
+                                ),
+                                child: const Icon(
+                                  Icons.forward_rounded,
+                                  color: AppColors.blue,
+                                  size: 20,
                                 ),
                               ),
                             ],
@@ -1216,72 +1621,91 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                               : Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    TextField(
-                                      controller: noteController,
-                                      minLines: 1,
-                                      maxLines: 3,
-                                      style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurface,
-                                        fontSize: 15.5,
-                                      ),
-                                      decoration: InputDecoration(
-                                        hintText: 'Add a message...',
-                                        hintStyle: TextStyle(
-                                          color: _mutedTextColor,
+                                    SizedBox(
+                                      height: 66,
+                                      child: ListView.separated(
+                                        scrollDirection: Axis.horizontal,
+                                        padding: const EdgeInsets.only(
+                                          bottom: 2,
                                         ),
-                                        filled: true,
-                                        fillColor: _isDarkMode
-                                            ? Colors.white.withValues(
-                                                alpha: 0.08,
-                                              )
-                                            : const Color(0xFFF0F4F8),
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            22,
-                                          ),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              horizontal: 16,
-                                              vertical: 12,
-                                            ),
+                                        itemCount: selectedChats.length,
+                                        separatorBuilder: (_, index) =>
+                                            const SizedBox(width: 14),
+                                        itemBuilder: (_, i) {
+                                          final chat = selectedChats[i];
+                                          final chatName = _forwardChatName(
+                                            chat,
+                                          );
+                                          return _buildForwardSelectedChip(
+                                            name: chatName,
+                                            photoUrl:
+                                                chat
+                                                    .getDisplayUser(
+                                                      _currentUserId,
+                                                    )
+                                                    ?.photo ??
+                                                '',
+                                            onRemove: () => toggle(chat),
+                                          );
+                                        },
                                       ),
                                     ),
-                                    const SizedBox(height: 12),
+                                    const SizedBox(height: 8),
                                     Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
                                       children: [
                                         Expanded(
-                                          child: Text(
-                                            _forwardSelectionLabel(
-                                              selectedChats,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
+                                          child: TextField(
+                                            controller: noteController,
+                                            minLines: 1,
+                                            maxLines: 3,
                                             style: TextStyle(
                                               color: Theme.of(
                                                 context,
                                               ).colorScheme.onSurface,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w700,
+                                              fontSize: 15.5,
+                                            ),
+                                            decoration: InputDecoration(
+                                              hintText: 'Add a message...',
+                                              hintStyle: TextStyle(
+                                                color: _mutedTextColor,
+                                              ),
+                                              filled: true,
+                                              fillColor: _isDarkMode
+                                                  ? Colors.white.withValues(
+                                                      alpha: 0.08,
+                                                    )
+                                                  : const Color(0xFFF0F4F8),
+                                              border: OutlineInputBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(24),
+                                                borderSide: BorderSide.none,
+                                              ),
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 18,
+                                                    vertical: 13,
+                                                  ),
                                             ),
                                           ),
                                         ),
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(
-                                            sheetContext,
-                                            selectedChats,
-                                          ),
-                                          child: const Text(
-                                            'Forward',
-                                            style: TextStyle(
-                                              color: Color(0xFF22C55E),
-                                              fontSize: 17,
-                                              fontWeight: FontWeight.w800,
-                                            ),
-                                          ),
+                                        const SizedBox(width: 10),
+                                        _buildForwardSendButton(
+                                          count: selectedChats.length,
+                                          onTap: () {
+                                            // Odaklı not alanı hâlâ ağaçtayken
+                                            // sheet pop + pushReplacement,
+                                            // InheritedWidget teardown'ında
+                                            // "_dependents.isEmpty" assert'ine
+                                            // yol açıyordu. Önce klavyeyi kapat.
+                                            FocusManager.instance.primaryFocus
+                                                ?.unfocus();
+                                            Navigator.pop(
+                                              sheetContext,
+                                              selectedChats,
+                                            );
+                                          },
                                         ),
                                       ],
                                     ),
@@ -1298,44 +1722,36 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         );
       },
     );
-    searchController.dispose();
     final note = noteController.text.trim();
-    noteController.dispose();
-    if (targets == null || targets.isEmpty || !mounted) return null;
+    // Sheet kapanış animasyonu bitene kadar TextField'lar hâlâ ağaçta kalabilir;
+    // controller'ları hemen dispose etmek disposed-controller kullanımına ve
+    // InheritedWidget teardown assert'ine yol açıyordu. Bir sonraki frame'de,
+    // route tamamen ayrıldıktan sonra dispose et.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      searchController.dispose();
+      noteController.dispose();
+    });
+    if (targets == null || targets.isEmpty) return null;
+    // Gönderimi burada BEKLEMİYORUZ: seçimi döndür, çağıran taraf hedefe anında
+    // geçip teslimatı arka planda yapsın (WhatsApp gibi anlık his).
+    return (targets, note);
+  }
 
-    // Sheet kapanır kapanmaz görünür geri bildirim: kullanıcı gönderim
-    // tamamlanana kadar donmuş hissetmemeli (asıl "yavaş" algısının kaynağı
-    // buradaki sessiz bekleyişti).
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 20),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: _isDarkMode ? const Color(0xFF111827) : Colors.black,
-        content: const Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            ),
-            SizedBox(width: 12),
-            Text('Sending...'),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      // Hem hedef sohbetler ARASINDA hem de aynı hedefteki mesajlar ARASINDA
-      // paralel gönderim: N sohbet × M mesaj artık N*M ardışık round-trip
-      // yerine tek bir round-trip süresi kadar sürüyor.
-      await Future.wait(
-        targets.map((target) async {
+  /// Seçilen hedeflere forward'u ARKA PLANDA teslim eder. Tek hedefte sayfa
+  /// zaten o sohbete geçtiği için bu State dispose olabilir; bu yüzden context'e
+  /// bağlı kalmadan (repo + kök navigator messenger) çalışır. Yalnızca hata
+  /// olursa premium koyu bir toast gösterir; başarıda ekstra gösterge yok —
+  /// açılan sohbet zaten geri bildirimdir.
+  Future<void> _deliverForward(
+    List<ChatListItem> targets,
+    List<ChatMessage> messages,
+    String note,
+  ) async {
+    final failures = <String>[];
+    Object? firstError;
+    await Future.wait(
+      targets.map((target) async {
+        try {
           await Future.wait(
             messages.map(
               (message) => _sendForwardedMessage(target.id, message),
@@ -1344,17 +1760,117 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           if (note.isNotEmpty) {
             await _repo.sendMessage(target.id, messageType: 'text', text: note);
           }
-        }),
-      );
-      if (!mounted) return null;
-      messenger.hideCurrentSnackBar();
-      return targets.length == 1 ? targets.first : null;
-    } catch (_) {
-      if (!mounted) return null;
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(const SnackBar(content: Text('İletilemedi.')));
-      return null;
+        } catch (e) {
+          firstError ??= e;
+          failures.add(_forwardChatName(target));
+        }
+      }),
+    );
+
+    if (failures.isEmpty) return;
+    _showRootForwardError(
+      _forwardErrorMessage(
+        firstError,
+        failedNames: failures,
+        totalTargets: targets.length,
+      ),
+    );
+  }
+
+  /// Forward hatasını kullanıcı dostu İngilizce metne çevirir. Backend'in
+  /// gerçek sebebini (eşleşme pasif / engel) korur, teknik jargonu gizler.
+  String _forwardErrorMessage(
+    Object? error, {
+    required List<String> failedNames,
+    required int totalTargets,
+  }) {
+    final raw = (error?.toString() ?? '').toLowerCase();
+    final who = failedNames.length == 1 ? failedNames.first : null;
+
+    if (isOfflineError(error)) {
+      return "You're offline. Check your connection and try again.";
     }
+    if (raw.contains('not active') || raw.contains('chat is not active')) {
+      return who != null
+          ? "You can't message $who anymore — you're no longer matched."
+          : "Some chats are no longer active, so the message wasn't sent.";
+    }
+    if (raw.contains('block')) {
+      return who != null
+          ? "You can't message $who because of a block."
+          : "Some messages couldn't be sent because of a block.";
+    }
+    if (failedNames.length == totalTargets) {
+      return who != null
+          ? "Couldn't send to $who. Please try again."
+          : "Couldn't forward the message. Please try again.";
+    }
+    return "Couldn't send to ${failedNames.join(', ')}.";
+  }
+
+  /// Premium koyu (beyaz kart değil) floating hata toast'ı. Kök navigator
+  /// context'i üzerinden gösterilir: forward sonrası bu sayfa başka sohbete
+  /// geçip dispose olsa bile toast doğru yerde belirir.
+  void _showRootForwardError(String message) {
+    final ctx = navigatorKey.currentContext ?? (mounted ? context : null);
+    if (ctx == null) return;
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
+    final messenger = ScaffoldMessenger.of(ctx);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        duration: const Duration(seconds: 4),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: EdgeInsets.zero,
+        content: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C222E) : const Color(0xFF14161B),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFE85D55).withValues(alpha: 0.16),
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFF08A83),
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _openForwardedChat(ChatListItem target) {
@@ -1372,11 +1888,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   Future<void> _sendForwardedMessage(String targetChatId, ChatMessage message) {
+    if (message.messageType == 'venue' && message.venueId != null) {
+      return _repo.sendMessage(
+        targetChatId,
+        messageType: 'venue',
+        venueId: message.venueId,
+      );
+    }
     if (message.messageType == 'image' && message.imageUrl != null) {
       return _repo.sendMessage(
         targetChatId,
         messageType: 'image',
         imageUrl: message.imageUrl,
+        // En-boy oranını taşı: aksi halde forward edilen resim boyut bilgisini
+        // kaybedip kare/yanlış oranla (tüm foto görünmeden) çiziliyordu.
+        imageWidth: message.imageWidth,
+        imageHeight: message.imageHeight,
       );
     }
     if (message.messageType == 'file' && message.fileUrl != null) {
@@ -1398,13 +1925,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final user = chat.getDisplayUser(_currentUserId);
     final name = user?.fullName?.trim();
     return name != null && name.isNotEmpty ? name : 'Unknown';
-  }
-
-  String _forwardSelectionLabel(List<ChatListItem> selectedChats) {
-    if (selectedChats.isEmpty) return '';
-    if (selectedChats.length == 1) return _forwardChatName(selectedChats.first);
-    final first = _forwardChatName(selectedChats.first);
-    return '$first +${selectedChats.length - 1}';
   }
 
   Widget _buildForwardSectionTitle(String title) {
@@ -1456,7 +1976,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final preview = chat.lastMessagePreview?.trim();
     return InkWell(
       onTap: onTap,
-      child: Padding(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        color: selected
+            ? AppColors.blue.withValues(alpha: _isDarkMode ? 0.10 : 0.06)
+            : Colors.transparent,
         padding: const EdgeInsets.only(left: 12),
         child: Row(
           children: [
@@ -1505,20 +2029,34 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                     const SizedBox(width: 12),
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
                       width: 28,
                       height: 28,
                       margin: const EdgeInsets.only(right: 14),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: selected
-                            ? const Color(0xFF22C55E)
-                            : Colors.transparent,
-                        border: Border.all(
-                          color: selected
-                              ? const Color(0xFF22C55E)
-                              : _mutedTextColor.withValues(alpha: 0.5),
-                          width: 2,
-                        ),
+                        gradient: selected
+                            ? const LinearGradient(
+                                colors: [AppColors.blue, AppColors.blueLight],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
+                        border: selected
+                            ? null
+                            : Border.all(
+                                color: _mutedTextColor.withValues(alpha: 0.5),
+                                width: 2,
+                              ),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                  color: AppColors.blue.withValues(alpha: 0.35),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : null,
                       ),
                       child: selected
                           ? const Icon(
@@ -1538,12 +2076,16 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
   }
 
-  Widget _buildForwardAvatar({required String name, required String photoUrl}) {
+  Widget _buildForwardAvatar({
+    required String name,
+    required String photoUrl,
+    double radius = 25,
+  }) {
     final hasPhoto = photoUrl.trim().isNotEmpty;
     final avatarColor = _avatarColor(name);
     final initial = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
     return CircleAvatar(
-      radius: 25,
+      radius: radius,
       backgroundColor: avatarColor.withValues(alpha: 0.18),
       backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
       child: hasPhoto
@@ -1553,9 +2095,118 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               style: TextStyle(
                 color: avatarColor,
                 fontWeight: FontWeight.w800,
-                fontSize: 17,
+                fontSize: radius * 0.68,
               ),
             ),
+    );
+  }
+
+  /// Alt bardaki seçili sohbet göstergesi: avatar + üstünde kaldır (x) rozeti,
+  /// altında kısaltılmış isim. WhatsApp'ın "send to" barındaki chip'in premium
+  /// hali.
+  Widget _buildForwardSelectedChip({
+    required String name,
+    required String photoUrl,
+    required VoidCallback onRemove,
+  }) {
+    final firstName = name.trim().split(RegExp(r'\s+')).first;
+    return SizedBox(
+      width: 52,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _buildForwardAvatar(name: name, photoUrl: photoUrl, radius: 21),
+              Positioned(
+                top: -2,
+                right: -2,
+                child: GestureDetector(
+                  onTap: onRemove,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _composerBackground,
+                    ),
+                    child: const CircleAvatar(
+                      radius: 8.5,
+                      backgroundColor: Color(0xFF6B7280),
+                      child: Icon(
+                        Icons.close_rounded,
+                        color: Colors.white,
+                        size: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            firstName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _mutedTextColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Premium gradient gönder butonu: seçili sohbet sayısını rozet olarak
+  /// gösterir, uygulamanın mavi kimliğiyle uyumlu.
+  Widget _buildForwardSendButton({
+    required int count,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        decoration: BoxDecoration(
+          color: AppColors.blue,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.blue.withValues(alpha: 0.30),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.send_rounded, color: Colors.white, size: 19),
+            if (count > 1) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Text(
+                  '$count',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -1594,37 +2245,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   Future<bool> _confirmDeleteMessage() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final colors = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          title: const Text('Delete message'),
-          content: const Text('This message will be permanently removed.'),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          actions: [
-            Row(
-              children: [
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppTheme.brandPrimary,
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                const Spacer(),
-                TextButton(
-                  style: TextButton.styleFrom(foregroundColor: colors.error),
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: const Text('Delete'),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
+    return showDestructiveConfirmationDialog(
+      context,
+      title: 'Delete this message?',
+      message:
+          'This message will be removed from the conversation for everyone. This action cannot be undone.',
+      confirmLabel: 'Delete message',
+      icon: Icons.delete_outline_rounded,
     );
-    return result == true;
   }
 
   static const List<String> _reactionEmojis = [
@@ -1728,21 +2356,56 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     return !age.isNegative && age <= _messageEditWindow;
   }
 
+  bool _hasImageMedia(ChatMessage message) =>
+      message.messageType == 'image' &&
+      (message.imageUrl != null || message.imageMedia?.canRefresh == true);
+
+  bool _hasFileMedia(ChatMessage message) =>
+      message.messageType == 'file' &&
+      (message.fileUrl != null || message.fileMedia?.canRefresh == true);
+
+  String _imageSource(ChatMessage message) =>
+      message.imageUrl ?? message.imageMedia?.url ?? '';
+
+  String _fileSource(ChatMessage message) =>
+      message.fileUrl ?? message.fileMedia?.url ?? '';
+
   /// Overlay'de gösterilecek balonun görsel kopyası (aynı builder'lar, key yok
   /// — orijinal balonla GlobalKey çakışmasını önlemek için).
   Widget _buildBubbleClone(ChatMessage message, bool isMe) {
     final time = _formatTime(message.createdAt);
     final isSeenByOther = isMe && message.readAt != null;
-    if (message.messageType == 'image' && message.imageUrl != null) {
-      return _buildImageBubble(message.imageUrl!, isMe, time, isSeenByOther);
+    if (_hasImageMedia(message)) {
+      return _buildImageBubble(
+        _imageSource(message),
+        isMe,
+        time,
+        isSeenByOther,
+        imageWidth: message.imageWidth,
+        imageHeight: message.imageHeight,
+        imageMedia: message.imageMedia,
+        localPreviewPath: _confirmedImagePreviews[message.id],
+      );
     }
-    if (message.messageType == 'file' && message.fileUrl != null) {
+    if (_hasFileMedia(message)) {
       return _buildFileBubble(
-        fileUrl: message.fileUrl!,
+        fileUrl: _fileSource(message),
+        fileMedia: message.fileMedia,
         fileName: message.fileName ?? 'Document',
         isMe: isMe,
         time: time,
         isSeenByOther: isSeenByOther,
+      );
+    }
+    if (message.messageType == 'venue' && message.venue != null) {
+      return _buildVenueBubble(
+        venue: message.venue!,
+        isMe: isMe,
+        time: time,
+        isSeenByOther: isSeenByOther,
+        bubbleKey: const ValueKey('venue-overlay-preview'),
+        highlighted: true,
+        showActions: false,
       );
     }
     return _buildMessageBubble(
@@ -2656,160 +3319,321 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
     final ordered = List<ChatMessage>.from(messages)
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final visibleMessages = ordered.reversed.toList(growable: false);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final topAlignConversation = _shouldTopAlignConversation(
+          ordered,
+          constraints.maxHeight,
+        );
+        final renderedMessages = topAlignConversation
+            ? ordered
+            : visibleMessages;
+        // FAB görünürlük mantığı reverse durumuna bağlı (offset≈0 = en yeni).
+        _conversationReversed = !topAlignConversation;
 
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(14, 14, 14, _messageListBottomPadding()),
-          itemCount: ordered.length + (_loadingMore ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (_loadingMore && index == 0) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Center(
-                  child: SizedBox(
-                    height: 24,
-                    width: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              );
-            }
-            final msgIndex = _loadingMore ? index - 1 : index;
-            final msg = ordered[msgIndex];
-            final isMe = msg.isSentByMe(_currentUserId);
-            final time = _formatTime(msg.createdAt);
-            // Per-message read receipt: each of my messages shows "Seen" only when
-            // the recipient actually read *that* message (read_at set). No shared
-            // pointer, so reads made with receipts off never leak.
-            final isSeenByOther = isMe && msg.readAt != null;
-            final content = msg.messageType == 'image' && msg.imageUrl != null
-                ? msg.imageUrl!
-                : (msg.text ?? '');
-            final showDate =
-                msgIndex == 0 ||
-                !_isSameDay(ordered[msgIndex - 1].createdAt, msg.createdAt);
-            final bubbleKey = _keyFor(msg.id);
-            final bubble = msg.messageType == 'image' && msg.imageUrl != null
-                ? GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    onTap: _forwardSelectionMode
-                        ? null
-                        : () => _openFullscreenImage(
-                            msg.imageUrl!,
-                            heroTag: 'chat-media-${msg.id}',
-                          ),
-                    child: _buildImageBubble(
-                      msg.imageUrl!,
-                      isMe,
-                      time,
-                      isSeenByOther,
-                      bubbleKey: bubbleKey,
-                      heroTag: 'chat-media-${msg.id}',
-                    ),
-                  )
-                : msg.messageType == 'file' && msg.fileUrl != null
-                ? GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    onTap: _forwardSelectionMode
-                        ? null
-                        : () => unawaited(_openFileUrl(msg.fileUrl!)),
-                    child: _buildFileBubble(
-                      fileUrl: msg.fileUrl!,
-                      fileName: msg.fileName ?? 'Document',
-                      isMe: isMe,
-                      time: time,
-                      isSeenByOther: isSeenByOther,
-                      bubbleKey: bubbleKey,
-                    ),
-                  )
-                : GestureDetector(
-                    onLongPress: _forwardSelectionMode
-                        ? null
-                        : () => _openMessageOverlay(msg, isMe),
-                    child: _buildMessageBubble(
-                      message: content,
-                      isMe: isMe,
-                      time: time,
-                      isSeenByOther: isSeenByOther,
-                      edited: msg.editedAt != null,
-                      bubbleKey: bubbleKey,
-                    ),
-                  );
-            // Reaction chip'leri balonun altına hafif bindirilmiş gösterilir.
-            final bubbleWithReactions = msg.reactions.isEmpty
-                ? bubble
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: isMe
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      bubble,
-                      Transform.translate(
-                        offset: const Offset(0, -14),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: _buildReactionChips(msg),
-                        ),
+        return Stack(
+          children: [
+            ListView.builder(
+              controller: _scrollController,
+              reverse: !topAlignConversation,
+              // Listede kaydırma başlayınca klavyeyi kapat (WhatsApp davranışı).
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                14,
+                14,
+                14,
+                _messageListBottomPadding(),
+              ),
+              itemCount: renderedMessages.length + (_loadingMore ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (_loadingMore && index == renderedMessages.length) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Center(
+                      child: SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                    ],
+                    ),
                   );
-            final selectableBubble = _forwardSelectionMode
-                ? GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _toggleForwardSelection(msg),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10, right: 8),
-                          child: _buildForwardMessageSelector(
-                            selected: _forwardSelectedMessageIds.contains(
-                              msg.id,
+                }
+                final msgIndex = index;
+                final msg = renderedMessages[msgIndex];
+                final isMe = _isMessageSentByMe(msg);
+                final time = _formatTime(msg.createdAt);
+                // Per-message read receipt: each of my messages shows "Seen" only when
+                // the recipient actually read *that* message (read_at set). No shared
+                // pointer, so reads made with receipts off never leak.
+                final isSeenByOther = isMe && msg.readAt != null;
+                final content = _hasImageMedia(msg)
+                    ? _imageSource(msg)
+                    : (msg.text ?? '');
+                final showDate = topAlignConversation
+                    ? msgIndex == 0 ||
+                          !_isSameDay(
+                            renderedMessages[msgIndex - 1].createdAt,
+                            msg.createdAt,
+                          )
+                    : msgIndex == renderedMessages.length - 1 ||
+                          !_isSameDay(
+                            renderedMessages[msgIndex + 1].createdAt,
+                            msg.createdAt,
+                          );
+                final bubbleKey = _keyFor(msg.id);
+                final highlighted = _highlightedMessageId == msg.id;
+                final bubble = msg.messageType == 'venue' && msg.venue != null
+                    ? GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        onTap: _forwardSelectionMode
+                            ? null
+                            : () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      VenueDetailPage(venue: msg.venue!),
+                                ),
+                              ),
+                        child: _buildVenueBubble(
+                          venue: msg.venue!,
+                          isMe: isMe,
+                          time: time,
+                          isSeenByOther: isSeenByOther,
+                          bubbleKey: bubbleKey,
+                          highlighted: highlighted,
+                        ),
+                      )
+                    : _hasImageMedia(msg)
+                    ? GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        onTap: _forwardSelectionMode
+                            ? null
+                            : () => _openFullscreenImage(
+                                _imageSource(msg),
+                                mediaReference: msg.imageMedia,
+                                heroTag: 'chat-media-${msg.id}',
+                              ),
+                        child: _buildImageBubble(
+                          _imageSource(msg),
+                          isMe,
+                          time,
+                          isSeenByOther,
+                          bubbleKey: bubbleKey,
+                          heroTag: 'chat-media-${msg.id}',
+                          imageWidth: msg.imageWidth,
+                          imageHeight: msg.imageHeight,
+                          imageMedia: msg.imageMedia,
+                          localPreviewPath: _confirmedImagePreviews[msg.id],
+                          highlighted: highlighted,
+                        ),
+                      )
+                    : _hasFileMedia(msg)
+                    ? GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        onTap: _forwardSelectionMode
+                            ? null
+                            : () => unawaited(
+                                _openFileUrl(
+                                  _fileSource(msg),
+                                  media: msg.fileMedia,
+                                ),
+                              ),
+                        child: _buildFileBubble(
+                          fileUrl: _fileSource(msg),
+                          fileMedia: msg.fileMedia,
+                          fileName: msg.fileName ?? 'Document',
+                          isMe: isMe,
+                          time: time,
+                          isSeenByOther: isSeenByOther,
+                          bubbleKey: bubbleKey,
+                          highlighted: highlighted,
+                        ),
+                      )
+                    : GestureDetector(
+                        onLongPress: _forwardSelectionMode
+                            ? null
+                            : () => _openMessageOverlay(msg, isMe),
+                        child: _buildMessageBubble(
+                          message: content,
+                          isMe: isMe,
+                          time: time,
+                          isSeenByOther: isSeenByOther,
+                          edited: msg.editedAt != null,
+                          failed: msg.sendFailed,
+                          onRetry: () => unawaited(_retryFailedMessage(msg)),
+                          bubbleKey: bubbleKey,
+                          replyToId: msg.replyToId,
+                          highlighted: highlighted,
+                        ),
+                      );
+                // Reaction chip'leri balonun altına hafif bindirilmiş gösterilir.
+                final bubbleWithReactions = msg.reactions.isEmpty
+                    ? bubble
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: isMe
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        children: [
+                          bubble,
+                          Transform.translate(
+                            offset: const Offset(0, -14),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              child: _buildReactionChips(msg),
                             ),
                           ),
+                        ],
+                      );
+                final selectableBubble = _forwardSelectionMode
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _toggleForwardSelection(msg),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10, right: 8),
+                              child: _buildForwardMessageSelector(
+                                selected: _forwardSelectedMessageIds.contains(
+                                  msg.id,
+                                ),
+                              ),
+                            ),
+                            Expanded(child: bubbleWithReactions),
+                          ],
                         ),
-                        Expanded(child: bubbleWithReactions),
-                      ],
+                      )
+                    : _SwipeToReply(
+                        enabled: _chat?.canSendMessages != false,
+                        onReply: () => _setReplyTarget(msg),
+                        child: bubbleWithReactions,
+                      );
+                final baseItem = showDate
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildDateSeparator(msg.createdAt),
+                          selectableBubble,
+                        ],
+                      )
+                    : selectableBubble;
+                // "Unread messages" ayracı: ilk okunmamış mesajın ÜSTÜNE.
+                final item = (msg.id == _firstUnreadMessageId)
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [_buildUnreadDivider(), baseItem],
+                      )
+                    : baseItem;
+                return KeyedSubtree(key: _itemKeyFor(msg.id), child: item);
+              },
+            ),
+            if (_floatingDateText != null)
+              Positioned(
+                top: 12,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: _showFloatingDate ? 1 : 0,
+                    duration: const Duration(milliseconds: 140),
+                    child: Center(
+                      child: _buildFloatingDateChip(_floatingDateText!),
                     ),
-                  )
-                : bubbleWithReactions;
-            final item = showDate
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildDateSeparator(msg.createdAt),
-                      selectableBubble,
-                    ],
-                  )
-                : selectableBubble;
-            return KeyedSubtree(key: _itemKeyFor(msg.id), child: item);
-          },
-        ),
-        if (_floatingDateText != null)
-          Positioned(
-            top: 12,
-            left: 0,
-            right: 0,
-            child: IgnorePointer(
-              child: AnimatedOpacity(
-                opacity: _showFloatingDate ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: Center(
-                  child: _buildFloatingDateChip(_floatingDateText!),
+                  ),
+                ),
+              ),
+            // Jump-to-bottom FAB (okunmamış rozetli) — yukarı kaydırınca belirir.
+            if (_showJumpToBottom)
+              Positioned(
+                right: 14,
+                bottom: 14,
+                child: _buildJumpToBottomButton(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildJumpToBottomButton() {
+    final unread = _unreadWhileScrolledUp;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _unreadWhileScrolledUp = 0;
+          _showJumpToBottom = false;
+        });
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOut,
+          );
+        }
+      },
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _isDarkMode ? const Color(0xFF1C222E) : Colors.white,
+              border: Border.all(color: _dividerColor),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: _isDarkMode ? 0.4 : 0.15,
+                  ),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Theme.of(context).colorScheme.onSurface,
+              size: 26,
+            ),
+          ),
+          if (unread > 0)
+            Positioned(
+              top: -4,
+              right: -2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                constraints: const BoxConstraints(minWidth: 20),
+                decoration: BoxDecoration(
+                  color: AppColors.blue,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(
+                    color: _isDarkMode ? const Color(0xFF0B0F17) : Colors.white,
+                    width: 2,
+                  ),
+                ),
+                child: Text(
+                  unread > 99 ? '99+' : '$unread',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2819,6 +3643,36 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     return left.year == right.year &&
         left.month == right.month &&
         left.day == right.day;
+  }
+
+  Widget _buildUnreadDivider() {
+    final count = widget.initialUnreadCount;
+    final label = count == 1 ? '1 unread message' : '$count unread messages';
+    final color = AppColors.blue;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Divider(color: color.withValues(alpha: 0.35), height: 1),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Divider(color: color.withValues(alpha: 0.35), height: 1),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildDateSeparator(DateTime date) {
@@ -2917,22 +3771,76 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       child: SafeArea(
         child: Row(
           children: [
-            _buildForwardCircleButton(
-              icon: Icons.forward_rounded,
-              onPressed: _forwardSelectedMessages,
-            ),
-            Expanded(
-              child: Text(
-                '$count Selected',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+            GestureDetector(
+              onTap: _exitForwardSelection,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 22,
+                  color: _mutedTextColor,
                 ),
               ),
             ),
-            const SizedBox(width: 48, height: 48),
+            const SizedBox(width: 8),
+            Text(
+              count == 1 ? '1 selected' : '$count selected',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const Spacer(),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: count == 0 ? null : _forwardSelectedMessages,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: count == 0 ? 0.5 : 1,
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      color: AppColors.blue,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.blue.withValues(alpha: 0.30),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Container(
+                      height: 40,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      alignment: Alignment.center,
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Forward',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            color: Colors.white,
+                            size: 17,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -2982,13 +3890,230 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
   }
 
+  Widget _buildVenueBubble({
+    required Venue venue,
+    required bool isMe,
+    required String time,
+    required bool isSeenByOther,
+    required Key bubbleKey,
+    required bool highlighted,
+    bool showActions = true,
+  }) {
+    final radius = _messageBubbleRadius(isMe);
+    final about = venue.description?.trim().isNotEmpty == true
+        ? venue.description!.trim()
+        : [
+            venue.address.trim(),
+            venue.city.trim(),
+          ].where((value) => value.isNotEmpty).toSet().join(', ');
+    final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: _buildStyledBubbleContainer(
+        key: bubbleKey,
+        isMe: isMe,
+        borderRadius: radius,
+        constraints: BoxConstraints(
+          minWidth: 230,
+          maxWidth: MediaQuery.of(context).size.width * 0.76,
+        ),
+        padding: EdgeInsets.zero,
+        highlighted: highlighted,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(14),
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                height: 126,
+                child: venue.photoUrl.trim().isNotEmpty
+                    ? CachedImage(
+                        venue.photoUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (_) => _venueCardFallback(),
+                      )
+                    : _venueCardFallback(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    venue.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    'ABOUT',
+                    style: TextStyle(
+                      color: AppColors.blue,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  if (about.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      about,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: textColor.withValues(alpha: 0.74),
+                        fontSize: 12.5,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                  if (showActions) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _venueCardAction(
+                            label: 'View details',
+                            icon: Icons.storefront_rounded,
+                            isMe: isMe,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => VenueDetailPage(venue: venue),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: _venueCardAction(
+                            label: 'Directions',
+                            icon: Icons.directions_rounded,
+                            isMe: isMe,
+                            onTap: () => unawaited(_openVenueDirections(venue)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _buildMessageMeta(
+                      time: time,
+                      isMe: isMe,
+                      isSeenByOther: isSeenByOther,
+                      textColor: textColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _venueCardAction({
+    required String label,
+    required IconData icon,
+    required bool isMe,
+    required VoidCallback onTap,
+  }) {
+    final color = isMe ? _outgoingTextColor : AppColors.blue;
+    return Material(
+      color: color.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: color, size: 15),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openVenueDirections(Venue venue) async {
+    final nativeUri = Platform.isIOS
+        ? Uri.parse(
+            'comgooglemaps://?daddr=${venue.latitude},${venue.longitude}&directionsmode=driving',
+          )
+        : Uri.parse(
+            'google.navigation:q=${venue.latitude},${venue.longitude}&mode=d',
+          );
+    if (await canLaunchUrl(nativeUri)) {
+      await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
+      return;
+    }
+    final webUri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination': '${venue.latitude},${venue.longitude}',
+      if (venue.placeId?.trim().isNotEmpty == true)
+        'destination_place_id': venue.placeId!.trim(),
+    });
+    await launchUrl(webUri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _venueCardFallback() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.blue.withValues(alpha: _isDarkMode ? 0.32 : 0.18),
+            AppColors.magenta.withValues(alpha: _isDarkMode ? 0.25 : 0.14),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Center(
+        child: Icon(Icons.storefront_rounded, color: Colors.white, size: 42),
+      ),
+    );
+  }
+
   Widget _buildMessageBubble({
     required String message,
     required bool isMe,
     required String time,
     required bool isSeenByOther,
     bool edited = false,
+    bool failed = false,
+    VoidCallback? onRetry,
     Key? bubbleKey,
+    bool highlighted = false,
+    // Yapısal reply hedefi: verilirse alıntı balonu tıklanabilir olur ve
+    // dokununca o mesaja zıplar.
+    String? replyToId,
   }) {
     final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
     final reply = _parseReplyMessage(message);
@@ -3004,7 +4129,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         if (reply != null) ...[
-          _buildInlineReplyQuote(reply, isMe: isMe),
+          (replyToId != null && replyToId.isNotEmpty)
+              ? GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(_jumpToMessage(replyToId)),
+                  child: _buildInlineReplyQuote(reply, isMe: isMe),
+                )
+              : _buildInlineReplyQuote(reply, isMe: isMe),
           const SizedBox(height: 6),
         ],
         Align(
@@ -3028,6 +4159,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           isSeenByOther: isSeenByOther,
           textColor: textColor,
           edited: edited,
+          failed: failed,
+          onRetry: onRetry,
         ),
       ],
     );
@@ -3043,6 +4176,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           maxWidth: screenWidth * 0.72,
         ),
         padding: const EdgeInsets.fromLTRB(12, 8, 9, 5),
+        highlighted: highlighted,
         child: bubbleChild,
       ),
     );
@@ -3064,6 +4198,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     Key? key,
     BoxConstraints? constraints,
     EdgeInsetsGeometry? padding,
+    bool highlighted = false,
   }) {
     return ClipRRect(
       borderRadius: borderRadius,
@@ -3071,7 +4206,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         filter: isMe
             ? ImageFilter.blur(sigmaX: 14, sigmaY: 14)
             : ImageFilter.blur(sigmaX: 0, sigmaY: 0),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
           key: key,
           margin: const EdgeInsets.only(bottom: 7),
           constraints: constraints,
@@ -3097,11 +4234,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 : null,
             borderRadius: borderRadius,
             border: Border.all(
-              color: isMe
+              color: highlighted
+                  ? AppColors.blue.withValues(alpha: _isDarkMode ? 0.95 : 0.82)
+                  : isMe
                   ? Colors.white.withValues(alpha: _isDarkMode ? 0.24 : 0.62)
                   : _dividerColor,
+              width: highlighted ? 1.6 : 1,
             ),
             boxShadow: [
+              if (highlighted)
+                BoxShadow(
+                  color: AppColors.blue.withValues(
+                    alpha: _isDarkMode ? 0.30 : 0.20,
+                  ),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
               BoxShadow(
                 color: Colors.black.withValues(
                   alpha: isMe
@@ -3113,6 +4261,14 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ),
             ],
           ),
+          foregroundDecoration: highlighted
+              ? BoxDecoration(
+                  color: AppColors.blue.withValues(
+                    alpha: _isDarkMode ? 0.09 : 0.06,
+                  ),
+                  borderRadius: borderRadius,
+                )
+              : null,
           child: child,
         ),
       ),
@@ -3254,7 +4410,36 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     required bool isSeenByOther,
     required Color textColor,
     bool edited = false,
+    bool failed = false,
+    VoidCallback? onRetry,
   }) {
+    // Gönderilemedi: saat/tik yerine kırmızı "!" + "Tap to retry" — dokununca
+    // yeniden gönderilir. Balon silinmez.
+    if (failed && isMe) {
+      return GestureDetector(
+        onTap: onRetry,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Text(
+              'Tap to retry',
+              style: TextStyle(
+                color: Color(0xFFE85D55),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            SizedBox(width: 4),
+            Icon(
+              Icons.error_outline_rounded,
+              color: Color(0xFFE85D55),
+              size: 15,
+            ),
+          ],
+        ),
+      );
+    }
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -3304,8 +4489,27 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// Medyaya dokununca tam ekran (pinch-zoom destekli) görüntüleyici açar.
   /// Hem yüklenmiş (http) görselleri hem de henüz yüklenmekte olan optimistic
   /// lokal dosyaları destekler.
-  void _openFullscreenImage(String imageUrl, {String? heroTag}) {
-    if (imageUrl.isEmpty) return;
+  Future<void> _openFullscreenImage(
+    String imageUrl, {
+    String? heroTag,
+    MediaReference? mediaReference,
+  }) async {
+    var resolvedUrl = imageUrl;
+    if (mediaReference != null &&
+        mediaReference.canRefresh &&
+        (resolvedUrl.isEmpty ||
+            mediaReference.expiresAt?.isBefore(
+                  DateTime.now().add(const Duration(seconds: 10)),
+                ) ==
+                true)) {
+      final refreshed = await SignedMediaResolver.instance.refreshOnce(
+        mediaReference,
+      );
+      if (refreshed != null && refreshed.url.isNotEmpty) {
+        resolvedUrl = refreshed.url;
+      }
+    }
+    if (!mounted || resolvedUrl.isEmpty) return;
     Navigator.of(context).push(
       PageRouteBuilder<void>(
         opaque: false,
@@ -3314,7 +4518,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         transitionDuration: const Duration(milliseconds: 220),
         reverseTransitionDuration: const Duration(milliseconds: 180),
         pageBuilder: (context, animation, secondaryAnimation) =>
-            _FullscreenImageViewer(imageUrl: imageUrl, heroTag: heroTag),
+            _FullscreenImageViewer(
+              imageUrl: resolvedUrl,
+              heroTag: heroTag,
+              mediaReference: mediaReference,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -3334,6 +4542,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     bool isSeenByOther, {
     Key? bubbleKey,
     String? heroTag,
+    int? imageWidth,
+    int? imageHeight,
+    MediaReference? imageMedia,
+    String? localPreviewPath,
+    bool highlighted = false,
   }) {
     final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
     final bubbleRadius = _messageBubbleRadius(isMe);
@@ -3347,6 +4560,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           maxWidth: MediaQuery.of(context).size.width * 0.68,
         ),
         padding: const EdgeInsets.all(3),
+        highlighted: highlighted,
         child: Stack(
           alignment: Alignment.bottomRight,
           children: [
@@ -3354,49 +4568,115 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               heroTag,
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                // http olmayan url = henüz yüklenmemiş lokal dosya (optimistic).
-                child: imageUrl.startsWith('http')
-                    ? CachedImage(
-                        imageUrl,
-                        width: min(
-                          MediaQuery.of(context).size.width * 0.62,
-                          238,
+                // WhatsApp tarzı: sabit kare değil — resmin kendi en-boy oranına
+                // göre boyutlanır (max genişlik/yükseklik sınırları içinde), böylece
+                // fotoğrafın tamamı kırpılmadan görünür.
+                child: Builder(
+                  builder: (context) {
+                    final maxW = min(
+                      MediaQuery.of(context).size.width * 0.68,
+                      280.0,
+                    );
+                    final maxH = MediaQuery.of(context).size.height * 0.5;
+
+                    // Boyut biliniyorsa (backend/optimistic) kutuyu resmin
+                    // en-boy oranında ÖNCEDEN ayarla → placeholder gerçek kutu
+                    // boyutunda olur, resim gelince zıplama/kayma olmaz.
+                    double boxW = maxW;
+                    // Her balona build anında SABİT yükseklik ver → liste
+                    // yüksekliği ilk frame'den kesin, maxScrollExtent doğru,
+                    // alta kaydırma tam dibe oturur ve resim gelince kaymaz.
+                    // Boyut biliniyorsa gerçek oran; bilinmiyorsa makul varsayılan.
+                    double boxH = maxW * 0.75;
+                    if (imageWidth != null &&
+                        imageHeight != null &&
+                        imageWidth > 0 &&
+                        imageHeight > 0) {
+                      boxW = maxW;
+                      boxH = maxW * imageHeight / imageWidth;
+                      if (boxH > maxH) {
+                        boxH = maxH;
+                        boxW = maxH * imageWidth / imageHeight;
+                      }
+                    }
+
+                    Widget placeholder = Container(
+                      width: boxW,
+                      height: boxH,
+                      color: Colors.white.withValues(alpha: 0.06),
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white70,
                         ),
-                        height: min(
-                          MediaQuery.of(context).size.width * 0.62,
-                          238,
-                        ),
-                        fit: BoxFit.cover,
-                        errorWidget: (context) =>
-                            const Icon(Icons.broken_image, size: 48),
-                      )
-                    : Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Image.file(
-                            File(imageUrl),
-                            width: min(
-                              MediaQuery.of(context).size.width * 0.62,
-                              238,
-                            ),
-                            height: min(
-                              MediaQuery.of(context).size.width * 0.62,
-                              238,
-                            ),
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Icon(Icons.broken_image, size: 48),
-                          ),
-                          const SizedBox(
-                            width: 34,
-                            height: 34,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
                       ),
+                    );
+
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: maxH),
+                      // http olmayan url = henüz yüklenmemiş lokal dosya.
+                      child: localPreviewPath != null
+                          ? Image.file(
+                              File(localPreviewPath),
+                              width: boxW,
+                              height: boxH,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, _, _) => CachedImage(
+                                imageUrl,
+                                mediaReference: imageMedia,
+                                width: boxW,
+                                height: boxH,
+                                fit: BoxFit.cover,
+                              ),
+                            )
+                          : imageMedia != null
+                          ? CachedImage(
+                              imageUrl,
+                              mediaReference: imageMedia,
+                              width: boxW,
+                              height: boxH,
+                              fit: BoxFit.cover,
+                              placeholder: (context) => placeholder,
+                              errorWidget: (context) =>
+                                  const Icon(Icons.broken_image, size: 48),
+                            )
+                          : imageUrl.startsWith('http')
+                          ? CachedImage(
+                              imageUrl,
+                              width: boxW,
+                              height: boxH,
+                              fit: BoxFit.cover,
+                              placeholder: (context) => placeholder,
+                              errorWidget: (context) =>
+                                  const Icon(Icons.broken_image, size: 48),
+                            )
+                          : Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Image.file(
+                                  File(imageUrl),
+                                  width: boxW,
+                                  height: boxH,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(Icons.broken_image, size: 48),
+                                ),
+                                const SizedBox(
+                                  width: 34,
+                                  height: 34,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    );
+                  },
+                ),
               ),
             ),
             Positioned(
@@ -3434,10 +4714,13 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     required bool isMe,
     required String time,
     required bool isSeenByOther,
+    MediaReference? fileMedia,
     Key? bubbleKey,
+    bool highlighted = false,
   }) {
     final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
-    final isUploading = !fileUrl.startsWith('http');
+    final isUploading =
+        !fileUrl.startsWith('http') && fileMedia?.canRefresh != true;
     final bubbleRadius = _messageBubbleRadius(isMe);
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -3449,6 +4732,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           maxWidth: MediaQuery.of(context).size.width * 0.72,
         ),
         padding: const EdgeInsets.fromLTRB(10, 9, 9, 5),
+        highlighted: highlighted,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
@@ -3673,8 +4957,10 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         ? '📷 Photo'
         : target.messageType == 'file'
         ? '📄 ${target.fileName ?? 'Document'}'
-        : (target.text ?? '').trim();
-    final senderLabel = target.isSentByMe(_currentUserId)
+        : target.messageType == 'venue'
+        ? '📍 ${target.venue?.name ?? 'Venue'}'
+        : _visibleMessageBody(target.text ?? '');
+    final senderLabel = _isMessageSentByMe(target)
         ? 'You'
         : widget.otherName.split(' ').first;
     return Container(
@@ -3914,6 +5200,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         cid,
         messageType: 'file',
         fileUrl: uploaded.url,
+        fileObjectKey: uploaded.objectKey,
         fileName: uploaded.fileName.isNotEmpty ? uploaded.fileName : pickedName,
         clientMessageId: clientMessageId,
       );
@@ -3932,10 +5219,30 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
   }
 
-  Future<void> _openFileUrl(String url) async {
-    if (!url.startsWith('http')) return; // henüz yükleniyor
+  Future<void> _openFileUrl(String url, {MediaReference? media}) async {
+    if (!url.startsWith('http') && media?.canRefresh != true) {
+      return; // henüz yükleniyor
+    }
+    // Private dosya: imzalı URL süresi dolmuş olabilir. Açmadan önce, ref
+    // yenilenebiliyor ve süresi geçmişse BİR kez taze imzalı URL al (sonsuz
+    // döngü yok — refreshOnce in-flight dedupe'lu). Aksi halde mevcut URL.
+    var openUrl = url;
+    if (media != null && media.canRefresh) {
+      final expired = media.expiresAt == null
+          ? false
+          : media.expiresAt!.isBefore(
+              DateTime.now().add(const Duration(seconds: 10)),
+            );
+      if (openUrl.isEmpty || expired) {
+        final refreshed = await SignedMediaResolver.instance.refreshOnce(media);
+        if (refreshed != null && refreshed.url.isNotEmpty) {
+          openUrl = refreshed.url;
+        }
+      }
+    }
+    if (!openUrl.startsWith('http')) return;
     final ok = await launchUrl(
-      Uri.parse(url),
+      Uri.parse(openUrl),
       mode: LaunchMode.externalApplication,
     );
     if (!ok && mounted) {
@@ -3961,14 +5268,55 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       return;
     }
 
-    final XFile? picked;
+    File? pickedFile;
     try {
-      picked = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 82,
-      );
+      if (source == ImageSource.camera) {
+        final result = await Navigator.push<File>(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => const CameraScreen(
+              useFrontCamera: false,
+              optimizeForUpload: true,
+              allowVideo: false,
+              previewConfirmLabel: 'Send',
+              previewConfirmIcon: Icons.send_rounded,
+              // Sohbet fotoğrafı doğal oranında (4:3) gitsin — ekran oranına
+              // (ince/uzun) kırpılmasın.
+              cropToScreen: false,
+            ),
+          ),
+        );
+        pickedFile = result;
+      } else {
+        final picked = await ImagePicker().pickImage(
+          source: source,
+          maxWidth: 1600,
+          maxHeight: 1600,
+          imageQuality: 82,
+        );
+        if (picked != null && mounted) {
+          pickedFile = await Navigator.push<File>(
+            context,
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => PreviewScreen(
+                file: File(picked.path),
+                cancelLabel: 'Back',
+                confirmLabel: 'Send',
+                confirmIcon: Icons.send_rounded,
+                // Gallery photos have arbitrary aspect ratios — show the whole
+                // image instead of a zoomed-in crop.
+                imageFit: BoxFit.contain,
+                // Sending a gallery photo: no caption tool and no re-download
+                // (it's already in the user's gallery).
+                allowText: false,
+                allowDownload: false,
+              ),
+            ),
+          );
+        }
+      }
     } catch (e) {
       debugPrint('❌ image pick error: $e');
       if (!mounted) return;
@@ -3980,7 +5328,23 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       );
       return;
     }
-    if (picked == null || !mounted) return;
+    if (pickedFile == null || !mounted) return;
+
+    final (sourceWidth, sourceHeight) = await _decodeImageSize(pickedFile);
+    if (!mounted) return;
+    final uploadFile = await MediaCompressor.compressImage(
+      pickedFile,
+      maxDimension: 1280,
+      quality: 78,
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+    );
+    if (!mounted) return;
+
+    // Resmin gerçek boyutunu decode et → hem optimistic balon hem backend'e
+    // gönderilir, böylece alıcıda resim indirilmeden önce doğru en-boy kutusu
+    // ayrılır (layout kaymaz, scroll bozulmaz).
+    final (imgW, imgH) = await _decodeImageSize(uploadFile);
 
     final clientMessageId = _nextClientMessageId();
     final optimisticTempId = 'temp-$clientMessageId';
@@ -3991,7 +5355,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         id: optimisticTempId,
         messageType: 'image',
         text: null,
-        imageUrl: picked.path,
+        imageUrl: uploadFile.path,
+        imageWidth: imgW,
+        imageHeight: imgH,
         createdAt: DateTime.now(),
         senderId: _currentUserId,
         isMe: true,
@@ -4000,14 +5366,19 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
 
     try {
-      final url = await _repo.uploadChatImage(File(picked.path));
+      final uploaded = await _repo.uploadChatImage(uploadFile);
       final sentMessage = await _repo.sendMessage(
         cid,
         messageType: 'image',
-        imageUrl: url,
+        imageUrl: uploaded.url,
+        imageObjectKey: uploaded.objectKey,
+        imageWidth: imgW,
+        imageHeight: imgH,
         clientMessageId: clientMessageId,
+        localUploadedImage: uploadFile,
       );
       if (!mounted) return;
+      _confirmedImagePreviews[sentMessage.id] = uploadFile.path;
       _removeMessageById(optimisticTempId);
       _mergeOrInsertMessage(sentMessage);
     } catch (e) {
@@ -4033,6 +5404,115 @@ class _ParsedReplyMessage {
     required this.quote,
     required this.body,
   });
+}
+
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+  final bool enabled;
+
+  const _SwipeToReply({
+    required this.child,
+    required this.onReply,
+    required this.enabled,
+  });
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply> {
+  static const double _triggerDistance = 54;
+  static const double _maximumDistance = 72;
+  double _offset = 0;
+  bool _dragging = false;
+  bool _thresholdReached = false;
+
+  void _update(DragUpdateDetails details) {
+    if (!widget.enabled) return;
+    final next = (_offset + details.delta.dx)
+        .clamp(0.0, _maximumDistance)
+        .toDouble();
+    final reached = next >= _triggerDistance;
+    if (reached && !_thresholdReached) {
+      HapticFeedback.selectionClick();
+    }
+    setState(() {
+      _dragging = true;
+      _offset = next;
+      _thresholdReached = reached;
+    });
+  }
+
+  void _finish(DragEndDetails _) {
+    if (!widget.enabled) return;
+    final shouldReply = _thresholdReached;
+    setState(() {
+      _dragging = false;
+      _offset = 0;
+      _thresholdReached = false;
+    });
+    if (shouldReply) widget.onReply();
+  }
+
+  void _cancel() {
+    if (_offset == 0 && !_dragging) return;
+    setState(() {
+      _dragging = false;
+      _offset = 0;
+      _thresholdReached = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final progress = (_offset / _triggerDistance).clamp(0.0, 1.0).toDouble();
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: widget.enabled ? _update : null,
+      onHorizontalDragEnd: widget.enabled ? _finish : null,
+      onHorizontalDragCancel: widget.enabled ? _cancel : null,
+      child: Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          Positioned(
+            left: 8,
+            child: Opacity(
+              opacity: progress,
+              child: Transform.scale(
+                scale: 0.72 + (0.28 * progress),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.primary.withValues(alpha: 0.14),
+                    border: Border.all(
+                      color: colors.primary.withValues(alpha: 0.32),
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.reply_rounded,
+                    size: 21,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          AnimatedContainer(
+            duration: _dragging
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_offset, 0, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _EmojiCategory {
@@ -4605,8 +6085,13 @@ class _MessageActionOverlay extends StatelessWidget {
 class _FullscreenImageViewer extends StatefulWidget {
   final String imageUrl;
   final String? heroTag;
+  final MediaReference? mediaReference;
 
-  const _FullscreenImageViewer({required this.imageUrl, this.heroTag});
+  const _FullscreenImageViewer({
+    required this.imageUrl,
+    this.heroTag,
+    this.mediaReference,
+  });
 
   @override
   State<_FullscreenImageViewer> createState() => _FullscreenImageViewerState();
@@ -4651,6 +6136,7 @@ class _FullscreenImageViewerState extends State<_FullscreenImageViewer> {
     if (url.startsWith('http')) {
       return CachedImage(
         url,
+        mediaReference: widget.mediaReference,
         fit: BoxFit.contain,
         placeholder: (context) =>
             const Center(child: CircularProgressIndicator(color: Colors.white)),

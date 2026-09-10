@@ -1,5 +1,6 @@
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
+import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
 
 class VenueOwnerStatsVenue {
   final String id;
@@ -152,6 +153,7 @@ class VenueActiveGuest {
         mediaType: e['mediaType']?.toString() ?? 'photo',
         thumbnailUrl: e['thumbnailUrl']?.toString(),
         durationSecs: (e['durationSecs'] as num?)?.toInt(),
+        textOverlay: MediaTextOverlay.fromJson(e['textOverlay'] ?? e['text_overlay']),
         expiresAt: DateTime.tryParse(e['expiresAt']?.toString() ?? '') ?? DateTime.now().add(const Duration(hours: 24)),
         createdAt: DateTime.tryParse(e['createdAt']?.toString() ?? '') ?? DateTime.now(),
       )).toList(),

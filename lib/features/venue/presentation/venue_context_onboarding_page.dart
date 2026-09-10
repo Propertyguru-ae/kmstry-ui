@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -378,10 +380,10 @@ class _VenueContextOnboardingPageState
     debugPrint('[VenueWizard] uploading to $uri');
 
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $token'
+      ..headers.addAll(await AppRequestHeaders.build(accessToken: token))
       ..files.add(await http.MultipartFile.fromPath('file', file.path));
 
-    final streamed = await request.send();
+    final streamed = await sendMultipartRequest(request);
     final body = await streamed.stream.bytesToString();
     debugPrint('[VenueWizard] upload response status=${streamed.statusCode}');
 

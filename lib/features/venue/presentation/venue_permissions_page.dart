@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
 
 // ─── Brand colors ─────────────────────────────────────────────────────────────
 
@@ -548,7 +549,9 @@ class _PermBody extends StatelessWidget {
     final bodyBg = isDark ? const Color(0xFF0A1828) : colors.surfaceContainerLowest;
     final borderCol = roleColor;
 
-    final allPerms = VenuePermission.values.toList();
+    final allPerms = VenuePermission.values
+        .where(VenueFeatureVisibility.showPermission)
+        .toList();
 
     return Container(
       decoration: BoxDecoration(
@@ -839,7 +842,9 @@ class _AddRoleSheetState extends State<_AddRoleSheet> {
                 child: ListView(
                   shrinkWrap: true,
                   padding: const EdgeInsets.only(bottom: 12),
-                  children: VenuePermission.values.map((perm) {
+                  children: VenuePermission.values
+                      .where(VenueFeatureVisibility.showPermission)
+                      .map((perm) {
                     final enabled = _selected.contains(perm);
                     final meta = _permMeta[perm];
                     return InkWell(

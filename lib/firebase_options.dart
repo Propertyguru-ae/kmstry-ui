@@ -52,7 +52,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyCF47jkUhp_uoVV9jDz7r91n9oPvg80TH8',
-    appId: '1:403759544454:android:6b3f376f72fd0f42293907',
+    appId: '1:403759544454:android:d7295dc5175b5283293907',
     messagingSenderId: '403759544454',
     projectId: 'kmstry-8510d',
     storageBucket: 'kmstry-8510d.firebasestorage.app',

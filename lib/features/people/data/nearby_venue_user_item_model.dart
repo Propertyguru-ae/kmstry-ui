@@ -1,3 +1,5 @@
+import '../../../core/media/media_reference.dart';
+
 class NearbyVenueUserItem {
   final String checkinId;
   final String userId;
@@ -10,6 +12,7 @@ class NearbyVenueUserItem {
   final String? venuePhoto;
   final double? nearbyVenueDistanceMeters;
   final bool isFeaturedVideo;
+  final MediaReference? featuredMediaReference;
 
   const NearbyVenueUserItem({
     required this.checkinId,
@@ -23,6 +26,7 @@ class NearbyVenueUserItem {
     this.venuePhoto,
     this.nearbyVenueDistanceMeters,
     this.isFeaturedVideo = false,
+    this.featuredMediaReference,
   });
 
   // Attendee kartı: kişinin o mekandaki temsili olan featured foto öncelikli;
@@ -69,6 +73,13 @@ class NearbyVenueUserItem {
         ? distanceRaw.toDouble()
         : double.tryParse(distanceRaw?.toString() ?? '');
     final isVideo = mediaType == 'video';
+    final parsedMediaReference = firstMedia.isEmpty
+        ? null
+        : MediaReference.fromJson(
+            firstMedia,
+            fallbackId: firstMedia['id']?.toString() ?? '',
+            legacyUrlKeys: const ['url'],
+          );
     final featuredMediaUrl = isVideo
         ? readString(firstMedia, const ['thumbnailUrl', 'thumbnail_url', 'url'])
         : readString(firstMedia, const [
@@ -94,6 +105,7 @@ class NearbyVenueUserItem {
       venuePhoto: readString(venue, const ['photo', 'photoUrl', 'photo_url']),
       nearbyVenueDistanceMeters: distance,
       isFeaturedVideo: isVideo,
+      featuredMediaReference: isVideo ? null : parsedMediaReference,
     );
   }
 }

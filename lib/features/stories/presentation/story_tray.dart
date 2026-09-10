@@ -19,6 +19,9 @@ class StoryTray extends StatefulWidget {
   /// yerine [onAddStory] bilgilendirme popup'ı gösterir.
   final bool anonymousLocked;
 
+  /// Kendi story'si yokken "Me" balonunda gösterilecek profil/check-in resmi.
+  final String? myPhotoUrl;
+
   /// Kullanıcının BU venue'da kendi story'si olup olmadığını üst widget'a bildirir
   /// (ör. venue detail'de "story paylaş" teşvik metnini göstermek için).
   final ValueChanged<bool>? onMyStoryStateChanged;
@@ -33,6 +36,7 @@ class StoryTray extends StatefulWidget {
     this.onAddStory,
     this.isUploading = false,
     this.anonymousLocked = false,
+    this.myPhotoUrl,
     this.onMyStoryStateChanged,
     this.onStoriesEmptyChanged,
   });
@@ -269,6 +273,7 @@ class _StoryTrayState extends State<StoryTray> {
               onAddStory: hasAdd ? widget.onAddStory! : null,
               onViewStories: hasMe ? _openMyStories : null,
               anonymousLocked: widget.anonymousLocked,
+              fallbackImageUrl: widget.myPhotoUrl,
             );
           }
 
@@ -431,6 +436,7 @@ class _MeBubble extends StatefulWidget {
   final VoidCallback? onAddStory;
   final VoidCallback? onViewStories;
   final bool anonymousLocked;
+  final String? fallbackImageUrl;
 
   const _MeBubble({
     required this.myStories,
@@ -439,6 +445,7 @@ class _MeBubble extends StatefulWidget {
     this.onAddStory,
     this.onViewStories,
     this.anonymousLocked = false,
+    this.fallbackImageUrl,
   });
 
   @override
@@ -477,6 +484,14 @@ class _MeBubbleState extends State<_MeBubble>
   }
 
   static String? _bubbleImage(List<StoryItem> stories) {
+    // Home'daki "Your story" balonuyla aynı kaynağı kullan. Fotoğraf üzerine
+    // yazılan metin görsele işlendiği için story medyası, eski check-in
+    // featured görselinden önce gelmeli.
+    for (final s in stories) {
+      final thumbnail = s.thumbnailUrl;
+      if (thumbnail != null && thumbnail.isNotEmpty) return thumbnail;
+      if (!s.isVideo && s.mediaUrl.isNotEmpty) return s.mediaUrl;
+    }
     for (final s in stories) {
       final f = s.checkinFeaturedPhotoUrl;
       if (f != null && f.isNotEmpty) return f;
@@ -506,7 +521,8 @@ class _MeBubbleState extends State<_MeBubble>
     final canAdd = widget.onAddStory != null;
     final uploading = widget.isUploading;
     final color = Theme.of(context).colorScheme.primary;
-    final bubbleImg = _bubbleImage(widget.myStories);
+    final bubbleImg =
+        _bubbleImage(widget.myStories) ?? widget.fallbackImageUrl;
 
     if (!hasStories && !canAdd) return const SizedBox.shrink();
 

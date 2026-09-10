@@ -9,8 +9,8 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
-import 'package:kmstry_frontend/features/profile/presentation/account_settings_page.dart';
-import 'package:kmstry_frontend/features/profile/presentation/settings_activity_page.dart';
+import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
+import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
@@ -25,6 +25,13 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.da
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
@@ -60,6 +67,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   bool _uploadingStory = false;
   List<VenueStoryItem> _avatarStories = [];
   final _venueStoryRepo = VenueStoryRepository();
+
+  // Deals & discounts (salt-görüntü) — venue detay sayfasıyla aynı.
+  final _partnershipRepo = ExternalPartnershipRepository();
+  List<ExternalPartnershipModel> _partnerships = const [];
 
   @override
   void initState() {
@@ -114,10 +125,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     });
   }
 
-  Future<void> _loadVenueProfile() async {
-    setState(() => _loading = true);
+  Future<void> _loadVenueProfile({bool showLoading = true}) async {
+    if (showLoading) setState(() => _loading = true);
     try {
-      final me = await AuthRepository().getMe();
+      final me = await AuthRepository().getMe(forceRefresh: !showLoading);
       final ctx = MeContextModel.fromMe(me);
       final username = me['username']?.toString();
       final fullName = (me['fullName'] ?? me['full_name'])?.toString();
@@ -172,7 +183,11 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
         // Permission'ları yükle (async, UI'ı bloklamaz)
         VenueSession.instance.load(venueId, resolvedRole);
         // Story state'i sadece boşsa yükle — viewer kapanınca optimistic update korunur
-        if (_avatarStories.isEmpty) _loadAvatarStories(venueId);
+        if (showLoading) {
+          if (_avatarStories.isEmpty) _loadAvatarStories(venueId);
+          // Deals & discounts (best-effort, UI'ı bloklamaz).
+          _loadPartnerships(venueId);
+        }
       } else {
         if (!mounted) return;
         setState(() {
@@ -184,6 +199,27 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _refreshVenueProfile() async {
+    await _loadVenueProfile(showLoading: false);
+    final venueId = _venue?.id;
+    if (venueId == null || venueId.isEmpty) return;
+    await Future.wait<void>([
+      _loadAvatarStories(venueId),
+      _loadPartnerships(venueId),
+    ]);
+  }
+
+  Future<void> _loadPartnerships(String venueId) async {
+    try {
+      final partnerships = await _partnershipRepo.getActivePartnerships(
+        venueId,
+      );
+      if (mounted) setState(() => _partnerships = partnerships);
+    } catch (_) {
+      /* best-effort — sessiz geç */
     }
   }
 
@@ -234,51 +270,44 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                'About',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: kText,
-                ),
-              ),
-              const Spacer(),
-              if (canEdit)
-                GestureDetector(
-                  onTap: () => _editAbout(venue),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colors.primary.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          hasDesc ? Icons.edit_outlined : Icons.add,
-                          size: 14,
-                          color: colors.primary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          hasDesc ? 'Edit' : 'Add',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+          venueSectionTitle(
+            context,
+            AppColors.magenta,
+            'About',
+            trailing: canEdit
+                ? GestureDetector(
+                    onTap: () => _editAbout(venue),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            hasDesc ? Icons.edit_outlined : Icons.add,
+                            size: 14,
                             color: colors.primary,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Text(
+                            hasDesc ? 'Edit' : 'Add',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: colors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
-            ],
+                  )
+                : null,
           ),
           const SizedBox(height: 6),
           Text(
@@ -301,24 +330,17 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     required String title,
     required IconData icon,
     required String message,
+    Color dotColor = AppColors.magenta,
   }) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = colors.onSurface;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              color: textColor,
-            ),
-          ),
+          venueSectionTitle(context, dotColor, title),
           const SizedBox(height: 8),
           Container(
             width: double.infinity,
@@ -349,7 +371,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                     style: TextStyle(
                       fontSize: 13,
                       height: 1.45,
-                      color: textColor.withValues(alpha: 0.62),
+                      color: colors.onSurface.withValues(alpha: 0.62),
                     ),
                   ),
                 ),
@@ -442,29 +464,15 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                     const SizedBox(height: 8),
                     SizedBox(
                       width: double.infinity,
-                      child: FilledButton(
+                      child: PrimaryButton(
+                        label: 'Save',
+                        loading: saving,
                         onPressed: saving
                             ? null
-                            : () async {
+                            : () {
                                 setSheet(() => saving = true);
                                 Navigator.pop(ctx, controller.text.trim());
                               },
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: saving
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('Save'),
                       ),
                     ),
                   ],
@@ -612,7 +620,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SettingsActivityPage()),
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
     );
   }
 
@@ -778,6 +786,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.surface,
+      // isScrollControlled: varsayılan ~9/16 ekran sınırı, sabit footer + venue
+      // listesiyle birkaç px aşılıp "bottom overflow" veriyordu. Bu bayrak sheet'i
+      // içeriğe göre boyutlar; venue listesi zaten iç ConstrainedBox ile sınırlı.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -830,18 +842,12 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           : null,
                       onTap: isPersonalActive
                           ? null
-                          : () async {
+                          : () {
+                              // Smooth in-place switch → lands on personal Profile.
                               Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'PERSONAL',
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {}
+                              AppShellNav.of(
+                                context,
+                              )?.switchToPersonalProfile();
                             },
                     ),
                   ...accountVenues.map((venue) {
@@ -900,19 +906,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           : null,
                       onTap: isActive
                           ? null
-                          : () async {
+                          : () {
+                              // Smooth in-place switch → lands on the venue's
+                              // Profile tab (no full shell rebuild → no dashboard).
                               Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'VENUE',
-                                  activeVenueId: venue.id,
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {}
+                              AppShellNav.of(
+                                context,
+                              )?.switchToVenueProfile(venue);
                             },
                     );
                   }),
@@ -986,16 +986,14 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                 color: colors.onSurface,
               ),
               title: Text(
-                'Go to Accounts Center',
+                'Go to Settings',
                 style: TextStyle(color: colors.onSurface),
               ),
               onTap: () {
                 Navigator.pop(sheetCtx);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const AccountSettingsPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const SettingsPage()),
                 );
               },
             ),
@@ -1079,9 +1077,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            return SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
-              child: ConstrainedBox(
+            return RefreshIndicator(
+              onRefresh: _refreshVenueProfile,
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1282,12 +1284,43 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                             session.can(VenuePermission.venueEdit),
                       ),
 
+                    // ── Deals & discounts (salt-görüntü) ──────────────
+                    // Venue detay sayfasıyla aynı: About altında, tek satır
+                    // kaydırılabilir chip'ler. Chip'e basınca detay açılır.
+                    if (!isClaimLocked &&
+                        venue != null &&
+                        _partnerships.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: VenueDealsChipRow(
+                          partnerships: _partnerships,
+                          venueName: venue.name,
+                        ),
+                      ),
+                    ],
+
+                    // ── Menu ──────────────────────────────────────────
+                    // About'un hemen ardından gelir; MENU_MANAGE iznine bağlıdır.
+                    if (VenueFeatureVisibility.menu &&
+                        !isClaimLocked &&
+                        venue != null &&
+                        (session.isOwner ||
+                            session.can(VenuePermission.menuManage))) ...[
+                      const SizedBox(height: 14),
+                      VenueMenuProfileSection(
+                        venueId: venue.id,
+                        venueName: venue.name,
+                      ),
+                    ],
+
                     // ── Gallery ───────────────────────────────────────
                     if (isClaimLocked) ...[
                       const SizedBox(height: 18),
                       _buildLockedProfileSection(
-                        title: 'Gallery',
+                        title: 'Photos & Videos',
                         icon: Icons.photo_library_outlined,
+                        dotColor: AppColors.teal,
                         message: isPendingClaim
                             ? 'After approval, you can upload venue photos and show guests what the place feels like.'
                             : 'Gallery management is locked because this claim was not approved.',
@@ -1303,6 +1336,27 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                       ),
                     ],
 
+                    // ── Upcoming Events (salt-görüntü) ────────────────
+                    // Venue detay sayfasıyla aynı kart tasarımı.
+                    if (!isClaimLocked &&
+                        venue != null &&
+                        VenueUpcomingEventsSection.hasUpcoming(
+                          venue.upcomingEvents,
+                        )) ...[
+                      const SizedBox(height: 18),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: VenueUpcomingEventsSection(
+                          events: venue.upcomingEvents,
+                          venueId: venue.id,
+                          venueName: venue.name,
+                          venueAddress: venue.address,
+                          venuePhotoUrl: venue.photo,
+                          openAsVenueMember: true,
+                        ),
+                      ),
+                    ],
+
                     SizedBox(
                       height:
                           MediaQuery.of(context).padding.bottom +
@@ -1310,6 +1364,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                           16,
                     ),
                   ],
+                ),
                 ),
               ),
             );

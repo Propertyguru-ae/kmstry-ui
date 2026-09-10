@@ -2,6 +2,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
@@ -91,6 +93,9 @@ class _StartupGatePageState extends State<StartupGatePage>
   }
 
   Future<void> _startFlow() async {
+    final updateRequired = await _checkVersionPolicy();
+    if (updateRequired || !mounted) return;
+
     final introSeen = await SecureStorage.isIntroSeen();
     if (!mounted) return;
 
@@ -100,6 +105,25 @@ class _StartupGatePageState extends State<StartupGatePage>
     }
 
     setState(() => _checking = false);
+  }
+
+  Future<bool> _checkVersionPolicy() async {
+    try {
+      await ApiClient().get(
+        '/app/version-policy',
+        timeout: const Duration(seconds: 4),
+      );
+      return false;
+    } on ApiException catch (error) {
+      // The ApiClient has already handed this response to the global update
+      // coordinator. Stop startup navigation while that screen is opening.
+      return error.statusCode == 426 &&
+          error.data['errorCode'] == 'APP_UPDATE_REQUIRED';
+    } catch (_) {
+      // Offline, DNS and temporary backend failures must not trap users on the
+      // splash screen. Existing offline handling continues in AuthGate.
+      return false;
+    }
   }
 
   Future<void> _goToIntro() async {
@@ -216,8 +240,8 @@ class _StartupGatePageState extends State<StartupGatePage>
           animation: Listenable.merge([_introController, _pulseController]),
           builder: (context, child) {
             final fade = _fadeAnimation.value;
-            final shimmer =
-                ((_pulseController.value - 0.98) / (1.03 - 0.98)).clamp(0.0, 1.0);
+            final shimmer = ((_pulseController.value - 0.98) / (1.03 - 0.98))
+                .clamp(0.0, 1.0);
             final borderTarget = Color.lerp(
               Colors.white.withValues(alpha: 0.12),
               _blueBright.withValues(alpha: 0.38),
@@ -410,8 +434,11 @@ class _StartupGatePageState extends State<StartupGatePage>
                           ),
                         ),
                         SizedBox(width: 10),
-                        Icon(Icons.arrow_forward_rounded,
-                            size: 20, color: Colors.white),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 20,
+                          color: Colors.white,
+                        ),
                       ],
                     ),
             ),

@@ -71,6 +71,8 @@ class MediaCompressor {
     File input, {
     int maxDimension = 1600,
     int quality = 85,
+    int? sourceWidth,
+    int? sourceHeight,
   }) async {
     try {
       final originalSize = await input.length();
@@ -78,11 +80,16 @@ class MediaCompressor {
       final target =
           '${dir.path}/img_${DateTime.now().microsecondsSinceEpoch}.jpg';
 
+      final (targetWidth, targetHeight) = imageTargetSize(
+        maxDimension,
+        sourceWidth,
+        sourceHeight,
+      );
       final result = await FlutterImageCompress.compressAndGetFile(
         input.absolute.path,
         target,
-        minWidth: maxDimension,
-        minHeight: maxDimension,
+        minWidth: targetWidth,
+        minHeight: targetHeight,
         quality: quality,
         format: CompressFormat.jpeg,
         keepExif: false,
@@ -110,6 +117,21 @@ class MediaCompressor {
       }
       return input;
     }
+  }
+
+  /// Native compression scales against BOTH minimum dimensions. A square
+  /// target otherwise keeps the short edge at 1280 and the long edge larger.
+  static (int, int) imageTargetSize(int limit, int? width, int? height) {
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return (limit, limit);
+    }
+    final longest = width > height ? width : height;
+    if (longest <= limit) return (width, height);
+    final scale = limit / longest;
+    return (
+      (width * scale).round().clamp(1, limit),
+      (height * scale).round().clamp(1, limit),
+    );
   }
 
   /// İşi biten sıkıştırma geçici dosyalarını temizler. Uygulama arka plana

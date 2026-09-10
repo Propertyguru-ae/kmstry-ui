@@ -1,4 +1,5 @@
 import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
+import '../../../core/media/media_reference.dart';
 
 class StoryUser {
   final String id;
@@ -27,6 +28,7 @@ class StoryItem {
   final DateTime expiresAt;
   final DateTime createdAt;
   final StoryUser? user;
+  final MediaReference? mediaReference;
 
   const StoryItem({
     required this.id,
@@ -37,6 +39,7 @@ class StoryItem {
     required this.expiresAt,
     required this.createdAt,
     this.user,
+    this.mediaReference,
     this.checkinFeaturedPhotoUrl,
     this.venueId,
     this.venueName,
@@ -86,9 +89,16 @@ class StoryItem {
       }
     }
     final venueMap = j['venue'] as Map<String, dynamic>?;
+    final id = j['id'] as String;
+    final mediaReference = MediaReference.fromJson(
+      j,
+      fallbackId: id,
+      legacyUrlKeys: const ['media_url', 'mediaUrl'],
+    );
     return StoryItem(
-      id: j['id'] as String,
-      mediaUrl: j['media_url'] as String,
+      id: id,
+      mediaUrl: mediaReference.url,
+      mediaReference: mediaReference,
       mediaType: j['media_type'] as String,
       thumbnailUrl: j['thumbnail_url'] as String?,
       durationSecs: j['duration_secs'] as int?,

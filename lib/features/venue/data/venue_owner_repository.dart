@@ -6,6 +6,8 @@ import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_owner_stats_model.dart';
 import 'venue_analytics_model.dart';
@@ -135,7 +137,7 @@ class VenueOwnerRepository {
 
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/photo');
     final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
+    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
 
     final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
     final mimeParts = mimeType.split('/');
@@ -147,7 +149,7 @@ class VenueOwnerRepository {
       ),
     );
 
-    final response = await request.send();
+    final response = await sendMultipartRequest(request);
     final body = await response.stream.bytesToString();
     if (response.statusCode >= 400) {
       throw Exception('Photo upload failed (${response.statusCode}): $body');

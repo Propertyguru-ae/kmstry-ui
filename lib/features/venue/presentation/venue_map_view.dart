@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:http/http.dart' as http;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -115,6 +113,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   BitmapDescriptor? _singleDefaultIcon;
   BitmapDescriptor? _singleSelectedIcon;
   BitmapDescriptor? _singlePressedIcon;
+  Brightness? _markerThemeBrightness;
 
   /// While the venue pin popup is open, that marker uses a different hue.
   String? _pressedMarkerVenueKey;
@@ -154,6 +153,26 @@ class _VenueMapViewState extends State<VenueMapView> {
     'apartment',
     'residential_apartment',
   };
+
+  // Heatmap açıklaması ve handler'ı korunur; yeniden açılmaya hazır.
+  static const bool _showHeatmapInfoButton = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final brightness = Theme.of(context).brightness;
+    final themeChanged =
+        _markerThemeBrightness != null && _markerThemeBrightness != brightness;
+    _markerThemeBrightness = brightness;
+    if (!themeChanged) return;
+
+    _clusterIconCache.clear();
+    _photoMarkerIconCache.clear();
+    _lastMarkerKey = '';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _recomputeClusters(force: true);
+    });
+  }
 
   // ── Harita filtreleri ──────────────────────────────────────────────────────
   /// Seçili kategoriler (venue.type): restaurant/cafe/bar/club/lounge. Boş = tümü.
@@ -686,7 +705,7 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   Future<void> _openPartnershipSheet() {
     return _openFilterSheet(
-      title: 'Partnerships',
+      title: 'Deals and discounts',
       contentBuilder: (setSheetState) {
         final theme = Theme.of(context);
         final isDark = theme.brightness == Brightness.dark;
@@ -1626,10 +1645,11 @@ class _VenueMapViewState extends State<VenueMapView> {
     required int count,
     required bool highlighted,
   }) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final text = count > 999 ? '999+' : '$count';
     const sublabel = 'spots';
     final bucket = count >= 100 ? '100+' : (count >= 20 ? '20+' : '2+');
-    final cacheKey = '$bucket:$text:$highlighted';
+    final cacheKey = '${isDark ? 'dark' : 'light'}:$bucket:$text:$highlighted';
 
     final cached = _clusterIconCache[cacheKey];
     if (cached != null) return cached;
@@ -1638,7 +1658,16 @@ class _VenueMapViewState extends State<VenueMapView> {
     Color fill;
     Color stroke;
 
-    if (highlighted) {
+    if (!isDark) {
+      fill = const Color(0xFFFCFBFF);
+      if (highlighted || count <= 20) {
+        stroke = _kKmstryBlue;
+      } else if (count > 50) {
+        stroke = _kKmstryPink;
+      } else {
+        stroke = const Color(0xFF8257E5);
+      }
+    } else if (highlighted) {
       fill = const Color(0xFF081120);
       stroke = _kKmstryBlue;
     } else if (count > 50) {
@@ -1658,6 +1687,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       sublabel: sublabel,
       fill: fill,
       stroke: stroke,
+      isDark: isDark,
     );
 
     _clusterIconCache[cacheKey] = icon;
@@ -1669,6 +1699,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     required String text,
     required Color fill,
     required Color stroke,
+    required bool isDark,
     String? sublabel,
   }) async {
     const scale = 3.0;
@@ -1692,14 +1723,14 @@ class _VenueMapViewState extends State<VenueMapView> {
     );
 
     final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.34)
+      ..color = Colors.black.withValues(alpha: isDark ? 0.34 : 0.14)
       ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 4);
     canvas.drawRRect(pill.shift(const Offset(0, 2)), shadowPaint);
 
     final fillPaint = Paint()
       ..shader = ui.Gradient.linear(pillRect.topLeft, pillRect.bottomRight, [
         fill,
-        const Color(0xFF101A2B),
+        isDark ? const Color(0xFF101A2B) : const Color(0xFFF0ECFA),
       ]);
     final strokePaint = Paint()
       ..color = stroke
@@ -1715,7 +1746,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       text: TextSpan(
         text: text,
         style: TextStyle(
-          color: Colors.white,
+          color: isDark ? Colors.white : const Color(0xFF241C35),
           fontSize: logicalSize * 0.28,
           fontWeight: FontWeight.w800,
         ),
@@ -1728,7 +1759,9 @@ class _VenueMapViewState extends State<VenueMapView> {
         text: TextSpan(
           text: sublabel,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.75),
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.75)
+                : const Color(0xFF675E76),
             fontSize: logicalSize * 0.145,
             fontWeight: FontWeight.w700,
           ),
@@ -2049,38 +2082,24 @@ class _VenueMapViewState extends State<VenueMapView> {
     }
   }
 
-  static const _googleApiKey = 'AIzaSyAW_tmPFyMqvhpZn9Fieq2iUXxX3we-F70';
-
   Future<List<_PlaceSuggestion>> _fetchPlaceSuggestions({
     required String query,
     required LatLng location,
   }) async {
     try {
-      final uri = Uri.https(
-        'maps.googleapis.com',
-        '/maps/api/place/autocomplete/json',
-        {'input': query, 'language': 'tr', 'key': _googleApiKey},
+      final predictions = await _venueRepository.searchPlaceSuggestions(
+        input: query,
+        language: 'tr',
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return const [];
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final predictions = data['predictions'] as List? ?? [];
       return predictions
           .take(4)
-          .map((p) {
-            final map = p as Map<String, dynamic>;
-            return _PlaceSuggestion(
-              placeId: map['place_id']?.toString() ?? '',
-              mainText:
-                  (map['structured_formatting']?['main_text'] ??
-                          map['description'] ??
-                          '')
-                      .toString(),
-              secondaryText:
-                  (map['structured_formatting']?['secondary_text'] ?? '')
-                      .toString(),
-            );
-          })
+          .map(
+            (p) => _PlaceSuggestion(
+              placeId: p.placeId,
+              mainText: p.mainText,
+              secondaryText: p.secondaryText,
+            ),
+          )
           .where((s) => s.placeId.isNotEmpty)
           .toList();
     } catch (_) {
@@ -2098,23 +2117,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _notifySearchActivity();
 
     try {
-      final uri = Uri.https(
-        'maps.googleapis.com',
-        '/maps/api/place/details/json',
-        {
-          'place_id': suggestion.placeId,
-          'fields': 'geometry',
-          'key': _googleApiKey,
-        },
+      final location = await _venueRepository.getPlaceGeometry(
+        suggestion.placeId,
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return;
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final location = data['result']?['geometry']?['location'];
-      if (location == null) return;
-      final lat = (location['lat'] as num).toDouble();
-      final lng = (location['lng'] as num).toDouble();
-      final target = LatLng(lat, lng);
+      final target = LatLng(location.latitude, location.longitude);
 
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
@@ -2154,21 +2160,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     _recomputeClusters(force: true);
 
     try {
-      final uri =
-          Uri.https('maps.googleapis.com', '/maps/api/place/details/json', {
-            'place_id': suggestion.place.placeId,
-            'fields': 'geometry',
-            'key': _googleApiKey,
-          });
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return;
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final location = data['result']?['geometry']?['location'];
-      if (location == null) return;
-      final target = LatLng(
-        (location['lat'] as num).toDouble(),
-        (location['lng'] as num).toDouble(),
+      final location = await _venueRepository.getPlaceGeometry(
+        suggestion.place.placeId,
       );
+      final target = LatLng(location.latitude, location.longitude);
       await _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(target: target, zoom: 15),
@@ -3259,7 +3254,7 @@ class _VenueMapViewState extends State<VenueMapView> {
           _ResultFilterChip(
             icon: Icons.handshake_outlined,
             label: _selectedPartnerships.isEmpty
-                ? 'Partnership'
+                ? 'Deals and discounts'
                 : '${_selectedPartnerships.length} selected',
             selected: _selectedPartnerships.isNotEmpty,
             onTap: _openPartnershipSheet,
@@ -3442,7 +3437,12 @@ class _VenueMapViewState extends State<VenueMapView> {
         if (!widget.hideSearch && !_showSearchResults)
           Positioned(top: 68, left: 0, right: 0, child: _buildFilterChipsRow()),
 
-        if (!widget.hideSearch)
+        // Search suggestions own this area while the field is active. Keeping
+        // the floating map controls visible here would place them above the
+        // suggestion panel because they are painted later in the Stack.
+        if (!widget.hideSearch &&
+            !_showSearchResults &&
+            !_searchFocusNode.hasFocus)
           Positioned(
             right: 16,
             top: 110,
@@ -3460,11 +3460,13 @@ class _VenueMapViewState extends State<VenueMapView> {
                     widget.onLocationResolved?.call(_currentLocation!);
                   },
                 ),
-                const SizedBox(width: 8),
-                _CircleIcon(
-                  Icons.info_outline,
-                  onTap: () => _showHeatmapLegend(context),
-                ),
+                if (_showHeatmapInfoButton) ...[
+                  const SizedBox(width: 8),
+                  _CircleIcon(
+                    Icons.info_outline,
+                    onTap: () => _showHeatmapLegend(context),
+                  ),
+                ],
               ],
             ),
           ),

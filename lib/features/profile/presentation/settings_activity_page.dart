@@ -76,7 +76,7 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
 
   Future<void> _load() async {
     try {
-      final me = await AuthRepository().getMe();
+      final me = await AuthRepository().getMe(forceRefresh: true);
       final accountOptIn = me['notificationPermissionGranted'];
       final accountEnabled = accountOptIn is bool ? accountOptIn : true;
       final permissionState = await _notificationPermissionService
@@ -241,9 +241,14 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
       ),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: colors.primary))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                padding: const EdgeInsets.all(16),
+                children: [
                 // ── Account Center ───────────────────────────────
                 _SectionLabel(label: 'Account'),
                 const SizedBox(height: 8),
@@ -337,7 +342,8 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
                 ),
 
                 const SizedBox(height: 32),
-              ],
+                ],
+              ),
             ),
     );
   }

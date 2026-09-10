@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
+import 'package:kmstry_frontend/core/network/app_request_headers.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
@@ -163,10 +164,15 @@ class ChatRealtimeService {
           .setReconnectionAttempts(1000)
           .setReconnectionDelay(1200)
           .setReconnectionDelayMax(8000)
-          .setAuth({
-            'token': token,
-            if (deviceToken != null && deviceToken.isNotEmpty)
-              'deviceToken': deviceToken,
+          // Socket.IO calls this again for every reconnect. App Check tokens
+          // are short lived, so never freeze one into the socket options.
+          .setAuthFn((callback) {
+            unawaited(
+              _buildSocketAuth(
+                token: token,
+                deviceToken: deviceToken,
+              ).then(callback),
+            );
           })
           .setExtraHeaders({
             'Authorization': 'Bearer $token',
@@ -179,6 +185,28 @@ class ChatRealtimeService {
     debugPrint('💬 [Realtime] Yeni socket instance olusturuldu');
     _bindSocketListeners(socket);
     _connectionController.add(ChatRealtimeConnectionState.connecting);
+  }
+
+  Future<Map<String, dynamic>> _buildSocketAuth({
+    required String token,
+    required String? deviceToken,
+  }) async {
+    final headers = await AppRequestHeaders.build(accessToken: token);
+    return <String, dynamic>{
+      'token': token,
+      if (deviceToken != null && deviceToken.isNotEmpty)
+        'deviceToken': deviceToken,
+      if (headers['X-Firebase-AppCheck'] case final appCheckToken?)
+        'appCheckToken': appCheckToken,
+      if (headers['x-kmstry-app-version'] case final appVersion?)
+        'appVersion': appVersion,
+      if (headers['x-kmstry-build-number'] case final buildNumber?)
+        'buildNumber': buildNumber,
+      if (headers['x-kmstry-platform'] case final platform?)
+        'platform': platform,
+      if (headers['x-kmstry-os-version'] case final osVersion?)
+        'osVersion': osVersion,
+    };
   }
 
   void _bindSocketListeners(io.Socket socket) {

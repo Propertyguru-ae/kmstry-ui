@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import '../../features/chat/data/chat_memory_cache.dart';
 
 class SecureStorage {
   static const _storage = FlutterSecureStorage();
@@ -81,6 +82,7 @@ class SecureStorage {
   }
 
   static Future<void> clearSession() async {
+    ChatMemoryCache.shared.clear();
     await _storage.delete(key: _accessTokenKey);
     await _storage.delete(key: _refreshTokenKey);
     final prefs = await SharedPreferences.getInstance();
@@ -110,6 +112,7 @@ class SecureStorage {
   }
 
   static Future<void> clear() async {
+    ChatMemoryCache.shared.clear();
     await _storage.deleteAll();
   }
 }
