@@ -1714,9 +1714,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             ),
 
             Expanded(
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
+              child: RefreshIndicator(
+                onRefresh: _loadProfile,
+                child: CustomScrollView(
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  slivers: [
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(
                       20,
@@ -1737,7 +1741,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                       subColor: subColor,
                       onSurface: onSurface,
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],

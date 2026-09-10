@@ -293,9 +293,9 @@ class _CheckInPageState extends State<CheckInPage> {
                   const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
+                    child: PrimaryButton(
+                      label: 'Done',
                       onPressed: () => Navigator.pop(context),
-                      child: const Text("Done"),
                     ),
                   ),
                 ],

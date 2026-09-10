@@ -46,6 +46,10 @@ class _DataExportPageState extends State<DataExportPage> {
   bool _submitting = false;
   String? _busyId;
 
+  List<DataExportRequestModel> get _visibleRequests => _requests
+      .where((request) => request.status != DataExportStatus.expired)
+      .toList(growable: false);
+
   @override
   void initState() {
     super.initState();
@@ -527,6 +531,8 @@ class _DataExportPageState extends State<DataExportPage> {
       (item) => item?.isActive == true,
       orElse: () => null,
     );
+    final visibleRequests = _visibleRequests;
+    final hasExpiredRequests = visibleRequests.length != _requests.length;
     return Scaffold(
       backgroundColor: background,
       appBar: AppBar(
@@ -544,10 +550,7 @@ class _DataExportPageState extends State<DataExportPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _loadError
-          ? ConnectionErrorView(
-              offline: _loadOffline,
-              onRetry: () => _load(),
-            )
+          ? ConnectionErrorView(offline: _loadOffline, onRetry: () => _load())
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
@@ -868,15 +871,29 @@ class _DataExportPageState extends State<DataExportPage> {
                   ),
                   if (_exportsExpanded) ...[
                     const SizedBox(height: 6),
-                    if (_requests.isEmpty)
+                    if (visibleRequests.isEmpty)
                       _panel(
                         const Padding(
                           padding: EdgeInsets.all(18),
-                          child: Text('You have not requested an export yet.'),
+                          child: Text(
+                            'You do not have any active or downloadable exports.',
+                          ),
                         ),
                       )
                     else
-                      ..._requests.map(_requestCard),
+                      ...visibleRequests.map(_requestCard),
+                    if (hasExpiredRequests) ...[
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          'Expired archives are no longer available for download.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurface.withValues(alpha: 0.58),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),

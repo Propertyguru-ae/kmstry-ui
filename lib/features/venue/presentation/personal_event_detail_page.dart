@@ -208,9 +208,14 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                 )
               : Stack(
                   children: [
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.only(bottom: 40),
-                      child: Column(
+                    RefreshIndicator(
+                      onRefresh: _loadDetail,
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.only(bottom: 40),
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // ── COVER HERO ─────────────────────────────────────
@@ -455,6 +460,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                             ),
                           ),
                         ],
+                        ),
                       ),
                     ),
 
