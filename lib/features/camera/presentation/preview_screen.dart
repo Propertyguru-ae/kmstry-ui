@@ -1,0 +1,789 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:gal/gal.dart';
+import 'package:image/image.dart' as img;
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/branded_notice.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+
+/// Metin overlay'inin stil ön-ayarları (Instagram'daki Modern/Classic/Signature
+/// şeridine karşılık gelir).
+enum _TextFontStyle { modern, classic, typewriter }
+
+extension _TextFontStyleX on _TextFontStyle {
+  String get label => switch (this) {
+    _TextFontStyle.modern => 'Modern',
+    _TextFontStyle.classic => 'Classic',
+    _TextFontStyle.typewriter => 'Typewriter',
+  };
+
+  TextStyle base(Color color) => switch (this) {
+    _TextFontStyle.modern => TextStyle(
+      color: color,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.2,
+    ),
+    _TextFontStyle.classic => TextStyle(
+      color: color,
+      fontFamily: 'Georgia',
+      fontWeight: FontWeight.w600,
+    ),
+    _TextFontStyle.typewriter => TextStyle(
+      color: color,
+      fontFamily: 'Courier',
+      fontWeight: FontWeight.w700,
+    ),
+  };
+}
+
+/// Fotoğraf çekimi sonrası önizleme + Instagram tarzı metin düzenleme ekranı.
+/// Yazı: sürüklenebilir, iki parmakla büyütülüp küçültülebilir ve döndürülebilir;
+/// font stili, renk paleti, hizalama ve arka plan (pill) seçenekleri vardır.
+/// "Use Photo" ile onaylanınca yazı görüntüye kalıcı gömülür (burn-in);
+/// indir butonu kompozit hâli galeriye kaydeder.
+class PreviewScreen extends StatefulWidget {
+  final File file;
+  final String cancelLabel;
+  final String confirmLabel;
+  final IconData? confirmIcon;
+
+  /// Kamera çekiminden geliyorsa: ham fotoğraf ANINDA gösterilir, ağır
+  /// orientation/crop/resize işlemesi arka planda yapılıp hazır olunca
+  /// gösterim güncellenir. Bu ikisi null ise (galeriden vb.) işleme yapılmaz.
+  final bool? isFrontCamera;
+  final double? screenAr;
+
+  /// How the image fills the preview. Camera/story shots are full-bleed
+  /// (`cover`); gallery photos of arbitrary aspect ratios should use `contain`
+  /// so the whole picture is shown instead of a zoomed-in crop.
+  final BoxFit imageFit;
+
+  /// Whether the "add text" overlay tool is available. Off for e.g. sending a
+  /// gallery photo in chat, where captioning isn't offered.
+  final bool allowText;
+
+  /// Whether the "download/save" tool is shown. Off when the source is already
+  /// the user's gallery (no point re-saving it).
+  final bool allowDownload;
+
+  const PreviewScreen({
+    super.key,
+    required this.file,
+    this.isFrontCamera,
+    this.screenAr,
+    this.cancelLabel = 'Retake',
+    this.confirmLabel = 'Use',
+    this.confirmIcon,
+    this.imageFit = BoxFit.cover,
+    this.allowText = true,
+    this.allowDownload = true,
+  });
+
+  @override
+  State<PreviewScreen> createState() => _PreviewScreenState();
+}
+
+class _PreviewScreenState extends State<PreviewScreen> {
+  final GlobalKey _composeKey = GlobalKey();
+  final TextEditingController _textController = TextEditingController();
+
+  // ---- Overlay state ----
+  String _text = '';
+  Color _color = Colors.white;
+  Offset? _offset; // null → ekran ortası
+  double _scale = 1.0;
+  double _rotation = 0.0; // radyan
+  double _fontSize = 28; // sol dikey slider ile ayarlanır (Instagram gibi)
+  TextAlign _align = TextAlign.center;
+  _TextFontStyle _fontStyle = _TextFontStyle.modern;
+
+  bool _editing = false;
+  bool _confirming = false;
+  bool _saving = false;
+
+  // Instant-preview state: önce ham dosya gösterilir, işleme bitince değişir.
+  late File _displayFile;
+  bool _processing = false;
+  bool _mirrorInstant = false; // ham ön-kamera fotoğrafını gösterirken aynala
+
+  // Pinch jesti için başlangıç değerleri.
+  double _gestureStartScale = 1.0;
+  double _gestureStartRotation = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Released davranışı: ham kamera dosyasını olduğu gibi kullan. Flutter'ın
+    // native decoder'ı EXIF orientation + ayna bayrağını doğru uyguluyor.
+    // `image` paketiyle re-encode etmek (bakeOrientation) ayna bayrağını
+    // düşürüp ön kamera fotoğrafını ters çeviriyordu — o yüzden işleme kaldırıldı.
+    _displayFile = widget.file;
+    _processing = false;
+    _mirrorInstant = false;
+  }
+
+  static const List<Color> _palette = [
+    Colors.white,
+    Colors.black,
+    AppColors.magenta,
+    AppColors.blue,
+    AppColors.teal,
+    AppColors.orange,
+    Color(0xFFFF3B30), // kırmızı
+    Color(0xFFFFCC00), // sarı
+    Color(0xFF34C759), // yeşil
+    Color(0xFF5E5CE6), // indigo
+    Color(0xFFFF2D95), // pembe
+    Color(0xFF8E8E93), // gri
+  ];
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  bool get _hasText => _text.trim().isNotEmpty;
+
+  Color get _effectiveTextColor => _color;
+
+  TextStyle get _overlayStyle {
+    return _fontStyle
+        .base(_color)
+        .copyWith(
+          fontSize: _fontSize,
+          shadows: const [Shadow(blurRadius: 8, color: Colors.black45)],
+        );
+  }
+
+  // ---------- Burn-in / kaydetme ----------
+
+  Future<File> _composedFile() async {
+    // İşlenmiş dosya varsa onu kullan (ham değil).
+    if (!_hasText) return _displayFile;
+
+    final boundary =
+        _composeKey.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+    if (boundary == null) return _displayFile;
+
+    final logicalWidth = boundary.size.width;
+    final pixelRatio = logicalWidth > 0 ? (1080 / logicalWidth) : 3.0;
+    final uiImage = await boundary.toImage(pixelRatio: pixelRatio);
+    final byteData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) return widget.file;
+
+    final decoded = img.decodePng(byteData.buffer.asUint8List());
+    if (decoded == null) return widget.file;
+    img.Image fixed = decoded;
+    if (fixed.width > 720) {
+      final targetH = (720 * fixed.height / fixed.width).round();
+      fixed = img.copyResize(
+        fixed,
+        width: 720,
+        height: targetH,
+        interpolation: img.Interpolation.linear,
+      );
+    }
+    final jpgBytes = img.encodeJpg(fixed, quality: 92);
+
+    final dir = await getTemporaryDirectory();
+    final filePath = path.join(
+      dir.path,
+      '${DateTime.now().millisecondsSinceEpoch}_edited.jpg',
+    );
+    return File(filePath).writeAsBytes(jpgBytes, flush: true);
+  }
+
+  Future<void> _usePhoto() async {
+    if (_confirming || _saving) return;
+    setState(() => _confirming = true);
+    try {
+      // İşleme henüz bitmediyse bitene kadar bekle (kullanıcı hemen onayladıysa).
+      await _awaitProcessing();
+      final result = await _composedFile();
+      if (!mounted) return;
+      // TEK pop: sonucu CameraScreen'e döndür. Kamera bunu await edip kendini
+      // kapatır (aşağıya bak). Böylece kamera "alttan" pop edilmiyor ve CameraX
+      // surface dispose crash'i olmuyor.
+      Navigator.pop(context, result);
+    } finally {
+      if (mounted) setState(() => _confirming = false);
+    }
+  }
+
+  /// İşleme sürüyorsa bitene kadar bekler (en fazla ~5 sn güvenlik sınırı).
+  Future<void> _awaitProcessing() async {
+    var waited = 0;
+    while (_processing && waited < 5000 && mounted) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      waited += 50;
+    }
+  }
+
+  Future<void> _download() async {
+    if (_saving || _confirming) return;
+    setState(() => _saving = true);
+    try {
+      await _awaitProcessing();
+      final result = await _composedFile();
+      await Gal.putImage(result.path);
+      if (!mounted) return;
+      showBrandedNotice(
+        context,
+        title: 'Saved to gallery',
+        message: 'Your photo is now available in your photo library.',
+        tone: BrandedNoticeTone.success,
+        icon: Icons.download_done_rounded,
+        duration: const Duration(seconds: 3),
+      );
+    } on GalException catch (e) {
+      if (!mounted) return;
+      showBrandedNotice(
+        context,
+        title: 'Photo not saved',
+        message: e.type == GalExceptionType.accessDenied
+            ? 'Allow photo library access in Settings, then try again.'
+            : 'We could not save this photo. Please try again.',
+        tone: BrandedNoticeTone.error,
+        icon: Icons.photo_library_outlined,
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ---------- Düzenleme ----------
+
+  void _openEditor() {
+    _textController.text = _text;
+    setState(() => _editing = true);
+  }
+
+  void _closeEditor() {
+    setState(() {
+      _text = _textController.text.trim();
+      _editing = false;
+    });
+  }
+
+  void _cycleAlign() {
+    setState(() {
+      _align = switch (_align) {
+        TextAlign.center => TextAlign.left,
+        TextAlign.left => TextAlign.right,
+        _ => TextAlign.center,
+      };
+    });
+  }
+
+  IconData get _alignIcon => switch (_align) {
+    TextAlign.left => Icons.format_align_left,
+    TextAlign.right => Icons.format_align_right,
+    _ => Icons.format_align_center,
+  };
+
+  // ---------- Build ----------
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.of(context).size;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: false,
+      body: Stack(
+        children: [
+          // Görüntü + yazı: burn-in için RepaintBoundary ile sarılı.
+          Positioned.fill(
+            child: RepaintBoundary(
+              key: _composeKey,
+              child: ColoredBox(
+                color: Colors.black,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      // Ham ön-kamera fotoğrafını gösterirken aynala (kamera
+                      // önizlemesi de aynalıydı); işlenmiş dosya zaten aynalı.
+                      child: Transform(
+                        alignment: Alignment.center,
+                        transform: _mirrorInstant
+                            ? (Matrix4.identity()
+                                ..scaleByDouble(-1.0, 1.0, 1.0, 1.0))
+                            : Matrix4.identity(),
+                        child: Image.file(
+                          _displayFile,
+                          fit: widget.imageFit,
+                          gaplessPlayback: true,
+                        ),
+                      ),
+                    ),
+                    if (_hasText && !_editing) _buildPlacedText(screen),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // Sağ üst araçlar: X (kapat) — kamera açılışındaki X ile aynı yerde —
+          // ardından (varsa) Tt ve indirme aynı hizada alt alta.
+          if (!_editing)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 12,
+              child: Column(
+                children: [
+                  _ToolButton(
+                    icon: Icons.close_rounded,
+                    onTap: _saving || _confirming
+                        ? null
+                        : () => Navigator.pop(context, null),
+                  ),
+                  if (widget.allowText) const SizedBox(height: 12),
+                  if (widget.allowText)
+                    _ToolButton(
+                      icon: Icons.text_fields_rounded,
+                      onTap: _saving || _confirming ? null : _openEditor,
+                    ),
+                  if (widget.allowDownload) const SizedBox(height: 12),
+                  if (widget.allowDownload)
+                    _ToolButton(
+                      icon: Icons.download_rounded,
+                      onTap: _saving || _confirming ? null : _download,
+                      loading: _saving,
+                    ),
+                ],
+              ),
+            ),
+
+          if (_editing) _buildEditor(context),
+
+          if (!_editing) _buildBottomButtons(),
+        ],
+      ),
+    );
+  }
+
+  /// Fotoğrafın üzerine yerleştirilmiş yazı — sürükle + pinch (ölçek/rotasyon).
+  Widget _buildPlacedText(Size screen) {
+    final center = _offset ?? Offset(screen.width / 2, screen.height / 2);
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: _openEditor,
+        onScaleStart: (details) {
+          _gestureStartScale = _scale;
+          _gestureStartRotation = _rotation;
+        },
+        onScaleUpdate: (details) {
+          setState(() {
+            // Tek parmak sürükleme de scale jestinin focalPoint delta'sıyla gelir.
+            _offset =
+                (_offset ?? Offset(screen.width / 2, screen.height / 2)) +
+                details.focalPointDelta;
+            _scale = (_gestureStartScale * details.scale).clamp(0.4, 4.0);
+            _rotation = _gestureStartRotation + details.rotation;
+          });
+        },
+        child: Stack(
+          children: [
+            Positioned(
+              left: center.dx - 160,
+              top: center.dy - 60,
+              child: Transform.rotate(
+                angle: _rotation,
+                child: Transform.scale(
+                  scale: _scale,
+                  child: Container(
+                    width: 320,
+                    alignment: Alignment.center,
+                    child: Text(_text, textAlign: _align, style: _overlayStyle),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Instagram tarzı düzenleme modu: üstte Done, ortada metin, altta stil araçları.
+  Widget _buildEditor(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Positioned.fill(
+      child: Container(
+        // Arka plan şeffaf — fotoğraf olduğu gibi görünür, kutu/karartma yok.
+        color: Colors.transparent,
+        child: Column(
+          children: [
+            // Üst bar — Done.
+            SafeArea(
+              bottom: false,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16, top: 8),
+                  child: GestureDetector(
+                    onTap: _closeEditor,
+                    child: const Text(
+                      'Done',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // Metin alanı — kutu/çerçeve yok, yazı doğrudan fotoğrafın
+            // üzerinde (Instagram gibi). Solda dikey boyut slider'ı.
+            Expanded(
+              child: Stack(
+                children: [
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 48),
+                      child: TextField(
+                        controller: _textController,
+                        autofocus: true,
+                        maxLines: 4,
+                        minLines: 1,
+                        maxLength: 120,
+                        textAlign: _align,
+                        cursorColor: _effectiveTextColor,
+                        style: _overlayStyle,
+                        // Global temadaki filled/fillColor kutu çiziyordu —
+                        // burada tamamen şeffaf: sadece imleç ve yazı görünür.
+                        decoration: const InputDecoration(
+                          isCollapsed: true,
+                          filled: false,
+                          fillColor: Colors.transparent,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          counterText: '',
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        onSubmitted: (_) => _closeEditor(),
+                      ),
+                    ),
+                  ),
+
+                  // Sol kenarda dikey yazı boyutu slider'ı (Instagram gibi).
+                  Positioned(
+                    left: -8,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: SizedBox(
+                        height: 220,
+                        child: RotatedBox(
+                          quarterTurns: -1,
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              trackHeight: 3,
+                              activeTrackColor: Colors.white,
+                              inactiveTrackColor: Colors.white30,
+                              thumbColor: Colors.white,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 9,
+                              ),
+                              overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 16,
+                              ),
+                            ),
+                            child: Slider(
+                              value: _fontSize,
+                              min: 14,
+                              max: 64,
+                              onChanged: (v) => setState(() => _fontSize = v),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Alt araç şeridi — klavyenin hemen üstünde.
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: bottomInset > 0 ? bottomInset : 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Font stili seçici (Modern / Classic / Typewriter).
+                  SizedBox(
+                    height: 44,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: _TextFontStyle.values.map((style) {
+                        final selected = style == _fontStyle;
+                        return GestureDetector(
+                          onTap: () => setState(() => _fontStyle = style),
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: selected ? Colors.white : Colors.white24,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              style.label,
+                              style: style
+                                  .base(selected ? Colors.black : Colors.white)
+                                  .copyWith(fontSize: 15),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Araçlar: hizalama + arka plan + renk paleti.
+                  SizedBox(
+                    height: 44,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        _EditorToolChip(icon: _alignIcon, onTap: _cycleAlign),
+                        const SizedBox(width: 14),
+                        ..._palette.map((color) {
+                          final selected = color == _color;
+                          return GestureDetector(
+                            onTap: () => setState(() => _color = color),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 120),
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 4,
+                              ),
+                              width: selected ? 34 : 28,
+                              height: selected ? 34 : 28,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: selected ? 3 : 1.5,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    return Positioned(
+      left: 24,
+      right: 24,
+      bottom: 24,
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: _PreviewActionButton(
+                label: widget.cancelLabel,
+                icon: widget.cancelLabel == 'Retake'
+                    ? Icons.refresh_rounded
+                    : Icons.arrow_back_rounded,
+                primary: false,
+                onPressed: _saving || _confirming
+                    ? null
+                    : () => Navigator.pop(context),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _PreviewActionButton(
+                label: widget.confirmLabel,
+                icon: widget.confirmIcon ?? Icons.check_rounded,
+                primary: true,
+                loading: _confirming,
+                onPressed: _saving || _confirming ? null : _usePhoto,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewActionButton extends StatelessWidget {
+  const _PreviewActionButton({
+    required this.label,
+    required this.icon,
+    required this.primary,
+    required this.onPressed,
+    this.loading = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool primary;
+  final VoidCallback? onPressed;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 160),
+      opacity: enabled || loading ? 1 : 0.48,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          // Primary (Use/Send): uygulama mavisi. Secondary: fotoğraf üstünde
+          // her iki modda okunur yarı-saydam koyu pill + ince beyaz kenar.
+          color: primary
+              ? AppColors.blue
+              : Colors.black.withValues(alpha: 0.40),
+          borderRadius: BorderRadius.circular(14),
+          border: primary
+              ? null
+              : Border.all(color: Colors.white.withValues(alpha: 0.28)),
+          boxShadow: primary && enabled
+              ? [
+                  BoxShadow(
+                    color: AppColors.blue.withValues(alpha: 0.35),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : null,
+        ),
+        child: ElevatedButton(
+          onPressed: onPressed,
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(0, 46),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            elevation: 0,
+            shadowColor: Colors.transparent,
+            backgroundColor: Colors.transparent,
+            disabledBackgroundColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+          child: loading
+              ? const SizedBox(
+                  width: 19,
+                  height: 19,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Colors.white,
+                  ),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, size: 18),
+                    const SizedBox(width: 7),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.1,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool loading;
+
+  const _ToolButton({
+    required this.icon,
+    required this.onTap,
+    this.loading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black38,
+      shape: const CircleBorder(),
+      child: IconButton(
+        icon: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Icon(icon, color: Colors.white),
+        onPressed: onTap,
+      ),
+    );
+  }
+}
+
+class _EditorToolChip extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _EditorToolChip({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white24,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, size: 20, color: Colors.white),
+      ),
+    );
+  }
+}

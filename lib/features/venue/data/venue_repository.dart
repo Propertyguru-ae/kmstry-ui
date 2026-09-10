@@ -1,0 +1,494 @@
+import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'venue_model.dart';
+
+class NearbyVenuesResponse {
+  final List<Venue> mapItems;
+  final List<Venue> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final int count;
+
+  NearbyVenuesResponse({
+    required this.mapItems,
+    required this.items,
+    required this.page,
+    required this.pageSize,
+    required this.total,
+    required this.count,
+  });
+
+  bool get hasMore => page * pageSize < total;
+
+  factory NearbyVenuesResponse.fromJson(Map<String, dynamic> json) {
+    final parsedItems = (json['items'] as List? ?? [])
+        .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    return NearbyVenuesResponse(
+      mapItems: (json['mapItems'] as List? ?? [])
+          .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      items: parsedItems,
+      page: _parseInt(json['page']) ?? 1,
+      pageSize:
+          _parseInt(json['pageSize'] ?? json['page_size']) ??
+          parsedItems.length,
+      total: _parseInt(json['total']) ?? parsedItems.length,
+      count: _parseInt(json['count']) ?? parsedItems.length,
+    );
+  }
+
+  static int? _parseInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+}
+
+class PlaceSuggestion {
+  final String placeId;
+  final String mainText;
+  final String secondaryText;
+
+  const PlaceSuggestion({
+    required this.placeId,
+    required this.mainText,
+    required this.secondaryText,
+  });
+
+  factory PlaceSuggestion.fromJson(Map<String, dynamic> json) {
+    return PlaceSuggestion(
+      placeId: json['placeId']?.toString() ?? '',
+      mainText: json['mainText']?.toString() ?? '',
+      secondaryText: json['secondaryText']?.toString() ?? '',
+    );
+  }
+}
+
+class PlaceGeometry {
+  final String placeId;
+  final double latitude;
+  final double longitude;
+
+  const PlaceGeometry({
+    required this.placeId,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  factory PlaceGeometry.fromJson(Map<String, dynamic> json) {
+    return PlaceGeometry(
+      placeId: json['placeId']?.toString() ?? '',
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+    );
+  }
+}
+
+class VenueRepository {
+  final ApiClient _api = ApiClient();
+
+  Future<List<Venue>> getNearbyVenues1({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    // Prefer the new hybrid listing endpoint.
+    final nearbyPaths = <String>[
+      '/venues/discover?lat=$latitude&lng=$longitude',
+      '/venues/discover?latitude=$latitude&longitude=$longitude',
+      '/venues/nearby-google?lat=$latitude&lng=$longitude',
+      '/venues/nearby-google?latitude=$latitude&longitude=$longitude',
+      '/venues',
+    ];
+
+    Object? lastError;
+    for (final path in nearbyPaths) {
+      try {
+        final data = await _api.get(path, headers: headers);
+        final parsed = _parseVenueList(data);
+        if (parsed.isNotEmpty || path == '/venues') return parsed;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return const [];
+  }
+
+  Future<NearbyVenuesResponse> getNearbyVenues({
+    required double latitude,
+    required double longitude,
+    int page = 1,
+    int pageSize = 50,
+    String? keyword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final normalizedPage = page < 1 ? 1 : page;
+    final normalizedPageSize = pageSize.clamp(1, 50);
+    final q = keyword?.trim();
+    final keywordPart = q != null && q.isNotEmpty
+        ? '&keyword=${Uri.encodeQueryComponent(q)}'
+        : '';
+    final path =
+        '/venues/discover?latitude=$latitude&longitude=$longitude&page=$normalizedPage&pageSize=$normalizedPageSize$keywordPart';
+
+    final data = await _api.get(path, headers: headers);
+
+    return NearbyVenuesResponse.fromJson(data);
+  }
+
+  Future<List<Venue>> getRecommendedVenuesForMe({
+    double? latitude,
+    double? longitude,
+    int pageSize = 10,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final params = <String>[
+      'pageSize=${pageSize.clamp(1, 20)}',
+      if (latitude != null) 'latitude=$latitude',
+      if (longitude != null) 'longitude=$longitude',
+    ].join('&');
+
+    final data = await _api.get(
+      '/venues/recommended-for-me?$params',
+      headers: headers,
+    );
+
+    return _parseVenueList(data);
+  }
+
+  Future<List<PlaceSuggestion>> searchPlaceSuggestions({
+    required String input,
+    String language = 'en',
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+    final path =
+        '/venues/places/autocomplete?input=${Uri.encodeQueryComponent(input)}&language=${Uri.encodeQueryComponent(language)}';
+
+    final data = await _api.get(path, headers: headers);
+    final predictions = (data['predictions'] as List? ?? [])
+        .map((e) => PlaceSuggestion.fromJson(Map<String, dynamic>.from(e)))
+        .where((suggestion) => suggestion.placeId.isNotEmpty)
+        .toList();
+    return predictions;
+  }
+
+  Future<PlaceGeometry> getPlaceGeometry(String placeId) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+    final path =
+        '/venues/places/details?placeId=${Uri.encodeQueryComponent(placeId)}';
+
+    final data = await _api.get(path, headers: headers);
+    return PlaceGeometry.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Trending Now — son 7 günde en çok aranan venue'ler (recommended ile aynı şekil).
+  Future<List<Venue>> getTrendingVenues({
+    double? latitude,
+    double? longitude,
+    int limit = 10,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final params = <String>[
+      'limit=${limit.clamp(1, 20)}',
+      if (latitude != null) 'latitude=$latitude',
+      if (longitude != null) 'longitude=$longitude',
+    ].join('&');
+
+    final data = await _api.get('/venues/trending?$params', headers: headers);
+
+    return _parseVenueList(data);
+  }
+
+  /// Kullanıcı aramadan bir venue açınca çağrılır — trending sinyalini besler.
+  /// Fire-and-forget: hata sessizce yutulur.
+  Future<void> recordSearchHit(String venueId) async {
+    try {
+      final token = await SecureStorage.getAccessToken();
+      if (token == null) return;
+      await _api.post(
+        '/venues/$venueId/search-hit',
+        body: const <String, dynamic>{},
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // trending sinyali; başarısızlık kullanıcı akışını etkilememeli
+    }
+  }
+
+  Future<List<Venue>> getMapMarkers({
+    required double latitude,
+    required double longitude,
+    int radiusMeters = 3000,
+    int limit = 400,
+    String? keyword,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final normalizedLimit = limit.clamp(1, 1000);
+    final normalizedRadius = radiusMeters < 1 ? 3000 : radiusMeters;
+    final q = keyword?.trim();
+    final hasKeyword = q != null && q.isNotEmpty;
+
+    final candidatePaths = <String>[
+      '/venues/map-markers?latitude=$latitude&longitude=$longitude&radiusMeters=$normalizedRadius&limit=$normalizedLimit${hasKeyword ? '&keyword=${Uri.encodeQueryComponent(q)}' : ''}',
+      '/venues/map-markers?lat=$latitude&lng=$longitude&radiusMeters=$normalizedRadius&limit=$normalizedLimit${hasKeyword ? '&keyword=${Uri.encodeQueryComponent(q)}' : ''}',
+    ];
+
+    Object? lastError;
+    for (final path in candidatePaths) {
+      try {
+        final data = await _api.get(path, headers: headers);
+        return _parseVenueList(data);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return const [];
+  }
+
+  Future<List<Venue>> searchVenues({
+    required String query,
+    double? latitude,
+    double? longitude,
+    int limit = 12,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final encodedQuery = Uri.encodeQueryComponent(q);
+
+    // Build path — only include lat/lng when meaningful (non-zero) coordinates
+    // are available. Without location the backend performs a text-only search.
+    final hasLocation =
+        latitude != null &&
+        longitude != null &&
+        !(latitude == 0 && longitude == 0);
+
+    final locationPart = hasLocation
+        ? '&latitude=$latitude&longitude=$longitude'
+        : '';
+    final path = '/venues/search?query=$encodedQuery$locationPart&limit=$limit';
+
+    final data = await _api.get(path, headers: headers);
+    return _parseVenueList(data);
+  }
+
+  Future<List<Venue>> getVenues() async {
+    final data = await _api.get('/venues');
+    return _parseVenueList(data);
+  }
+
+  List<Venue> _parseVenueList(dynamic data) {
+    List<dynamic> list = const [];
+    if (data is List) {
+      list = data;
+    } else if (data is Map<String, dynamic>) {
+      final nested =
+          data['items'] ?? data['venues'] ?? data['data'] ?? data['results'];
+      if (nested is List) {
+        list = nested;
+      } else if (nested is Map<String, dynamic> && nested['items'] is List) {
+        list = nested['items'] as List;
+      }
+    }
+
+    return list
+        .whereType<Map>()
+        .map((e) => Venue.fromJson(Map<String, dynamic>.from(e)))
+        .where((v) => v.name.isNotEmpty)
+        .toList();
+  }
+
+  /// Google Place ID ile venue'yu DB'ye ekler veya varsa getirir.
+  /// Backend: POST /venues/ensure-from-place  { placeId }
+  /// Donus: { venue: { id, name, ... } }
+  Future<String> ensureVenueDbId(String placeId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final result = await _api.post(
+      '/venues/ensure-from-place',
+      body: {'googlePlaceId': placeId},
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final map = Map<String, dynamic>.from(result as Map);
+    final venueMap = map['venue'] as Map?;
+    final id =
+        venueMap?['id']?.toString() ??
+        map['id']?.toString() ??
+        map['venueId']?.toString();
+    if (id == null || id.isEmpty) throw Exception('Could not resolve venue ID');
+    return id;
+  }
+
+  /// Kullanicinin mekan sahibi oldugunu iddia eder.
+  /// Backend: POST /venues/claim
+  Future<Map<String, dynamic>> claimVenue({
+    required String venueId,
+    required String ownerNote,
+    String? ownerFullName,
+    String? tradeLicenceUrl,
+    String? ownerVideoUrl,
+    bool hasDocuments = false,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final result = await _api.post(
+      '/venues/claim',
+      body: {
+        'venueId': venueId,
+        'ownerNote': ownerNote,
+        'hasDocuments': hasDocuments,
+        if (ownerFullName != null && ownerFullName.isNotEmpty)
+          'ownerFullName': ownerFullName,
+        if (tradeLicenceUrl != null) 'tradeLicenceUrl': tradeLicenceUrl,
+        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+      },
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return Map<String, dynamic>.from(result as Map);
+  }
+
+  /// Belgeler sonradan eklendiğinde çağrılır (skip sonrası).
+  /// Backend: POST /venues/claim/documents
+  Future<void> submitClaimDocuments({
+    required String tradeLicenceUrl,
+    String? ownerVideoUrl,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    await _api.post(
+      '/venues/claim/documents',
+      body: {
+        'tradeLicenceUrl': tradeLicenceUrl,
+        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+      },
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  /// Backend'den venue ID ile tek venue getirir.
+  /// Deep link gibi senaryolarda kullanılır.
+  Future<Venue> getVenueById(String venueId) async {
+    final token = await SecureStorage.getAccessToken();
+    final headers = token == null
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $token'};
+
+    final data = await _api.get('/venues/$venueId', headers: headers);
+    return Venue.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  /// Test venue proximity push'unu tetikler (backend rate-limits to once/hour).
+  /// Fire-and-forget: hatalar görmezden gelinir.
+  Future<void> triggerTestVenueNotification() async {
+    try {
+      final token = await SecureStorage.getAccessToken();
+      if (token == null) return;
+      await _api.post(
+        '/venues/test-venue-notification',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // Non-fatal — test notification is best-effort.
+    }
+  }
+
+  // ── VenueClaimDraft ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>?> getClaimDraft() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return null;
+    try {
+      final result = await _api.get(
+        '/venues/claim-draft',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      final map = Map<String, dynamic>.from(result as Map);
+      return map['data'] != null
+          ? Map<String, dynamic>.from(map['data'] as Map)
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> upsertClaimDraft({
+    String? venueId,
+    String? ownerFullName,
+    String? ownerPhone,
+    String? tradeLicenceUrl,
+    String? ownerVideoUrl,
+    int? currentStep,
+  }) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final body = <String, dynamic>{
+      if (venueId != null) 'venue_id': venueId,
+      if (ownerFullName != null) 'owner_full_name': ownerFullName,
+      if (ownerPhone != null) 'owner_phone': ownerPhone,
+      if (tradeLicenceUrl != null) 'trade_licence_url': tradeLicenceUrl,
+      if (ownerVideoUrl != null) 'owner_video_url': ownerVideoUrl,
+      if (currentStep != null) 'current_step': currentStep,
+    };
+
+    final result = await _api.put(
+      '/venues/claim-draft',
+      body: body,
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final map = Map<String, dynamic>.from(result as Map);
+    return Map<String, dynamic>.from(map['data'] as Map);
+  }
+
+  Future<void> deleteClaimDraft() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) return;
+    try {
+      await _api.delete(
+        '/venues/claim-draft',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // Best-effort — draft silinmese de submit geçerli.
+    }
+  }
+}

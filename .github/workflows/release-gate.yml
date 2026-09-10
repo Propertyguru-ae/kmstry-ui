@@ -1,0 +1,61 @@
+name: Mobile release gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      API_URL: ${{ vars.RELEASE_API_URL }}
+      SITE_URL: ${{ vars.RELEASE_SITE_URL }}
+      BUILD_NAME: ${{ vars.RELEASE_BUILD_NAME }}
+      BUILD_NUMBER: ${{ vars.RELEASE_BUILD_NUMBER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.2'
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android release signing (manual release only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          for (const key of ['KEYSTORE_BASE64', 'STORE_PASSWORD', 'KEY_PASSWORD', 'KEY_ALIAS']) {
+            if (!process.env[key]) throw new Error(`Missing release signing secret: ${key}`);
+          }
+          const store = path.join(process.env.RUNNER_TEMP, 'kmstry-release.jks');
+          fs.writeFileSync(store, Buffer.from(process.env.KEYSTORE_BASE64, 'base64'), { mode: 0o600 });
+          const escape = value => value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/ /g, '\\ ');
+          const fields = { storeFile: store, storePassword: process.env.STORE_PASSWORD, keyPassword: process.env.KEY_PASSWORD, keyAlias: process.env.KEY_ALIAS };
+          fs.writeFileSync('android/key.properties', Object.entries(fields).map(([k,v]) => `${k}=${escape(v)}`).join('\n'), { mode: 0o600 });
+          NODE
+      - run: bash tool/release_gate.sh
+        env:
+          RELEASE_CHECKS_ONLY: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: android-release
+          path: build/app/outputs/bundle/release/*.aab
+          if-no-files-found: error

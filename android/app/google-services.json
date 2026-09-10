@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "403759544454",
+    "project_id": "kmstry-8510d",
+    "storage_bucket": "kmstry-8510d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:403759544454:android:d7295dc5175b5283293907",
+        "android_client_info": {
+          "package_name": "com.brightminds.kmstry"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCF47jkUhp_uoVV9jDz7r91n9oPvg80TH8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:403759544454:android:6b3f376f72fd0f42293907",
+        "android_client_info": {
+          "package_name": "com.example.kmstry_frontend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCF47jkUhp_uoVV9jDz7r91n9oPvg80TH8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
