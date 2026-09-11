@@ -320,6 +320,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
       Navigator.pop(context, true);
     } on ApiException catch (e) {
       if (!mounted) return;
+      if (isPublicTextRejection(e)) {
+        setState(() {
+          _saving = false;
+          _saveError = publicTextRejectionMessage;
+        });
+        return;
+      }
       final msg = (e.data['message'] ?? '').toString();
       final lower = msg.toLowerCase();
       final rawSuggestions = e.data['suggestions'];

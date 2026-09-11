@@ -63,16 +63,26 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
     final startIndex = _stories.indexWhere((s) => !s.viewedByMe);
     final initialIndex = startIndex == -1 ? 0 : startIndex;
 
-    final storyItems = _stories.map((s) => StoryItem(
-          id: s.id,
-          mediaUrl: s.mediaUrl,
-          mediaType: s.mediaType,
-          thumbnailUrl: s.thumbnailUrl,
-          durationSecs: s.durationSecs,
-          expiresAt: s.expiresAt,
-          createdAt: s.createdAt,
-          viewCount: s.viewCount,
-        )).toList();
+    final storyItems = _stories
+        .map(
+          (s) => StoryItem(
+            id: s.id,
+            mediaUrl: s.mediaUrl,
+            mediaType: s.mediaType,
+            thumbnailUrl: s.thumbnailUrl,
+            durationSecs: s.durationSecs,
+            expiresAt: s.expiresAt,
+            createdAt: s.createdAt,
+            viewCount: s.viewCount,
+            user: s.posterUserId == null
+                ? null
+                : StoryUser(id: s.posterUserId!),
+            isVenueStory: true,
+            venueId: venueId,
+            venueName: widget.venueName,
+          ),
+        )
+        .toList();
 
     if (widget.isUploading) storyItems.add(StoryItem.uploadingPlaceholder());
 
@@ -96,21 +106,26 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
           onClose: (lastIndex, allFinished) {
             final justViewed = allFinished
                 ? _stories.map((s) => s.id).toSet()
-                : { for (int i = 0; i <= lastIndex && i < _stories.length; i++) _stories[i].id };
+                : {
+                    for (int i = 0; i <= lastIndex && i < _stories.length; i++)
+                      _stories[i].id,
+                  };
             final cache = VenueStoryViewedCache.instance;
             justViewed.forEach(cache.mark);
             if (mounted) {
               setState(() {
                 _stories = [
                   for (final s in _stories)
-                    (s.viewedByMe || justViewed.contains(s.id)) ? s.copyWith(viewedByMe: true) : s,
+                    (s.viewedByMe || justViewed.contains(s.id))
+                        ? s.copyWith(viewedByMe: true)
+                        : s,
                 ];
               });
             }
           },
         ),
       ),
-    );
+    ).then((_) => _load());
   }
 
   @override
@@ -293,8 +308,11 @@ class _VenueBubbleState extends State<_VenueBubble>
                             width: 1.5,
                           ),
                         ),
-                        child:
-                            const Icon(Icons.add, color: Colors.white, size: 13),
+                        child: const Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 13,
+                        ),
                       ),
                     ),
                   ),

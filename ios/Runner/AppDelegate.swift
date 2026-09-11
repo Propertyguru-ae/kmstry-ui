@@ -12,7 +12,15 @@ import AVKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GMSServices.provideAPIKey("AIzaSyAW_tmPFyMqvhpZn9Fieq2iUXxX3we-F70")
+    guard let mapsApiKey = Bundle.main.object(forInfoDictionaryKey: "GMSApiKey") as? String,
+          mapsApiKey.hasPrefix("AIza"),
+          !mapsApiKey.contains("$(") else {
+      fatalError(
+        "Missing iOS Google Maps API key. Copy " +
+        "ios/Flutter/GoogleMaps.xcconfig.example to GoogleMaps.xcconfig and set GOOGLE_MAPS_API_KEY."
+      )
+    }
+    GMSServices.provideAPIKey(mapsApiKey)
     GeneratedPluginRegistrant.register(with: self)
 
     // window, super.application içinde kurulduğu için önce onu çağırıyoruz.

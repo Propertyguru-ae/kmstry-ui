@@ -11,6 +11,7 @@ class ChatDetail {
   final bool isBlocked;
   final bool blockedByMe;
   final bool blockedMe;
+  final bool otherUserUnavailable;
   final bool canSendMessages;
 
   ChatDetail({
@@ -22,8 +23,9 @@ class ChatDetail {
     this.isBlocked = false,
     this.blockedByMe = false,
     this.blockedMe = false,
+    this.otherUserUnavailable = false,
     bool? canSendMessages,
-  }) : canSendMessages = canSendMessages ?? isActive;
+  }) : canSendMessages = canSendMessages ?? (isActive && !otherUserUnavailable);
 
   ChatDetail copyWith({
     String? id,
@@ -34,6 +36,7 @@ class ChatDetail {
     bool? isBlocked,
     bool? blockedByMe,
     bool? blockedMe,
+    bool? otherUserUnavailable,
     bool? canSendMessages,
   }) {
     return ChatDetail(
@@ -45,6 +48,7 @@ class ChatDetail {
       isBlocked: isBlocked ?? this.isBlocked,
       blockedByMe: blockedByMe ?? this.blockedByMe,
       blockedMe: blockedMe ?? this.blockedMe,
+      otherUserUnavailable: otherUserUnavailable ?? this.otherUserUnavailable,
       canSendMessages: canSendMessages ?? this.canSendMessages,
     );
   }
@@ -78,6 +82,7 @@ class ChatDetail {
       isBlocked: json['is_blocked'] as bool? ?? false,
       blockedByMe: json['blocked_by_me'] as bool? ?? false,
       blockedMe: json['blocked_me'] as bool? ?? false,
+      otherUserUnavailable: json['other_user_unavailable'] as bool? ?? false,
       canSendMessages: json['can_send_messages'] as bool?,
     );
   }

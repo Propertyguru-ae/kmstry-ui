@@ -33,8 +33,17 @@ Future<bool> showReportUserSheet(
   BuildContext context, {
   required String targetUserId,
   String title = 'What do you want to report?',
+  String? messageId,
+  String? storyId,
+  String? venueStoryId,
+  String? checkinMediaId,
 }) async {
   final repo = CheckinRepository();
+  final reportsSelectedContent =
+      messageId != null ||
+      storyId != null ||
+      venueStoryId != null ||
+      checkinMediaId != null;
 
   int? selectedIndex;
   bool submitting = false;
@@ -117,7 +126,9 @@ Future<bool> showReportUserSheet(
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Text(
-                          'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
+                          reportsSelectedContent
+                              ? 'The selected content will be shared with authorised KMSTRY moderators. This person won\'t know you reported it. Reporting content does not block the account.'
+                              : 'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
                           style: TextStyle(
                             color: colors.onSurface.withValues(alpha: 0.72),
                             fontSize: 12.5,
@@ -217,9 +228,14 @@ Future<bool> showReportUserSheet(
                                       targetUserId: targetUserId,
                                       reason: category.backendReason,
                                       details: category.label,
+                                      messageId: messageId,
+                                      storyId: storyId,
+                                      venueStoryId: venueStoryId,
+                                      checkinMediaId: checkinMediaId,
                                     );
                                     reportSucceeded = true;
                                   } catch (_) {
+                                    if (!ctx.mounted) return;
                                     setModalState(() {
                                       submitting = false;
                                       submitError =
@@ -228,11 +244,15 @@ Future<bool> showReportUserSheet(
                                     return;
                                   }
 
-                                  // Best-effort block after a successful report.
-                                  try {
-                                    await repo.blockUser(targetUserId);
-                                  } catch (_) {}
+                                  if (!reportsSelectedContent) {
+                                    // User-level reports retain the existing
+                                    // report-and-block safety behavior.
+                                    try {
+                                      await repo.blockUser(targetUserId);
+                                    } catch (_) {}
+                                  }
 
+                                  if (!ctx.mounted) return;
                                   setModalState(() {
                                     submitting = false;
                                     submitted = true;
@@ -308,7 +328,9 @@ Future<bool> showReportUserSheet(
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'This user has been blocked automatically, and messaging has been paused for your safety.',
+                              reportsSelectedContent
+                                  ? 'The selected content has been sent to the KMSTRY moderation team.'
+                                  : 'This user has been blocked automatically, and messaging has been paused for your safety.',
                               style: TextStyle(
                                 color: colors.onSurface.withValues(alpha: 0.7),
                                 fontSize: 13.5,

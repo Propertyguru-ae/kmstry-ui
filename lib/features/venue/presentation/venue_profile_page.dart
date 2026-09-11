@@ -29,6 +29,8 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
@@ -492,10 +494,11 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       if (mounted) setState(() => _venue = updated);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not save: $e'),
-          behavior: SnackBarBehavior.floating,
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          e,
+          fallback: 'Could not save the venue description. Please try again.',
         ),
       );
     }

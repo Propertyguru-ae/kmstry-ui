@@ -23,6 +23,28 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
+
+val mapsSecretsProperties = Properties()
+val mapsSecretsFile = rootProject.file("secrets.properties")
+if (mapsSecretsFile.exists()) {
+    mapsSecretsProperties.load(FileInputStream(mapsSecretsFile))
+}
+
+val googleMapsApiKey =
+    providers.gradleProperty("GOOGLE_MAPS_API_KEY").orNull
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: System.getenv("ANDROID_GOOGLE_MAPS_API_KEY")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        ?: mapsSecretsProperties.getProperty("GOOGLE_MAPS_API_KEY")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        ?: throw GradleException(
+            "Missing Android Google Maps API key. Set ANDROID_GOOGLE_MAPS_API_KEY, " +
+                "-PGOOGLE_MAPS_API_KEY, or android/secrets.properties.",
+        )
+
 android {
     namespace = "com.brightminds.kmstry"
     compileSdk = flutter.compileSdkVersion
@@ -44,6 +66,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = googleMapsApiKey
     }
 signingConfigs {
     create("release") {

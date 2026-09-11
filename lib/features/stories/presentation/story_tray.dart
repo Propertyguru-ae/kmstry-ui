@@ -4,6 +4,7 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
+import '../data/story_visibility.dart';
 import 'story_viewer_page.dart';
 
 class StoryTray extends StatefulWidget {
@@ -52,6 +53,7 @@ class _StoryTrayState extends State<StoryTray> {
   List<StoryGroup> _groups = [];
   bool _loading = true;
   bool _initialLoaded = false;
+  int _loadRequest = 0;
   // Local session-only viewed IDs — populated from backend on load, updated after viewer closes.
   // NOT persisted to SharedPreferences to avoid cross-user contamination.
   Set<String> _viewedIds = {};
@@ -59,14 +61,30 @@ class _StoryTrayState extends State<StoryTray> {
   @override
   void initState() {
     super.initState();
+    StoryVisibility.changes.addListener(_onVisibilityChanged);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    StoryVisibility.changes.removeListener(_onVisibilityChanged);
+    super.dispose();
+  }
+
+  void _onVisibilityChanged() {
+    if (!mounted) return;
+    final change = StoryVisibility.changes.value;
+    if (change == null) return;
+    setState(() => _groups = change.apply(_groups));
     _load();
   }
 
   Future<void> _load() async {
+    final request = ++_loadRequest;
     _loadMyStories();
     try {
       final freshGroups = await _repo.getVenueStories(widget.venueId);
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
 
       // İlk yüklemede backend'in shuffle'lı sırasını kullan.
       // Sonraki yüklemelerde (viewer kapandıktan sonra) mevcut sırayı koru —
@@ -95,7 +113,7 @@ class _StoryTrayState extends State<StoryTray> {
       // yaratılınca halka tekrar renkli görünüyordu. Cache logout'ta temizlendiği
       // için cross-user contamination riski yok.
       final persistedViewed = await StoryViewedCache.loadAll();
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
       setState(() {
         _groups = orderedGroups;
         _viewedIds = {...backendViewed, ...persistedViewed};
@@ -104,7 +122,7 @@ class _StoryTrayState extends State<StoryTray> {
       });
       _notifyEmptiness();
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
       setState(() => _loading = false);
     }
   }
@@ -521,8 +539,7 @@ class _MeBubbleState extends State<_MeBubble>
     final canAdd = widget.onAddStory != null;
     final uploading = widget.isUploading;
     final color = Theme.of(context).colorScheme.primary;
-    final bubbleImg =
-        _bubbleImage(widget.myStories) ?? widget.fallbackImageUrl;
+    final bubbleImg = _bubbleImage(widget.myStories) ?? widget.fallbackImageUrl;
 
     if (!hasStories && !canAdd) return const SizedBox.shrink();
 

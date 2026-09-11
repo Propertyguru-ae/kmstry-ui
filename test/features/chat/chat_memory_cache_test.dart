@@ -141,6 +141,27 @@ void main() {
     expect(result.isBlocked, isTrue);
   });
 
+  test('banned recipient keeps history visible and disables the composer', () {
+    final result = ChatDetail.fromJson({
+      'id': 'chat',
+      'messages': [
+        {
+          'id': 'old-message',
+          'message_type': 'text',
+          'text': 'history remains',
+          'created_at': '2026-09-11T09:00:00.000Z',
+        },
+      ],
+      'is_active': true,
+      'other_user_unavailable': true,
+      'can_send_messages': false,
+    });
+
+    expect(result.messages, hasLength(1));
+    expect(result.otherUserUnavailable, isTrue);
+    expect(result.canSendMessages, isFalse);
+  });
+
   test('cache excludes pending local files and stays bounded', () {
     cache.remember(
       detail([

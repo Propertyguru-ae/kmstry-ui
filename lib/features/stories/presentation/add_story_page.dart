@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -104,7 +105,10 @@ class _AddStoryPageState extends State<AddStoryPage> {
         context,
         message: blockedByAnonymous
             ? "You're in Anonymous Mode. Turn it off to share a story."
-            : 'Could not upload story. Please try again.',
+            : publicTextErrorMessage(
+                e,
+                fallback: 'Could not upload story. Please try again.',
+              ),
       );
       if (mounted) Navigator.pop(context);
       return;

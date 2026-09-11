@@ -6,6 +6,7 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
+import 'package:kmstry_frontend/features/stories/data/story_visibility.dart';
 
 class MatchListResult {
   final List<MatchItem> items;
@@ -282,6 +283,7 @@ class MatchRepository {
       '/blocks/$userId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    StoryVisibility.changed(userId, blocked: false);
   }
 
   Future<void> deleteMatch(String matchId) async {

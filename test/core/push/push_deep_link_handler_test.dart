@@ -23,4 +23,32 @@ void main() {
       expect(find.text('Download your data'), findsWidgets);
     });
   }
+
+  testWidgets('report_update opens the moderation warning details', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Text('Home')),
+      ),
+    );
+
+    await PushDeepLinkHandler.instance.routeFromData(navigatorKey, {
+      'type': 'report_update',
+      'route': 'moderation_warning',
+      'contentRemoved': 'true',
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Community Guidelines warning'), findsWidgets);
+    expect(
+      find.text(
+        'The reported message has been removed. Your account remains active.',
+      ),
+      findsOneWidget,
+    );
+  });
 }

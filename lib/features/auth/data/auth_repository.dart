@@ -18,6 +18,7 @@ import '../../stories/data/story_viewed_cache.dart';
 import '../../../core/push/push_manager.dart';
 import '../../../core/checkin/checkin_ping_manager.dart';
 import '../../checkin/services/active_checkin_service.dart';
+import 'apple_sign_in_cancellation.dart';
 
 class AuthRepository {
   // ── One-time app bootstrap ────────────────────────────────────────────────
@@ -476,12 +477,18 @@ class AuthRepository {
       _pendingAppleAuthorizationCode = null;
       _pendingAppleFullName = null;
 
-      final credential = await SignInWithApple.getAppleIDCredential(
-        scopes: [
-          AppleIDAuthorizationScopes.email,
-          AppleIDAuthorizationScopes.fullName,
-        ],
-      );
+      late final AuthorizationCredentialAppleID credential;
+      try {
+        credential = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+        );
+      } catch (error) {
+        if (isAppleSignInCancellation(error)) return false;
+        rethrow;
+      }
 
       identityToken = credential.identityToken;
       authorizationCode = credential.authorizationCode;

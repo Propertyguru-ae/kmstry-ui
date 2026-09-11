@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/notifications/data/notification_model.d
 import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
+import 'package:kmstry_frontend/features/notifications/presentation/moderation_warning_page.dart';
 import 'package:kmstry_frontend/features/data_export/presentation/data_export_page.dart';
 import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
@@ -223,6 +224,19 @@ class _NotificationPageState extends State<NotificationPage> {
 
   Future<void> _onNotificationTap(NotificationModel n) async {
     final data = _profileContextData(n);
+
+    if (n.type == 'report_update') {
+      final raw = data['contentRemoved'] ?? data['content_removed'];
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ModerationWarningPage(
+            contentRemoved:
+                raw == true || raw?.toString().toLowerCase() == 'true',
+          ),
+        ),
+      );
+      return;
+    }
 
     if (n.type == 'data_export_ready' || n.type == 'data_export_failed') {
       await Navigator.of(
@@ -688,6 +702,8 @@ class _NotificationPageState extends State<NotificationPage> {
         return Icons.download_done_rounded;
       case 'data_export_failed':
         return Icons.error_outline_rounded;
+      case 'report_update':
+        return Icons.gpp_maybe_rounded;
       default:
         return Icons.notifications_none;
     }
