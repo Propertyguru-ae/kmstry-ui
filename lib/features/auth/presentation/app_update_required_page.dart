@@ -22,10 +22,16 @@ class _AppUpdateRequiredPageState extends State<AppUpdateRequiredPage> {
       _error = null;
     });
 
-    final configured = Uri.tryParse(widget.update.updateUrl ?? '');
+    // Not: Uri.tryParse('') null DÖNMEZ, boş bir Uri döner → launchUrl çöker
+    // ("Unable to parse URL, null"). Bu yüzden boş/whitespace URL'i ele.
+    final rawUrl = widget.update.updateUrl?.trim();
+    final configured = (rawUrl != null && rawUrl.isNotEmpty)
+        ? Uri.tryParse(rawUrl)
+        : null;
     final primary =
-        configured ??
-        Uri.parse(
+        (configured != null && configured.hasScheme)
+        ? configured
+        : Uri.parse(
           widget.update.platform == 'ios'
               ? 'itms-beta://'
               : 'market://details?id=com.brightminds.kmstry',

@@ -38,7 +38,7 @@
 
        <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyAW_tmPFyMqvhpZn9Fieq2iUXxX3we-F70" />
+            android:value="${GOOGLE_MAPS_API_KEY}" />
 
         <!-- image_cropper (uCrop) — avatar kare kırpma ekranı -->
         <activity

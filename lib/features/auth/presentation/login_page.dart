@@ -9,6 +9,7 @@ import 'package:kmstry_frontend/core/ui/account_exists_sheet.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_invite_page.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../data/apple_sign_in_cancellation.dart';
 import '../data/auth_repository.dart';
 import 'auth_routes.dart';
 import 'dart:io' show Platform;
@@ -367,6 +368,7 @@ class _LoginPageState extends State<LoginPage> {
   /// E-posta zaten kayıtlıysa tutarlı "Sign In" sheet'ini, aksi halde genel
   /// hata diyaloğunu gösterir.
   Future<void> _showLoginError(BuildContext ctx, Object error) async {
+    if (isAppleSignInCancellation(error)) return;
     // ApiClient already replaces the current route with the mandatory update
     // screen. Do not show a second, misleading login error on top of it.
     if (_isAppUpdateRequiredError(error)) return;

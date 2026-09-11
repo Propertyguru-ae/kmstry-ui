@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
@@ -524,7 +525,9 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
             eventId,
             _selectedPartnershipIds.toList(),
           );
-        } catch (_) {}
+        } catch (error) {
+          if (isPublicTextRejection(error)) rethrow;
+        }
       }
       if (eventId.isNotEmpty && _createOffer) {
         try {
@@ -541,14 +544,22 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
           } else {
             await _offerRepo.create(widget.venueId, body);
           }
-        } catch (_) {}
+        } catch (error) {
+          if (isPublicTextRejection(error)) rethrow;
+        }
       }
       if (!mounted) return;
       Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
-      await showPremiumErrorDialog(context, message: 'Could not save event. Please try again.');
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          error,
+          fallback: 'Could not save event. Please try again.',
+        ),
+      );
     }
   }
 

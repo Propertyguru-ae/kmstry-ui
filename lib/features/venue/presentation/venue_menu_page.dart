@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_menu_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_menu_repository.dart';
@@ -1002,12 +1003,15 @@ class _VenueMenuItemEditPageState extends State<VenueMenuItemEditPage> {
         message: _isEditing ? 'Item updated' : 'Item added to menu',
       );
       Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         setState(() => _saving = false);
         await showPremiumErrorDialog(
           context,
-          message: 'Could not save the item. Please try again.',
+          message: publicTextErrorMessage(
+            error,
+            fallback: 'Could not save the item. Please try again.',
+          ),
         );
       }
     }

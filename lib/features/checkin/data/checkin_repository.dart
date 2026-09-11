@@ -11,6 +11,7 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
+import 'package:kmstry_frontend/features/stories/data/story_visibility.dart';
 
 class CheckinMediaUploadTarget {
   final String uploadUrl;
@@ -546,12 +547,17 @@ class CheckinRepository {
       headers: {'Authorization': 'Bearer $token'},
       body: {'blocked_id': targetUserId},
     );
+    StoryVisibility.changed(targetUserId, blocked: true);
   }
 
   Future<void> reportUser({
     required String targetUserId,
     required String reason,
     String? details,
+    String? messageId,
+    String? storyId,
+    String? venueStoryId,
+    String? checkinMediaId,
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
@@ -561,6 +567,14 @@ class CheckinRepository {
       'reason': reason,
       if (details != null && details.trim().isNotEmpty)
         'details': details.trim(),
+      if (messageId != null && messageId.trim().isNotEmpty)
+        'message_id': messageId.trim(),
+      if (storyId != null && storyId.trim().isNotEmpty)
+        'story_id': storyId.trim(),
+      if (venueStoryId != null && venueStoryId.trim().isNotEmpty)
+        'venue_story_id': venueStoryId.trim(),
+      if (checkinMediaId != null && checkinMediaId.trim().isNotEmpty)
+        'checkin_media_id': checkinMediaId.trim(),
     };
 
     await _api.post(
@@ -568,6 +582,14 @@ class CheckinRepository {
       headers: {'Authorization': 'Bearer $token'},
       body: body,
     );
+    final reportsSelectedContent =
+        messageId != null ||
+        storyId != null ||
+        venueStoryId != null ||
+        checkinMediaId != null;
+    if (!reportsSelectedContent) {
+      StoryVisibility.changed(targetUserId, blocked: true);
+    }
   }
 
   Future<void> unblockUser(String targetUserId) async {
@@ -578,6 +600,7 @@ class CheckinRepository {
       '/blocks/$targetUserId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    StoryVisibility.changed(targetUserId, blocked: false);
   }
 
   Future<Set<String>> getBlockedUserIds() async {

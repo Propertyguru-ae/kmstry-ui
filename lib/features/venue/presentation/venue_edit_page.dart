@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 
 class VenueEditPage extends StatefulWidget {
   final VenueOwnerStatsVenue venue;
@@ -57,11 +58,14 @@ class _VenueEditPageState extends State<VenueEditPage> {
       );
       if (!mounted) return;
       Navigator.of(context).pop(updated);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not save changes. Please try again.';
+        _error = publicTextErrorMessage(
+          error,
+          fallback: 'Could not save changes. Please try again.',
+        );
       });
     }
   }

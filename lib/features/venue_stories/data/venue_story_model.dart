@@ -11,6 +11,7 @@ class VenueStoryItem {
   final bool viewedByMe;
   final int viewCount;
   final MediaReference? mediaReference;
+  final String? posterUserId;
 
   const VenueStoryItem({
     required this.id,
@@ -23,6 +24,7 @@ class VenueStoryItem {
     this.viewedByMe = false,
     this.viewCount = 0,
     this.mediaReference,
+    this.posterUserId,
   });
 
   factory VenueStoryItem.fromJson(Map<String, dynamic> json) {
@@ -43,6 +45,7 @@ class VenueStoryItem {
       createdAt: DateTime.parse(json['created_at'] as String),
       viewedByMe: (json['viewed_by_me'] as bool?) ?? false,
       viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
+      posterUserId: (json['poster'] as Map?)?['id']?.toString(),
     );
   }
 
@@ -57,6 +60,7 @@ class VenueStoryItem {
     viewedByMe: viewedByMe ?? this.viewedByMe,
     viewCount: viewCount,
     mediaReference: mediaReference,
+    posterUserId: posterUserId,
   );
 
   bool get isVideo => mediaType == 'video';

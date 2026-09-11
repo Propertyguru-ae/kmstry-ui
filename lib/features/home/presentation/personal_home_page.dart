@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:kmstry_frontend/features/stories/data/story_visibility.dart';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -58,6 +59,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   // Boş-durum mesajını ayırt etmek için: kullanıcı hiç mekan takip ediyor mu?
   bool _followsAnyVenue = false;
   List<StoryGroup> _stories = const [];
+  int _storyLoadRequest = 0;
   List<TodayEvent> _events = const [];
   List<Venue> _trendingVenues = const [];
   List<TodayEvent> _discoverEvents = const [];
@@ -82,6 +84,15 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     // kendi story listesini + home story'lerini tazele. Böylece "paylaştım ama
     // home'da bazen gelmiyor" durumu olmaz.
     StoryRepository.changes.addListener(_onStoryChanged);
+    StoryVisibility.changes.addListener(_onStoryVisibilityChanged);
+  }
+
+  void _onStoryVisibilityChanged() {
+    if (!mounted) return;
+    final change = StoryVisibility.changes.value;
+    if (change == null) return;
+    setState(() => _stories = change.apply(_stories));
+    _loadHomeStories();
   }
 
   void _onStoryChanged() {
@@ -93,10 +104,12 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   @override
   void dispose() {
     StoryRepository.changes.removeListener(_onStoryChanged);
+    StoryVisibility.changes.removeListener(_onStoryVisibilityChanged);
     super.dispose();
   }
 
   Future<void> _loadAll() async {
+    final storyRequest = ++_storyLoadRequest;
     // Kendi story bubble'ı bağımsız — checkin/homeStories/venue lookup'ı
     // beklemeden hemen yükle ki geç görünmesin. (Kendi setState'ini yapıyor.)
     _loadMyStories();
@@ -139,7 +152,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     final active = results[0] as ActiveCheckin?;
     setState(() {
       _activeCheckin = active;
-      _stories = results[1] as List<StoryGroup>;
+      if (storyRequest == _storyLoadRequest) {
+        _stories = results[1] as List<StoryGroup>;
+      }
       _events = results[2] as List<TodayEvent>;
       _loading = false;
       if (active == null) _activeVenue = null;
@@ -376,11 +391,15 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   }
 
   Future<void> _openStories(int index) async {
+    if (index < 0 || index >= _stories.length) return;
+    final group = _stories[index];
     // Seçilen grubun ilk izlenmemiş story'sinden başla (baştan değil).
     // Tek kaynak: StoryViewedCache (viewer her izlenen story'i oraya yazar).
     final viewed = await StoryViewedCache.loadAll();
     if (!mounted) return;
-    final firstUnseen = _stories[index].stories.indexWhere(
+    final currentIndex = _stories.indexWhere((g) => g.user.id == group.user.id);
+    if (currentIndex < 0) return;
+    final firstUnseen = _stories[currentIndex].stories.indexWhere(
       (s) => !s.viewedByMe && !viewed.contains(s.id),
     );
     final result = await Navigator.push(
@@ -388,14 +407,14 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       MaterialPageRoute(
         builder: (_) => StoryViewerPage(
           groups: _stories,
-          initialGroupIndex: index,
+          initialGroupIndex: currentIndex,
           initialStoryIndex: firstUnseen == -1 ? 0 : firstUnseen,
         ),
       ),
     );
     if (!mounted) return;
     // Mark the opened group as viewed so the ring greys out immediately.
-    setState(() => _viewedGroupIds.add(_stories[index].user.id));
+    setState(() => _viewedGroupIds.add(group.user.id));
     if (result is StoryViewerResult) {
       // A refresh keeps viewed state in sync with the backend on next open.
       _loadHomeStories();
@@ -403,10 +422,13 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   }
 
   Future<void> _loadHomeStories() async {
+    final request = ++_storyLoadRequest;
     if (_useDummyData) return; // keep the dummy list intact
     try {
       final stories = await _storyRepo.getHomeStories();
-      if (mounted) setState(() => _stories = stories);
+      if (mounted && request == _storyLoadRequest) {
+        setState(() => _stories = stories);
+      }
     } catch (_) {}
   }
 

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
 class EditExternalPartnershipPage extends StatefulWidget {
   final String venueId;
@@ -60,8 +62,12 @@ class _EditExternalPartnershipPageState
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          e,
+          fallback: 'Could not save the partnership. Please try again.',
+        ),
       );
     }
   }
