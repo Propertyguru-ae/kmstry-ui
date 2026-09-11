@@ -14,6 +14,7 @@ import '../../features/venue/presentation/venue_team_page.dart';
 import '../../features/venue/presentation/venue_claim_rejected_page.dart';
 import '../../core/venue/venue_session.dart';
 import '../../features/data_export/presentation/data_export_page.dart';
+import '../../features/notifications/presentation/moderation_warning_page.dart';
 
 /// FCM bildirimlerine dokunulduğunda (arka plan / kapalı uygulama)
 /// ilgili ekrana yönlendiren handler.
@@ -22,6 +23,7 @@ import '../../features/data_export/presentation/data_export_page.dart';
 /// - `new_message` → MessageDetailPage (chatId gerekli)
 /// - `match_created` → People sayfası
 /// - `liked_you` → Notifications sayfası
+/// - `report_update` → Moderation warning details sayfası
 class PushDeepLinkHandler {
   PushDeepLinkHandler._();
   static final PushDeepLinkHandler instance = PushDeepLinkHandler._();
@@ -109,6 +111,18 @@ class PushDeepLinkHandler {
 
       case 'liked_you':
         nav.pushNamed(AuthRoutes.notifications);
+
+      case 'report_update':
+        nav.push(
+          MaterialPageRoute(
+            builder: (_) => ModerationWarningPage(
+              contentRemoved: _readBool(data, const [
+                'contentRemoved',
+                'content_removed',
+              ]),
+            ),
+          ),
+        );
 
       case 'data_export_ready':
       case 'data_export_failed':
@@ -218,6 +232,15 @@ class PushDeepLinkHandler {
       if (v != null && v.isNotEmpty) return v;
     }
     return '';
+  }
+
+  bool _readBool(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      final value = data[key];
+      if (value is bool) return value;
+      if (value?.toString().toLowerCase() == 'true') return true;
+    }
+    return false;
   }
 
   /// venueId ile venue'yu fetch eder.

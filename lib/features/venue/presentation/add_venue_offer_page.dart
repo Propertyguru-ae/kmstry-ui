@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_offer_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_offer_repository.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
 class AddVenueOfferPage extends StatefulWidget {
   final String venueId;
@@ -52,8 +54,12 @@ class _AddVenueOfferPageState extends State<AddVenueOfferPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          e,
+          fallback: 'Could not save the offer. Please try again.',
+        ),
       );
     }
   }

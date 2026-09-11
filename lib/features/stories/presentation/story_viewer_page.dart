@@ -121,14 +121,26 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
   bool _canReportStoryOwner(StoryGroup group, StoryItem story) {
     if (story.isUploadingPlaceholder) return false;
-    if (_currentUserId == null || _currentUserId!.trim().isEmpty) return false;
-    return !_isCurrentUserStory(group);
+    // NOT: _currentUserId async yüklenir; ilk açılışta null olabilir. Üç noktayı
+    // ona bağlı erken-dönüşle GİZLEME — kişisel story'de group.isCurrentUserOwner
+    // "başkasının story'si mi"yi zaten anında bilir; venue story'de de id
+    // yüklenene kadar göster (kendi id'mizle eşleşmedikçe).
+    if (!story.isVenueStory) return !_isCurrentUserStory(group);
+    final targetUserId = story.user?.id?.trim();
+    if (targetUserId == null || targetUserId.isEmpty) return false;
+    final me = _currentUserId?.trim();
+    return me == null || me.isEmpty || targetUserId != me;
   }
 
-  Future<void> _openReportSheet(String targetUserId) async {
+  Future<void> _openReportSheet(String targetUserId, StoryItem story) async {
     if (targetUserId.trim() == _currentUserId?.trim()) return;
     _pauseProgress();
-    final ok = await showReportUserSheet(context, targetUserId: targetUserId);
+    final ok = await showReportUserSheet(
+      context,
+      targetUserId: targetUserId,
+      storyId: story.isVenueStory ? null : story.id,
+      venueStoryId: story.isVenueStory ? story.id : null,
+    );
     if (ok && mounted) {
       widget.onClose?.call(_storyIndex, false);
       Navigator.pop(
@@ -488,7 +500,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   }
 
   void _resumePlaybackIfAllowed() {
-    if (_loadingStory || _closingStory || _appPaused || _interactionPaused) return;
+    if (_loadingStory || _closingStory || _appPaused || _interactionPaused)
+      return;
     _displayTimer?.resume();
     _progressController?.forward();
     _videoController?.play();
@@ -930,8 +943,15 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                     ),
                     if (_canReportStoryOwner(group, story))
                       IconButton(
-                        icon: const Icon(Icons.more_vert, color: Colors.white),
-                        onPressed: () => _openReportSheet(group.user.id),
+                        tooltip: 'Report',
+                        icon: const Icon(
+                          Icons.flag_outlined,
+                          color: Colors.white,
+                        ),
+                        onPressed: () => _openReportSheet(
+                          story.isVenueStory ? story.user!.id : group.user.id,
+                          story,
+                        ),
                       ),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),

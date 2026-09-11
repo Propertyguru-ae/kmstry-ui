@@ -5,6 +5,7 @@ import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/ui/account_exists_sheet.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/features/auth/data/apple_sign_in_cancellation.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/register_email_otp_page.dart';
@@ -189,6 +190,7 @@ class _SignupPageState extends State<SignupPage> {
         setState(() => _error = _friendlyError(e));
       }
     } catch (e) {
+      if (isAppleSignInCancellation(e)) return;
       if (!mounted) return;
       setState(() => _error = 'Apple sign-in failed. Please try again.');
     }
