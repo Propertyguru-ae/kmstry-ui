@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Platform Maps credentials. Commit only the corresponding example files.
+/android/secrets.properties
+/ios/Flutter/GoogleMaps.xcconfig

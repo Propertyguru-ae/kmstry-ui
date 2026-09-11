@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,7 @@ class MomentsViewerPage extends StatefulWidget {
   final int initialIndex;
   final bool allowFeature;
   final String? checkinId;
+  final String? reportedUserId;
 
   const MomentsViewerPage({
     super.key,
@@ -26,6 +28,7 @@ class MomentsViewerPage extends StatefulWidget {
     required this.initialIndex,
     this.allowFeature = false,
     this.checkinId,
+    this.reportedUserId,
   });
 
   @override
@@ -178,6 +181,28 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
     }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _reportCurrentMedia() async {
+    final targetUserId = widget.reportedUserId;
+    if (_media.isEmpty || targetUserId == null || targetUserId.isEmpty) return;
+
+    await _videoController?.pause();
+    if (!mounted) return;
+    final reported = await showReportUserSheet(
+      context,
+      targetUserId: targetUserId,
+      title: 'Report this moment?',
+      checkinMediaId: _media[_currentIndex].id,
+    );
+    if (!mounted) return;
+    if (reported) {
+      Navigator.pop(context, true);
+      return;
+    }
+    if (_videoController?.value.isInitialized == true) {
+      await _videoController?.play();
+    }
   }
 
   Future<void> _showFeaturedCropPrompt(CheckinProfileMedia selected) async {
@@ -455,13 +480,30 @@ class _MomentsViewerPageState extends State<MomentsViewerPage> {
             },
           ),
 
-          // ❌ CLOSE
+          // ⚑ REPORT + ❌ CLOSE — story görüntüleyiciyle ortak: sağ üstte,
+          // report (bayrak) kapatmanın hemen solunda, aynı sade beyaz stil.
           Positioned(
             top: 40,
-            right: 16,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 28),
-              onPressed: () => Navigator.pop(context, _hasChanged),
+            right: 8,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!widget.allowFeature &&
+                    widget.reportedUserId?.isNotEmpty == true)
+                  IconButton(
+                    tooltip: 'Report',
+                    icon: const Icon(
+                      Icons.flag_outlined,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                    onPressed: _reportCurrentMedia,
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.pop(context, _hasChanged),
+                ),
+              ],
             ),
           ),
 

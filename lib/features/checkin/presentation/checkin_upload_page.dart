@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/ui/branded_notice.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -791,7 +792,10 @@ class _CheckInPageState extends State<CheckInPage> {
       } else {
         await showPremiumErrorDialog(
           context,
-          message: 'Check-in su an tamamlanamadi. Lutfen tekrar deneyin.',
+          message: publicTextErrorMessage(
+            e,
+            fallback: 'Check-in could not be completed. Please try again.',
+          ),
         );
       }
     } finally {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 /// Profilden bio düzenleme. Ürün metinleri İngilizce.
@@ -39,10 +40,16 @@ class _EditBioPageState extends State<EditBioPage> {
       await AuthRepository().updateMe({'bio': text});
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _loading = false);
-      await showPremiumErrorDialog(context, message: 'Could not save bio');
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          error,
+          fallback: 'Could not save bio. Please try again.',
+        ),
+      );
     }
   }
 

@@ -1375,18 +1375,19 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return media;
   }
 
-  void _openMediaViewerAt(int index) {
+  Future<void> _openMediaViewerAt(int index) async {
     if (!_showPostsAndVibe || _profile == null || _profile!.media.isEmpty) {
       return;
     }
     final mediaForViewer = _mediaForViewer();
-    Navigator.push(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => MomentsViewerPage(
           media: mediaForViewer,
           initialIndex: index,
           allowFeature: false,
+          reportedUserId: _profile!.user.id,
         ),
       ),
     );

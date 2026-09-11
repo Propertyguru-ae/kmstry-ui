@@ -28,6 +28,7 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
@@ -66,6 +67,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   final ChatRealtimeService _realtime = ChatRealtimeService();
 
   ChatDetail? _chat;
+  bool _safetyActionBusy = false;
 
   /// Effective chat id: widget.chatId or set after createChat on first send.
   String? _chatId;
@@ -1068,14 +1070,18 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       // Blok / inaktif sohbet: retry işe yaramaz → balonu kaldır, metni geri ver,
       // sohbeti tazele (input kilitlensin) ve anlaşılır uyarı göster.
       if (_isBlockedOrInactiveError(e)) {
+        final accountUnavailable = _isRecipientUnavailableError(e);
         _removeMessageById(optimisticTempId);
         _messageController.text = text;
         unawaited(_loadChat());
         await showPremiumErrorDialog(
           context,
-          title: 'Messaging paused',
-          message:
-              'You can\'t message this user right now. This happens when one of you has blocked the other.',
+          title: accountUnavailable
+              ? 'Account unavailable'
+              : 'Messaging paused',
+          message: accountUnavailable
+              ? 'This account can no longer receive new messages. You can still view your chat history.'
+              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
         );
         return;
       }
@@ -1130,6 +1136,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         s.contains('not active') ||
         s.contains('403') ||
         s.contains('forbidden');
+  }
+
+  bool _isRecipientUnavailableError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('recipient_account_unavailable') ||
+        s.contains('cannot receive new messages');
   }
 
   bool _isTooManyRequestsError(Object e) {
@@ -1795,6 +1807,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           ? "You can't message $who anymore — you're no longer matched."
           : "Some chats are no longer active, so the message wasn't sent.";
     }
+    if (raw.contains('cannot receive new messages') ||
+        raw.contains('recipient_account_unavailable')) {
+      return who != null
+          ? "$who's account can no longer receive new messages."
+          : "Some accounts can no longer receive new messages.";
+    }
     if (raw.contains('block')) {
       return who != null
           ? "You can't message $who because of a block."
@@ -2332,7 +2350,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
           canReport: !isMe,
           onReport: () {
             Navigator.of(dialogContext).pop();
-            unawaited(_openReportMessageSheet());
+            unawaited(_openReportMessageSheet(message: message));
           },
         );
       },
@@ -2340,10 +2358,67 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
   }
 
-  Future<void> _openReportMessageSheet() async {
+  Future<void> _openReportMessageSheet({ChatMessage? message}) async {
     final targetUserId = _effectiveOtherUserId;
-    if (targetUserId.isEmpty) return;
-    await showReportUserSheet(context, targetUserId: targetUserId);
+    if (targetUserId.isEmpty || _safetyActionBusy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _safetyActionBusy = true);
+    try {
+      final reported = await showReportUserSheet(
+        context,
+        targetUserId: targetUserId,
+        messageId: message?.id,
+      );
+      if (!mounted || !reported) return;
+      if (message == null) _applySafetyBlock();
+    } finally {
+      if (mounted) setState(() => _safetyActionBusy = false);
+    }
+  }
+
+  void _applySafetyBlock() {
+    // Invalidate a pre-block refresh so it cannot re-enable the composer.
+    _chatLoadRequest++;
+    setState(() {
+      _loading = false;
+      _chat = (_chat ?? ChatDetail(id: _chatId ?? '', messages: [])).copyWith(
+        isBlocked: true,
+        blockedByMe: true,
+        canSendMessages: false,
+      );
+    });
+    unawaited(_loadChat(silent: true));
+  }
+
+  Future<void> _blockChatUser() async {
+    final targetUserId = _effectiveOtherUserId;
+    if (targetUserId.isEmpty || _safetyActionBusy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _safetyActionBusy = true);
+    try {
+      final confirmed = await showDestructiveConfirmationDialog(
+        context,
+        title: 'Block this user?',
+        message:
+            'You will no longer be able to message each other. Your chat history will stay available. You can unblock this person in Settings → Blocked users.',
+        confirmLabel: 'Block user',
+        icon: Icons.block_rounded,
+      );
+      if (!confirmed || !mounted) return;
+      await CheckinRepository().blockUser(targetUserId);
+      if (mounted) _applySafetyBlock();
+    } catch (error) {
+      if (mounted) {
+        await showPremiumErrorDialog(
+          context,
+          message: _isTooManyRequestsError(error)
+              ? 'Please wait a moment before trying again.'
+              : 'We could not block this user. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _safetyActionBusy = false);
+    }
   }
 
   bool _canEditMessage(ChatMessage message, bool isMe) {
@@ -3252,7 +3327,60 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 ),
                 const SizedBox(width: 8),
               ]
-            : const [],
+            : [
+                PopupMenuButton<String>(
+                  tooltip: 'Conversation options',
+                  enabled:
+                      !_safetyActionBusy && _effectiveOtherUserId.isNotEmpty,
+                  icon: _safetyActionBusy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.more_horiz_rounded),
+                  color: _headerBackground,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  onSelected: (action) {
+                    if (action == 'report') {
+                      unawaited(_openReportMessageSheet());
+                    }
+                    if (action == 'block') {
+                      unawaited(_blockChatUser());
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'report',
+                      child: Row(
+                        children: [
+                          Icon(Icons.flag_outlined, color: colors.error),
+                          const SizedBox(width: 12),
+                          const Text('Report user'),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'block',
+                      enabled: _chat?.blockedByMe != true,
+                      child: Row(
+                        children: [
+                          Icon(Icons.block_rounded, color: colors.error),
+                          const SizedBox(width: 12),
+                          Text(
+                            _chat?.blockedByMe == true
+                                ? 'User blocked'
+                                : 'Block user',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 8),
+              ],
       ),
       body: DecoratedBox(
         decoration: BoxDecoration(color: _chatBackground),
@@ -4825,6 +4953,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         child: Text(
           _chat?.isBlocked == true
               ? 'Messaging is paused because one of you blocked the other. You can still view your chat history.'
+              : _chat?.otherUserUnavailable == true
+              ? 'This account can no longer receive new messages. You can still view your chat history.'
               : 'This chat is no longer active. You can still view your chat history.',
           textAlign: TextAlign.center,
           style: TextStyle(color: _mutedTextColor, fontSize: 13),
@@ -5211,6 +5341,20 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       debugPrint('❌ sendFile error: $e');
       if (!mounted) return;
       _removeMessageById(optimisticTempId);
+      if (_isBlockedOrInactiveError(e)) {
+        final accountUnavailable = _isRecipientUnavailableError(e);
+        unawaited(_loadChat());
+        await showPremiumErrorDialog(
+          context,
+          title: accountUnavailable
+              ? 'Account unavailable'
+              : 'Messaging paused',
+          message: accountUnavailable
+              ? 'This account can no longer receive new messages. You can still view your chat history.'
+              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
+        );
+        return;
+      }
       await showPremiumErrorDialog(
         context,
         message:
@@ -5385,6 +5529,20 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       debugPrint('❌ sendImage error: $e');
       if (!mounted) return;
       _removeMessageById(optimisticTempId);
+      if (_isBlockedOrInactiveError(e)) {
+        final accountUnavailable = _isRecipientUnavailableError(e);
+        unawaited(_loadChat());
+        await showPremiumErrorDialog(
+          context,
+          title: accountUnavailable
+              ? 'Account unavailable'
+              : 'Messaging paused',
+          message: accountUnavailable
+              ? 'This account can no longer receive new messages. You can still view your chat history.'
+              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
+        );
+        return;
+      }
       await showPremiumErrorDialog(
         context,
         message:

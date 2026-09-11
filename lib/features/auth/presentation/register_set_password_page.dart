@@ -751,7 +751,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                           children: const [
                                             TextSpan(text: 'Your password is '),
                                             TextSpan(
-                                              text: 'end-to-end encrypted',
+                                              text: 'securely hashed',
                                               style: TextStyle(
                                                 color: _teal,
                                                 fontWeight: FontWeight.w600,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
@@ -102,9 +103,15 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
       } else {
         Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
       }
-    } catch (_) {
+    } catch (error) {
       setState(() => _loading = false);
-      await showPremiumErrorDialog(context, message: 'Something went wrong');
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          error,
+          fallback: 'Could not save your profile. Please try again.',
+        ),
+      );
     }
   }
 

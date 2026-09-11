@@ -1,0 +1,2 @@
+// iOS-restricted key: bundle ID com.brightminds.kmstry; Maps SDK for iOS only.
+GOOGLE_MAPS_API_KEY = replace_with_ios_restricted_key
