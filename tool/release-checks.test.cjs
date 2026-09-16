@@ -51,8 +51,16 @@ test('service accounts and provider tokens are blocked', () => {
 });
 
 const { validate } = require('./release-preflight.cjs');
-const good = { API_URL: 'https://api.kmstry.net', SITE_URL: 'https://staging.kmstry.net', BUILD_NAME: '1.0.1', BUILD_NUMBER: '43' };
+const good = { BUILD_ENV: 'staging', API_URL: 'https://api.kmstry.net', SITE_URL: 'https://staging.kmstry.net', BUILD_NAME: '1.0.1', BUILD_NUMBER: '43' };
 test('release preflight accepts explicit public origins and build metadata', () => assert.doesNotThrow(() => validate(good)));
+test('release preflight accepts the pre-prod origin pair', () => assert.doesNotThrow(() => validate({ ...good, BUILD_ENV: 'pre-prod', API_URL: 'https://pre-prod-api.kmstry.net', SITE_URL: 'https://pre-prod.kmstry.net' })));
+test('release preflight rejects missing, unknown, and unconfigured production environments', () => {
+  for (const BUILD_ENV of ['', 'test', 'production']) assert.throws(() => validate({ ...good, BUILD_ENV }));
+});
+test('release preflight rejects cross-environment API or site origins', () => {
+  assert.throws(() => validate({ ...good, API_URL: 'https://pre-prod-api.kmstry.net' }));
+  assert.throws(() => validate({ ...good, SITE_URL: 'https://pre-prod.kmstry.net' }));
+});
 test('release preflight rejects missing, private or malformed origins', () => {
   for (const value of ['', 'http://api.kmstry.net', 'https://192.168.1.1', 'https://localhost', 'https://[::1]', 'https://api.kmstry.net/path', 'https://user:pass@api.kmstry.net', 'https://api.kmstry.net?q=1', 'https://example.com']) {
     for (const field of ['API_URL', 'SITE_URL']) assert.throws(() => validate({ ...good, [field]: value }));

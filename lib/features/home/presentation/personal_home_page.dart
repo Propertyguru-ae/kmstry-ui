@@ -945,7 +945,10 @@ class _StoriesRow extends StatelessWidget {
     // Bilgilendirme ipucu YALNIZCA kullanıcı henüz story paylaşmadıysa VE
     // arkadaşları/mekanları da hiç story paylaşmamışsa gösterilir. Kullanıcı
     // kendi story'sini paylaşınca ("Your story" balonu doldu) ipucu kalkar.
-    final showEmptyHint = stories.isEmpty && !hasMyStory;
+    // "Check in to unlock stories" bannerı kaldırıldı: ipucu YALNIZCA kullanıcı
+    // bu venue'da aktif check-in'liyken ("Share your first story here.") ve henüz
+    // story paylaşmamışken, kimsede story yokken gösterilir.
+    final showEmptyHint = stories.isEmpty && !hasMyStory && hasActiveCheckin;
     final itemCount = stories.length + 1 + (showEmptyHint ? 1 : 0);
     return SizedBox(
       height: 104,
