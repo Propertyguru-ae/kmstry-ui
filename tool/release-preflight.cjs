@@ -2,6 +2,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 function validate(env) {
+  const releaseOrigins = {
+    staging: { API_URL: 'https://api.kmstry.net', SITE_URL: 'https://staging.kmstry.net' },
+    'pre-prod': { API_URL: 'https://pre-prod-api.kmstry.net', SITE_URL: 'https://pre-prod.kmstry.net' },
+    // Add production only after the final production API and site are approved.
+  };
+  const expectedOrigins = releaseOrigins[env.BUILD_ENV];
+  if (!expectedOrigins) throw new Error('BUILD_ENV must be staging or pre-prod; production origins are not configured yet.');
   for (const name of ['API_URL', 'SITE_URL']) {
     let url;
     try { url = new URL(env[name]); } catch { throw new Error(`${name} must be an HTTPS origin.`); }
@@ -11,6 +18,9 @@ function validate(env) {
         /(?:^|\.)(local|example\.com|example\.net|example\.org|invalid|test)$/.test(host) || /placeholder|replace-me/.test(host)) {
       throw new Error(`${name} must be a public HTTPS origin without credentials, query, fragment or path.`);
     }
+  }
+  for (const name of ['API_URL', 'SITE_URL']) {
+    if (env[name] !== expectedOrigins[name]) throw new Error(`${name} does not match BUILD_ENV=${env.BUILD_ENV}.`);
   }
   if (!/^\d+\.\d+\.\d+$/.test(env.BUILD_NAME || '')) throw new Error('BUILD_NAME must be x.y.z.');
   if (!/^[1-9]\d*$/.test(env.BUILD_NUMBER || '') || Number(env.BUILD_NUMBER) > 2100000000) throw new Error('BUILD_NUMBER must be a positive Android-compatible build number.');

@@ -196,16 +196,12 @@ class ChatRealtimeService {
       'token': token,
       if (deviceToken != null && deviceToken.isNotEmpty)
         'deviceToken': deviceToken,
-      if (headers['X-Firebase-AppCheck'] case final appCheckToken?)
-        'appCheckToken': appCheckToken,
-      if (headers['x-kmstry-app-version'] case final appVersion?)
-        'appVersion': appVersion,
-      if (headers['x-kmstry-build-number'] case final buildNumber?)
-        'buildNumber': buildNumber,
-      if (headers['x-kmstry-platform'] case final platform?)
-        'platform': platform,
-      if (headers['x-kmstry-os-version'] case final osVersion?)
-        'osVersion': osVersion,
+      'appCheckToken': ?headers['X-Firebase-AppCheck'],
+      'appVersion': ?headers['x-kmstry-app-version'],
+      'buildNumber': ?headers['x-kmstry-build-number'],
+      'buildEnv': ?headers['x-kmstry-build-env'],
+      'platform': ?headers['x-kmstry-platform'],
+      'osVersion': ?headers['x-kmstry-os-version'],
     };
   }
 

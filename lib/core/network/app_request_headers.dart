@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../config/app_config.dart';
 
 /// Security and app metadata headers shared by JSON and multipart API calls.
 ///
@@ -21,10 +22,12 @@ class AppRequestHeaders {
     };
   }
 
-  static Future<Map<String, String>> appCheck() async {
+  static Future<Map<String, String>> appCheck({
+    bool forceRefresh = false,
+  }) async {
     try {
-      var token = await FirebaseAppCheck.instance.getToken();
-      if (token == null || token.isEmpty) {
+      var token = await FirebaseAppCheck.instance.getToken(forceRefresh);
+      if (!forceRefresh && (token == null || token.isEmpty)) {
         token = await FirebaseAppCheck.instance.getToken(true);
       }
       if (token != null && token.isNotEmpty) {
@@ -45,6 +48,8 @@ class AppRequestHeaders {
     try {
       final info = await PackageInfo.fromPlatform();
       final headers = <String, String>{
+        if (AppConfig.buildEnv.isNotEmpty)
+          'x-kmstry-build-env': AppConfig.buildEnv,
         if (info.version.isNotEmpty) 'x-kmstry-app-version': info.version,
         if (info.buildNumber.isNotEmpty)
           'x-kmstry-build-number': info.buildNumber,
@@ -54,7 +59,10 @@ class AppRequestHeaders {
       _metadataCache = headers;
       return headers;
     } catch (_) {
-      return const {};
+      return {
+        if (AppConfig.buildEnv.isNotEmpty)
+          'x-kmstry-build-env': AppConfig.buildEnv,
+      };
     }
   }
 }

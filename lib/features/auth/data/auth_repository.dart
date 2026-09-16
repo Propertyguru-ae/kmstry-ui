@@ -32,6 +32,7 @@ class AuthRepository {
     ApiClient.onSessionExpired = () async {
       CheckinPingManager.I.stop();
       ActiveCheckinService().clear();
+      PushManager.instance.onSessionEnded();
       await SecureStorage.clearSession();
       invalidateMeCache();
       ProfilePreviewPage.clearActionStateCache();
@@ -614,6 +615,7 @@ class AuthRepository {
     await _googleSignIn.signOut();
     CheckinPingManager.I.stop();
     ActiveCheckinService().clear();
+    PushManager.instance.onSessionEnded();
     await SecureStorage.clearSession();
     ProfilePreviewPage.clearActionStateCache();
   }

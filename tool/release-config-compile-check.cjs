@@ -1,9 +1,14 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const cases = [
-  { name: 'missing API_URL', defines: ['SITE_URL=https://staging.kmstry.net'], expected: '_releaseApiUrlMustBeProvided' },
-  { name: 'missing SITE_URL', defines: ['API_URL=https://api.kmstry.net'], expected: '_releaseSiteUrlMustBeProvided' },
-  { name: 'explicit release origins', defines: ['API_URL=https://api.kmstry.net', 'SITE_URL=https://staging.kmstry.net'] },
+  { name: 'missing API_URL', defines: ['BUILD_ENV=staging', 'SITE_URL=https://staging.kmstry.net'], expected: '_releaseApiUrlMustBeProvided' },
+  { name: 'missing SITE_URL', defines: ['BUILD_ENV=staging', 'API_URL=https://api.kmstry.net'], expected: '_releaseSiteUrlMustBeProvided' },
+  { name: 'missing BUILD_ENV', defines: ['API_URL=https://api.kmstry.net', 'SITE_URL=https://staging.kmstry.net'], expected: '_releaseBuildEnvMustBeProvided' },
+  { name: 'staging pair mismatch', defines: ['BUILD_ENV=staging', 'API_URL=https://pre-prod-api.kmstry.net', 'SITE_URL=https://pre-prod.kmstry.net'], expected: '_releaseOriginsMustMatchEnvironment' },
+  { name: 'staging site mismatch', defines: ['BUILD_ENV=staging', 'API_URL=https://api.kmstry.net', 'SITE_URL=https://pre-prod.kmstry.net'], expected: '_releaseOriginsMustMatchEnvironment' },
+  { name: 'production blocked until origins are configured', defines: ['BUILD_ENV=production', 'API_URL=https://api.kmstry.net', 'SITE_URL=https://staging.kmstry.net'], expected: '_releaseOriginsMustMatchEnvironment' },
+  { name: 'staging release origins', defines: ['BUILD_ENV=staging', 'API_URL=https://api.kmstry.net', 'SITE_URL=https://staging.kmstry.net'] },
+  { name: 'pre-prod release origins', defines: ['BUILD_ENV=pre-prod', 'API_URL=https://pre-prod-api.kmstry.net', 'SITE_URL=https://pre-prod.kmstry.net'] },
 ];
 for (const check of cases) {
   // Exercise the actual AppConfig constant evaluation, not a duplicate validator.

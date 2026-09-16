@@ -162,6 +162,7 @@ class PushManager {
 
       try {
         await _messaging.deleteToken();
+        await SecureStorage.clearRegisteredDeviceToken();
       } catch (e) {
         debugPrint('[PUSH] deleteToken failed (non-fatal): $e');
       }
@@ -328,6 +329,7 @@ class PushManager {
 
         // Success — record so we don't re-register the same token.
         _lastRegisteredToken = token;
+        await SecureStorage.saveRegisteredDeviceToken(token);
         debugPrint('[PUSH] ✅ FCM token registered (attempt $attempt)');
         return;
       } catch (e) {
