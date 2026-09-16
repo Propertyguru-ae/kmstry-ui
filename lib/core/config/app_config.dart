@@ -1,8 +1,20 @@
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
+  static const String buildEnv = String.fromEnvironment('BUILD_ENV');
   static const String _definedApiUrl = String.fromEnvironment('API_URL');
   static const String _definedSiteUrl = String.fromEnvironment('SITE_URL');
+
+  // Release identities stay the same across tracks. The environment is part of
+  // the artifact, so reject a mismatched API/site pair at AOT compile time.
+  // Production is deliberately absent until its final origins are approved.
+  static const bool _releaseOriginsMatchEnvironment =
+      (buildEnv == 'staging' &&
+          _definedApiUrl == 'https://api.kmstry.net' &&
+          _definedSiteUrl == 'https://staging.kmstry.net') ||
+      (buildEnv == 'pre-prod' &&
+          _definedApiUrl == 'https://pre-prod-api.kmstry.net' &&
+          _definedSiteUrl == 'https://pre-prod.kmstry.net');
 
   static const String baseUrl = _definedApiUrl != ''
       ? _definedApiUrl
@@ -21,10 +33,18 @@ class AppConfig {
       !kReleaseMode || _definedApiUrl != '' ? 1 : 1 ~/ 0;
   static const int _releaseSiteUrlMustBeProvided =
       !kReleaseMode || _definedSiteUrl != '' ? 1 : 1 ~/ 0;
+  static const int _releaseBuildEnvMustBeProvided =
+      !kReleaseMode || buildEnv != '' ? 1 : 1 ~/ 0;
+  static const int _releaseOriginsMustMatchEnvironment =
+      !kReleaseMode || _releaseOriginsMatchEnvironment ? 1 : 1 ~/ 0;
 
   static void validateForStartup() {
     // Force compile-time evaluation of the required-define constants above.
-    if (_releaseApiUrlMustBeProvided + _releaseSiteUrlMustBeProvided != 2) {
+    if (_releaseApiUrlMustBeProvided +
+            _releaseSiteUrlMustBeProvided +
+            _releaseBuildEnvMustBeProvided +
+            _releaseOriginsMustMatchEnvironment !=
+        4) {
       throw StateError('Invalid release URL configuration.');
     }
     if (!kReleaseMode) return;

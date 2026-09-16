@@ -14,6 +14,7 @@ jobs:
     env:
       API_URL: ${{ vars.RELEASE_API_URL }}
       SITE_URL: ${{ vars.RELEASE_SITE_URL }}
+      BUILD_ENV: ${{ vars.RELEASE_BUILD_ENV || 'staging' }}
       BUILD_NAME: ${{ vars.RELEASE_BUILD_NAME }}
       BUILD_NUMBER: ${{ vars.RELEASE_BUILD_NUMBER }}
     steps:

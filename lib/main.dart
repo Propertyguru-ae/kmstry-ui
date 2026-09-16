@@ -18,6 +18,7 @@ import 'core/push/push_manager.dart';
 import 'core/push/push_deep_link_handler.dart';
 import 'core/linking/app_links_bootstrap.dart';
 import 'core/config/app_config.dart';
+import 'core/config/session_environment_coordinator.dart';
 import 'core/network/api_client.dart';
 import 'core/update/app_update_coordinator.dart';
 
@@ -80,6 +81,11 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('⚠️ App Check activate failed: $e');
   }
+
+  // Same bundle/application ID means Keychain/secure-storage and Firebase FCM
+  // state can survive a staging → pre-prod update. Reconcile before any API or
+  // push registration can use the old session against the new environment.
+  await SessionEnvironmentCoordinator.reconcile();
 
   await PushManager.instance.init();
 

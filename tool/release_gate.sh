@@ -2,8 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${API_URL:?API_URL is required (for example https://staging-api.kmstry.net)}"
+: "${API_URL:?API_URL is required (for example https://api.kmstry.net)}"
 : "${SITE_URL:?SITE_URL is required (for example https://staging.kmstry.net)}"
+: "${BUILD_ENV:?BUILD_ENV is required (staging or pre-prod; production is not configured yet)}"
 : "${BUILD_NAME:?BUILD_NAME is required (for example 1.0.1)}"
 : "${BUILD_NUMBER:?BUILD_NUMBER is required (for example 43)}"
 
@@ -31,14 +32,16 @@ flutter build appbundle --release \
   --build-name "${BUILD_NAME}" \
   --build-number "${BUILD_NUMBER}" \
   --dart-define="API_URL=${API_URL}" \
-  --dart-define="SITE_URL=${SITE_URL}"
+  --dart-define="SITE_URL=${SITE_URL}" \
+  --dart-define="BUILD_ENV=${BUILD_ENV}"
 
 if [[ "${BUILD_IOS:-false}" == "true" ]]; then
   flutter build ipa --release \
     --build-name "${BUILD_NAME}" \
     --build-number "${BUILD_NUMBER}" \
     --dart-define="API_URL=${API_URL}" \
-    --dart-define="SITE_URL=${SITE_URL}"
+    --dart-define="SITE_URL=${SITE_URL}" \
+    --dart-define="BUILD_ENV=${BUILD_ENV}"
 fi
 
 echo "Mobile release gate passed."
