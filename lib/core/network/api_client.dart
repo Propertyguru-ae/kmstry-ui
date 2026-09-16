@@ -8,14 +8,25 @@ import 'app_request_headers.dart';
 import 'api_exception.dart';
 
 class ApiClient {
-  final http.Client _client = http.Client();
+  ApiClient({
+    http.Client? client,
+    Future<Map<String, String>> Function({bool forceRefresh})?
+    appCheckHeaderProvider,
+  }) : _client = client ?? http.Client(),
+       _appCheckHeaderProvider =
+           appCheckHeaderProvider ?? AppRequestHeaders.appCheck;
+
+  final http.Client _client;
+  final Future<Map<String, String>> Function({bool forceRefresh})
+  _appCheckHeaderProvider;
   static const bool _enableVerboseHttpLogs = false;
 
   /// Firebase App Check token'ını header olarak döner (varsa). Backend'in
   /// App Check guard'ı bunu doğrulayıp bot/script isteklerini eler. Token
   /// alınamazsa boş döner — normal akışı bozmaz (backend `off`/`monitor`
   /// modunda zaten geçer; `enforce` modunda ise gerçek app zaten token üretir).
-  Future<Map<String, String>> _appCheckHeader() => AppRequestHeaders.appCheck();
+  Future<Map<String, String>> _appCheckHeader({bool forceRefresh = false}) =>
+      _appCheckHeaderProvider(forceRefresh: forceRefresh);
 
   /// App/device metadata headers the backend's App Check guard records into the
   /// admin "User Logs" table (app version, build number, platform, OS version).
@@ -93,6 +104,32 @@ class ApiClient {
     };
   }
 
+  bool _isAppCheck401(http.Response response) {
+    if (response.statusCode != 401) return false;
+    if (response.headers['x-kmstry-app-check-retry'] == 'refresh') return true;
+    final data = _tryDecode(response.body);
+    return data is Map && data['errorCode'] == 'APP_CHECK_REQUIRED';
+  }
+
+  /// App Check rejection never expires a JWT session. Refresh its own token
+  /// once and preserve Authorization/build metadata on the replayed request.
+  Future<dynamic> _retryAppCheck401(
+    http.Response first,
+    Map<String, String> originalHeaders,
+    Future<http.Response> Function(Map<String, String> newHeaders) retry,
+  ) async {
+    final freshAppCheck = await _appCheckHeader(forceRefresh: true);
+    if (freshAppCheck.isEmpty) {
+      return _throwApiException(first.statusCode, _tryDecode(first.body));
+    }
+    final replay = await retry({...originalHeaders, ...freshAppCheck});
+    final replayData = _tryDecode(replay.body);
+    if (replay.statusCode >= 400) {
+      return _throwApiException(replay.statusCode, replayData);
+    }
+    return replayData;
+  }
+
   /// After a 401 response: try refresh, retry, or expire session.
   ///
   /// Only activates when the request carried an Authorization header — meaning
@@ -105,6 +142,10 @@ class ApiClient {
     Map<String, String>? originalHeaders,
     Future<http.Response> Function(Map<String, String> newHeaders) retry,
   ) async {
+    if (_isAppCheck401(first)) {
+      return _retryAppCheck401(first, originalHeaders ?? const {}, retry);
+    }
+
     // No Authorization header → this is a credential error (wrong password,
     // invalid OTP, etc.), not a session expiry. Let it propagate normally.
     final hasAuthHeader =
@@ -137,8 +178,13 @@ class ApiClient {
     }
 
     // Retry the original request with the new token.
-    final retryResp = await retry(_withNewToken(originalHeaders, newToken));
+    final refreshedHeaders = _withNewToken(originalHeaders, newToken);
+    final retryResp = await retry(refreshedHeaders);
     _log('🌐 [HTTP] retry statusCode = ${retryResp.statusCode}');
+
+    if (_isAppCheck401(retryResp)) {
+      return _retryAppCheck401(retryResp, refreshedHeaders, retry);
+    }
 
     final retryData = _tryDecode(retryResp.body);
     if (retryResp.statusCode >= 400) {
@@ -179,7 +225,7 @@ class ApiClient {
         return _handle401(
           response,
           path,
-          headers,
+          merged,
           (h) => _client
               .post(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
@@ -229,7 +275,7 @@ class ApiClient {
         return _handle401(
           response,
           path,
-          headers,
+          merged,
           (h) => _client.get(url, headers: h).timeout(timeout),
         );
       }
@@ -274,7 +320,7 @@ class ApiClient {
         return _handle401(
           response,
           path,
-          headers,
+          merged,
           (h) => _client
               .patch(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
@@ -326,7 +372,7 @@ class ApiClient {
         return _handle401(
           response,
           path,
-          headers,
+          merged,
           (h) => _client
               .put(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
@@ -373,7 +419,7 @@ class ApiClient {
         return _handle401(
           response,
           path,
-          headers,
+          merged,
           (h) => _client
               .delete(url, headers: h)
               .timeout(const Duration(seconds: 10)),
