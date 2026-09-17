@@ -415,35 +415,39 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _toggleFollow() async {
-    if (_followLoading || !widget.venue.isInDb || widget.venue.id.isEmpty) {
-      return;
-    }
+    if (_followLoading) return;
     final previousFollowing = _isFollowing;
     final previousCount = _followerCount;
     final nextFollowing = !previousFollowing;
+    var optimisticStateApplied = false;
 
-    setState(() {
-      _followLoading = true;
-      _isFollowing = nextFollowing;
-      _followerCount = nextFollowing
-          ? previousCount + 1
-          : (previousCount > 0 ? previousCount - 1 : 0);
-    });
+    setState(() => _followLoading = true);
 
     try {
+      final venueId = await _resolveVenueIdForFollow();
+      if (!mounted) return;
+      setState(() {
+        optimisticStateApplied = true;
+        _isFollowing = nextFollowing;
+        _followerCount = nextFollowing
+            ? previousCount + 1
+            : (previousCount > 0 ? previousCount - 1 : 0);
+      });
       final result = nextFollowing
-          ? await _venueContextRepo.followVenue(widget.venue.id)
-          : await _venueContextRepo.unfollowVenue(widget.venue.id);
+          ? await _venueContextRepo.followVenue(venueId)
+          : await _venueContextRepo.unfollowVenue(venueId);
       final count = _parseOptionalInt(result['followerCount']);
       if (mounted && count != null) {
         setState(() => _followerCount = count);
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _isFollowing = previousFollowing;
-        _followerCount = previousCount;
-      });
+      if (optimisticStateApplied) {
+        setState(() {
+          _isFollowing = previousFollowing;
+          _followerCount = previousCount;
+        });
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -458,6 +462,34 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         setState(() => _followLoading = false);
       }
     }
+  }
+
+  Future<String> _resolveVenueIdForFollow() async {
+    final cached = _resolvedVenueIdForCurrentDetail;
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    if (widget.venue.isInDb && widget.venue.id.isNotEmpty) {
+      _resolvedVenueIdForCurrentDetail = widget.venue.id;
+      return widget.venue.id;
+    }
+
+    final explicitPlaceId = widget.venue.placeId?.trim();
+    final placeId = explicitPlaceId != null && explicitPlaceId.isNotEmpty
+        ? explicitPlaceId
+        : widget.venue.source == 'google' && widget.venue.id.isNotEmpty
+        ? widget.venue.id
+        : null;
+    if (placeId == null) throw Exception('Venue reference is missing');
+
+    final response = await _venueContextRepo.resolveVenueFromPlace(placeId);
+    final resolved = _extractVenueIdFromResponse(response);
+    if (resolved == null || resolved.isEmpty) {
+      throw Exception('Could not resolve venue id for follow');
+    }
+    if (mounted) {
+      setState(() => _resolvedVenueIdForCurrentDetail = resolved);
+    }
+    return resolved;
   }
 
   // ── Logo-renkli tema paleti (light/dark uyumlu) ───────────────────────────
@@ -721,9 +753,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Widget _buildFollowButton() {
-    if (!widget.venue.isInDb || widget.venue.id.isEmpty) {
-      return const SizedBox.shrink();
-    }
     final following = _isFollowing;
     return _actionButton(
       onTap: _followLoading ? null : _toggleFollow,
@@ -2090,8 +2119,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final address = (_venueDetails?['address'] ?? widget.venue.address ?? '')
         .toString()
         .trim();
-    final followAvailable = widget.venue.isInDb && widget.venue.id.isNotEmpty;
-
     return Scaffold(
       backgroundColor: _pageBg,
       body: Stack(
@@ -2322,10 +2349,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                           /// Menu ve Check in tam genişlikte.
                           Row(
                             children: [
-                              if (followAvailable) ...[
-                                Expanded(child: _buildFollowButton()),
-                                const SizedBox(width: 9),
-                              ],
+                              Expanded(child: _buildFollowButton()),
+                              const SizedBox(width: 9),
                               Expanded(child: _buildDirectionsButton()),
                               const SizedBox(width: 9),
                               Expanded(child: _buildShareButton()),
@@ -2359,8 +2384,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                               confirmLabel: 'Check out',
                                               icon: Icons.logout_rounded,
                                             );
-                                        if (confirmed == true)
+                                        if (confirmed == true) {
                                           await _checkout();
+                                        }
                                       },
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.redAccent,
@@ -2494,8 +2520,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                           )
                                           .toList(),
                                     );
-                                if (weekly.isEmpty)
+                                if (weekly.isEmpty) {
                                   return const SizedBox.shrink();
+                                }
                                 return Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
