@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
@@ -81,6 +82,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
   Map<String, dynamic>? _enrichedVenueData;
+  late String _venuePhotoUrl;
+  MediaReference? _venuePhotoReference;
   bool _loadingCheckinStats = false;
   int? _checkinCountActive;
   int? _checkinCountMale;
@@ -106,6 +109,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   @override
   void initState() {
     super.initState();
+    _venuePhotoUrl = widget.venue.photoUrl;
+    _venuePhotoReference = widget.venue.photoReference;
     _checkinCountActive = widget.venue.checkinCountActive;
     _checkinCountMale = widget.venue.checkinCountMale;
     _checkinCountFemale = widget.venue.checkinCountFemale;
@@ -277,7 +282,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       user: StoryUser(
         id: 'venue_$venueId',
         fullName: widget.venue.name,
-        photo: widget.venue.photoUrl.isNotEmpty ? widget.venue.photoUrl : null,
+        photo: _venuePhotoUrl.isNotEmpty ? _venuePhotoUrl : null,
       ),
       stories: _headerStories
           .map(
@@ -347,8 +352,17 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     try {
       final data = await _venueContextRepo.getVenueById(widget.venue.id);
       if (!mounted) return;
+      final freshPhoto = MediaReference.venuePhoto(
+        data,
+        venueId: widget.venue.id,
+        allowRefresh: true,
+      );
       setState(() {
         _enrichedVenueData = data;
+        if (freshPhoto.url.isNotEmpty || freshPhoto.canRefresh) {
+          _venuePhotoUrl = freshPhoto.url;
+          _venuePhotoReference = freshPhoto;
+        }
         _isFollowing = (data['isFollowing'] ?? data['is_following']) == true;
         _followerCount =
             _parseOptionalInt(
@@ -1794,7 +1808,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             venueName: widget.venue.name,
             venueAddress: (_venueDetails?['address'] ?? widget.venue.address)
                 ?.toString(),
-            venuePhotoUrl: widget.venue.photoUrl,
+            venuePhotoUrl: _venuePhotoUrl,
           ),
         ),
       ),
@@ -2103,8 +2117,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       fit: StackFit.expand,
                       children: [
                         CachedImage(
-                          _safeDisplayPhotoUrl(widget.venue.photoUrl),
-                          mediaReference: widget.venue.photoReference,
+                          _safeDisplayPhotoUrl(_venuePhotoUrl),
+                          mediaReference: _venuePhotoReference,
                           fit: BoxFit.cover,
                         ),
                         Align(
@@ -2137,7 +2151,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               _VenueDetailAvatarRing(
-                                photoUrl: widget.venue.photoUrl,
+                                photoUrl: _venuePhotoUrl,
+                                mediaReference: _venuePhotoReference,
                                 hasStories: _headerStories.isNotEmpty,
                                 allSeen:
                                     _headerStories.isNotEmpty &&
@@ -2516,6 +2531,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
 class _VenueDetailAvatarRing extends StatelessWidget {
   final String photoUrl;
+  final MediaReference? mediaReference;
   final bool hasStories;
   final bool allSeen;
   final VoidCallback? onTap;
@@ -2530,6 +2546,7 @@ class _VenueDetailAvatarRing extends StatelessWidget {
 
   const _VenueDetailAvatarRing({
     required this.photoUrl,
+    required this.mediaReference,
     required this.hasStories,
     required this.allSeen,
     this.onTap,
@@ -2548,6 +2565,7 @@ class _VenueDetailAvatarRing extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: CachedImage(
         photo,
+        mediaReference: mediaReference,
         width: avatarSize,
         height: avatarSize,
         fit: BoxFit.cover,
