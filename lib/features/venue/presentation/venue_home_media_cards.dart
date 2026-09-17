@@ -797,9 +797,11 @@ class _PremiumMediaCard extends StatelessWidget {
   }
 
   Widget _photoFrame(VenueGalleryItem item, double w, double h) {
-    final url = item.thumbnailUrl?.isNotEmpty == true
-        ? item.thumbnailUrl!
-        : item.url;
+    final usesThumbnail = item.thumbnailUrl?.isNotEmpty == true;
+    final url = usesThumbnail ? item.thumbnailUrl! : item.url;
+    final mediaReference = usesThumbnail
+        ? item.thumbnailReference
+        : item.mediaReference;
     return Container(
       width: w,
       height: h,
@@ -825,6 +827,7 @@ class _PremiumMediaCard extends StatelessWidget {
           children: [
             CachedImage(
               url,
+              mediaReference: mediaReference,
               fit: BoxFit.cover,
               errorWidget: (_) => Container(
                 color: const Color(0xFF1A2233),

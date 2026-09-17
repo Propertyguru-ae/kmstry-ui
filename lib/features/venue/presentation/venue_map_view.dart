@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/features/venue/presentation/map_style.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
@@ -1398,8 +1400,14 @@ class _VenueMapViewState extends State<VenueMapView> {
         : _heatRingColor(activeCount);
     final glowColor = _venueGlowColor(venue);
     final glowHex = glowColor.toARGB32().toRadixString(16);
+    final mediaReference =
+        venue.photoReference ??
+        MediaReference(
+          mediaId: '${_venueIdentity(venue)}:venue-photo',
+          url: photoUrl,
+        );
     final cacheKey =
-        '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed|$activeCount|$glowHex';
+        '${_venueIdentity(venue)}|${mediaReference.mediaId}|$isSelected|$isPressed|$activeCount|$glowHex';
     final cached = _photoMarkerIconCache[cacheKey];
     if (cached != null) {
       return cached;
@@ -1408,6 +1416,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     _schedulePhotoMarkerIconBuild(
       cacheKey: cacheKey,
       photoUrl: photoUrl,
+      mediaReference: mediaReference,
       ringColor: ringColor,
       glowColor: glowColor,
       activeCount: activeCount,
@@ -1435,6 +1444,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   void _schedulePhotoMarkerIconBuild({
     required String cacheKey,
     required String photoUrl,
+    required MediaReference mediaReference,
     required Color ringColor,
     required Color glowColor,
     int? activeCount,
@@ -1443,6 +1453,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     _photoMarkerIconLoadingKeys.add(cacheKey);
     _buildPhotoMarkerIcon(
           photoUrl: photoUrl,
+          mediaReference: mediaReference,
           ringColor: ringColor,
           glowColor: glowColor,
           activeCount: activeCount,
@@ -1475,18 +1486,44 @@ class _VenueMapViewState extends State<VenueMapView> {
   static final BaseCacheManager _markerPhotoCacheManager =
       DefaultCacheManager();
 
-  Future<Uint8List?> _loadMarkerPhotoBytes(String photoUrl) async {
-    try {
-      final file = await _markerPhotoCacheManager.getSingleFile(photoUrl);
+  Future<Uint8List?> _loadMarkerPhotoBytes(
+    String photoUrl,
+    MediaReference mediaReference,
+  ) async {
+    final resolver = SignedMediaResolver.instance;
+    final current = resolver.current(mediaReference);
+    final stableCacheKey = current.mediaId.trim().isEmpty
+        ? photoUrl
+        : current.mediaId;
+
+    Future<Uint8List?> load(String url) async {
+      final file = await _markerPhotoCacheManager.getSingleFile(
+        url,
+        key: stableCacheKey,
+      );
       if (!await file.exists()) return null;
-      return await file.readAsBytes();
+      return file.readAsBytes();
+    }
+
+    try {
+      final currentUrl = current.url.trim().isEmpty ? photoUrl : current.url;
+      return await load(currentUrl);
     } catch (_) {
-      return null;
+      // Exactly one authenticated refresh attempt. The resolver also
+      // coalesces concurrent pin failures for the same venue media id.
+      final refreshed = await resolver.refreshOnce(current);
+      if (refreshed == null || refreshed.url.trim().isEmpty) return null;
+      try {
+        return await load(refreshed.url);
+      } catch (_) {
+        return null;
+      }
     }
   }
 
   Future<BitmapDescriptor?> _buildPhotoMarkerIcon({
     required String photoUrl,
+    required MediaReference mediaReference,
     required Color ringColor,
     required Color glowColor,
     int? activeCount,
@@ -1497,7 +1534,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       // Ham fotoğrafı diskten oku; ilk görülüşte bir kez indirilir, sonraki
       // rebuild/uygulama açılışlarında ağdan tekrar çekilmez → Place Photo SKU
       // maliyeti ve veri/pil tüketimi düşer.
-      final bytes = await _loadMarkerPhotoBytes(photoUrl);
+      final bytes = await _loadMarkerPhotoBytes(photoUrl, mediaReference);
       if (bytes == null || bytes.isEmpty) return null;
       // Yüksek çözünürlük (4x) → kenarlar ve glow keskin, "pixel pixel" görünüm
       // biter. Görüntü boyutu aynı (64pt) kalır, sadece daha çok piksel basılır.
@@ -2418,6 +2455,8 @@ class _VenueMapViewState extends State<VenueMapView> {
                                 child: liveVenue.photoUrl.isNotEmpty
                                     ? CachedImage(
                                         liveVenue.photoUrl,
+                                        mediaReference:
+                                            liveVenue.photoReference,
                                         fit: BoxFit.cover,
                                         errorWidget: (_) => Icon(
                                           Icons.storefront_rounded,

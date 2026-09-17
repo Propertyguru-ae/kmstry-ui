@@ -443,6 +443,7 @@ class GalleryTile extends StatelessWidget {
           if (item.thumbnailUrl != null && item.thumbnailUrl!.isNotEmpty)
             CachedImage(
               item.thumbnailUrl!,
+              mediaReference: item.thumbnailReference,
               fit: BoxFit.cover,
               errorWidget: (_) => Container(color: Colors.black),
             )
@@ -456,6 +457,7 @@ class GalleryTile extends StatelessWidget {
     }
     return CachedImage(
       item.url,
+      mediaReference: item.mediaReference,
       fit: BoxFit.cover,
       placeholder: (_) => placeholder,
       errorWidget: (_) => placeholder,
@@ -581,7 +583,11 @@ class _GalleryViewerState extends State<GalleryViewer> {
                 minScale: 1,
                 maxScale: 4,
                 child: Center(
-                  child: CachedImage(item.url, fit: BoxFit.contain),
+                  child: CachedImage(
+                    item.url,
+                    mediaReference: item.mediaReference,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               );
             },

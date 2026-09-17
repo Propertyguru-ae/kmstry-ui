@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
@@ -53,16 +54,12 @@ class VenueListItem extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? _brandBlue.withValues(alpha: isDark ? 0.15 : 0.10)
-                : (isDark
-                      ? const Color(0xFF0E1724)
-                      : const Color(0xFFF8FBFD)),
+                : (isDark ? const Color(0xFF0E1724) : const Color(0xFFF8FBFD)),
             borderRadius: BorderRadius.circular(20),
             border: isActiveCheckin
                 ? Border.all(color: _checkedInColor.withValues(alpha: 0.72))
                 : (isSelected
-                      ? Border.all(
-                          color: _brandBlue.withValues(alpha: 0.56),
-                        )
+                      ? Border.all(color: _brandBlue.withValues(alpha: 0.56))
                       : (isDark
                             ? Border.all(
                                 color: Colors.white.withValues(alpha: 0.07),
@@ -114,7 +111,12 @@ class VenueListItem extends StatelessWidget {
               ),
               if (galleryPhotos.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                _VenuePhotoStrip(photos: galleryPhotos, isDark: isDark),
+                _VenuePhotoStrip(
+                  photos: galleryPhotos,
+                  isDark: isDark,
+                  coverUrl: venue.photoUrl,
+                  coverReference: venue.photoReference,
+                ),
               ],
               const SizedBox(height: 12),
               Wrap(
@@ -371,8 +373,15 @@ class _MetadataText extends StatelessWidget {
 class _VenuePhotoStrip extends StatelessWidget {
   final List<String> photos;
   final bool isDark;
+  final String coverUrl;
+  final MediaReference? coverReference;
 
-  const _VenuePhotoStrip({required this.photos, required this.isDark});
+  const _VenuePhotoStrip({
+    required this.photos,
+    required this.isDark,
+    required this.coverUrl,
+    required this.coverReference,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -391,6 +400,9 @@ class _VenuePhotoStrip extends StatelessWidget {
                       : const Color(0xFFEAF1F4),
                   child: CachedImage(
                     visible[i],
+                    mediaReference: visible[i] == coverUrl
+                        ? coverReference
+                        : null,
                     fit: BoxFit.cover,
                     errorWidget: (context) => Icon(
                       Icons.image_not_supported_outlined,
@@ -413,10 +425,7 @@ List<String> _galleryPhotos(Venue venue) {
     ...venue.photos,
     if (venue.photoUrl.trim().isNotEmpty) venue.photoUrl.trim(),
   ];
-  return ordered
-      .where((url) => url.trim().isNotEmpty)
-      .toSet()
-      .toList();
+  return ordered.where((url) => url.trim().isNotEmpty).toSet().toList();
 }
 
 String? _aboutText(Venue venue) {
