@@ -200,6 +200,7 @@ class CheckinProfileUser {
   final String? username;
   final String fullName;
   final String? photo;
+  final MediaReference? photoReference;
   final DateTime birthdate;
   final String gender;
   final bool isVerified;
@@ -212,6 +213,7 @@ class CheckinProfileUser {
     this.username,
     required this.fullName,
     this.photo,
+    this.photoReference,
     required this.birthdate,
     required this.gender,
     required this.isVerified,
@@ -222,11 +224,14 @@ class CheckinProfileUser {
 
   factory CheckinProfileUser.fromJson(Map<String, dynamic> json) {
     final birthdateRaw = json['birthdate']?.toString();
+    final id = json['id']?.toString() ?? '';
+    final photoReference = MediaReference.profilePhoto(json, userId: id);
     return CheckinProfileUser(
-      id: json['id']?.toString() ?? '',
+      id: id,
       username: (json['username'] ?? json['user_name'])?.toString(),
       fullName: (json['full_name'] ?? json['fullName'])?.toString() ?? 'Guest',
-      photo: (json['photo'] ?? json['photo_url'])?.toString(),
+      photo: photoReference.url.isEmpty ? null : photoReference.url,
+      photoReference: photoReference.url.isEmpty ? null : photoReference,
       birthdate:
           DateTime.tryParse(birthdateRaw ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -251,6 +256,7 @@ class PublicUserProfile {
   final String? username;
   final String fullName;
   final String? photo;
+  final MediaReference? photoReference;
   final DateTime birthdate;
   final String gender;
   final bool isVerified;
@@ -266,6 +272,7 @@ class PublicUserProfile {
     this.username,
     required this.fullName,
     this.photo,
+    this.photoReference,
     required this.birthdate,
     required this.gender,
     required this.isVerified,
@@ -292,14 +299,17 @@ class PublicUserProfile {
       return null;
     }
 
+    final id = json['id']?.toString() ?? '';
+    final photoReference = MediaReference.profilePhoto(json, userId: id);
     return PublicUserProfile(
-      id: json['id']?.toString() ?? '',
+      id: id,
       username: readString(const ['username', 'user_name']),
       fullName:
           readString(const ['fullName', 'full_name']) ??
           readString(const ['username']) ??
           'User',
-      photo: readString(const ['photo', 'photoUrl', 'photo_url']),
+      photo: photoReference.url.isEmpty ? null : photoReference.url,
+      photoReference: photoReference.url.isEmpty ? null : photoReference,
       birthdate:
           DateTime.tryParse(birthdateRaw ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),

@@ -5,6 +5,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/ui/connection_error_view.dart';
 import 'package:kmstry_frontend/core/network/network_error.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -728,6 +729,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   /// Sohbet listesi avatarı: fotoğrafı varsa fotoğraf, yoksa renkli baş harf.
   Widget _buildChatAvatar(
     String? photo,
+    MediaReference? mediaReference,
     String name,
     Color avatarColor,
     bool isDark,
@@ -760,6 +762,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
         width: 55,
         height: 55,
         fit: BoxFit.cover,
+        mediaReference: mediaReference,
         errorWidget: (_) => initial(),
       ),
     );
@@ -796,7 +799,13 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
               horizontal: 16,
               vertical: 4,
             ),
-            leading: _buildChatAvatar(other?.photo, name, avatarColor, isDark),
+            leading: _buildChatAvatar(
+              other?.photo,
+              other?.photoReference,
+              name,
+              avatarColor,
+              isDark,
+            ),
             title: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [

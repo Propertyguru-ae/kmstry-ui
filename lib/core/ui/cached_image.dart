@@ -70,6 +70,18 @@ class _CachedImageState extends State<CachedImage> {
   MediaReference _legacyReference() =>
       MediaReference(mediaId: widget.url, url: widget.url);
 
+  String? get _cacheKey {
+    final explicit = widget.mediaReference?.mediaId.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    final uri = Uri.tryParse(_url);
+    if (uri == null ||
+        (!uri.queryParameters.containsKey('X-Amz-Signature') &&
+            !uri.queryParameters.containsKey('x-amz-signature'))) {
+      return null;
+    }
+    return uri.replace(query: '', fragment: '').toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     // Boş/geçersiz URL → doğrudan fallback (CachedNetworkImage boş url'de atar).
@@ -81,7 +93,7 @@ class _CachedImageState extends State<CachedImage> {
     return CachedNetworkImage(
       key: ValueKey('${widget.mediaReference?.mediaId ?? _url}:$_url'),
       imageUrl: _url,
-      cacheKey: widget.mediaReference?.mediaId,
+      cacheKey: _cacheKey,
       fit: widget.fit,
       width: widget.width,
       height: widget.height,
