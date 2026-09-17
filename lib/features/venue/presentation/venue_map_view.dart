@@ -2281,6 +2281,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       address: venue.address,
       city: venue.city,
       photoUrl: venue.photoUrl,
+      photoReference: venue.photoReference,
       latitude: venue.latitude,
       longitude: venue.longitude,
       tag: venue.tag,
@@ -2301,6 +2302,9 @@ class _VenueMapViewState extends State<VenueMapView> {
       photos: venue.photos,
       openingHours: venue.openingHours,
       upcomingEvents: venue.upcomingEvents,
+      isFollowing: venue.isFollowing,
+      followerCount: venue.followerCount,
+      recommendationReason: venue.recommendationReason,
       partnershipPlatforms: venue.partnershipPlatforms,
     );
   }
