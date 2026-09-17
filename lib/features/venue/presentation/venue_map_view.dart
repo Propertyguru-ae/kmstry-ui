@@ -112,6 +112,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   final Map<String, BitmapDescriptor> _clusterIconCache = {};
   final Map<String, BitmapDescriptor> _photoMarkerIconCache = {};
   final Set<String> _photoMarkerIconLoadingKeys = <String>{};
+  final Map<String, int> _photoMarkerIconRetryCounts = <String, int>{};
   BitmapDescriptor? _singleDefaultIcon;
   BitmapDescriptor? _singleSelectedIcon;
   BitmapDescriptor? _singlePressedIcon;
@@ -993,10 +994,12 @@ class _VenueMapViewState extends State<VenueMapView> {
     final selectionChanged =
         oldWidget.selectedVenueId != widget.selectedVenueId;
     if (venuesChanged) {
-      // Venue listesi güncellenince (ör. checkin sonrası) icon cache'i temizle
-      // ki checkinCountActive değişen venue'lar yeni heat rengiyle yeniden çizilsin.
-      _photoMarkerIconCache.clear();
-      _photoMarkerIconLoadingKeys.clear();
+      // Discover sonucu kısa süre sonra canonical map-markers cevabıyla
+      // değişir. Tüm fotoğraf cache/in-flight işlerini burada temizlemek aynı
+      // görselleri tekrar indiriyor ve yavaş ağda pinleri sürekli fallback'te
+      // bırakıyordu. Cache key zaten check-in/selection durumunu içeriyor;
+      // yalnızca gerçekten fotoğraf kimliği değişen venue'ları temizle.
+      _invalidateChangedVenuePhotoIcons(oldWidget.venues, widget.venues);
       // Venue listesi yenilendiyse (ör. check-in sonrası) aktif check-in'i de
       // tazele ki rozet doğru mekanda görünsün.
       _loadActiveCheckin();
@@ -1004,6 +1007,52 @@ class _VenueMapViewState extends State<VenueMapView> {
     if (venuesChanged || selectionChanged) {
       _recomputeClusters(force: true);
     }
+  }
+
+  void _invalidateChangedVenuePhotoIcons(
+    List<Venue> previous,
+    List<Venue> current,
+  ) {
+    final previousById = <String, Venue>{
+      for (final venue in previous) _venueIdentity(venue): venue,
+    };
+    final currentById = <String, Venue>{
+      for (final venue in current) _venueIdentity(venue): venue,
+    };
+
+    final changedIds = <String>{};
+    for (final entry in previousById.entries) {
+      final next = currentById[entry.key];
+      if (next == null ||
+          _venuePhotoIdentity(entry.value) != _venuePhotoIdentity(next)) {
+        changedIds.add(entry.key);
+      }
+    }
+    for (final entry in currentById.entries) {
+      if (!previousById.containsKey(entry.key)) changedIds.add(entry.key);
+    }
+
+    if (changedIds.isEmpty) return;
+    bool belongsToChangedVenue(String key) {
+      final separator = key.indexOf('|');
+      final venueId = separator == -1 ? key : key.substring(0, separator);
+      return changedIds.contains(venueId);
+    }
+
+    _photoMarkerIconCache.removeWhere((key, _) => belongsToChangedVenue(key));
+    _photoMarkerIconRetryCounts.removeWhere(
+      (key, _) => belongsToChangedVenue(key),
+    );
+  }
+
+  String _venuePhotoIdentity(Venue venue) {
+    final mediaId = venue.photoReference?.mediaId.trim();
+    if (mediaId != null && mediaId.isNotEmpty) return mediaId;
+    final rawUrl = venue.photoUrl.trim();
+    final uri = Uri.tryParse(rawUrl);
+    return uri == null
+        ? rawUrl
+        : uri.replace(query: '', fragment: '').toString();
   }
 
   void _showHeatmapLegend(BuildContext context) {
@@ -1451,21 +1500,53 @@ class _VenueMapViewState extends State<VenueMapView> {
   }) {
     if (_photoMarkerIconLoadingKeys.contains(cacheKey)) return;
     _photoMarkerIconLoadingKeys.add(cacheKey);
-    _buildPhotoMarkerIcon(
-          photoUrl: photoUrl,
-          mediaReference: mediaReference,
-          ringColor: ringColor,
-          glowColor: glowColor,
-          activeCount: activeCount,
-        )
-        .then((icon) {
-          if (icon == null || !mounted) return;
-          _photoMarkerIconCache[cacheKey] = icon;
-          _schedulePhotoIconRefresh();
-        })
-        .whenComplete(() {
-          _photoMarkerIconLoadingKeys.remove(cacheKey);
-        });
+    unawaited(
+      _buildAndCachePhotoMarkerIcon(
+        cacheKey: cacheKey,
+        photoUrl: photoUrl,
+        mediaReference: mediaReference,
+        ringColor: ringColor,
+        glowColor: glowColor,
+        activeCount: activeCount,
+      ),
+    );
+  }
+
+  Future<void> _buildAndCachePhotoMarkerIcon({
+    required String cacheKey,
+    required String photoUrl,
+    required MediaReference mediaReference,
+    required Color ringColor,
+    required Color glowColor,
+    int? activeCount,
+  }) async {
+    final icon = await _buildPhotoMarkerIcon(
+      photoUrl: photoUrl,
+      mediaReference: mediaReference,
+      ringColor: ringColor,
+      glowColor: glowColor,
+      activeCount: activeCount,
+    );
+    _photoMarkerIconLoadingKeys.remove(cacheKey);
+    if (!mounted) return;
+
+    if (icon != null) {
+      _photoMarkerIconRetryCounts.remove(cacheKey);
+      _photoMarkerIconCache[cacheKey] = icon;
+      _schedulePhotoIconRefresh();
+      return;
+    }
+
+    // The first discover response can be replaced by map-markers while an
+    // image request is still in flight. If that old request fails, schedule a
+    // single rebuild so the new signed URL gets a chance; never loop forever.
+    final attempts = _photoMarkerIconRetryCounts[cacheKey] ?? 0;
+    if (attempts >= 1) return;
+    _photoMarkerIconRetryCounts[cacheKey] = attempts + 1;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+    _lastMarkerKey = '';
+    await _recomputeClusters(force: true);
   }
 
   void _schedulePhotoIconRefresh() {
