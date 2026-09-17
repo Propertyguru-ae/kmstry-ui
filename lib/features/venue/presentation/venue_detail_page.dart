@@ -2104,6 +2104,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       children: [
                         CachedImage(
                           _safeDisplayPhotoUrl(widget.venue.photoUrl),
+                          mediaReference: widget.venue.photoReference,
                           fit: BoxFit.cover,
                         ),
                         Align(

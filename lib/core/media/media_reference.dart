@@ -85,4 +85,47 @@ class MediaReference {
       ),
     );
   }
+
+  /// Venue cover photos use the venue id as a stable cache identity. Google
+  /// Places-only results deliberately receive no refresh path because their
+  /// URLs are owned by Google rather than KMSTRY storage.
+  factory MediaReference.venuePhoto(
+    Map<String, dynamic> json, {
+    required String venueId,
+    required bool allowRefresh,
+  }) {
+    String? readString(Iterable<String> keys) {
+      for (final key in keys) {
+        final value = json[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+      return null;
+    }
+
+    final mediaId =
+        readString(const ['photo_media_id', 'photoMediaId']) ??
+        (venueId.isEmpty ? '' : '$venueId:venue-photo');
+    final refreshPath =
+        readString(const ['photo_refresh_path', 'photoRefreshPath']) ??
+        (allowRefresh && venueId.isNotEmpty
+            ? '/venues/$venueId/photo-url'
+            : null);
+
+    return MediaReference(
+      mediaId: mediaId,
+      url:
+          readString(const [
+            'photo_temporary_url',
+            'photoTemporaryUrl',
+            'photo',
+            'photoUrl',
+            'photo_url',
+          ]) ??
+          '',
+      refreshPath: refreshPath,
+      expiresAt: DateTime.tryParse(
+        readString(const ['photo_url_expires_at', 'photoUrlExpiresAt']) ?? '',
+      ),
+    );
+  }
 }

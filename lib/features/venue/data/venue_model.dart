@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:kmstry_frontend/core/media/media_reference.dart';
+
 class Venue {
   final String id;
   final String? placeId;
@@ -9,6 +11,7 @@ class Venue {
   final String address;
   final String city;
   final String photoUrl;
+  final MediaReference? photoReference;
   final double latitude;
   final double longitude;
   final String tag; // UI derived
@@ -50,6 +53,7 @@ class Venue {
     required this.address,
     required this.city,
     required this.photoUrl,
+    this.photoReference,
     required this.latitude,
     required this.longitude,
     required this.tag,
@@ -114,9 +118,16 @@ class Venue {
     }
     final canCheckinRaw = json['canCheckin'] ?? json['can_checkin'];
     final distanceRaw = json['distanceMeters'] ?? json['distance_meters'];
+    final resolvedId = (json['id'] ?? json['placeId'] ?? json['place_id'] ?? '')
+        .toString();
+    final photoReference = MediaReference.venuePhoto(
+      json,
+      venueId: resolvedId,
+      allowRefresh: isInDb && source == 'db',
+    );
 
     return Venue(
-      id: (json['id'] ?? json['placeId'] ?? json['place_id'] ?? '').toString(),
+      id: resolvedId,
       placeId: (json['placeId'] ?? json['place_id'])?.toString(),
       name: (json['name'] ?? '').toString(),
       type: (json['venueType'] ?? json['venue_type'] ?? json['type'] ?? 'venue')
@@ -129,7 +140,10 @@ class Venue {
       longitude: (json['longitude'] is num)
           ? (json['longitude'] as num).toDouble()
           : 0.0,
-      photoUrl: (json['photo'] ?? '').toString(),
+      photoUrl: photoReference.url,
+      photoReference: photoReference.url.isNotEmpty || photoReference.canRefresh
+          ? photoReference
+          : null,
       source: source == 'db' ? 'db' : 'google',
       isInDb: isInDb,
       canCheckin: canCheckinRaw is bool ? canCheckinRaw : isInDb,
@@ -300,6 +314,7 @@ class Venue {
       address: address,
       city: city,
       photoUrl: photoUrl,
+      photoReference: photoReference ?? other.photoReference,
       latitude: latitude,
       longitude: longitude,
       tag: tag,
