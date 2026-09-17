@@ -3170,6 +3170,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     required Color avatarColor,
     required bool hasPhoto,
     required String photoUrl,
+    MediaReference? mediaReference,
   }) {
     final initial = avatarSeed.trim().isNotEmpty
         ? avatarSeed.trim()[0].toUpperCase()
@@ -3192,6 +3193,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                   width: 44,
                   height: 44,
                   fit: BoxFit.cover,
+                  mediaReference: mediaReference,
                   errorWidget: (_) => Text(
                     initial,
                     style: TextStyle(
@@ -3235,6 +3237,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final colors = theme.colorScheme;
     final name = _chat?.displayOtherUser?.fullName ?? widget.otherName;
     final photoUrl = _chat?.displayOtherUser?.photo ?? widget.otherPhotoUrl;
+    final photoReference = _chat?.displayOtherUser?.photoReference;
     final avatarSeed = name.isNotEmpty ? name : _effectiveOtherUserId;
     final avatarColor = _avatarColor(avatarSeed);
     final hasPhoto = photoUrl.isNotEmpty;
@@ -3270,6 +3273,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                         avatarColor: avatarColor,
                         hasPhoto: hasPhoto,
                         photoUrl: photoUrl,
+                        mediaReference: photoReference,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
