@@ -422,8 +422,8 @@ class _VenuePhotoStrip extends StatelessWidget {
 
 List<String> _galleryPhotos(Venue venue) {
   final ordered = <String>[
-    ...venue.photos,
     if (venue.photoUrl.trim().isNotEmpty) venue.photoUrl.trim(),
+    ...venue.photos,
   ];
   return ordered.where((url) => url.trim().isNotEmpty).toSet().toList();
 }
