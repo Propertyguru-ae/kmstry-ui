@@ -41,4 +41,48 @@ class MediaReference {
       ),
     );
   }
+
+  /// Profile photos use the user id as their stable cache identity. The
+  /// backend rotates the signed URL, while this reference keeps cache entries
+  /// stable and gives [CachedImage] exactly one authenticated refresh path.
+  factory MediaReference.profilePhoto(
+    Map<String, dynamic> json, {
+    String? userId,
+  }) {
+    String? readString(Iterable<String> keys) {
+      for (final key in keys) {
+        final value = json[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+      return null;
+    }
+
+    final resolvedUserId =
+        userId ?? readString(const ['id', 'userId', 'user_id']);
+    final mediaId =
+        readString(const ['photo_media_id', 'photoMediaId']) ??
+        (resolvedUserId == null ? '' : '$resolvedUserId:profile');
+    final refreshPath =
+        readString(const ['photo_refresh_path', 'photoRefreshPath']) ??
+        (resolvedUserId == null ? null : '/users/$resolvedUserId/photo-url');
+
+    return MediaReference(
+      mediaId: mediaId,
+      url:
+          readString(const [
+            'photo_temporary_url',
+            'photoTemporaryUrl',
+            'photo',
+            'profilePhoto',
+            'profile_photo',
+            'avatarUrl',
+            'avatar_url',
+          ]) ??
+          '',
+      refreshPath: refreshPath,
+      expiresAt: DateTime.tryParse(
+        readString(const ['photo_url_expires_at', 'photoUrlExpiresAt']) ?? '',
+      ),
+    );
+  }
 }

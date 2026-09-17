@@ -7,6 +7,7 @@ import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -41,6 +42,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   File? _pickedPhoto; // yeni seçilen (önizleme için)
   String _photoUrl = '';
+  MediaReference? _profilePhotoReference;
   // Aktif check-in'in avatarı (featured foto'dan kırpılmış) — varsa profil
   // fotosunun yerine bu gösterilir ve "Change photo" gizlenir; çünkü aktif
   // check-in boyunca avatar check-in'den yönetilir.
@@ -77,6 +79,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
       text: (widget.user['bio'] ?? '').toString(),
     );
     _photoUrl = (widget.user['photo'] ?? '').toString();
+    final reference = MediaReference.profilePhoto(widget.user);
+    _profilePhotoReference = reference.url.isEmpty ? null : reference;
 
     final active =
         widget.user['activeCheckin'] ?? widget.user['active_checkin'];
@@ -178,6 +182,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (mounted) {
         setState(() {
           _photoUrl = '';
+          _profilePhotoReference = null;
           _checkinAvatarUrl = '';
           _uploadingPhoto = false;
           _photoChanged = true;
@@ -218,6 +223,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (!mounted) return;
       setState(() {
         _photoUrl = '';
+        _profilePhotoReference = null;
         _pickedPhoto = null;
         _removingPhoto = false;
         _photoChanged = true;
@@ -641,6 +647,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       return CachedImage(
         displayUrl,
         fit: BoxFit.cover,
+        mediaReference: _photoUrl.isNotEmpty ? _profilePhotoReference : null,
         errorWidget: (_) => _avatarFallback(isDark),
       );
     }

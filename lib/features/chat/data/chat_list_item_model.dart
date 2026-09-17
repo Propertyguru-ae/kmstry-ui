@@ -1,3 +1,5 @@
+import '../../../core/media/media_reference.dart';
+
 /// Model for GET /chats list item.
 /// Backend returns user1 + user2 (Prisma include); "other" is the one that isn't current user.
 class ChatListItem {
@@ -50,8 +52,7 @@ class ChatListItem {
       return ChatListItemUser.fromJson(v);
     }
 
-    final lastMessageAtRaw =
-        json['last_message_at'] ?? json['lastMessageAt'];
+    final lastMessageAtRaw = json['last_message_at'] ?? json['lastMessageAt'];
     final unreadCountRaw = json['unread_count'] ?? json['unreadCount'] ?? 0;
     final lastPreview =
         json['last_message_preview'] as String? ??
@@ -104,20 +105,25 @@ class ChatListItemUser {
   final String id;
   final String? fullName;
   final String? photo;
+  final MediaReference? photoReference;
   final bool isOnline;
 
   ChatListItemUser({
     required this.id,
     this.fullName,
     this.photo,
+    this.photoReference,
     this.isOnline = false,
   });
 
   factory ChatListItemUser.fromJson(Map<String, dynamic> json) {
+    final id = json['id']?.toString() ?? '';
+    final reference = MediaReference.profilePhoto(json, userId: id);
     return ChatListItemUser(
-      id: json['id'] as String,
+      id: id,
       fullName: json['full_name'] as String? ?? json['fullName'] as String?,
-      photo: json['photo'] as String? ?? json['photoUrl'] as String?,
+      photo: reference.url.isEmpty ? null : reference.url,
+      photoReference: reference.url.isEmpty ? null : reference,
       isOnline:
           json['is_online'] as bool? ?? json['isOnline'] as bool? ?? false,
     );

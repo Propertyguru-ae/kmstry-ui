@@ -5,6 +5,7 @@ import 'dart:ui'; // Glassmorphism efekti için
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
 import '../../checkin/services/active_checkin_service.dart';
@@ -1572,6 +1573,9 @@ class _ProfilePageState extends State<ProfilePage>
         _activeCheckinAvatarPhotoUrl ?? _featuredCheckinPhotoUrl;
     final photo = (userPhoto.isNotEmpty ? userPhoto : (activeAvatar ?? ''))
         .toString();
+    final profilePhotoReference = userPhoto.isNotEmpty && _user != null
+        ? MediaReference.profilePhoto(_user!)
+        : null;
     final fullName = (_user?['fullName'] ?? _user?['full_name'] ?? '')
         .toString()
         .trim();
@@ -1627,7 +1631,11 @@ class _ProfilePageState extends State<ProfilePage>
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        _buildProfileAvatar(photo, isDark),
+                        _buildProfileAvatar(
+                          photo,
+                          isDark,
+                          mediaReference: profilePhotoReference,
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -1864,7 +1872,11 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
-  Widget _buildProfileAvatar(String photo, bool isDark) {
+  Widget _buildProfileAvatar(
+    String photo,
+    bool isDark, {
+    MediaReference? mediaReference,
+  }) {
     const avatarSize = 132.0;
     const ringWidth = 3.0;
     const gap = 2.5;
@@ -1899,6 +1911,7 @@ class _ProfilePageState extends State<ProfilePage>
             ? CachedImage(
                 photo,
                 fit: BoxFit.cover,
+                mediaReference: mediaReference,
                 errorWidget: (_) => _avatarFallback(isDark),
               )
             : _avatarFallback(isDark),

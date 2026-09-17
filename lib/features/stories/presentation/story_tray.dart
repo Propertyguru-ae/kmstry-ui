@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
@@ -427,6 +428,7 @@ const _kAvatarRadius = 11.0;
 Widget _squareAvatar({
   required BuildContext context,
   required String? imageUrl,
+  MediaReference? mediaReference,
   required Widget placeholder,
 }) {
   return Container(
@@ -439,7 +441,11 @@ Widget _squareAvatar({
     child: ClipRRect(
       borderRadius: BorderRadius.circular(_kAvatarRadius),
       child: imageUrl != null && imageUrl.isNotEmpty
-          ? CachedImage(imageUrl, fit: BoxFit.cover)
+          ? CachedImage(
+              imageUrl,
+              fit: BoxFit.cover,
+              mediaReference: mediaReference,
+            )
           : placeholder,
     ),
   );
@@ -710,6 +716,7 @@ class _StoryBubble extends StatelessWidget {
     final avatar = _squareAvatar(
       context: context,
       imageUrl: group.bubbleImageUrl,
+      mediaReference: group.bubbleMediaReference,
       placeholder: const Center(
         child: Icon(Icons.person, color: Colors.white70, size: 24),
       ),
