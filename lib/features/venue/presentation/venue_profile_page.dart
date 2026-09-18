@@ -29,6 +29,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
@@ -237,13 +238,23 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     );
     if (picked == null || !mounted) return;
 
+    // Venue tek foto tutar; hem kare avatar hem cover hero (BoxFit.cover) bundan
+    // beslenir. Bu yüzden KARE kırpılır → avatar düzgün, cover hero geniş dolar
+    // (venue detay sayfasıyla aynı davranış). İptal edilirse yükleme yapma.
+    final cropped = await cropSquareAvatar(context, File(picked.path));
+    if (cropped == null || !mounted) return;
+
     setState(() => _uploadingPhoto = true);
     try {
       final updated = await VenueOwnerRepository().uploadVenuePhoto(
         venueId,
-        File(picked.path),
+        cropped,
       );
       if (mounted) setState(() => _venue = updated);
+      // Foto aynı zamanda venue avatarı → navbar'daki avatarı da tazele
+      // (/auth/me cache'ini geçersiz kıl + dinleyicileri uyar).
+      AuthRepository.invalidateMeCache();
+      ActiveCheckinService().notifyMediaUpdated();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1053,6 +1064,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     final isPendingClaim = activeMemberVenue?.isPendingOwnerClaim ?? false;
     final isRejectedClaim = activeMemberVenue?.isRejectedOwnerClaim ?? false;
     final isClaimLocked = isPendingClaim || isRejectedClaim;
+    final canShowCoverPhoto = hasPhoto && !isClaimLocked;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -1087,287 +1099,325 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                   parent: AlwaysScrollableScrollPhysics(),
                 ),
                 child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ── Venue fotoğrafı ───────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                      child: Stack(
-                        children: [
-                          GestureDetector(
-                            onTap: hasPhoto
-                                ? () => _showPhotoViewer(venue!.photo!)
-                                : null,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: hasPhoto
-                                  ? Image.network(
-                                      venue!.photo!,
-                                      height: 140,
-                                      width: double.infinity,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          _PhotoPlaceholder(colors: colors),
-                                    )
-                                  : _PhotoPlaceholder(colors: colors),
-                            ),
-                          ),
-                          // Kalem ikonu — sağ üst köşe (sadece VENUE_EDIT yetkisi varsa)
-                          if (!isClaimLocked &&
-                              session.can(VenuePermission.venueEdit))
-                            Positioned(
-                              top: 10,
-                              right: 10,
-                              child: GestureDetector(
-                                onTap: _uploadingPhoto
-                                    ? null
-                                    : _pickAndUploadPhoto,
-                                child: Container(
-                                  width: 34,
-                                  height: 34,
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.55),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: _uploadingPhoto
-                                      ? const Padding(
-                                          padding: EdgeInsets.all(8),
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.edit_outlined,
-                                          size: 17,
-                                          color: Colors.white,
-                                        ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Venue adı + bilgiler ──────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Venue fotoğrafı ───────────────────────────────
+                      // ── Cover hero (venue detay sayfası gibi: tam genişlik +
+                      // alt gradient). Kalem avatara taşındı. Foto yoksa
+                      // placeholder; yetkiliyse dokununca foto ekleme açılır.
+                      GestureDetector(
+                        onTap: canShowCoverPhoto
+                            ? () => _showPhotoViewer(venue!.photo!)
+                            : (!isClaimLocked &&
+                                  session.can(VenuePermission.venueEdit) &&
+                                  !_uploadingPhoto)
+                            ? _pickAndUploadPhoto
+                            : null,
+                        child: SizedBox(
+                          height: 180,
+                          width: double.infinity,
+                          child: Stack(
+                            fit: StackFit.expand,
                             children: [
-                              if (venue != null) ...[
-                                _VenueSquareAvatar(
-                                  venue: venue,
-                                  isUploading: _uploadingStory,
-                                  canAddStory:
-                                      !isClaimLocked &&
-                                      session.can(VenuePermission.storyManage),
-                                  canViewStats:
-                                      !isClaimLocked &&
-                                      (session.isOwner ||
-                                          session.can(
-                                            VenuePermission.storyViewStats,
-                                          )),
-                                  canDeleteStory:
-                                      !isClaimLocked &&
-                                      (session.isOwner ||
-                                          session.can(
-                                            VenuePermission.storyManage,
-                                          )),
-                                  onAddStory: _openAddStory,
-                                  stories: _avatarStories,
-                                  onStoryClose: _onStoryViewerClose,
-                                  onStoryDeleted: _onStoryDeleted,
-                                ),
-                                const SizedBox(width: 14),
-                              ],
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      venue?.name ??
-                                          widget.activeVenueName ??
-                                          'Venue',
-                                      style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w800,
-                                        color: colors.onSurface,
-                                        letterSpacing: -0.3,
-                                        height: 1.2,
-                                      ),
-                                    ),
-                                    if (venue?.address != null &&
-                                        venue!.address!.isNotEmpty) ...[
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Icon(
-                                            Icons.location_on_outlined,
-                                            size: 12,
-                                            color: colors.onSurface.withValues(
-                                              alpha: 0.45,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 3),
-                                          Expanded(
-                                            child: Text(
-                                              venue.address!,
-                                              style: TextStyle(
-                                                fontSize: 11.5,
-                                                color: colors.onSurface
-                                                    .withValues(alpha: 0.55),
-                                                height: 1.4,
-                                              ),
-                                            ),
-                                          ),
+                              if (isClaimLocked)
+                                _PhotoPlaceholder(
+                                  colors: colors,
+                                  locked: true,
+                                  message:
+                                      'You can add a photo after your venue is approved.',
+                                )
+                              else if (hasPhoto)
+                                Image.network(
+                                  venue!.photo!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      _PhotoPlaceholder(colors: colors),
+                                )
+                              else
+                                _PhotoPlaceholder(colors: colors),
+                              // Alt gradient — cover sayfa zeminine erir.
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    height: 90,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.transparent,
+                                          theme.scaffoldBackgroundColor,
                                         ],
                                       ),
-                                    ],
-                                  ],
+                                    ),
+                                  ),
                                 ),
                               ),
+                              // Kalem — cover'ın sağ üstünde (VENUE_EDIT). Basınca
+                              // foto ekleme + KARE (avatar) kırpma akışını açar.
+                              if (!isClaimLocked &&
+                                  session.can(VenuePermission.venueEdit))
+                                Positioned(
+                                  top: 10,
+                                  right: 10,
+                                  child: GestureDetector(
+                                    onTap: _uploadingPhoto
+                                        ? null
+                                        : _pickAndUploadPhoto,
+                                    child: Container(
+                                      width: 34,
+                                      height: 34,
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.55,
+                                        ),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: _uploadingPhoto
+                                          ? const Padding(
+                                              padding: EdgeInsets.all(8),
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.edit_outlined,
+                                              size: 17,
+                                              color: Colors.white,
+                                            ),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Badges ────────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                      child: Row(
-                        children: [
-                          _RoleBadge(role: _venueRole, colors: colors),
-                          const SizedBox(width: 8),
-                          Builder(
-                            builder: (_) {
-                              final canEditType =
-                                  !isClaimLocked &&
-                                  (session.isOwner ||
-                                      session.can(VenuePermission.venueEdit));
-                              return GestureDetector(
-                                onTap: canEditType ? _showTypePicker : null,
-                                child: _TypeBadge(
-                                  type: venue?.type,
-                                  updating: _updatingType,
-                                  editable: canEditType,
-                                  colors: colors,
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // NOT: Yönetim aksiyonları (Events, Offers, Team, Push)
-                    // artık "Manage" sekmesinde. Profil = kimlik + stories + edit.
-
-                    // ── About ─────────────────────────────────────────
-                    if (isClaimLocked)
-                      _buildLockedProfileSection(
-                        title: 'About',
-                        icon: Icons.info_outline_rounded,
-                        message: isPendingClaim
-                            ? 'Once your claim is approved, you will be able to add your venue description and introduce your vibe to guests.'
-                            : 'This claim was not approved. About details are locked for this venue account.',
-                      )
-                    else if (venue != null)
-                      _buildAbout(
-                        venue,
-                        session.isOwner ||
-                            session.can(VenuePermission.venueEdit),
-                      ),
-
-                    // ── Deals & discounts (salt-görüntü) ──────────────
-                    // Venue detay sayfasıyla aynı: About altında, tek satır
-                    // kaydırılabilir chip'ler. Chip'e basınca detay açılır.
-                    if (!isClaimLocked &&
-                        venue != null &&
-                        _partnerships.isNotEmpty) ...[
-                      const SizedBox(height: 18),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: VenueDealsChipRow(
-                          partnerships: _partnerships,
-                          venueName: venue.name,
                         ),
                       ),
-                    ],
 
-                    // ── Menu ──────────────────────────────────────────
-                    // About'un hemen ardından gelir; MENU_MANAGE iznine bağlıdır.
-                    if (VenueFeatureVisibility.menu &&
-                        !isClaimLocked &&
-                        venue != null &&
-                        (session.isOwner ||
-                            session.can(VenuePermission.menuManage))) ...[
-                      const SizedBox(height: 14),
-                      VenueMenuProfileSection(
-                        venueId: venue.id,
-                        venueName: venue.name,
-                      ),
-                    ],
-
-                    // ── Gallery ───────────────────────────────────────
-                    if (isClaimLocked) ...[
-                      const SizedBox(height: 18),
-                      _buildLockedProfileSection(
-                        title: 'Photos & Videos',
-                        icon: Icons.photo_library_outlined,
-                        dotColor: AppColors.teal,
-                        message: isPendingClaim
-                            ? 'After approval, you can upload venue photos and show guests what the place feels like.'
-                            : 'Gallery management is locked because this claim was not approved.',
-                      ),
-                    ] else if (venue != null) ...[
-                      const SizedBox(height: 18),
-                      VenueGallerySection(
-                        venueId: venue.id,
-                        // Galeri ekleme/silme POST_CREATE iznine bağlı.
-                        canEdit:
-                            session.isOwner ||
-                            session.can(VenuePermission.postCreate),
-                      ),
-                    ],
-
-                    // ── Upcoming Events (salt-görüntü) ────────────────
-                    // Venue detay sayfasıyla aynı kart tasarımı.
-                    if (!isClaimLocked &&
-                        venue != null &&
-                        VenueUpcomingEventsSection.hasUpcoming(
-                          venue.upcomingEvents,
-                        )) ...[
-                      const SizedBox(height: 18),
+                      // ── Venue adı + bilgiler ──────────────────────────
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: VenueUpcomingEventsSection(
-                          events: venue.upcomingEvents,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                if (venue != null) ...[
+                                  _VenueSquareAvatar(
+                                    venue: venue,
+                                    isUploading: _uploadingStory,
+                                    canAddStory:
+                                        !isClaimLocked &&
+                                        session.can(
+                                          VenuePermission.storyManage,
+                                        ),
+                                    canViewStats:
+                                        !isClaimLocked &&
+                                        (session.isOwner ||
+                                            session.can(
+                                              VenuePermission.storyViewStats,
+                                            )),
+                                    canDeleteStory:
+                                        !isClaimLocked &&
+                                        (session.isOwner ||
+                                            session.can(
+                                              VenuePermission.storyManage,
+                                            )),
+                                    onAddStory: _openAddStory,
+                                    stories: _avatarStories,
+                                    onStoryClose: _onStoryViewerClose,
+                                    onStoryDeleted: _onStoryDeleted,
+                                  ),
+                                  const SizedBox(width: 14),
+                                ],
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        venue?.name ??
+                                            widget.activeVenueName ??
+                                            'Venue',
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w800,
+                                          color: colors.onSurface,
+                                          letterSpacing: -0.3,
+                                          height: 1.2,
+                                        ),
+                                      ),
+                                      if (venue?.address != null &&
+                                          venue!.address!.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Icon(
+                                              Icons.location_on_outlined,
+                                              size: 12,
+                                              color: colors.onSurface
+                                                  .withValues(alpha: 0.45),
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Expanded(
+                                              child: Text(
+                                                venue.address!,
+                                                style: TextStyle(
+                                                  fontSize: 11.5,
+                                                  color: colors.onSurface
+                                                      .withValues(alpha: 0.55),
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // ── Badges ────────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                        child: Row(
+                          children: [
+                            _RoleBadge(role: _venueRole, colors: colors),
+                            const SizedBox(width: 8),
+                            Builder(
+                              builder: (_) {
+                                final canEditType =
+                                    !isClaimLocked &&
+                                    (session.isOwner ||
+                                        session.can(VenuePermission.venueEdit));
+                                return GestureDetector(
+                                  onTap: canEditType ? _showTypePicker : null,
+                                  child: _TypeBadge(
+                                    type: venue?.type,
+                                    updating: _updatingType,
+                                    editable: canEditType,
+                                    colors: colors,
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // NOT: Yönetim aksiyonları (Events, Offers, Team, Push)
+                      // artık "Manage" sekmesinde. Profil = kimlik + stories + edit.
+
+                      // ── About ─────────────────────────────────────────
+                      if (isClaimLocked)
+                        _buildLockedProfileSection(
+                          title: 'About',
+                          icon: Icons.info_outline_rounded,
+                          message: isPendingClaim
+                              ? 'Once your claim is approved, you will be able to add your venue description and introduce your vibe to guests.'
+                              : 'This claim was not approved. About details are locked for this venue account.',
+                        )
+                      else if (venue != null)
+                        _buildAbout(
+                          venue,
+                          session.isOwner ||
+                              session.can(VenuePermission.venueEdit),
+                        ),
+
+                      // ── Deals & discounts (salt-görüntü) ──────────────
+                      // Venue detay sayfasıyla aynı: About altında, tek satır
+                      // kaydırılabilir chip'ler. Chip'e basınca detay açılır.
+                      if (!isClaimLocked &&
+                          venue != null &&
+                          _partnerships.isNotEmpty) ...[
+                        const SizedBox(height: 18),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: VenueDealsChipRow(
+                            partnerships: _partnerships,
+                            venueName: venue.name,
+                          ),
+                        ),
+                      ],
+
+                      // ── Menu ──────────────────────────────────────────
+                      // About'un hemen ardından gelir; MENU_MANAGE iznine bağlıdır.
+                      if (VenueFeatureVisibility.menu &&
+                          !isClaimLocked &&
+                          venue != null &&
+                          (session.isOwner ||
+                              session.can(VenuePermission.menuManage))) ...[
+                        const SizedBox(height: 14),
+                        VenueMenuProfileSection(
                           venueId: venue.id,
                           venueName: venue.name,
-                          venueAddress: venue.address,
-                          venuePhotoUrl: venue.photo,
-                          openAsVenueMember: true,
                         ),
+                      ],
+
+                      // ── Gallery ───────────────────────────────────────
+                      if (isClaimLocked) ...[
+                        const SizedBox(height: 18),
+                        _buildLockedProfileSection(
+                          title: 'Photos & Videos',
+                          icon: Icons.photo_library_outlined,
+                          dotColor: AppColors.teal,
+                          message: isPendingClaim
+                              ? 'After approval, you can upload venue photos and show guests what the place feels like.'
+                              : 'Gallery management is locked because this claim was not approved.',
+                        ),
+                      ] else if (venue != null) ...[
+                        const SizedBox(height: 18),
+                        VenueGallerySection(
+                          venueId: venue.id,
+                          // Galeri ekleme/silme POST_CREATE iznine bağlı.
+                          canEdit:
+                              session.isOwner ||
+                              session.can(VenuePermission.postCreate),
+                        ),
+                      ],
+
+                      // ── Upcoming Events (salt-görüntü) ────────────────
+                      // Venue detay sayfasıyla aynı kart tasarımı.
+                      if (!isClaimLocked &&
+                          venue != null &&
+                          VenueUpcomingEventsSection.hasUpcoming(
+                            venue.upcomingEvents,
+                          )) ...[
+                        const SizedBox(height: 18),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: VenueUpcomingEventsSection(
+                            events: venue.upcomingEvents,
+                            venueId: venue.id,
+                            venueName: venue.name,
+                            venueAddress: venue.address,
+                            venuePhotoUrl: venue.photo,
+                            openAsVenueMember: true,
+                          ),
+                        ),
+                      ],
+
+                      SizedBox(
+                        height:
+                            MediaQuery.of(context).padding.bottom +
+                            kBottomNavigationBarHeight +
+                            16,
                       ),
                     ],
-
-                    SizedBox(
-                      height:
-                          MediaQuery.of(context).padding.bottom +
-                          kBottomNavigationBarHeight +
-                          16,
-                    ),
-                  ],
-                ),
+                  ),
                 ),
               ),
             );
@@ -1741,7 +1791,14 @@ class _InitialBox extends StatelessWidget {
 
 class _PhotoPlaceholder extends StatelessWidget {
   final ColorScheme colors;
-  const _PhotoPlaceholder({required this.colors});
+  final bool locked;
+  final String message;
+
+  const _PhotoPlaceholder({
+    required this.colors,
+    this.locked = false,
+    this.message = 'Add photo',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1756,13 +1813,16 @@ class _PhotoPlaceholder extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.add_photo_alternate_outlined,
+            locked
+                ? Icons.lock_outline_rounded
+                : Icons.add_photo_alternate_outlined,
             size: 36,
             color: colors.onSurface.withValues(alpha: 0.35),
           ),
           const SizedBox(height: 6),
           Text(
-            'Add cover photo',
+            message,
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
               color: colors.onSurface.withValues(alpha: 0.45),

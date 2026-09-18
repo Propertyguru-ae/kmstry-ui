@@ -8,14 +8,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
 
 const _kMagenta = Color(0xFFE020D8);
+const _maxVenueVideoDuration = Duration(seconds: 60);
+const _maxVenueVideoUploadBytes = 100 * 1024 * 1024;
 
-/// Venue profilinde gösterilen galeri: foto + video, limitsiz.
+/// Venue profilinde gösterilen galeri: fotoğraf + en fazla 60 saniyelik video.
 /// Kendi verisini yükler; [canEdit] true ise ekleme/silme kısayolları görünür.
 class VenueGallerySection extends StatefulWidget {
   final String venueId;
@@ -102,8 +105,21 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
         .toList();
     if (paths.isEmpty || !mounted) return;
 
+    final validationMessage = await _validateSelectedVideos(paths);
+    if (!mounted) return;
+    if (validationMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(validationMessage),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     setState(() => _uploading = true);
     var hadError = false;
+    String? uploadErrorMessage;
 
     // Yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 720p) ve hepsini
     // paralel yükle; giriş sırasını koru.
@@ -114,6 +130,12 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
         File? thumb;
         if (isVideo) {
           fileToUpload = await MediaCompressor.compressGalleryVideo(File(path));
+          if (await fileToUpload.length() > _maxVenueVideoUploadBytes) {
+            uploadErrorMessage =
+                'Video is too large. Please choose a smaller file.';
+            hadError = true;
+            return null;
+          }
           thumb = await _generateThumbnail(path);
         } else {
           fileToUpload = await MediaCompressor.compressImage(File(path));
@@ -123,8 +145,12 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
           fileToUpload,
           thumbnail: thumb,
         );
-      } catch (_) {
+      } catch (error) {
         hadError = true;
+        if (error.toString().contains('413')) {
+          uploadErrorMessage =
+              'Video is too large. Please choose a smaller file.';
+        }
         return null;
       }
     }
@@ -147,12 +173,31 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
     }
     if (hadError) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Some uploads failed'),
+        SnackBar(
+          content: Text(
+            uploadErrorMessage ?? 'Some uploads failed. Please try again.',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
     }
+  }
+
+  Future<String?> _validateSelectedVideos(List<String> paths) async {
+    for (final path in paths.where(_isVideoPath)) {
+      final controller = VideoPlayerController.file(File(path));
+      try {
+        await controller.initialize();
+        if (controller.value.duration > _maxVenueVideoDuration) {
+          return 'Video must be 60 seconds or shorter.';
+        }
+      } catch (_) {
+        return 'Could not read the selected video. Please try another file.';
+      } finally {
+        await controller.dispose();
+      }
+    }
+    return null;
   }
 
   Future<File?> _generateThumbnail(String videoPath) async {
@@ -172,39 +217,14 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
   }
 
   Future<void> _confirmDelete(VenueGalleryItem item) async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF0B1322) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text(
-          'Remove from gallery',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-        ),
-        content: const Text(
-          'This media will be permanently removed.',
-          style: TextStyle(fontSize: 13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Remove',
-              style: TextStyle(
-                color: Color(0xFFEF4444),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
+    final ok = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Remove from gallery',
+      message: 'This media will be permanently removed.',
+      confirmLabel: 'Remove',
+      icon: Icons.delete_outline_rounded,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     try {
       await _repo.deleteItem(widget.venueId, item.id);
       if (mounted)

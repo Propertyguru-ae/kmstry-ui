@@ -40,6 +40,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _isVenue = false;
   String? _activeVenueId;
   String? _venueName;
+  String? _venuePhotoUrl;
 
   // Account
   String? _email;
@@ -92,13 +93,19 @@ class _SettingsPageState extends State<SettingsPage>
       final venueId =
           ctx.activeVenueId ??
           (ctx.memberVenues.isNotEmpty ? ctx.memberVenues.first.id : null);
-      String? venueName;
+      MemberVenue? selectedVenue;
       for (final v in ctx.memberVenues) {
         if (v.id == venueId) {
-          venueName = v.name;
+          selectedVenue = v;
           break;
         }
       }
+      // Pending/rejected claims are still venue contexts. If activeVenueId is
+      // temporarily absent, keep the header tied to the known venue rather
+      // than falling back to the personal identity.
+      selectedVenue ??= isVenue && ctx.memberVenues.isNotEmpty
+          ? ctx.memberVenues.first
+          : null;
 
       final emailRaw =
           (me['email'] ?? me['emailAddress'] ?? me['email_address'])
@@ -109,8 +116,13 @@ class _SettingsPageState extends State<SettingsPage>
       setState(() {
         _me = me;
         _isVenue = isVenue;
-        _activeVenueId = venueId;
-        _venueName = venueName;
+        _activeVenueId = selectedVenue?.id ?? venueId;
+        _venueName = selectedVenue?.name;
+        // A pending/rejected claim uses the venue initial. Once ACTIVE, show
+        // the venue photo when available; otherwise keep the same initial.
+        _venuePhotoUrl = selectedVenue?.isActive == true
+            ? selectedVenue?.photoUrl
+            : null;
         _email = (emailRaw != null && emailRaw.isNotEmpty) ? emailRaw : null;
         _hasPassword = AuthRepository().hasLocalPasswordProvider(me);
         _marketingOptIn =
@@ -452,15 +464,24 @@ class _SettingsPageState extends State<SettingsPage>
     final colors = theme.colorScheme;
     final name = (_me['fullName'] ?? _me['full_name'] ?? '').toString().trim();
     final username = (_me['username'] ?? '').toString().trim();
-    final avatar = (_me['photo'] ?? _me['photoUrl'] ?? _me['photo_url'])
+    final personalAvatar = (_me['photo'] ?? _me['photoUrl'] ?? _me['photo_url'])
         ?.toString()
         .trim();
+    final avatar = _isVenue ? _venuePhotoUrl : personalAvatar;
     final title = _isVenue
         ? (_venueName ?? 'Venue')
         : (name.isEmpty ? 'You' : name);
     final sub = _isVenue
         ? 'Venue account'
         : (username.isNotEmpty ? '@$username' : (_email ?? 'Personal account'));
+    final initialSource = _isVenue
+        ? (_venueName ?? 'V')
+        : (name.isNotEmpty
+              ? name
+              : (username.isNotEmpty ? username : (_email ?? 'U')));
+    final initial = initialSource.trim().isEmpty
+        ? (_isVenue ? 'V' : 'U')
+        : initialSource.trim()[0].toUpperCase();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -484,9 +505,13 @@ class _SettingsPageState extends State<SettingsPage>
                 ? NetworkImage(avatar)
                 : null,
             child: (avatar == null || avatar.isEmpty)
-                ? Icon(
-                    _isVenue ? Icons.storefront_rounded : Icons.person_rounded,
-                    color: colors.primary,
+                ? Text(
+                    initial,
+                    style: TextStyle(
+                      color: colors.primary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
                   )
                 : null,
           ),

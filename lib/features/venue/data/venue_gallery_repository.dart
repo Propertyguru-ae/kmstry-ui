@@ -71,7 +71,10 @@ class VenueGalleryRepository {
       );
     }
 
-    final response = await sendMultipartRequest(request);
+    final response = await sendMultipartRequest(
+      request,
+      timeout: const Duration(minutes: 5),
+    );
     final body = await response.stream.bytesToString();
     if (response.statusCode >= 400) {
       throw Exception('Upload failed (${response.statusCode}): $body');

@@ -42,7 +42,10 @@ class VenueStoryRepository {
     );
     request.fields['media_type'] = mediaType;
 
-    final streamed = await sendMultipartRequest(request);
+    final streamed = await sendMultipartRequest(
+      request,
+      timeout: const Duration(minutes: 5),
+    );
     final body = await streamed.stream.bytesToString();
 
     if (streamed.statusCode >= 400) {

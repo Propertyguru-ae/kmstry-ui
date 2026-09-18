@@ -3,7 +3,10 @@ import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import '../data/venue_story_repository.dart';
+
+const _maxVenueStoryUploadBytes = 50 * 1024 * 1024;
 
 class AddVenueStoryPage extends StatefulWidget {
   final String venueId;
@@ -31,10 +34,8 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
     final dynamic captureResult = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => const CameraScreen(
-          useFrontCamera: false,
-          optimizeForUpload: true,
-        ),
+        builder: (_) =>
+            const CameraScreen(useFrontCamera: false, optimizeForUpload: true),
       ),
     );
 
@@ -60,9 +61,15 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
     setState(() => _uploading = true);
 
     try {
+      final uploadFile = isVideo
+          ? await MediaCompressor.compressVenueVideo(file)
+          : file;
+      if (isVideo && await uploadFile.length() > _maxVenueStoryUploadBytes) {
+        throw Exception('VIDEO_TOO_LARGE');
+      }
       await _repo.createVenueStory(
         venueId: widget.venueId,
-        file: file,
+        file: uploadFile,
         mediaType: isVideo ? 'video' : 'photo',
       );
     } catch (e) {
@@ -72,10 +79,19 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
       // giriş noktalarından ulaşılır; yine de plan hatası düşerse generic
       // "could not upload" yerine gerçek nedeni göster.
       final isPlanLocked = e.toString().contains('PLAN_UPGRADE_REQUIRED');
+      final isTooLong = e.toString().contains('60 seconds or shorter');
+      final isTooLarge =
+          e.toString().contains('VIDEO_TOO_LARGE') ||
+          e.toString().contains('413') ||
+          e.toString().contains('File too large');
       await showPremiumErrorDialog(
         context,
         message: isPlanLocked
             ? 'Venue stories are part of the Social plan. Upgrade your venue to post stories.'
+            : isTooLong
+            ? 'Video must be 60 seconds or shorter.'
+            : isTooLarge
+            ? 'Video is too large. Please choose a smaller file.'
             : 'Could not upload story. Please try again.',
       );
       if (mounted) Navigator.pop(context);
@@ -99,7 +115,9 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2.5),
+                    color: Colors.white,
+                    strokeWidth: 2.5,
+                  ),
                   SizedBox(height: 18),
                   Text(
                     'Uploading...',
@@ -112,7 +130,9 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
                 ],
               )
             : const CircularProgressIndicator(
-                color: Colors.white, strokeWidth: 2.5),
+                color: Colors.white,
+                strokeWidth: 2.5,
+              ),
       ),
     );
   }
