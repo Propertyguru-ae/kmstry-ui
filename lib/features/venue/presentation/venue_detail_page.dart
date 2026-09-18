@@ -183,8 +183,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _reportVenue() async {
-    final venueId = await _resolveVenueIdForDetail();
-    if (!mounted || venueId.isEmpty) return;
+    final venueId = widget.venue.id.trim();
+    if (!widget.venue.isInDb || venueId.isEmpty || !mounted) return;
     await showReportUserSheet(
       context,
       title: 'Why are you reporting this venue?',
@@ -2632,23 +2632,24 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             left: 12,
             child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
           ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 6,
-            right: 12,
-            child: Material(
-              color: Colors.black.withValues(alpha: 0.45),
-              shape: const CircleBorder(),
-              child: IconButton(
-                tooltip: 'Report venue',
-                onPressed: _reportVenue,
-                icon: const Icon(
-                  Icons.flag_outlined,
-                  size: 20,
-                  color: Colors.white,
+          if (widget.venue.isInDb && widget.venue.id.trim().isNotEmpty)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 6,
+              right: 12,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Report venue',
+                  onPressed: _reportVenue,
+                  icon: const Icon(
+                    Icons.flag_outlined,
+                    size: 20,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
-          ),
         ], // Stack children
       ), // Stack
     );
