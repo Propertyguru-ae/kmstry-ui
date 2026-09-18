@@ -6,15 +6,27 @@ class StoryUser {
   final String? username;
   final String? fullName;
   final String? photo;
+  final MediaReference? photoReference;
 
-  const StoryUser({required this.id, this.username, this.fullName, this.photo});
+  const StoryUser({
+    required this.id,
+    this.username,
+    this.fullName,
+    this.photo,
+    this.photoReference,
+  });
 
-  factory StoryUser.fromJson(Map<String, dynamic> j) => StoryUser(
-    id: j['id'] as String,
-    username: j['username'] as String?,
-    fullName: j['full_name'] as String?,
-    photo: j['photo'] as String?,
-  );
+  factory StoryUser.fromJson(Map<String, dynamic> j) {
+    final id = j['id']?.toString() ?? '';
+    final reference = MediaReference.profilePhoto(j, userId: id);
+    return StoryUser(
+      id: id,
+      username: j['username'] as String?,
+      fullName: j['full_name'] as String?,
+      photo: reference.url.isEmpty ? null : reference.url,
+      photoReference: reference.url.isEmpty ? null : reference,
+    );
+  }
 
   String get displayName => fullName ?? username ?? 'User';
 }
@@ -146,6 +158,11 @@ class StoryGroup {
       if (featured != null && featured.isNotEmpty) return featured;
     }
     return user.photo;
+  }
+
+  MediaReference? get bubbleMediaReference {
+    if (venueLabel != null || bubbleImageUrl != user.photo) return null;
+    return user.photoReference;
   }
 
   factory StoryGroup.fromJson(Map<String, dynamic> j) => StoryGroup(

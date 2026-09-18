@@ -289,6 +289,7 @@ class _VenueHomePageState extends State<VenueHomePage> {
       address: v.address,
       city: v.city,
       photoUrl: v.photoUrl,
+      photoReference: v.photoReference,
       latitude: v.latitude,
       longitude: v.longitude,
       tag: v.tag,
@@ -309,6 +310,9 @@ class _VenueHomePageState extends State<VenueHomePage> {
       photos: v.photos,
       openingHours: v.openingHours,
       upcomingEvents: v.upcomingEvents,
+      isFollowing: v.isFollowing,
+      followerCount: v.followerCount,
+      recommendationReason: v.recommendationReason,
       partnershipPlatforms: v.partnershipPlatforms,
     );
   }

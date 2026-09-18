@@ -551,19 +551,26 @@ class CheckinRepository {
   }
 
   Future<void> reportUser({
-    required String targetUserId,
+    String? targetUserId,
     required String reason,
     String? details,
     String? messageId,
     String? storyId,
     String? venueStoryId,
     String? checkinMediaId,
+    String? venueId,
+    String? venueGalleryItemId,
+    String? eventId,
+    String? venueOfferId,
+    String? venueMenuItemId,
+    String? venueBenefitId,
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
     final body = <String, dynamic>{
-      'reported_user_id': targetUserId,
+      if (targetUserId != null && targetUserId.trim().isNotEmpty)
+        'reported_user_id': targetUserId.trim(),
       'reason': reason,
       if (details != null && details.trim().isNotEmpty)
         'details': details.trim(),
@@ -575,6 +582,18 @@ class CheckinRepository {
         'venue_story_id': venueStoryId.trim(),
       if (checkinMediaId != null && checkinMediaId.trim().isNotEmpty)
         'checkin_media_id': checkinMediaId.trim(),
+      if (venueId != null && venueId.trim().isNotEmpty)
+        'venue_id': venueId.trim(),
+      if (venueGalleryItemId != null && venueGalleryItemId.trim().isNotEmpty)
+        'venue_gallery_item_id': venueGalleryItemId.trim(),
+      if (eventId != null && eventId.trim().isNotEmpty)
+        'event_id': eventId.trim(),
+      if (venueOfferId != null && venueOfferId.trim().isNotEmpty)
+        'venue_offer_id': venueOfferId.trim(),
+      if (venueMenuItemId != null && venueMenuItemId.trim().isNotEmpty)
+        'venue_menu_item_id': venueMenuItemId.trim(),
+      if (venueBenefitId != null && venueBenefitId.trim().isNotEmpty)
+        'venue_benefit_id': venueBenefitId.trim(),
     };
 
     await _api.post(
@@ -586,8 +605,16 @@ class CheckinRepository {
         messageId != null ||
         storyId != null ||
         venueStoryId != null ||
-        checkinMediaId != null;
-    if (!reportsSelectedContent) {
+        checkinMediaId != null ||
+        venueId != null ||
+        venueGalleryItemId != null ||
+        eventId != null ||
+        venueOfferId != null ||
+        venueMenuItemId != null ||
+        venueBenefitId != null;
+    if (!reportsSelectedContent &&
+        targetUserId != null &&
+        targetUserId.trim().isNotEmpty) {
       StoryVisibility.changed(targetUserId, blocked: true);
     }
   }

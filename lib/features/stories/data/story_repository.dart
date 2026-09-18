@@ -27,6 +27,7 @@ class StoryRepository {
     required String mediaType, // 'photo' | 'video'
     int? durationSecs,
     String? textOverlayJson,
+    MultipartUploadProgress? onProgress,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/stories');
@@ -38,10 +39,11 @@ class StoryRepository {
     final mimeSplit = mimeType.split('/');
 
     request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        file.path,
+      await multipartFileWithProgress(
+        field: 'file',
+        file: file,
         contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+        onProgress: onProgress,
       ),
     );
 
@@ -53,7 +55,10 @@ class StoryRepository {
       request.fields['textOverlay'] = textOverlayJson;
     }
 
-    final streamed = await sendMultipartRequest(request);
+    final streamed = await sendMultipartRequest(
+      request,
+      timeout: const Duration(minutes: 5),
+    );
     final body = await streamed.stream.bytesToString();
 
     if (streamed.statusCode >= 400) {
