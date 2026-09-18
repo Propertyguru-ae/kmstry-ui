@@ -32,6 +32,8 @@ import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
@@ -684,40 +686,71 @@ class _ProfilePageState extends State<ProfilePage>
 
     final isVideo = _isVideoFile(file.path);
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    final uploadProgress = MediaUploadProgressController(
+      title: isVideo ? 'Preparing video' : 'Uploading story',
+      message: isVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Your photo is being uploaded…',
+    );
 
     setState(() => _uploadingStory = true);
     _storySpin.repeat();
+    await uploadProgress.show(context);
+    Object? uploadError;
+    StackTrace? uploadStack;
     try {
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: file,
-        mediaType: isVideo ? 'video' : 'photo',
-        textOverlayJson: storyOverlay?.toJsonString(),
-      );
-
-      if (mounted) {
-        await _loadMyStories();
-      }
-
-      final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
-          ? _activeVenue!.name
-          : 'your venue';
-      if (overlay != null) {
-        showStorySharedCard(
-          overlay,
-          mediaFile: file,
-          venueName: venueName,
-          isVideo: isVideo,
+      final uploadFile = isVideo
+          ? await MediaCompressor.compressVenueVideo(file)
+          : file;
+      if (isVideo) {
+        uploadProgress.update(
+          title: 'Uploading video',
+          message: 'Your optimized story is being uploaded…',
+          progress: 0,
         );
       }
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: uploadFile,
+        mediaType: isVideo ? 'video' : 'photo',
+        textOverlayJson: storyOverlay?.toJsonString(),
+        onProgress: (sent, total) {
+          if (total <= 0) return;
+          uploadProgress.update(progress: sent / total);
+        },
+      );
     } catch (e, st) {
-      debugPrint('❌ Profile story upload error: $e\n$st');
-      if (!mounted) return;
-      await showPremiumErrorDialog(context, message: 'Upload failed: $e');
+      uploadError = e;
+      uploadStack = st;
     } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
       _storySpin.stop();
       _storySpin.value = 0;
       if (mounted) setState(() => _uploadingStory = false);
+    }
+
+    if (!mounted) return;
+    if (uploadError != null) {
+      debugPrint('❌ Profile story upload error: $uploadError\n$uploadStack');
+      await showPremiumErrorDialog(
+        context,
+        message: 'Story could not be uploaded. Please try again.',
+      );
+      return;
+    }
+
+    await _loadMyStories();
+    final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
+        ? _activeVenue!.name
+        : 'your venue';
+    if (overlay != null) {
+      showStorySharedCard(
+        overlay,
+        mediaFile: file,
+        venueName: venueName,
+        isVideo: isVideo,
+      );
     }
   }
 

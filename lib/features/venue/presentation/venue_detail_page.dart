@@ -11,6 +11,8 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
@@ -42,6 +44,7 @@ import 'package:kmstry_frontend/features/venue/presentation/personal_event_detai
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -177,6 +180,16 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       _loadAnonymousStatus(),
       _checkProximity(useFreshGps: true),
     ]);
+  }
+
+  Future<void> _reportVenue() async {
+    final venueId = await _resolveVenueIdForDetail();
+    if (!mounted || venueId.isEmpty) return;
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this venue?',
+      venueId: venueId,
+    );
   }
 
   /// Gerçek venue'lerde kullanıcının fiziksel olarak mekânda olup olmadığını
@@ -1640,37 +1653,66 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Overlay'i async gap'ten ÖNCE yakala — kullanıcı başka sayfaya geçse bile
     // kart root overlay üzerinde gösterilecek.
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    final uploadProgress = MediaUploadProgressController(
+      title: isVideo ? 'Preparing video' : 'Uploading story',
+      message: isVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Your photo is being uploaded…',
+    );
 
     setState(() => _storyUploading = true);
-
+    await uploadProgress.show(context);
+    Object? uploadError;
+    StackTrace? uploadStack;
     try {
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: file,
-        mediaType: mediaType,
-        textOverlayJson: storyOverlay?.toJsonString(),
-      );
-      // Sayfa hâlâ açıksa tray'i yenile.
-      if (mounted) {
-        setState(() {
-          _storyUploading = false;
-          _storyTrayRefreshCount++;
-        });
-      }
-      // Kutlama kartını göster — kullanıcı nerede olursa olsun.
-      if (overlay != null) {
-        showStorySharedCard(
-          overlay,
-          mediaFile: file,
-          venueName: widget.venue.name,
-          isVideo: isVideo,
+      final uploadFile = isVideo
+          ? await MediaCompressor.compressVenueVideo(file)
+          : file;
+      if (isVideo) {
+        uploadProgress.update(
+          title: 'Uploading video',
+          message: 'Your optimized story is being uploaded…',
+          progress: 0,
         );
       }
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: uploadFile,
+        mediaType: mediaType,
+        textOverlayJson: storyOverlay?.toJsonString(),
+        onProgress: (sent, total) {
+          if (total <= 0) return;
+          uploadProgress.update(progress: sent / total);
+        },
+      );
     } catch (e, st) {
-      debugPrint('❌ Story upload error: $e\n$st');
-      if (!mounted) return;
-      setState(() => _storyUploading = false);
-      await showPremiumErrorDialog(context, message: 'Upload failed: $e');
+      uploadError = e;
+      uploadStack = st;
+    } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
+      if (mounted) setState(() => _storyUploading = false);
+    }
+
+    if (!mounted) return;
+    if (uploadError != null) {
+      debugPrint('❌ Story upload error: $uploadError\n$uploadStack');
+      await showPremiumErrorDialog(
+        context,
+        message: 'Story could not be uploaded. Please try again.',
+      );
+      return;
+    }
+
+    setState(() => _storyTrayRefreshCount++);
+    // Kutlama kartını göster — kullanıcı nerede olursa olsun.
+    if (overlay != null) {
+      showStorySharedCard(
+        overlay,
+        mediaFile: file,
+        venueName: widget.venue.name,
+        isVideo: isVideo,
+      );
     }
   }
 
@@ -2589,6 +2631,23 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             top: MediaQuery.of(context).padding.top + 6,
             left: 12,
             child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 6,
+            right: 12,
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: const CircleBorder(),
+              child: IconButton(
+                tooltip: 'Report venue',
+                onPressed: _reportVenue,
+                icon: const Icon(
+                  Icons.flag_outlined,
+                  size: 20,
+                  color: Colors.white,
+                ),
+              ),
+            ),
           ),
         ], // Stack children
       ), // Stack

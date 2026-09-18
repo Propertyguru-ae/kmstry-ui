@@ -707,10 +707,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
 
     setState(() => _uploadingStory = true);
     try {
-      await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(builder: (_) => AddVenueStoryPage(venueId: venueId)),
-      );
+      await Navigator.push<bool>(context, AddVenueStoryPage.route(venueId));
     } finally {
       if (mounted) {
         setState(() => _uploadingStory = false);

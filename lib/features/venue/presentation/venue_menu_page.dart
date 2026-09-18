@@ -12,6 +12,7 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_menu_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_menu_repository.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 /// Venue menü listeleme sayfası. [canManage] true ise menü öğeleri eklenebilir,
 /// düzenlenebilir ve silinebilir; false ise salt-okunur (diğer kullanıcılar).
@@ -561,6 +562,14 @@ class _VenueMenuItemDetailPageState extends State<VenueMenuItemDetailPage> {
     }
   }
 
+  Future<void> _report() async {
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this menu item?',
+      venueMenuItemId: _item.id,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -600,7 +609,14 @@ class _VenueMenuItemDetailPageState extends State<VenueMenuItemDetailPage> {
                 ),
                 const SizedBox(width: 4),
               ]
-            : null,
+            : [
+                IconButton(
+                  tooltip: 'Report menu item',
+                  onPressed: _report,
+                  icon: const Icon(Icons.flag_outlined),
+                ),
+                const SizedBox(width: 4),
+              ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),

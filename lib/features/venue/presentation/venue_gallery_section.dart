@@ -9,10 +9,12 @@ import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 const _kMagenta = Color(0xFFE020D8);
 const _maxVenueVideoDuration = Duration(seconds: 60);
@@ -117,11 +119,19 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
       return;
     }
 
+    final singleVideo = paths.length == 1 && _isVideoPath(paths.first);
+    final uploadProgress = MediaUploadProgressController(
+      title: singleVideo ? 'Preparing video' : 'Preparing media',
+      message: singleVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Preparing ${paths.length} items for upload…',
+    );
     setState(() => _uploading = true);
+    await uploadProgress.show(context);
     var hadError = false;
     String? uploadErrorMessage;
 
-    // Yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 720p) ve hepsini
+    // Yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 540p) ve hepsini
     // paralel yükle; giriş sırasını koru.
     Future<VenueGalleryItem?> processAndUpload(String path) async {
       try {
@@ -140,10 +150,23 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
         } else {
           fileToUpload = await MediaCompressor.compressImage(File(path));
         }
+        if (singleVideo) {
+          uploadProgress.update(
+            title: 'Uploading video',
+            message: 'Your optimized video is being uploaded…',
+            progress: 0,
+          );
+        }
         return await _repo.uploadItem(
           widget.venueId,
           fileToUpload,
           thumbnail: thumb,
+          onProgress: singleVideo
+              ? (sent, total) {
+                  if (total <= 0) return;
+                  uploadProgress.update(progress: sent / total);
+                }
+              : null,
         );
       } catch (error) {
         hadError = true;
@@ -155,14 +178,22 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
       }
     }
 
-    final results = await Future.wait(paths.map(processAndUpload));
-    final added = results.whereType<VenueGalleryItem>().toList();
+    List<VenueGalleryItem> added = [];
+    try {
+      final results = await Future.wait(paths.map(processAndUpload));
+      added = results.whereType<VenueGalleryItem>().toList();
+    } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
+      if (mounted) {
+        setState(() {
+          if (added.isNotEmpty) _items = [...added.reversed, ..._items];
+          _uploading = false;
+        });
+      }
+    }
 
     if (!mounted) return;
-    setState(() {
-      if (added.isNotEmpty) _items = [...added.reversed, ..._items];
-      _uploading = false;
-    });
     if (added.isNotEmpty) {
       showSuccessSnackBar(
         context,
@@ -247,6 +278,7 @@ class _VenueGallerySectionState extends State<VenueGallerySection> {
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => GalleryViewer(
+          venueId: widget.venueId,
           items: List.of(_items),
           initialIndex: index,
           onDelete: widget.canEdit
@@ -487,15 +519,19 @@ class GalleryTile extends StatelessWidget {
 
 // ── Fullscreen viewer ────────────────────────────────────────────────────────
 class GalleryViewer extends StatefulWidget {
+  final String venueId;
   final List<VenueGalleryItem> items;
   final int initialIndex;
+  final bool allowReport;
 
   /// null → salt-okunur (silme ikonu gösterilmez, ör. müşteri detay sayfası).
   final Future<void> Function(VenueGalleryItem item)? onDelete;
   const GalleryViewer({
     super.key,
+    required this.venueId,
     required this.items,
     required this.initialIndex,
+    this.allowReport = false,
     this.onDelete,
   });
 
@@ -586,6 +622,15 @@ class _GalleryViewerState extends State<GalleryViewer> {
     if (_items.isEmpty) Navigator.of(context).pop();
   }
 
+  Future<void> _report() async {
+    final item = _items[_index];
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this media?',
+      venueGalleryItemId: item.id,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -639,6 +684,14 @@ class _GalleryViewerState extends State<GalleryViewer> {
                   ),
                 ),
                 const Spacer(),
+                if (widget.allowReport) ...[
+                  _CircleBtn(
+                    icon: Icons.flag_outlined,
+                    color: Colors.white,
+                    onTap: _report,
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (widget.canEdit)
                   _CircleBtn(
                     icon: Icons.delete_outline_rounded,
@@ -698,15 +751,27 @@ class _VideoPage extends StatefulWidget {
 class _VideoPageState extends State<_VideoPage> {
   VideoPlayerController? _controller;
 
+  Future<void> _togglePlayback() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isPlaying) {
+      await controller.pause();
+    } else {
+      await controller.play();
+    }
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize().then((_) {
+      ..initialize().then((_) async {
+        if (!mounted) return;
+        await _controller?.setLooping(true);
+        await _controller?.play();
         if (!mounted) return;
         setState(() {});
-        _controller?.play();
-        _controller?.setLooping(true);
       });
   }
 
@@ -726,10 +791,34 @@ class _VideoPageState extends State<_VideoPage> {
     }
     return Center(
       child: GestureDetector(
-        onTap: () => setState(() => c.value.isPlaying ? c.pause() : c.play()),
-        child: AspectRatio(
-          aspectRatio: c.value.aspectRatio,
-          child: VideoPlayer(c),
+        onTap: _togglePlayback,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AspectRatio(
+              aspectRatio: c.value.aspectRatio,
+              child: VideoPlayer(c),
+            ),
+            if (!c.value.isPlaying)
+              IgnorePointer(
+                child: Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withValues(alpha: 0.58),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.30),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 42,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -786,8 +875,12 @@ class _VenueGalleryStripState extends State<VenueGalleryStrip> {
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) =>
-            GalleryViewer(items: List.of(_items), initialIndex: index),
+        builder: (_) => GalleryViewer(
+          venueId: widget.venueId,
+          items: List.of(_items),
+          initialIndex: index,
+          allowReport: true,
+        ),
       ),
     );
   }

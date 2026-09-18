@@ -126,6 +126,10 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     // "başkasının story'si mi"yi zaten anında bilir; venue story'de de id
     // yüklenene kadar göster (kendi id'mizle eşleşmedikçe).
     if (!story.isVenueStory) return !_isCurrentUserStory(group);
+    // Venue story: o venue'yü yöneten (silme yetkisi olan) kullanıcı kendi
+    // mekanının içeriğini report edemez — bu yüzden report yerine yalnızca
+    // delete gösterilir. Report sadece yetkisiz (dışarıdan) izleyiciye çıkar.
+    if (_canDeleteCurrentStory) return false;
     final targetUserId = story.user?.id?.trim();
     if (targetUserId == null || targetUserId.isEmpty) return false;
     final me = _currentUserId?.trim();
@@ -875,38 +879,6 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                   ),
                 ),
               ),
-            // ── DELETE (bottom-right) — kendi story'n / venue owner ───────────
-            if (_canDeleteCurrentStory)
-              Positioned(
-                right: 16,
-                bottom:
-                    MediaQuery.of(context).padding.bottom +
-                    ((widget.venueId != null &&
-                            widget.showViewers &&
-                            !story.isUploadingPlaceholder)
-                        ? 76
-                        : 28),
-                child: GestureDetector(
-                  onTap: _deleteCurrentStory,
-                  child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.25),
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.delete_outline_rounded,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                ),
-              ),
-
             // ── USER ROW — tap zone'lardan sonra: çarpı butonu tıklanabilir ──
             SafeArea(
               child: Padding(
@@ -952,6 +924,15 @@ class _StoryViewerPageState extends State<StoryViewerPage>
                           story.isVenueStory ? story.user!.id : group.user.id,
                           story,
                         ),
+                      ),
+                    if (_canDeleteCurrentStory)
+                      IconButton(
+                        tooltip: 'Delete',
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Colors.white,
+                        ),
+                        onPressed: _deleteCurrentStory,
                       ),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
