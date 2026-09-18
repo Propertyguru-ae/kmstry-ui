@@ -7,13 +7,14 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
 import 'package:kmstry_frontend/core/user/premium_gate.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const _kMagenta = Color(0xFFE020D8);
 const _kTurkuaz = Color(0xFF1FD9A8);
-const _kMavi    = Color(0xFF1A9FE8);
+const _kMavi = Color(0xFF1A9FE8);
 const _kTuruncu = Color(0xFFF08838);
-const _kRed     = Color(0xFFEF4444);
+const _kRed = Color(0xFFEF4444);
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,8 @@ class PersonalEventDetailPage extends StatefulWidget {
   });
 
   @override
-  State<PersonalEventDetailPage> createState() => _PersonalEventDetailPageState();
+  State<PersonalEventDetailPage> createState() =>
+      _PersonalEventDetailPageState();
 }
 
 class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
@@ -56,9 +58,9 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
   @override
   void initState() {
     super.initState();
-    _event     = widget.event;
+    _event = widget.event;
     _rsvpCount = widget.event.rsvpCount;
-    _capacity  = widget.event.capacity;
+    _capacity = widget.event.capacity;
     _loadDetail();
     // Premium status drives the early-access gate; refresh once loaded.
     UserSession.instance.ensureLoaded().then((_) {
@@ -93,6 +95,33 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     );
   }
 
+  Future<void> _reportEvent() async {
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this event?',
+      eventId: _event.id,
+    );
+  }
+
+  Future<void> _reportOffer() async {
+    final offerId = _event.offerId;
+    if (offerId == null || offerId.isEmpty) return;
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this offer?',
+      venueOfferId: offerId,
+    );
+  }
+
+  Future<void> _reportBenefit(EventPartnerBenefit benefit) async {
+    if (benefit.id.isEmpty) return;
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this benefit?',
+      venueBenefitId: benefit.id,
+    );
+  }
+
   Future<void> _loadDetail() async {
     try {
       final token = await SecureStorage.getAccessToken();
@@ -104,17 +133,25 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
       if (mounted) {
         setState(() {
           _event = VenueUpcomingEvent.fromJson(map);
-          _rsvpCount  = map['rsvpCount'] is num ? (map['rsvpCount'] as num).toInt() : 0;
-          _capacity   = map['capacity'] is num ? (map['capacity'] as num).toInt() : null;
+          _rsvpCount = map['rsvpCount'] is num
+              ? (map['rsvpCount'] as num).toInt()
+              : 0;
+          _capacity = map['capacity'] is num
+              ? (map['capacity'] as num).toInt()
+              : null;
           _userHasRsvp = map['userHasRsvp'] == true;
           _rsvpOpensAt = DateTime.tryParse(
             map['rsvpOpensAt']?.toString() ?? '',
           );
-          _loading    = false;
+          _loading = false;
         });
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted)
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
     }
   }
 
@@ -127,7 +164,11 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
           '/venues/${widget.venueId}/events/${widget.event.id}/rsvp',
           headers: {'Authorization': 'Bearer $token'},
         );
-        if (mounted) setState(() { _userHasRsvp = false; _rsvpCount = (_rsvpCount - 1).clamp(0, 999999); });
+        if (mounted)
+          setState(() {
+            _userHasRsvp = false;
+            _rsvpCount = (_rsvpCount - 1).clamp(0, 999999);
+          });
       } else {
         await _api.post(
           '/venues/${widget.venueId}/events/${widget.event.id}/rsvp',
@@ -135,7 +176,10 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
           body: {},
         );
         if (mounted) {
-          setState(() { _userHasRsvp = true; _rsvpCount++; });
+          setState(() {
+            _userHasRsvp = true;
+            _rsvpCount++;
+          });
           _showRsvpSuccess();
         }
       }
@@ -157,9 +201,9 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
 
   void _showRsvpSuccess() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final kBg    = isDark ? const Color(0xFF0D1525) : Colors.white;
-    final kText  = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim   = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
+    final kBg = isDark ? const Color(0xFF0D1525) : Colors.white;
+    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+    final kDim = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
 
     showModalBottomSheet(
       context: context,
@@ -177,16 +221,16 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark  = Theme.of(context).brightness == Brightness.dark;
-    final kBg     = isDark ? const Color(0xFF06091A) : Colors.white;
-    final kCard   = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kCard = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
     final kBorder = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
-    final kText   = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim    = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
-    final kLabel  = isDark ? const Color(0xFF44597A) : const Color(0xFF8794A6);
-    final kFaint  = isDark ? const Color(0xFF3A5070) : const Color(0xFF9AA6B6);
+    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+    final kDim = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
+    final kLabel = isDark ? const Color(0xFF44597A) : const Color(0xFF8794A6);
+    final kFaint = isDark ? const Color(0xFF3A5070) : const Color(0xFF9AA6B6);
 
-    final event  = _event;
+    final event = _event;
     final photos = event.photos.isNotEmpty
         ? event.photos
         : (event.photo != null ? [event.photo!] : <String>[]);
@@ -200,279 +244,327 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: _kMagenta))
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(_error!, style: TextStyle(color: kDim)),
-                  ),
-                )
-              : Stack(
-                  children: [
-                    RefreshIndicator(
-                      onRefresh: _loadDetail,
-                      child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
-                        ),
-                        padding: const EdgeInsets.only(bottom: 40),
-                        child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // ── COVER HERO ─────────────────────────────────────
-                          _EventCover(photo: coverPhoto, pageBg: kBg),
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(_error!, style: TextStyle(color: kDim)),
+              ),
+            )
+          : Stack(
+              children: [
+                RefreshIndicator(
+                  onRefresh: _loadDetail,
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.only(bottom: 40),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ── COVER HERO ─────────────────────────────────────
+                        _EventCover(photo: coverPhoto, pageBg: kBg),
 
-                          // ── TITLE + CHIPS (cover'a biner) ──────────────────
-                          Transform.translate(
-                            offset: const Offset(0, -36),
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    event.title,
-                                    style: TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: -0.5,
-                                      color: kText,
-                                      height: 1.15,
-                                    ),
+                        // ── TITLE + CHIPS (cover'a biner) ──────────────────
+                        Transform.translate(
+                          offset: const Offset(0, -36),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  event.title,
+                                  style: TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.5,
+                                    color: kText,
+                                    height: 1.15,
                                   ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 7,
-                                    runSpacing: 7,
-                                    children: [
-                                      _Chip(
-                                        icon: isFree
-                                            ? Icons.confirmation_num_outlined
-                                            : Icons.local_activity_outlined,
-                                        label: isFree
-                                            ? 'Free entry'
-                                            : '${event.currency} ${event.priceAed} min.',
-                                        color: isFree ? _kTurkuaz : _kTuruncu,
-                                        isDark: isDark,
-                                      ),
-                                      if (event.isRecurring)
-                                        _Chip(
-                                          icon: Icons.repeat_rounded,
-                                          label: 'Recurring',
-                                          color: _kMagenta,
-                                          isDark: isDark,
-                                        ),
-                                      _Chip(
-                                        icon: Icons.people_outline_rounded,
-                                        label: _capacity != null
-                                            ? '$_rsvpCount / $_capacity interested'
-                                            : '$_rsvpCount interested',
-                                        color: isFull ? _kRed : _kMavi,
-                                        isDark: isDark,
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          // ── CONTENT (cover altını biraz yukarı çeker) ──────
-                          Transform.translate(
-                            offset: const Offset(0, -20),
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // DATE & TIME
-                                  _InfoCard(
-                                    icon: Icons.calendar_month_rounded,
-                                    accent: _kTurkuaz,
-                                    label: 'Date & Time',
-                                    value: event.formattedDate,
-                                    sub: _durationLabel(
-                                      event.endAt.difference(event.startAt),
-                                    ),
-                                    kCard: kCard,
-                                    kBorder: kBorder,
-                                    kText: kText,
-                                    kLabel: kLabel,
-                                    kFaint: kFaint,
-                                  ),
-                                  const SizedBox(height: 10),
-
-                                  // ENTRY
-                                  _InfoCard(
-                                    icon: Icons.local_activity_rounded,
-                                    accent: _kTuruncu,
-                                    label: 'Entry',
-                                    value: isFree
-                                        ? 'Free · No ticket required'
-                                        : '${event.currency} ${event.priceAed} minimum spend',
-                                    kCard: kCard,
-                                    kBorder: kBorder,
-                                    kText: kText,
-                                    kLabel: kLabel,
-                                    kFaint: kFaint,
-                                  ),
-
-                                  // VENUE CARD
-                                  if ((widget.venueName ?? '').trim().isNotEmpty) ...[
-                                    const SizedBox(height: 10),
-                                    _VenueCard(
-                                      name: widget.venueName!,
-                                      address: widget.venueAddress,
-                                      photoUrl: widget.venuePhotoUrl,
-                                      onTap: () => Navigator.pop(context),
-                                      kCard: kCard,
-                                      kText: kText,
-                                      kFaint: kFaint,
-                                    ),
-                                  ],
-
-                                  // ATTENDEES
-                                  if (_rsvpCount > 0) ...[
-                                    const SizedBox(height: 14),
-                                    _AttendeesRow(
-                                      count: _rsvpCount,
-                                      kFaint: kFaint,
-                                    ),
-                                  ],
-
-                                  // RECURRING BANNER
-                                  if (event.isRecurring) ...[
-                                    const SizedBox(height: 14),
-                                    _RecurringBanner(
-                                      label: _recurrenceLabel(event),
-                                    ),
-                                  ],
-
-                                  // ABOUT
-                                  if (event.description != null &&
-                                      event.description!.isNotEmpty) ...[
-                                    const SizedBox(height: 20),
-                                    _DotTitle(
-                                      color: _kMagenta,
-                                      label: 'About',
-                                      kText: kText,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      event.description!,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: kDim,
-                                        height: 1.7,
-                                      ),
-                                    ),
-                                  ],
-
-                                  // KMSTRY OFFER
-                                  if (event.offerType != null) ...[
-                                    const SizedBox(height: 20),
-                                    _DotTitle(
-                                      color: _kTuruncu,
-                                      label: 'Kmstry Offer',
-                                      kText: kText,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _OfferCard(
-                                      conditions: event.offerTitle,
-                                      type: event.offerType,
-                                      price: event.offerPrice,
+                                ),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 7,
+                                  runSpacing: 7,
+                                  children: [
+                                    _Chip(
+                                      icon: isFree
+                                          ? Icons.confirmation_num_outlined
+                                          : Icons.local_activity_outlined,
+                                      label: isFree
+                                          ? 'Free entry'
+                                          : '${event.currency} ${event.priceAed} min.',
+                                      color: isFree ? _kTurkuaz : _kTuruncu,
                                       isDark: isDark,
-                                      kCard: kCard,
-                                      kBorder: kBorder,
-                                      kText: kText,
-                                      kDim: kDim,
+                                    ),
+                                    if (event.isRecurring)
+                                      _Chip(
+                                        icon: Icons.repeat_rounded,
+                                        label: 'Recurring',
+                                        color: _kMagenta,
+                                        isDark: isDark,
+                                      ),
+                                    _Chip(
+                                      icon: Icons.people_outline_rounded,
+                                      label: _capacity != null
+                                          ? '$_rsvpCount / $_capacity interested'
+                                          : '$_rsvpCount interested',
+                                      color: isFull ? _kRed : _kMavi,
+                                      isDark: isDark,
                                     ),
                                   ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
 
-                                  // PARTNER BENEFITS
-                                  if (event.partnershipBenefits.isNotEmpty) ...[
-                                    const SizedBox(height: 20),
-                                    _DotTitle(
-                                      color: _kMavi,
-                                      label: 'Partner Benefits',
-                                      kText: kText,
+                        // ── CONTENT (cover altını biraz yukarı çeker) ──────
+                        Transform.translate(
+                          offset: const Offset(0, -20),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // DATE & TIME
+                                _InfoCard(
+                                  icon: Icons.calendar_month_rounded,
+                                  accent: _kTurkuaz,
+                                  label: 'Date & Time',
+                                  value: event.formattedDate,
+                                  sub: _durationLabel(
+                                    event.endAt.difference(event.startAt),
+                                  ),
+                                  kCard: kCard,
+                                  kBorder: kBorder,
+                                  kText: kText,
+                                  kLabel: kLabel,
+                                  kFaint: kFaint,
+                                ),
+                                const SizedBox(height: 10),
+
+                                // ENTRY
+                                _InfoCard(
+                                  icon: Icons.local_activity_rounded,
+                                  accent: _kTuruncu,
+                                  label: 'Entry',
+                                  value: isFree
+                                      ? 'Free · No ticket required'
+                                      : '${event.currency} ${event.priceAed} minimum spend',
+                                  kCard: kCard,
+                                  kBorder: kBorder,
+                                  kText: kText,
+                                  kLabel: kLabel,
+                                  kFaint: kFaint,
+                                ),
+
+                                // VENUE CARD
+                                if ((widget.venueName ?? '')
+                                    .trim()
+                                    .isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  _VenueCard(
+                                    name: widget.venueName!,
+                                    address: widget.venueAddress,
+                                    photoUrl: widget.venuePhotoUrl,
+                                    onTap: () => Navigator.pop(context),
+                                    kCard: kCard,
+                                    kText: kText,
+                                    kFaint: kFaint,
+                                  ),
+                                ],
+
+                                // ATTENDEES
+                                if (_rsvpCount > 0) ...[
+                                  const SizedBox(height: 14),
+                                  _AttendeesRow(
+                                    count: _rsvpCount,
+                                    kFaint: kFaint,
+                                  ),
+                                ],
+
+                                // RECURRING BANNER
+                                if (event.isRecurring) ...[
+                                  const SizedBox(height: 14),
+                                  _RecurringBanner(
+                                    label: _recurrenceLabel(event),
+                                  ),
+                                ],
+
+                                // ABOUT
+                                if (event.description != null &&
+                                    event.description!.isNotEmpty) ...[
+                                  const SizedBox(height: 20),
+                                  _DotTitle(
+                                    color: _kMagenta,
+                                    label: 'About',
+                                    kText: kText,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    event.description!,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: kDim,
+                                      height: 1.7,
                                     ),
-                                    const SizedBox(height: 8),
-                                    ...event.partnershipBenefits.map(
-                                      (b) => Padding(
-                                        padding: const EdgeInsets.only(bottom: 8),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 12,
+                                  ),
+                                ],
+
+                                // KMSTRY OFFER
+                                if (event.offerType != null) ...[
+                                  const SizedBox(height: 20),
+                                  _DotTitle(
+                                    color: _kTuruncu,
+                                    label: 'Kmstry Offer',
+                                    kText: kText,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  _OfferCard(
+                                    conditions: event.offerTitle,
+                                    type: event.offerType,
+                                    price: event.offerPrice,
+                                    isDark: isDark,
+                                    kCard: kCard,
+                                    kBorder: kBorder,
+                                    kText: kText,
+                                    kDim: kDim,
+                                  ),
+                                  if ((event.offerId ?? '').isNotEmpty)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: TextButton.icon(
+                                        onPressed: _reportOffer,
+                                        icon: const Icon(
+                                          Icons.flag_outlined,
+                                          size: 16,
+                                        ),
+                                        label: const Text('Report offer'),
+                                      ),
+                                    ),
+                                ],
+
+                                // PARTNER BENEFITS
+                                if (event.partnershipBenefits.isNotEmpty) ...[
+                                  const SizedBox(height: 20),
+                                  _DotTitle(
+                                    color: _kMavi,
+                                    label: 'Partner Benefits',
+                                    kText: kText,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...event.partnershipBenefits.map(
+                                    (b) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 12,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: kCard,
+                                          borderRadius: BorderRadius.circular(
+                                            14,
                                           ),
-                                          decoration: BoxDecoration(
-                                            color: kCard,
-                                            borderRadius: BorderRadius.circular(14),
-                                            border: Border.all(color: kBorder),
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                width: 32,
-                                                height: 32,
-                                                decoration: BoxDecoration(
-                                                  color: _kMavi.withValues(alpha: 0.12),
-                                                  borderRadius: BorderRadius.circular(9),
+                                          border: Border.all(color: kBorder),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 32,
+                                              height: 32,
+                                              decoration: BoxDecoration(
+                                                color: _kMavi.withValues(
+                                                  alpha: 0.12,
                                                 ),
-                                                child: const Icon(
-                                                  Icons.handshake_outlined,
-                                                  size: 16,
-                                                  color: _kMavi,
-                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(9),
                                               ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      b.platformLabel ?? b.platform,
-                                                      style: TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: kText,
-                                                      ),
-                                                    ),
-                                                    Text(
-                                                      b.offerLabel,
-                                                      style: TextStyle(
-                                                        fontSize: 12,
-                                                        color: kDim,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
+                                              child: const Icon(
+                                                Icons.handshake_outlined,
+                                                size: 16,
+                                                color: _kMavi,
                                               ),
-                                            ],
-                                          ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    b.platformLabel ??
+                                                        b.platform,
+                                                    style: TextStyle(
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: kText,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    b.offerLabel,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: kDim,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Report benefit',
+                                              onPressed: () =>
+                                                  _reportBenefit(b),
+                                              icon: const Icon(
+                                                Icons.flag_outlined,
+                                                size: 18,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ],
-                              ),
+                              ],
                             ),
                           ),
-                        ],
                         ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // ── Floating back button ───────────────────────────────
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 8,
+                  left: 14,
+                  child: AppBackButton.onCover(
+                    onTap: () => Navigator.pop(context),
+                  ),
+                ),
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 8,
+                  right: 14,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      tooltip: 'Report event',
+                      onPressed: _reportEvent,
+                      icon: const Icon(
+                        Icons.flag_outlined,
+                        size: 20,
+                        color: Colors.white,
                       ),
                     ),
-
-                    // ── Floating back button ───────────────────────────────
-                    Positioned(
-                      top: MediaQuery.of(context).padding.top + 8,
-                      left: 14,
-                      child: AppBackButton.onCover(
-                          onTap: () => Navigator.pop(context)),
-                    ),
-                  ],
+                  ),
                 ),
+              ],
+            ),
 
       // ── RSVP / Attend button ────────────────────────────────────────────────
       bottomNavigationBar: _loading
@@ -533,17 +625,17 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     final label = earlyLocked
         ? '$_opensInLabel · KMSTRY+ early'
         : _userHasRsvp
-            ? 'Remove from my calendar'
-            : isFull
-                ? 'Event is full'
-                : 'Add to my calendar';
+        ? 'Remove from my calendar'
+        : isFull
+        ? 'Event is full'
+        : 'Add to my calendar';
     final icon = earlyLocked
         ? Icons.lock_clock_rounded
         : _userHasRsvp
-            ? Icons.check_circle_outline_rounded
-            : isFull
-                ? Icons.block_rounded
-                : Icons.person_add_alt_1_rounded;
+        ? Icons.check_circle_outline_rounded
+        : isFull
+        ? Icons.block_rounded
+        : Icons.person_add_alt_1_rounded;
     final fg = showGradient ? Colors.white : kDim;
 
     return SizedBox(
@@ -555,8 +647,8 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
           onTap: disabled
               ? null
               : earlyLocked
-                  ? _openEarlyAccessUpsell
-                  : _toggleRsvp,
+              ? _openEarlyAccessUpsell
+              : _toggleRsvp,
           child: Ink(
             decoration: BoxDecoration(
               gradient: showGradient
@@ -638,7 +730,11 @@ class _EventCover extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF1A0828), Color(0xFF0A1840), Color(0xFF0A2010)],
+                  colors: [
+                    Color(0xFF1A0828),
+                    Color(0xFF0A1840),
+                    Color(0xFF0A2010),
+                  ],
                 ),
               ),
             ),
@@ -671,17 +767,15 @@ class _EventCover extends StatelessWidget {
   }
 
   Widget _glow(Color color, double size) => IgnorePointer(
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              colors: [color, color.withValues(alpha: 0)],
-            ),
-          ),
-        ),
-      );
+    child: Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
+      ),
+    ),
+  );
 }
 
 // ─── Info card (Date & Time, Entry) ───────────────────────────────────────────
@@ -752,10 +846,7 @@ class _InfoCard extends StatelessWidget {
                 ),
                 if (sub != null && sub!.isNotEmpty) ...[
                   const SizedBox(height: 1),
-                  Text(
-                    sub!,
-                    style: TextStyle(fontSize: 11, color: kFaint),
-                  ),
+                  Text(sub!, style: TextStyle(fontSize: 11, color: kFaint)),
                 ],
               ],
             ),
@@ -804,7 +895,12 @@ class _VenueCard extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: (photoUrl != null && photoUrl!.trim().isNotEmpty)
-                    ? CachedImage(photoUrl!, width: 40, height: 40, fit: BoxFit.cover)
+                    ? CachedImage(
+                        photoUrl!,
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.cover,
+                      )
                     : Container(
                         width: 40,
                         height: 40,
@@ -813,8 +909,11 @@ class _VenueCard extends StatelessWidget {
                             colors: [Color(0xFF1A1020), Color(0xFF0A1840)],
                           ),
                         ),
-                        child: const Icon(Icons.storefront_rounded,
-                            size: 19, color: _kTurkuaz),
+                        child: const Icon(
+                          Icons.storefront_rounded,
+                          size: 19,
+                          color: _kTurkuaz,
+                        ),
                       ),
               ),
               const SizedBox(width: 12),
@@ -836,8 +935,11 @@ class _VenueCard extends StatelessWidget {
                       const SizedBox(height: 2),
                       Row(
                         children: [
-                          const Icon(Icons.location_on_rounded,
-                              size: 12, color: _kMavi),
+                          const Icon(
+                            Icons.location_on_rounded,
+                            size: 12,
+                            color: _kMavi,
+                          ),
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
@@ -894,7 +996,11 @@ class _AttendeesRow extends StatelessWidget {
               ),
               border: Border.all(color: const Color(0xFF06091A), width: 2),
             ),
-            child: const Icon(Icons.person_rounded, size: 14, color: Colors.white),
+            child: const Icon(
+              Icons.person_rounded,
+              size: 14,
+              color: Colors.white,
+            ),
           ),
         const SizedBox(width: 10),
         Text.rich(
@@ -962,7 +1068,11 @@ class _DotTitle extends StatelessWidget {
   final Color color;
   final String label;
   final Color kText;
-  const _DotTitle({required this.color, required this.label, required this.kText});
+  const _DotTitle({
+    required this.color,
+    required this.label,
+    required this.kText,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -996,7 +1106,12 @@ class _Chip extends StatelessWidget {
   final Color color;
   final bool isDark;
 
-  const _Chip({required this.icon, required this.label, required this.color, required this.isDark});
+  const _Chip({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1012,7 +1127,14 @@ class _Chip extends StatelessWidget {
         children: [
           Icon(icon, size: 13, color: color),
           const SizedBox(width: 5),
-          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -1041,16 +1163,26 @@ class _OfferCard extends StatelessWidget {
 
   String _typeLabel() {
     switch (type) {
-      case 'BUFFET':     return 'Buffet';
-      case 'SET_MENU':   return 'Set Menu';
-      case 'OPEN_DRINK': return 'Open Drink';
-      case 'OPEN_FOOD':  return 'Open Food';
-      case 'PERCENT_OFF':    return 'Percent off';
-      case 'FIXED_DISCOUNT': return 'Fixed discount';
-      case 'FREE_ITEM':      return 'Free item';
-      case 'BUNDLE':         return 'Bundle deal';
-      case 'BOGO':           return 'Buy one get one';
-      default:               return '';
+      case 'BUFFET':
+        return 'Buffet';
+      case 'SET_MENU':
+        return 'Set Menu';
+      case 'OPEN_DRINK':
+        return 'Open Drink';
+      case 'OPEN_FOOD':
+        return 'Open Food';
+      case 'PERCENT_OFF':
+        return 'Percent off';
+      case 'FIXED_DISCOUNT':
+        return 'Fixed discount';
+      case 'FREE_ITEM':
+        return 'Free item';
+      case 'BUNDLE':
+        return 'Bundle deal';
+      case 'BOGO':
+        return 'Buy one get one';
+      default:
+        return '';
     }
   }
 
@@ -1066,28 +1198,48 @@ class _OfferCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 32, height: 32,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: _kTuruncu.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.local_offer_outlined, size: 16, color: _kTuruncu),
+            child: const Icon(
+              Icons.local_offer_outlined,
+              size: 16,
+              color: _kTuruncu,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_typeLabel().isNotEmpty ? _typeLabel() : 'Offer',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kText)),
+                Text(
+                  _typeLabel().isNotEmpty ? _typeLabel() : 'Offer',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: kText,
+                  ),
+                ),
                 if (conditions != null && conditions!.trim().isNotEmpty)
-                  Text(conditions!, style: TextStyle(fontSize: 12, color: kDim)),
+                  Text(
+                    conditions!,
+                    style: TextStyle(fontSize: 12, color: kDim),
+                  ),
               ],
             ),
           ),
           if (price != null)
-            Text(price!.toStringAsFixed(0),
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _kTuruncu)),
+            Text(
+              price!.toStringAsFixed(0),
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: _kTuruncu,
+              ),
+            ),
         ],
       ),
     );
@@ -1116,10 +1268,7 @@ class _RsvpSuccessSheet extends StatelessWidget {
       decoration: BoxDecoration(
         color: kBg,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: _kMagenta.withValues(alpha: 0.3),
-          width: 1.5,
-        ),
+        border: Border.all(color: _kMagenta.withValues(alpha: 0.3), width: 1.5),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
@@ -1129,8 +1278,10 @@ class _RsvpSuccessSheet extends StatelessWidget {
             Text(
               "You're In! 🎉",
               style: TextStyle(
-                fontSize: 22, fontWeight: FontWeight.w800,
-                color: kText, letterSpacing: -0.5,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: kText,
+                letterSpacing: -0.5,
               ),
             ),
             const SizedBox(height: 10),
@@ -1139,14 +1290,19 @@ class _RsvpSuccessSheet extends StatelessWidget {
               'Your spot is confirmed for "$eventTitle". '
               "We can't wait to see you there. Get ready for a night to remember! ✨",
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: kText.withValues(alpha: 0.75), height: 1.65),
+              style: TextStyle(
+                fontSize: 14,
+                color: kText.withValues(alpha: 0.75),
+                height: 1.65,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
               'Good vibes only. Make it count. ✨',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
                 color: _kTurkuaz,
               ),
             ),
@@ -1161,7 +1317,9 @@ class _RsvpSuccessSheet extends StatelessWidget {
                   backgroundColor: _kMagenta,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: const Text(
                   "Let's go! 🚀",

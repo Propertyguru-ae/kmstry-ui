@@ -7,6 +7,7 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
@@ -18,6 +19,8 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_sectio
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
+
+const _maxGalleryVideoUploadBytes = 100 * 1024 * 1024;
 
 /// Venue home sayfasının en üstündeki iki karesel medya kartı:
 ///   • "Story"  — boşken `+`, story varsa son story'nin önizlemesi (sağ altta `+`).
@@ -112,10 +115,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
     final added = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => AddVenueStoryPage(venueId: widget.venueId),
-      ),
+      AddVenueStoryPage.route(widget.venueId),
     );
     if (added == true) {
       setState(() => _uploadingStory = true);
@@ -260,10 +260,19 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
         .toList();
     if (paths.isEmpty || !mounted) return;
 
+    final singleVideo = paths.length == 1 && _isVideoPath(paths.first);
+    final uploadProgress = MediaUploadProgressController(
+      title: singleVideo ? 'Preparing video' : 'Preparing media',
+      message: singleVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Preparing ${paths.length} items for upload…',
+    );
     setState(() => _uploadingGallery = true);
+    await uploadProgress.show(context);
     var hadError = false;
+    String? uploadErrorMessage;
 
-    // Her dosyayı yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 720p),
+    // Her dosyayı yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 540p),
     // sonra hepsini paralel yükle. Sıralamayı koru → optimistik listede doğru
     // sırayla görünsün.
     Future<VenueGalleryItem?> processAndUpload(String path) async {
@@ -273,28 +282,59 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
         File? thumb;
         if (isVideo) {
           fileToUpload = await MediaCompressor.compressGalleryVideo(File(path));
+          if (await fileToUpload.length() > _maxGalleryVideoUploadBytes) {
+            uploadErrorMessage =
+                'Video is too large. Please choose a smaller file.';
+            hadError = true;
+            return null;
+          }
           thumb = await _generateThumbnail(path);
         } else {
           fileToUpload = await MediaCompressor.compressImage(File(path));
+        }
+        if (singleVideo) {
+          uploadProgress.update(
+            title: 'Uploading video',
+            message: 'Your optimized video is being uploaded…',
+            progress: 0,
+          );
         }
         return await _galleryRepo.uploadItem(
           widget.venueId,
           fileToUpload,
           thumbnail: thumb,
+          onProgress: singleVideo
+              ? (sent, total) {
+                  if (total <= 0) return;
+                  uploadProgress.update(progress: sent / total);
+                }
+              : null,
         );
-      } catch (_) {
+      } catch (error) {
         hadError = true;
+        if (error.toString().contains('413')) {
+          uploadErrorMessage =
+              'Video is too large. Please choose a smaller file.';
+        }
         return null;
       }
     }
 
-    final results = await Future.wait(paths.map(processAndUpload));
-    final added = results.whereType<VenueGalleryItem>().toList();
+    List<VenueGalleryItem> added = [];
+    try {
+      final results = await Future.wait(paths.map(processAndUpload));
+      added = results.whereType<VenueGalleryItem>().toList();
+    } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
+      if (mounted) {
+        setState(() {
+          if (added.isNotEmpty) _gallery = [...added.reversed, ..._gallery];
+          _uploadingGallery = false;
+        });
+      }
+    }
     if (!mounted) return;
-    setState(() {
-      if (added.isNotEmpty) _gallery = [...added.reversed, ..._gallery];
-      _uploadingGallery = false;
-    });
     if (added.isNotEmpty) {
       showSuccessSnackBar(
         context,
@@ -305,8 +345,8 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
     }
     if (hadError) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Some uploads failed'),
+        SnackBar(
+          content: Text(uploadErrorMessage ?? 'Some uploads failed'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -320,6 +360,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => GalleryViewer(
+          venueId: widget.venueId,
           items: List.of(_gallery),
           initialIndex: 0,
           onDelete: widget.canEditGallery
@@ -379,11 +420,14 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
   Widget _buildStoryCard() {
     final hasStory = _stories.isNotEmpty;
     final allSeen = hasStory && _stories.every((s) => s.viewedByMe);
-    final preview = hasStory
-        ? (_stories.first.thumbnailUrl?.isNotEmpty == true
-              ? _stories.first.thumbnailUrl!
-              : _stories.first.mediaUrl)
-        : null;
+    final firstStory = hasStory ? _stories.first : null;
+    final preview = firstStory == null
+        ? null
+        : firstStory.thumbnailUrl?.isNotEmpty == true
+        ? firstStory.thumbnailUrl
+        : firstStory.isVideo
+        ? null
+        : firstStory.mediaUrl;
 
     return _PremiumMediaCard(
       variant: _MediaVariant.story,
@@ -393,6 +437,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
       emptyIcon: Icons.play_arrow_rounded,
       hasContent: hasStory,
       previewUrl: preview,
+      showPlayOverlay: firstStory?.isVideo == true,
       unseen: hasStory && !allSeen,
       loading: _uploadingStory,
       showAddBadge: widget.canEditStory,
@@ -415,6 +460,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
       emptyIcon: Icons.photo_library_rounded,
       hasContent: hasGallery,
       previewUrl: null,
+      showPlayOverlay: false,
       unseen: false,
       loading: _uploadingGallery,
       showAddBadge: widget.canEditGallery,
@@ -439,6 +485,7 @@ class _PremiumMediaCard extends StatelessWidget {
   final IconData emptyIcon;
   final bool hasContent;
   final String? previewUrl; // story önizleme
+  final bool showPlayOverlay;
   final List<VenueGalleryItem> galleryItems;
   final bool unseen;
   final bool loading;
@@ -454,6 +501,7 @@ class _PremiumMediaCard extends StatelessWidget {
     required this.emptyIcon,
     required this.hasContent,
     required this.previewUrl,
+    required this.showPlayOverlay,
     required this.galleryItems,
     required this.unseen,
     required this.loading,
@@ -575,6 +623,25 @@ class _PremiumMediaCard extends StatelessWidget {
                     children: [
                       glow,
                       content,
+                      if (showPlayOverlay && isStoryPreview)
+                        Center(
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.48),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.72),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                        ),
                       if (loading)
                         Container(
                           color: Colors.black.withValues(alpha: 0.4),
@@ -797,9 +864,11 @@ class _PremiumMediaCard extends StatelessWidget {
   }
 
   Widget _photoFrame(VenueGalleryItem item, double w, double h) {
-    final url = item.thumbnailUrl?.isNotEmpty == true
-        ? item.thumbnailUrl!
-        : item.url;
+    final usesThumbnail = item.thumbnailUrl?.isNotEmpty == true;
+    final url = usesThumbnail ? item.thumbnailUrl! : item.url;
+    final mediaReference = usesThumbnail
+        ? item.thumbnailReference
+        : item.mediaReference;
     return Container(
       width: w,
       height: h,
@@ -825,6 +894,7 @@ class _PremiumMediaCard extends StatelessWidget {
           children: [
             CachedImage(
               url,
+              mediaReference: mediaReference,
               fit: BoxFit.cover,
               errorWidget: (_) => Container(
                 color: const Color(0xFF1A2233),

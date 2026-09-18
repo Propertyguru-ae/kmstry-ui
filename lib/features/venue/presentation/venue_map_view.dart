@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/features/venue/presentation/map_style.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/venue/data/active_checkin_model.dart';
@@ -110,6 +112,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   final Map<String, BitmapDescriptor> _clusterIconCache = {};
   final Map<String, BitmapDescriptor> _photoMarkerIconCache = {};
   final Set<String> _photoMarkerIconLoadingKeys = <String>{};
+  final Map<String, int> _photoMarkerIconRetryCounts = <String, int>{};
   BitmapDescriptor? _singleDefaultIcon;
   BitmapDescriptor? _singleSelectedIcon;
   BitmapDescriptor? _singlePressedIcon;
@@ -991,10 +994,12 @@ class _VenueMapViewState extends State<VenueMapView> {
     final selectionChanged =
         oldWidget.selectedVenueId != widget.selectedVenueId;
     if (venuesChanged) {
-      // Venue listesi güncellenince (ör. checkin sonrası) icon cache'i temizle
-      // ki checkinCountActive değişen venue'lar yeni heat rengiyle yeniden çizilsin.
-      _photoMarkerIconCache.clear();
-      _photoMarkerIconLoadingKeys.clear();
+      // Discover sonucu kısa süre sonra canonical map-markers cevabıyla
+      // değişir. Tüm fotoğraf cache/in-flight işlerini burada temizlemek aynı
+      // görselleri tekrar indiriyor ve yavaş ağda pinleri sürekli fallback'te
+      // bırakıyordu. Cache key zaten check-in/selection durumunu içeriyor;
+      // yalnızca gerçekten fotoğraf kimliği değişen venue'ları temizle.
+      _invalidateChangedVenuePhotoIcons(oldWidget.venues, widget.venues);
       // Venue listesi yenilendiyse (ör. check-in sonrası) aktif check-in'i de
       // tazele ki rozet doğru mekanda görünsün.
       _loadActiveCheckin();
@@ -1002,6 +1007,52 @@ class _VenueMapViewState extends State<VenueMapView> {
     if (venuesChanged || selectionChanged) {
       _recomputeClusters(force: true);
     }
+  }
+
+  void _invalidateChangedVenuePhotoIcons(
+    List<Venue> previous,
+    List<Venue> current,
+  ) {
+    final previousById = <String, Venue>{
+      for (final venue in previous) _venueIdentity(venue): venue,
+    };
+    final currentById = <String, Venue>{
+      for (final venue in current) _venueIdentity(venue): venue,
+    };
+
+    final changedIds = <String>{};
+    for (final entry in previousById.entries) {
+      final next = currentById[entry.key];
+      if (next == null ||
+          _venuePhotoIdentity(entry.value) != _venuePhotoIdentity(next)) {
+        changedIds.add(entry.key);
+      }
+    }
+    for (final entry in currentById.entries) {
+      if (!previousById.containsKey(entry.key)) changedIds.add(entry.key);
+    }
+
+    if (changedIds.isEmpty) return;
+    bool belongsToChangedVenue(String key) {
+      final separator = key.indexOf('|');
+      final venueId = separator == -1 ? key : key.substring(0, separator);
+      return changedIds.contains(venueId);
+    }
+
+    _photoMarkerIconCache.removeWhere((key, _) => belongsToChangedVenue(key));
+    _photoMarkerIconRetryCounts.removeWhere(
+      (key, _) => belongsToChangedVenue(key),
+    );
+  }
+
+  String _venuePhotoIdentity(Venue venue) {
+    final mediaId = venue.photoReference?.mediaId.trim();
+    if (mediaId != null && mediaId.isNotEmpty) return mediaId;
+    final rawUrl = venue.photoUrl.trim();
+    final uri = Uri.tryParse(rawUrl);
+    return uri == null
+        ? rawUrl
+        : uri.replace(query: '', fragment: '').toString();
   }
 
   void _showHeatmapLegend(BuildContext context) {
@@ -1398,8 +1449,14 @@ class _VenueMapViewState extends State<VenueMapView> {
         : _heatRingColor(activeCount);
     final glowColor = _venueGlowColor(venue);
     final glowHex = glowColor.toARGB32().toRadixString(16);
+    final mediaReference =
+        venue.photoReference ??
+        MediaReference(
+          mediaId: '${_venueIdentity(venue)}:venue-photo',
+          url: photoUrl,
+        );
     final cacheKey =
-        '${_venueIdentity(venue)}|$photoUrl|$isSelected|$isPressed|$activeCount|$glowHex';
+        '${_venueIdentity(venue)}|${mediaReference.mediaId}|$isSelected|$isPressed|$activeCount|$glowHex';
     final cached = _photoMarkerIconCache[cacheKey];
     if (cached != null) {
       return cached;
@@ -1408,6 +1465,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     _schedulePhotoMarkerIconBuild(
       cacheKey: cacheKey,
       photoUrl: photoUrl,
+      mediaReference: mediaReference,
       ringColor: ringColor,
       glowColor: glowColor,
       activeCount: activeCount,
@@ -1435,26 +1493,60 @@ class _VenueMapViewState extends State<VenueMapView> {
   void _schedulePhotoMarkerIconBuild({
     required String cacheKey,
     required String photoUrl,
+    required MediaReference mediaReference,
     required Color ringColor,
     required Color glowColor,
     int? activeCount,
   }) {
     if (_photoMarkerIconLoadingKeys.contains(cacheKey)) return;
     _photoMarkerIconLoadingKeys.add(cacheKey);
-    _buildPhotoMarkerIcon(
-          photoUrl: photoUrl,
-          ringColor: ringColor,
-          glowColor: glowColor,
-          activeCount: activeCount,
-        )
-        .then((icon) {
-          if (icon == null || !mounted) return;
-          _photoMarkerIconCache[cacheKey] = icon;
-          _schedulePhotoIconRefresh();
-        })
-        .whenComplete(() {
-          _photoMarkerIconLoadingKeys.remove(cacheKey);
-        });
+    unawaited(
+      _buildAndCachePhotoMarkerIcon(
+        cacheKey: cacheKey,
+        photoUrl: photoUrl,
+        mediaReference: mediaReference,
+        ringColor: ringColor,
+        glowColor: glowColor,
+        activeCount: activeCount,
+      ),
+    );
+  }
+
+  Future<void> _buildAndCachePhotoMarkerIcon({
+    required String cacheKey,
+    required String photoUrl,
+    required MediaReference mediaReference,
+    required Color ringColor,
+    required Color glowColor,
+    int? activeCount,
+  }) async {
+    final icon = await _buildPhotoMarkerIcon(
+      photoUrl: photoUrl,
+      mediaReference: mediaReference,
+      ringColor: ringColor,
+      glowColor: glowColor,
+      activeCount: activeCount,
+    );
+    _photoMarkerIconLoadingKeys.remove(cacheKey);
+    if (!mounted) return;
+
+    if (icon != null) {
+      _photoMarkerIconRetryCounts.remove(cacheKey);
+      _photoMarkerIconCache[cacheKey] = icon;
+      _schedulePhotoIconRefresh();
+      return;
+    }
+
+    // The first discover response can be replaced by map-markers while an
+    // image request is still in flight. If that old request fails, schedule a
+    // single rebuild so the new signed URL gets a chance; never loop forever.
+    final attempts = _photoMarkerIconRetryCounts[cacheKey] ?? 0;
+    if (attempts >= 1) return;
+    _photoMarkerIconRetryCounts[cacheKey] = attempts + 1;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+    _lastMarkerKey = '';
+    await _recomputeClusters(force: true);
   }
 
   void _schedulePhotoIconRefresh() {
@@ -1475,18 +1567,44 @@ class _VenueMapViewState extends State<VenueMapView> {
   static final BaseCacheManager _markerPhotoCacheManager =
       DefaultCacheManager();
 
-  Future<Uint8List?> _loadMarkerPhotoBytes(String photoUrl) async {
-    try {
-      final file = await _markerPhotoCacheManager.getSingleFile(photoUrl);
+  Future<Uint8List?> _loadMarkerPhotoBytes(
+    String photoUrl,
+    MediaReference mediaReference,
+  ) async {
+    final resolver = SignedMediaResolver.instance;
+    final current = resolver.current(mediaReference);
+    final stableCacheKey = current.mediaId.trim().isEmpty
+        ? photoUrl
+        : current.mediaId;
+
+    Future<Uint8List?> load(String url) async {
+      final file = await _markerPhotoCacheManager.getSingleFile(
+        url,
+        key: stableCacheKey,
+      );
       if (!await file.exists()) return null;
-      return await file.readAsBytes();
+      return file.readAsBytes();
+    }
+
+    try {
+      final currentUrl = current.url.trim().isEmpty ? photoUrl : current.url;
+      return await load(currentUrl);
     } catch (_) {
-      return null;
+      // Exactly one authenticated refresh attempt. The resolver also
+      // coalesces concurrent pin failures for the same venue media id.
+      final refreshed = await resolver.refreshOnce(current);
+      if (refreshed == null || refreshed.url.trim().isEmpty) return null;
+      try {
+        return await load(refreshed.url);
+      } catch (_) {
+        return null;
+      }
     }
   }
 
   Future<BitmapDescriptor?> _buildPhotoMarkerIcon({
     required String photoUrl,
+    required MediaReference mediaReference,
     required Color ringColor,
     required Color glowColor,
     int? activeCount,
@@ -1497,7 +1615,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       // Ham fotoğrafı diskten oku; ilk görülüşte bir kez indirilir, sonraki
       // rebuild/uygulama açılışlarında ağdan tekrar çekilmez → Place Photo SKU
       // maliyeti ve veri/pil tüketimi düşer.
-      final bytes = await _loadMarkerPhotoBytes(photoUrl);
+      final bytes = await _loadMarkerPhotoBytes(photoUrl, mediaReference);
       if (bytes == null || bytes.isEmpty) return null;
       // Yüksek çözünürlük (4x) → kenarlar ve glow keskin, "pixel pixel" görünüm
       // biter. Görüntü boyutu aynı (64pt) kalır, sadece daha çok piksel basılır.
@@ -2244,6 +2362,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       address: venue.address,
       city: venue.city,
       photoUrl: venue.photoUrl,
+      photoReference: venue.photoReference,
       latitude: venue.latitude,
       longitude: venue.longitude,
       tag: venue.tag,
@@ -2264,6 +2383,9 @@ class _VenueMapViewState extends State<VenueMapView> {
       photos: venue.photos,
       openingHours: venue.openingHours,
       upcomingEvents: venue.upcomingEvents,
+      isFollowing: venue.isFollowing,
+      followerCount: venue.followerCount,
+      recommendationReason: venue.recommendationReason,
       partnershipPlatforms: venue.partnershipPlatforms,
     );
   }
@@ -2418,6 +2540,8 @@ class _VenueMapViewState extends State<VenueMapView> {
                                 child: liveVenue.photoUrl.isNotEmpty
                                     ? CachedImage(
                                         liveVenue.photoUrl,
+                                        mediaReference:
+                                            liveVenue.photoReference,
                                         fit: BoxFit.cover,
                                         errorWidget: (_) => Icon(
                                           Icons.storefront_rounded,
