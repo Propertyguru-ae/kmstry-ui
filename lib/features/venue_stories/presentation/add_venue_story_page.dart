@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
@@ -12,13 +13,29 @@ class AddVenueStoryPage extends StatefulWidget {
   final String venueId;
   const AddVenueStoryPage({super.key, required this.venueId});
 
+  /// Saydam route: sayfanın kendisi görsel bir zemin çizmez (kamera + yükleme
+  /// dialog'u yönetir). opaque:false ile arkadaki uygulama görünür kalır.
+  static Route<bool> route(String venueId) {
+    return PageRouteBuilder<bool>(
+      opaque: false,
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 150),
+      reverseTransitionDuration: const Duration(milliseconds: 150),
+      // Saydam sayfa: slide/döndürme yerine yumuşak fade (sayfa zaten görünmez,
+      // arkada uygulama kalır). Varsayılan geçişin "dönerek sola" görünmesini
+      // engeller.
+      transitionsBuilder: (_, animation, __, child) =>
+          FadeTransition(opacity: animation, child: child),
+      pageBuilder: (_, __, ___) => AddVenueStoryPage(venueId: venueId),
+    );
+  }
+
   @override
   State<AddVenueStoryPage> createState() => _AddVenueStoryPageState();
 }
 
 class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
   final _repo = VenueStoryRepository();
-  bool _uploading = false;
 
   @override
   void initState() {
@@ -58,8 +75,18 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
     final isVideo =
         ext.endsWith('.mp4') || ext.endsWith('.mov') || ext.endsWith('.avi');
 
-    setState(() => _uploading = true);
+    // Uygulama geneli yükleme dialog'u (premium kart + progress) — eski tam
+    // ekran siyah "Uploading..." yerine.
+    final progress = MediaUploadProgressController(
+      title: isVideo ? 'Uploading video story' : 'Uploading story',
+      message: isVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Sharing your story…',
+    );
+    await progress.show(context);
 
+    bool success = false;
+    Object? err;
     try {
       final uploadFile = isVideo
           ? await MediaCompressor.compressVenueVideo(file)
@@ -67,73 +94,69 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
       if (isVideo && await uploadFile.length() > _maxVenueStoryUploadBytes) {
         throw Exception('VIDEO_TOO_LARGE');
       }
+      if (isVideo) {
+        progress.update(
+          message: 'Your optimized video is being uploaded…',
+          progress: 0,
+        );
+      }
       await _repo.createVenueStory(
         venueId: widget.venueId,
         file: uploadFile,
         mediaType: isVideo ? 'video' : 'photo',
+        onProgress: (sent, total) {
+          if (total <= 0) return;
+          progress.update(progress: sent / total);
+        },
       );
+      success = true;
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _uploading = false);
-      // Backend STORIES'i SOCIAL+ plana kilitliyor. Bu ekrana normalde gate'li
-      // giriş noktalarından ulaşılır; yine de plan hatası düşerse generic
-      // "could not upload" yerine gerçek nedeni göster.
-      final isPlanLocked = e.toString().contains('PLAN_UPGRADE_REQUIRED');
-      final isTooLong = e.toString().contains('60 seconds or shorter');
-      final isTooLarge =
-          e.toString().contains('VIDEO_TOO_LARGE') ||
-          e.toString().contains('413') ||
-          e.toString().contains('File too large');
-      await showPremiumErrorDialog(
-        context,
-        message: isPlanLocked
-            ? 'Venue stories are part of the Social plan. Upgrade your venue to post stories.'
-            : isTooLong
-            ? 'Video must be 60 seconds or shorter.'
-            : isTooLarge
-            ? 'Video is too large. Please choose a smaller file.'
-            : 'Could not upload story. Please try again.',
-      );
-      if (mounted) Navigator.pop(context);
-      return;
+      err = e;
+    } finally {
+      await progress.close();
+      progress.dispose();
     }
 
     if (!mounted) return;
-    try {
-      showSuccessSnackBar(context, message: 'Story shared!');
-    } catch (_) {}
-    Navigator.pop(context, true);
+    if (success) {
+      try {
+        showSuccessSnackBar(context, message: 'Story shared!');
+      } catch (_) {}
+      Navigator.pop(context, true);
+      return;
+    }
+
+    // Backend STORIES'i SOCIAL+ plana kilitliyor. Plan hatası düşerse generic
+    // "could not upload" yerine gerçek nedeni göster.
+    final s = err.toString();
+    final isPlanLocked = s.contains('PLAN_UPGRADE_REQUIRED');
+    final isTooLong = s.contains('60 seconds or shorter');
+    final isTooLarge =
+        s.contains('VIDEO_TOO_LARGE') ||
+        s.contains('413') ||
+        s.contains('File too large');
+    await showPremiumErrorDialog(
+      context,
+      message: isPlanLocked
+          ? 'Venue stories are part of the Social plan. Upgrade your venue to post stories.'
+          : isTooLong
+          ? 'Video must be 60 seconds or shorter.'
+          : isTooLarge
+          ? 'Video is too large. Please choose a smaller file.'
+          : 'Could not upload story. Please try again.',
+    );
+    if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: _uploading
-            ? const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2.5,
-                  ),
-                  SizedBox(height: 18),
-                  Text(
-                    'Uploading...',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              )
-            : const CircularProgressIndicator(
-                color: Colors.white,
-                strokeWidth: 2.5,
-              ),
-      ),
+    // Sayfa SAYDAM: kamera ayrı route'ta açılır, yükleme dialog'u root
+    // navigator'da gösterilir. Böylece dialog görünürken arkada beyaz boş bir
+    // zemin değil, normal uygulama (venue profil) görünür. (Route opaque:false
+    // ile açılır — aşağıdaki AddVenueStoryPage.route.)
+    return const Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SizedBox.shrink(),
     );
   }
 }
