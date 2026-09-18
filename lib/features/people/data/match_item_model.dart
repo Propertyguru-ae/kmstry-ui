@@ -1,3 +1,5 @@
+import '../../../core/media/media_reference.dart';
+
 /// Model for GET /matches list item.
 /// Backend returns: match_id, chat_id, user_id, full_name.
 class MatchItem {
@@ -15,6 +17,7 @@ class MatchItem {
 
   /// Yalnızca galeriden yüklenen profil avatarı (check-in featured fotosu değil).
   final String? userPhotoUrl;
+  final MediaReference? userPhotoReference;
 
   MatchItem({
     required this.matchId,
@@ -29,6 +32,7 @@ class MatchItem {
     this.venuePhoto,
     this.bio,
     this.userPhotoUrl,
+    this.userPhotoReference,
   });
 
   factory MatchItem.fromJson(Map<String, dynamic> json) {
@@ -92,6 +96,16 @@ class MatchItem {
                 user?['aboutMe'])
             ?.toString()
             .trim();
+    final profileJson = <String, dynamic>{
+      ...json,
+      if (user != null) ...user,
+      'id': userId,
+      'photo': userPhoto,
+    };
+    final userPhotoReference = MediaReference.profilePhoto(
+      profileJson,
+      userId: userId,
+    );
 
     return MatchItem(
       matchId: matchId,
@@ -114,6 +128,9 @@ class MatchItem {
       userPhotoUrl: (userPhoto != null && userPhoto.trim().isNotEmpty)
           ? userPhoto.trim()
           : null,
+      userPhotoReference: userPhotoReference.url.isEmpty
+          ? null
+          : userPhotoReference,
     );
   }
 }

@@ -58,10 +58,16 @@ class MediaCompressor {
     }
   }
 
-  /// Galeri gibi kalitenin önemli olduğu yerler için 1080p sıkıştırma.
-  /// Check-in akışı (720p, MediumQuality) etkilenmez.
+  /// Venue story/gallery videoları için 720p sıkıştırma. 60 saniyelik medya
+  /// mobil ağda güvenilir biçimde yüklenirken görüntü kalitesi korunur.
+  static Future<File> compressVenueVideo(File input) =>
+      compressVideo(input, quality: VideoQuality.Res1280x720Quality);
+
+  /// Venue gallery videos are primarily viewed on a phone-sized surface.
+  /// 540p keeps them clear while materially reducing encode/upload time for
+  /// long gallery clips. Stories stay at 720p above.
   static Future<File> compressGalleryVideo(File input) =>
-      compressVideo(input, quality: VideoQuality.Res1920x1080Quality);
+      compressVideo(input, quality: VideoQuality.Res960x540Quality);
 
   /// Fotoğrafı yüklemeden önce en uzun kenarı ~[maxDimension]px olacak şekilde
   /// küçültüp JPEG'e (kalite [quality]) çevirir. Native codec kullanır → iOS

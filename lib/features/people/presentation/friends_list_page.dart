@@ -3,6 +3,7 @@ import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 
 /// Profildeki "Friends" istatistiğine basınca açılan liste.
 /// Kullanıcının eşleştiği (match) kişileri listeler + isimle arama.
@@ -306,9 +307,16 @@ class _FriendsListPageState extends State<FriendsListPage> {
           leading: CircleAvatar(
             radius: 24,
             backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.12),
-            foregroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
             child: hasAvatar
-                ? null
+                ? ClipOval(
+                    child: CachedImage(
+                      avatarUrl,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                      mediaReference: match.userPhotoReference,
+                    ),
+                  )
                 : Text(
                     initial,
                     style: TextStyle(
