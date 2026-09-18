@@ -78,6 +78,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   String? _activeCheckinFeaturedPhoto;
   bool _checkingOut = false;
   String? _resolvedVenueIdForCurrentDetail;
+  Future<String>? _venueIdResolutionFuture;
+  bool _storySectionLoading = true;
+  bool _storySectionUnavailable = false;
   bool _loadingActiveCheckin = true;
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
@@ -264,18 +267,36 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _loadHeaderStories() async {
+    if (mounted && _resolvedVenueIdForCurrentDetail == null) {
+      setState(() {
+        _storySectionLoading = true;
+        _storySectionUnavailable = false;
+      });
+    }
+
     try {
-      final stories = await _venueStoryRepo.getVenueStories(widget.venue.id);
+      final venueId = await _resolveVenueIdForDetail();
+      final stories = await _venueStoryRepo.getVenueStories(venueId);
       if (!mounted) return;
       setState(() {
         _headerStories = stories;
+        _storySectionLoading = false;
+        _storySectionUnavailable = false;
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('⚠️ Could not prepare venue stories: $e');
+      if (!mounted) return;
+      setState(() {
+        _storySectionLoading = false;
+        _storySectionUnavailable = true;
+      });
+    }
   }
 
   void _openStoryViewer() {
     if (_headerStories.isEmpty) return;
-    final venueId = widget.venue.id;
+    final venueId = _resolvedVenueIdForCurrentDetail;
+    if (venueId == null || venueId.isEmpty) return;
     final startIndex = _headerStories.indexWhere((s) => !s.viewedByMe);
     final initialIndex = startIndex == -1 ? 0 : startIndex;
     final group = StoryGroup(
@@ -424,7 +445,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     setState(() => _followLoading = true);
 
     try {
-      final venueId = await _resolveVenueIdForFollow();
+      final venueId = await _resolveVenueIdForDetail();
       if (!mounted) return;
       setState(() {
         optimisticStateApplied = true;
@@ -464,7 +485,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     }
   }
 
-  Future<String> _resolveVenueIdForFollow() async {
+  Future<String> _resolveVenueIdForDetail() async {
     final cached = _resolvedVenueIdForCurrentDetail;
     if (cached != null && cached.isNotEmpty) return cached;
 
@@ -473,6 +494,21 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       return widget.venue.id;
     }
 
+    final inFlight = _venueIdResolutionFuture;
+    if (inFlight != null) return inFlight;
+
+    final resolution = _resolveGoogleVenueId();
+    _venueIdResolutionFuture = resolution;
+    try {
+      return await resolution;
+    } finally {
+      if (identical(_venueIdResolutionFuture, resolution)) {
+        _venueIdResolutionFuture = null;
+      }
+    }
+  }
+
+  Future<String> _resolveGoogleVenueId() async {
     final explicitPlaceId = widget.venue.placeId?.trim();
     final placeId = explicitPlaceId != null && explicitPlaceId.isNotEmpty
         ? explicitPlaceId
@@ -484,10 +520,14 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final response = await _venueContextRepo.resolveVenueFromPlace(placeId);
     final resolved = _extractVenueIdFromResponse(response);
     if (resolved == null || resolved.isEmpty) {
-      throw Exception('Could not resolve venue id for follow');
+      throw Exception('Could not resolve venue id');
     }
     if (mounted) {
-      setState(() => _resolvedVenueIdForCurrentDetail = resolved);
+      setState(() {
+        _resolvedVenueIdForCurrentDetail = resolved;
+        _storySectionLoading = false;
+        _storySectionUnavailable = false;
+      });
     }
     return resolved;
   }
@@ -1308,13 +1348,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       final placeKey = _effectivePlaceKeyForActiveCheckinCorrelation();
       if (placeKey != null && placeKey.isNotEmpty) {
         try {
-          final resolvedResponse = await _venueContextRepo
-              .resolveVenueFromPlace(placeKey);
-          final resolved = _extractVenueIdFromResponse(resolvedResponse);
+          final resolved = await _resolveVenueIdForDetail();
           if (!mounted) return;
-          if (resolved != null &&
-              resolved.isNotEmpty &&
-              resolved == activeVenueId) {
+          if (resolved.isNotEmpty && resolved == activeVenueId) {
             setState(() {
               _resolvedVenueIdForCurrentDetail = resolved;
               _loadingActiveCheckin = false;
@@ -1380,25 +1416,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<String> _resolveVenueIdForCheckin() async {
-    if (widget.venue.id.isNotEmpty && widget.venue.canCheckin) {
-      return widget.venue.id;
-    }
-
-    final placeId = widget.venue.placeId;
-    if (placeId == null || placeId.isEmpty) {
-      if (widget.venue.id.isNotEmpty) return widget.venue.id;
-      throw Exception('Venue reference is missing');
-    }
-
-    // Check-in flow must resolve a usable venue id without claim/account side effects.
-    final resolvedResponse = await _venueContextRepo.resolveVenueFromPlace(
-      placeId,
-    );
-    final resolved = _extractVenueIdFromResponse(resolvedResponse);
-    if (resolved == null || resolved.isEmpty) {
-      throw Exception('Could not resolve venue id from place');
-    }
-    return resolved;
+    return _resolveVenueIdForDetail();
   }
 
   Future<void> _openCheckinFlow() async {
@@ -2405,9 +2423,33 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                           ],
 
                           /// STORY TRAY
-                          if (_resolvedVenueIdForCurrentDetail != null) ...[
-                            const SizedBox(height: 18),
-                            _sectionTitle(AppColors.magenta, 'Stories'),
+                          const SizedBox(height: 18),
+                          _sectionTitle(AppColors.magenta, 'Stories'),
+                          if (_resolvedVenueIdForCurrentDetail == null) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              height: 72,
+                              child: Center(
+                                child: _storySectionLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Text(
+                                        _storySectionUnavailable
+                                            ? 'Stories are unavailable right now.'
+                                            : 'No stories here yet.',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: _textMuted,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ] else ...[
                             // Check-in'li ama henüz story paylaşmamış kullanıcıyı
                             // teşvik et + baloncuğun ne olduğunu açıkla.
                             if (hasActiveCheckinHere &&

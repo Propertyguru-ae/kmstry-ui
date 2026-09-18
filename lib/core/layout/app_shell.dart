@@ -1114,9 +1114,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(11),
+        // Seçili göstergesi diğer navbar sekmeleriyle AYNI (magenta→orange).
         gradient: isActive
             ? const LinearGradient(
-                colors: [AppColors.blue, AppColors.teal],
+                colors: [AppColors.magentaDark, AppColors.orange],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               )
@@ -1127,7 +1128,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(9),
-          color: isDark
+          // Harf dalında seçiliyken iç kutu şeffaf → dış gradient görünür ve
+          // beyaz harf net okunur (light modda kaybolma sorunu giderildi).
+          // Foto dalında foto zaten örtüyor; seçiliyken 2px gradient çerçeve kalır.
+          color: (isActive && avatarUrl == null)
+              ? Colors.transparent
+              : isDark
               ? const Color(0xFF102238)
               : colors.primary.withValues(alpha: 0.10),
         ),
@@ -1440,16 +1446,28 @@ class _ProfileInitial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      initial,
-      style: TextStyle(
-        fontWeight: FontWeight.w800,
-        fontSize: 15,
-        color: isActive
-            ? (isDark ? Colors.white : AppColors.blue)
-            : isDark
-            ? AppColors.blueDark
-            : colors.onSurface,
+    // Resim dalıyla aynı 32x32 kutu + gerçek ortalama. height:1.0, harfin
+    // ascent/descent boşluğundan gelen optik kaymayı engeller (navbar'da baş
+    // harf artık tam ortada — profildeki avatarla tutarlı).
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: Center(
+        child: Text(
+          initial,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 15,
+            height: 1.0,
+            // Seçiliyken harf gradient kutunun üstünde → her iki temada beyaz.
+            color: isActive
+                ? Colors.white
+                : isDark
+                ? AppColors.blueDark
+                : colors.onSurface,
+          ),
+        ),
       ),
     );
   }
