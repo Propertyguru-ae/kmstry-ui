@@ -4,12 +4,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
@@ -41,6 +44,7 @@ import 'package:kmstry_frontend/features/venue/presentation/personal_event_detai
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 // VenueUpcomingEvent, venue_model.dart'tan geliyor — ayrı import gerekmez
 
@@ -77,10 +81,15 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   String? _activeCheckinFeaturedPhoto;
   bool _checkingOut = false;
   String? _resolvedVenueIdForCurrentDetail;
+  Future<String>? _venueIdResolutionFuture;
+  bool _storySectionLoading = true;
+  bool _storySectionUnavailable = false;
   bool _loadingActiveCheckin = true;
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
   Map<String, dynamic>? _enrichedVenueData;
+  late String _venuePhotoUrl;
+  MediaReference? _venuePhotoReference;
   bool _loadingCheckinStats = false;
   int? _checkinCountActive;
   int? _checkinCountMale;
@@ -106,6 +115,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   @override
   void initState() {
     super.initState();
+    _venuePhotoUrl = widget.venue.photoUrl;
+    _venuePhotoReference = widget.venue.photoReference;
     _checkinCountActive = widget.venue.checkinCountActive;
     _checkinCountMale = widget.venue.checkinCountMale;
     _checkinCountFemale = widget.venue.checkinCountFemale;
@@ -169,6 +180,16 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       _loadAnonymousStatus(),
       _checkProximity(useFreshGps: true),
     ]);
+  }
+
+  Future<void> _reportVenue() async {
+    final venueId = widget.venue.id.trim();
+    if (!widget.venue.isInDb || venueId.isEmpty || !mounted) return;
+    await showReportUserSheet(
+      context,
+      title: 'Why are you reporting this venue?',
+      venueId: venueId,
+    );
   }
 
   /// Gerçek venue'lerde kullanıcının fiziksel olarak mekânda olup olmadığını
@@ -259,25 +280,43 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _loadHeaderStories() async {
+    if (mounted && _resolvedVenueIdForCurrentDetail == null) {
+      setState(() {
+        _storySectionLoading = true;
+        _storySectionUnavailable = false;
+      });
+    }
+
     try {
-      final stories = await _venueStoryRepo.getVenueStories(widget.venue.id);
+      final venueId = await _resolveVenueIdForDetail();
+      final stories = await _venueStoryRepo.getVenueStories(venueId);
       if (!mounted) return;
       setState(() {
         _headerStories = stories;
+        _storySectionLoading = false;
+        _storySectionUnavailable = false;
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('⚠️ Could not prepare venue stories: $e');
+      if (!mounted) return;
+      setState(() {
+        _storySectionLoading = false;
+        _storySectionUnavailable = true;
+      });
+    }
   }
 
   void _openStoryViewer() {
     if (_headerStories.isEmpty) return;
-    final venueId = widget.venue.id;
+    final venueId = _resolvedVenueIdForCurrentDetail;
+    if (venueId == null || venueId.isEmpty) return;
     final startIndex = _headerStories.indexWhere((s) => !s.viewedByMe);
     final initialIndex = startIndex == -1 ? 0 : startIndex;
     final group = StoryGroup(
       user: StoryUser(
         id: 'venue_$venueId',
         fullName: widget.venue.name,
-        photo: widget.venue.photoUrl.isNotEmpty ? widget.venue.photoUrl : null,
+        photo: _venuePhotoUrl.isNotEmpty ? _venuePhotoUrl : null,
       ),
       stories: _headerStories
           .map(
@@ -347,8 +386,17 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     try {
       final data = await _venueContextRepo.getVenueById(widget.venue.id);
       if (!mounted) return;
+      final freshPhoto = MediaReference.venuePhoto(
+        data,
+        venueId: widget.venue.id,
+        allowRefresh: true,
+      );
       setState(() {
         _enrichedVenueData = data;
+        if (freshPhoto.url.isNotEmpty || freshPhoto.canRefresh) {
+          _venuePhotoUrl = freshPhoto.url;
+          _venuePhotoReference = freshPhoto;
+        }
         _isFollowing = (data['isFollowing'] ?? data['is_following']) == true;
         _followerCount =
             _parseOptionalInt(
@@ -401,35 +449,39 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _toggleFollow() async {
-    if (_followLoading || !widget.venue.isInDb || widget.venue.id.isEmpty) {
-      return;
-    }
+    if (_followLoading) return;
     final previousFollowing = _isFollowing;
     final previousCount = _followerCount;
     final nextFollowing = !previousFollowing;
+    var optimisticStateApplied = false;
 
-    setState(() {
-      _followLoading = true;
-      _isFollowing = nextFollowing;
-      _followerCount = nextFollowing
-          ? previousCount + 1
-          : (previousCount > 0 ? previousCount - 1 : 0);
-    });
+    setState(() => _followLoading = true);
 
     try {
+      final venueId = await _resolveVenueIdForDetail();
+      if (!mounted) return;
+      setState(() {
+        optimisticStateApplied = true;
+        _isFollowing = nextFollowing;
+        _followerCount = nextFollowing
+            ? previousCount + 1
+            : (previousCount > 0 ? previousCount - 1 : 0);
+      });
       final result = nextFollowing
-          ? await _venueContextRepo.followVenue(widget.venue.id)
-          : await _venueContextRepo.unfollowVenue(widget.venue.id);
+          ? await _venueContextRepo.followVenue(venueId)
+          : await _venueContextRepo.unfollowVenue(venueId);
       final count = _parseOptionalInt(result['followerCount']);
       if (mounted && count != null) {
         setState(() => _followerCount = count);
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _isFollowing = previousFollowing;
-        _followerCount = previousCount;
-      });
+      if (optimisticStateApplied) {
+        setState(() {
+          _isFollowing = previousFollowing;
+          _followerCount = previousCount;
+        });
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -444,6 +496,53 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         setState(() => _followLoading = false);
       }
     }
+  }
+
+  Future<String> _resolveVenueIdForDetail() async {
+    final cached = _resolvedVenueIdForCurrentDetail;
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    if (widget.venue.isInDb && widget.venue.id.isNotEmpty) {
+      _resolvedVenueIdForCurrentDetail = widget.venue.id;
+      return widget.venue.id;
+    }
+
+    final inFlight = _venueIdResolutionFuture;
+    if (inFlight != null) return inFlight;
+
+    final resolution = _resolveGoogleVenueId();
+    _venueIdResolutionFuture = resolution;
+    try {
+      return await resolution;
+    } finally {
+      if (identical(_venueIdResolutionFuture, resolution)) {
+        _venueIdResolutionFuture = null;
+      }
+    }
+  }
+
+  Future<String> _resolveGoogleVenueId() async {
+    final explicitPlaceId = widget.venue.placeId?.trim();
+    final placeId = explicitPlaceId != null && explicitPlaceId.isNotEmpty
+        ? explicitPlaceId
+        : widget.venue.source == 'google' && widget.venue.id.isNotEmpty
+        ? widget.venue.id
+        : null;
+    if (placeId == null) throw Exception('Venue reference is missing');
+
+    final response = await _venueContextRepo.resolveVenueFromPlace(placeId);
+    final resolved = _extractVenueIdFromResponse(response);
+    if (resolved == null || resolved.isEmpty) {
+      throw Exception('Could not resolve venue id');
+    }
+    if (mounted) {
+      setState(() {
+        _resolvedVenueIdForCurrentDetail = resolved;
+        _storySectionLoading = false;
+        _storySectionUnavailable = false;
+      });
+    }
+    return resolved;
   }
 
   // ── Logo-renkli tema paleti (light/dark uyumlu) ───────────────────────────
@@ -707,9 +806,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Widget _buildFollowButton() {
-    if (!widget.venue.isInDb || widget.venue.id.isEmpty) {
-      return const SizedBox.shrink();
-    }
     final following = _isFollowing;
     return _actionButton(
       onTap: _followLoading ? null : _toggleFollow,
@@ -1265,13 +1361,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       final placeKey = _effectivePlaceKeyForActiveCheckinCorrelation();
       if (placeKey != null && placeKey.isNotEmpty) {
         try {
-          final resolvedResponse = await _venueContextRepo
-              .resolveVenueFromPlace(placeKey);
-          final resolved = _extractVenueIdFromResponse(resolvedResponse);
+          final resolved = await _resolveVenueIdForDetail();
           if (!mounted) return;
-          if (resolved != null &&
-              resolved.isNotEmpty &&
-              resolved == activeVenueId) {
+          if (resolved.isNotEmpty && resolved == activeVenueId) {
             setState(() {
               _resolvedVenueIdForCurrentDetail = resolved;
               _loadingActiveCheckin = false;
@@ -1337,25 +1429,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<String> _resolveVenueIdForCheckin() async {
-    if (widget.venue.id.isNotEmpty && widget.venue.canCheckin) {
-      return widget.venue.id;
-    }
-
-    final placeId = widget.venue.placeId;
-    if (placeId == null || placeId.isEmpty) {
-      if (widget.venue.id.isNotEmpty) return widget.venue.id;
-      throw Exception('Venue reference is missing');
-    }
-
-    // Check-in flow must resolve a usable venue id without claim/account side effects.
-    final resolvedResponse = await _venueContextRepo.resolveVenueFromPlace(
-      placeId,
-    );
-    final resolved = _extractVenueIdFromResponse(resolvedResponse);
-    if (resolved == null || resolved.isEmpty) {
-      throw Exception('Could not resolve venue id from place');
-    }
-    return resolved;
+    return _resolveVenueIdForDetail();
   }
 
   Future<void> _openCheckinFlow() async {
@@ -1579,37 +1653,66 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Overlay'i async gap'ten ÖNCE yakala — kullanıcı başka sayfaya geçse bile
     // kart root overlay üzerinde gösterilecek.
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    final uploadProgress = MediaUploadProgressController(
+      title: isVideo ? 'Preparing video' : 'Uploading story',
+      message: isVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Your photo is being uploaded…',
+    );
 
     setState(() => _storyUploading = true);
-
+    await uploadProgress.show(context);
+    Object? uploadError;
+    StackTrace? uploadStack;
     try {
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: file,
-        mediaType: mediaType,
-        textOverlayJson: storyOverlay?.toJsonString(),
-      );
-      // Sayfa hâlâ açıksa tray'i yenile.
-      if (mounted) {
-        setState(() {
-          _storyUploading = false;
-          _storyTrayRefreshCount++;
-        });
-      }
-      // Kutlama kartını göster — kullanıcı nerede olursa olsun.
-      if (overlay != null) {
-        showStorySharedCard(
-          overlay,
-          mediaFile: file,
-          venueName: widget.venue.name,
-          isVideo: isVideo,
+      final uploadFile = isVideo
+          ? await MediaCompressor.compressVenueVideo(file)
+          : file;
+      if (isVideo) {
+        uploadProgress.update(
+          title: 'Uploading video',
+          message: 'Your optimized story is being uploaded…',
+          progress: 0,
         );
       }
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: uploadFile,
+        mediaType: mediaType,
+        textOverlayJson: storyOverlay?.toJsonString(),
+        onProgress: (sent, total) {
+          if (total <= 0) return;
+          uploadProgress.update(progress: sent / total);
+        },
+      );
     } catch (e, st) {
-      debugPrint('❌ Story upload error: $e\n$st');
-      if (!mounted) return;
-      setState(() => _storyUploading = false);
-      await showPremiumErrorDialog(context, message: 'Upload failed: $e');
+      uploadError = e;
+      uploadStack = st;
+    } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
+      if (mounted) setState(() => _storyUploading = false);
+    }
+
+    if (!mounted) return;
+    if (uploadError != null) {
+      debugPrint('❌ Story upload error: $uploadError\n$uploadStack');
+      await showPremiumErrorDialog(
+        context,
+        message: 'Story could not be uploaded. Please try again.',
+      );
+      return;
+    }
+
+    setState(() => _storyTrayRefreshCount++);
+    // Kutlama kartını göster — kullanıcı nerede olursa olsun.
+    if (overlay != null) {
+      showStorySharedCard(
+        overlay,
+        mediaFile: file,
+        venueName: widget.venue.name,
+        isVideo: isVideo,
+      );
     }
   }
 
@@ -1794,7 +1897,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             venueName: widget.venue.name,
             venueAddress: (_venueDetails?['address'] ?? widget.venue.address)
                 ?.toString(),
-            venuePhotoUrl: widget.venue.photoUrl,
+            venuePhotoUrl: _venuePhotoUrl,
           ),
         ),
       ),
@@ -2076,8 +2179,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     final address = (_venueDetails?['address'] ?? widget.venue.address ?? '')
         .toString()
         .trim();
-    final followAvailable = widget.venue.isInDb && widget.venue.id.isNotEmpty;
-
     return Scaffold(
       backgroundColor: _pageBg,
       body: Stack(
@@ -2103,7 +2204,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       fit: StackFit.expand,
                       children: [
                         CachedImage(
-                          _safeDisplayPhotoUrl(widget.venue.photoUrl),
+                          _safeDisplayPhotoUrl(_venuePhotoUrl),
+                          mediaReference: _venuePhotoReference,
                           fit: BoxFit.cover,
                         ),
                         Align(
@@ -2136,7 +2238,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               _VenueDetailAvatarRing(
-                                photoUrl: widget.venue.photoUrl,
+                                photoUrl: _venuePhotoUrl,
+                                mediaReference: _venuePhotoReference,
                                 hasStories: _headerStories.isNotEmpty,
                                 allSeen:
                                     _headerStories.isNotEmpty &&
@@ -2306,10 +2409,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                           /// Menu ve Check in tam genişlikte.
                           Row(
                             children: [
-                              if (followAvailable) ...[
-                                Expanded(child: _buildFollowButton()),
-                                const SizedBox(width: 9),
-                              ],
+                              Expanded(child: _buildFollowButton()),
+                              const SizedBox(width: 9),
                               Expanded(child: _buildDirectionsButton()),
                               const SizedBox(width: 9),
                               Expanded(child: _buildShareButton()),
@@ -2343,8 +2444,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                               confirmLabel: 'Check out',
                                               icon: Icons.logout_rounded,
                                             );
-                                        if (confirmed == true)
+                                        if (confirmed == true) {
                                           await _checkout();
+                                        }
                                       },
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.redAccent,
@@ -2363,9 +2465,33 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                           ],
 
                           /// STORY TRAY
-                          if (_resolvedVenueIdForCurrentDetail != null) ...[
-                            const SizedBox(height: 18),
-                            _sectionTitle(AppColors.magenta, 'Stories'),
+                          const SizedBox(height: 18),
+                          _sectionTitle(AppColors.magenta, 'Stories'),
+                          if (_resolvedVenueIdForCurrentDetail == null) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              height: 72,
+                              child: Center(
+                                child: _storySectionLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Text(
+                                        _storySectionUnavailable
+                                            ? 'Stories are unavailable right now.'
+                                            : 'No stories here yet.',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: _textMuted,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ] else ...[
                             // Check-in'li ama henüz story paylaşmamış kullanıcıyı
                             // teşvik et + baloncuğun ne olduğunu açıkla.
                             if (hasActiveCheckinHere &&
@@ -2478,8 +2604,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                                           )
                                           .toList(),
                                     );
-                                if (weekly.isEmpty)
+                                if (weekly.isEmpty) {
                                   return const SizedBox.shrink();
+                                }
                                 return Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -2505,6 +2632,24 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             left: 12,
             child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
           ),
+          if (widget.venue.isInDb && widget.venue.id.trim().isNotEmpty)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 6,
+              right: 12,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Report venue',
+                  onPressed: _reportVenue,
+                  icon: const Icon(
+                    Icons.flag_outlined,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
         ], // Stack children
       ), // Stack
     );
@@ -2515,6 +2660,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
 class _VenueDetailAvatarRing extends StatelessWidget {
   final String photoUrl;
+  final MediaReference? mediaReference;
   final bool hasStories;
   final bool allSeen;
   final VoidCallback? onTap;
@@ -2529,6 +2675,7 @@ class _VenueDetailAvatarRing extends StatelessWidget {
 
   const _VenueDetailAvatarRing({
     required this.photoUrl,
+    required this.mediaReference,
     required this.hasStories,
     required this.allSeen,
     this.onTap,
@@ -2547,6 +2694,7 @@ class _VenueDetailAvatarRing extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: CachedImage(
         photo,
+        mediaReference: mediaReference,
         width: avatarSize,
         height: avatarSize,
         fit: BoxFit.cover,

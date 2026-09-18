@@ -11,6 +11,8 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
+import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
 import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
@@ -550,40 +552,67 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     // Kutlama kartı için overlay'i async gap'ten önce yakala.
     final rootOverlay = Overlay.maybeOf(context, rootOverlay: true);
 
+    final uploadProgress = MediaUploadProgressController(
+      title: isVideo ? 'Preparing video' : 'Uploading story',
+      message: isVideo
+          ? 'Optimizing your video for a faster upload…'
+          : 'Your photo is being uploaded…',
+    );
     setState(() => _storyUploading = true);
-
+    await uploadProgress.show(context);
+    Object? uploadError;
     try {
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: file,
-        mediaType: isVideo ? 'video' : 'photo',
-        textOverlayJson: overlay?.toJsonString(),
-      );
-      if (mounted) {
-        setState(() => _storyUploading = false);
-        _loadHomeStories();
-        _loadMyStories();
-      }
-      // "Story shared" kutlama kartı — venue detay ile aynı bileşen.
-      if (rootOverlay != null) {
-        final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
-            ? _activeVenue!.name
-            : (_activeCheckin?.venueName ?? 'your venue');
-        showStorySharedCard(
-          rootOverlay,
-          mediaFile: file,
-          venueName: venueName,
-          isVideo: isVideo,
+      final uploadFile = isVideo
+          ? await MediaCompressor.compressVenueVideo(file)
+          : file;
+      if (isVideo) {
+        uploadProgress.update(
+          title: 'Uploading video',
+          message: 'Your optimized story is being uploaded…',
+          progress: 0,
         );
       }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _storyUploading = false);
+      await _storyRepo.createStory(
+        checkinId: checkinId,
+        file: uploadFile,
+        mediaType: isVideo ? 'video' : 'photo',
+        textOverlayJson: overlay?.toJsonString(),
+        onProgress: (sent, total) {
+          if (total <= 0) return;
+          uploadProgress.update(progress: sent / total);
+        },
+      );
+    } catch (error) {
+      uploadError = error;
+    } finally {
+      await uploadProgress.close();
+      uploadProgress.dispose();
+      if (mounted) setState(() => _storyUploading = false);
+    }
+
+    if (!mounted) return;
+    if (uploadError != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Story paylaşılamadı. Tekrar dene.'),
+          content: Text('Story could not be uploaded. Please try again.'),
           behavior: SnackBarBehavior.floating,
         ),
+      );
+      return;
+    }
+
+    _loadHomeStories();
+    _loadMyStories();
+    // "Story shared" kutlama kartı — venue detay ile aynı bileşen.
+    if (rootOverlay != null) {
+      final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
+          ? _activeVenue!.name
+          : (_activeCheckin?.venueName ?? 'your venue');
+      showStorySharedCard(
+        rootOverlay,
+        mediaFile: file,
+        venueName: venueName,
+        isVideo: isVideo,
       );
     }
   }

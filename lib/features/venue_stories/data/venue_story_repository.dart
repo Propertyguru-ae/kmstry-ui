@@ -23,6 +23,7 @@ class VenueStoryRepository {
     required String venueId,
     required File file,
     required String mediaType,
+    MultipartUploadProgress? onProgress,
   }) async {
     final token = await SecureStorage.getAccessToken();
     final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/venue-stories');
@@ -34,15 +35,19 @@ class VenueStoryRepository {
     final mimeSplit = mimeType.split('/');
 
     request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        file.path,
+      await multipartFileWithProgress(
+        field: 'file',
+        file: file,
         contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+        onProgress: onProgress,
       ),
     );
     request.fields['media_type'] = mediaType;
 
-    final streamed = await sendMultipartRequest(request);
+    final streamed = await sendMultipartRequest(
+      request,
+      timeout: const Duration(minutes: 5),
+    );
     final body = await streamed.stream.bytesToString();
 
     if (streamed.statusCode >= 400) {

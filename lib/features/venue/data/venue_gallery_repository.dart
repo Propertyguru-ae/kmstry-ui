@@ -40,6 +40,7 @@ class VenueGalleryRepository {
     String venueId,
     File file, {
     File? thumbnail,
+    MultipartUploadProgress? onProgress,
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
@@ -51,13 +52,14 @@ class VenueGalleryRepository {
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final mimeParts = mimeType.split('/');
     request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        file.path,
+      await multipartFileWithProgress(
+        field: 'file',
+        file: file,
         contentType: MediaType(
           mimeParts[0],
           mimeParts.length > 1 ? mimeParts[1] : 'octet-stream',
         ),
+        onProgress: onProgress,
       ),
     );
 
@@ -71,7 +73,10 @@ class VenueGalleryRepository {
       );
     }
 
-    final response = await sendMultipartRequest(request);
+    final response = await sendMultipartRequest(
+      request,
+      timeout: const Duration(minutes: 5),
+    );
     final body = await response.stream.bytesToString();
     if (response.statusCode >= 400) {
       throw Exception('Upload failed (${response.statusCode}): $body');

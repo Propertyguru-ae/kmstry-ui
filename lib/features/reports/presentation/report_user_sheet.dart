@@ -31,19 +31,31 @@ const _kReportCategories = <_ReportCategory>[
 /// Returns `true` if the report was submitted successfully.
 Future<bool> showReportUserSheet(
   BuildContext context, {
-  required String targetUserId,
+  String? targetUserId,
   String title = 'What do you want to report?',
   String? messageId,
   String? storyId,
   String? venueStoryId,
   String? checkinMediaId,
+  String? venueId,
+  String? venueGalleryItemId,
+  String? eventId,
+  String? venueOfferId,
+  String? venueMenuItemId,
+  String? venueBenefitId,
 }) async {
   final repo = CheckinRepository();
   final reportsSelectedContent =
       messageId != null ||
       storyId != null ||
       venueStoryId != null ||
-      checkinMediaId != null;
+      checkinMediaId != null ||
+      venueId != null ||
+      venueGalleryItemId != null ||
+      eventId != null ||
+      venueOfferId != null ||
+      venueMenuItemId != null ||
+      venueBenefitId != null;
 
   int? selectedIndex;
   bool submitting = false;
@@ -232,6 +244,12 @@ Future<bool> showReportUserSheet(
                                       storyId: storyId,
                                       venueStoryId: venueStoryId,
                                       checkinMediaId: checkinMediaId,
+                                      venueId: venueId,
+                                      venueGalleryItemId: venueGalleryItemId,
+                                      eventId: eventId,
+                                      venueOfferId: venueOfferId,
+                                      venueMenuItemId: venueMenuItemId,
+                                      venueBenefitId: venueBenefitId,
                                     );
                                     reportSucceeded = true;
                                   } catch (_) {
@@ -244,7 +262,9 @@ Future<bool> showReportUserSheet(
                                     return;
                                   }
 
-                                  if (!reportsSelectedContent) {
+                                  if (!reportsSelectedContent &&
+                                      targetUserId != null &&
+                                      targetUserId.trim().isNotEmpty) {
                                     // User-level reports retain the existing
                                     // report-and-block safety behavior.
                                     try {

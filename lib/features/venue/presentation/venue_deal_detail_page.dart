@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 /// Bir venue'nun tek bir deal/indirim ortaklığının detay sayfası. Chip'e
 /// dokununca açılır; platform, teklif tipi, açıklama, geçerlilik ve varsa
@@ -48,6 +49,18 @@ class VenueDealDetailPage extends StatelessWidget {
           'Deal details',
           style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Report benefit',
+            onPressed: () => showReportUserSheet(
+              context,
+              title: 'Why are you reporting this benefit?',
+              venueBenefitId: deal.id,
+            ),
+            icon: const Icon(Icons.flag_outlined),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),

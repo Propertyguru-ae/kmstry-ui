@@ -8,6 +8,7 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
@@ -1485,7 +1486,11 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         : <CheckinProfileMedia>[];
     final visitedPlaces = _visitedPlaces;
     final profileContent = <Widget>[
-      _buildPreviewAvatar(avatarUrl, isDark),
+      _buildPreviewAvatar(
+        avatarUrl,
+        isDark,
+        mediaReference: _previewAvatarReference(avatarUrl),
+      ),
       const SizedBox(height: 14),
       if (_hasPreviewStats) ...[
         _buildPreviewStats(onSurface, subColor),
@@ -1722,26 +1727,26 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     parent: AlwaysScrollableScrollPhysics(),
                   ),
                   slivers: [
-                  SliverPadding(
-                    padding: EdgeInsets.fromLTRB(
-                      20,
-                      8,
-                      20,
-                      _selectedProfileTab == 1 && visitedPlaces.isNotEmpty
-                          ? 0
-                          : 28,
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        20,
+                        8,
+                        20,
+                        _selectedProfileTab == 1 && visitedPlaces.isNotEmpty
+                            ? 0
+                            : 28,
+                      ),
+                      sliver: SliverList.list(children: profileContent),
                     ),
-                    sliver: SliverList.list(children: profileContent),
-                  ),
-                  if (!_isBlocked &&
-                      _selectedProfileTab == 1 &&
-                      visitedPlaces.isNotEmpty)
-                    _buildVisitedPlacesSliver(
-                      places: visitedPlaces,
-                      isDark: isDark,
-                      subColor: subColor,
-                      onSurface: onSurface,
-                    ),
+                    if (!_isBlocked &&
+                        _selectedProfileTab == 1 &&
+                        visitedPlaces.isNotEmpty)
+                      _buildVisitedPlacesSliver(
+                        places: visitedPlaces,
+                        isDark: isDark,
+                        subColor: subColor,
+                        onSurface: onSurface,
+                      ),
                   ],
                 ),
               ),
@@ -2444,7 +2449,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
     try {
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
+        MaterialPageRoute(
+          builder: (_) => VenueDetailPage(venue: resolvedVenue),
+        ),
       );
     } finally {
       _openingVenueDetail = false;
@@ -2587,13 +2594,24 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return null;
   }
 
+  MediaReference? _previewAvatarReference(String? url) {
+    if (url == null || url.isEmpty) return null;
+    if (url == _profile?.user.photo) return _profile?.user.photoReference;
+    if (url == _publicProfile?.photo) return _publicProfile?.photoReference;
+    return null;
+  }
+
   bool get _hasPreviewStats => _profile != null || _publicProfile != null;
 
   bool get _isPreviewVerified =>
       _profile?.user.isVerified == true || _publicProfile?.isVerified == true;
 
   /// Ortalanmış, karemsi (radius 32) avatar — personal profil ile aynı dil.
-  Widget _buildPreviewAvatar(String? url, bool isDark) {
+  Widget _buildPreviewAvatar(
+    String? url,
+    bool isDark, {
+    MediaReference? mediaReference,
+  }) {
     const size = 128.0;
     return Center(
       child: ClipRRect(
@@ -2605,6 +2623,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               ? CachedImage(
                   url,
                   fit: BoxFit.cover,
+                  mediaReference: mediaReference,
                   errorWidget: (_) => _previewAvatarFallback(isDark),
                 )
               : _previewAvatarFallback(isDark),
