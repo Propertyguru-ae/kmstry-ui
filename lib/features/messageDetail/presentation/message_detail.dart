@@ -32,6 +32,7 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/camera/presentation/preview_screen.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 
@@ -5421,8 +5422,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       if (source == ImageSource.camera) {
         final result = await Navigator.push<File>(
           context,
-          MaterialPageRoute(
-            fullscreenDialog: true,
+          cameraRoute<File>(
             builder: (_) => const CameraScreen(
               useFrontCamera: false,
               optimizeForUpload: true,

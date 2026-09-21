@@ -666,6 +666,21 @@ class _StorySharedCardState extends State<_StorySharedCard>
     final mq = MediaQuery.of(context);
     final bottomPad = mq.padding.bottom;
 
+    // Kart uygulamanın açık/koyu temasına uyar — light mode'da beyaz zemin +
+    // koyu metin, dark mode'da lacivert zemin + beyaz metin.
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark ? const Color(0xFF1A1F2E) : Colors.white;
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.10)
+        : Colors.black.withValues(alpha: 0.06);
+    final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+    final venueColor = isDark
+        ? Colors.white70
+        : AppColors.lightTextSecondary;
+    final locationIconColor = isDark
+        ? Colors.white54
+        : AppColors.lightTextSecondary.withValues(alpha: 0.7);
+
     return Positioned.fill(
       child: IgnorePointer(
         ignoring: false,
@@ -696,14 +711,14 @@ class _StorySharedCardState extends State<_StorySharedCard>
                       child: Container(
                         margin: EdgeInsets.fromLTRB(16, 0, 16, bottomPad + 16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1A1F2E),
+                          color: cardColor,
                           borderRadius: BorderRadius.circular(24),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.10),
-                          ),
+                          border: Border.all(color: borderColor),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.45),
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.45 : 0.18,
+                              ),
                               blurRadius: 32,
                               offset: const Offset(0, 12),
                             ),
@@ -716,14 +731,14 @@ class _StorySharedCardState extends State<_StorySharedCard>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // ── Başlık
-                              const Row(
+                              Row(
                                 children: [
-                                  Text('🎉', style: TextStyle(fontSize: 20)),
-                                  SizedBox(width: 8),
+                                  const Text('🎉', style: TextStyle(fontSize: 20)),
+                                  const SizedBox(width: 8),
                                   Text(
                                     'Story shared!',
                                     style: TextStyle(
-                                      color: Colors.white,
+                                      color: titleColor,
                                       fontSize: 18,
                                       fontWeight: FontWeight.w800,
                                       letterSpacing: -0.3,
@@ -827,17 +842,17 @@ class _StorySharedCardState extends State<_StorySharedCard>
                                         const SizedBox(height: 10),
                                         Row(
                                           children: [
-                                            const Icon(
+                                            Icon(
                                               Icons.location_on_rounded,
-                                              color: Colors.white54,
+                                              color: locationIconColor,
                                               size: 14,
                                             ),
                                             const SizedBox(width: 4),
                                             Expanded(
                                               child: Text(
                                                 widget.venueName,
-                                                style: const TextStyle(
-                                                  color: Colors.white70,
+                                                style: TextStyle(
+                                                  color: venueColor,
                                                   fontSize: 13,
                                                   fontWeight: FontWeight.w600,
                                                 ),

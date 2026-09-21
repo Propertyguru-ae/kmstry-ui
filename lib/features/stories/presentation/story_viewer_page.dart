@@ -33,6 +33,11 @@ class StoryViewerPage extends StatefulWidget {
   final String? venueId;
   final bool showViewers;
 
+  /// True when the viewer was opened from the account that manages this venue.
+  /// A venue account must not be offered a report action for its own content,
+  /// even when the story was posted by another team member.
+  final bool isManagedVenueContent;
+
   /// Called just before pop — index of last shown story, allFinished=true if all stories played through
   final void Function(int lastIndex, bool allFinished)? onClose;
 
@@ -47,6 +52,7 @@ class StoryViewerPage extends StatefulWidget {
     this.initialStoryIndex = 0,
     this.venueId,
     this.showViewers = false,
+    this.isManagedVenueContent = false,
     this.canDelete = false,
     this.onClose,
     this.onStoryDeleted,
@@ -121,6 +127,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
 
   bool _canReportStoryOwner(StoryGroup group, StoryItem story) {
     if (story.isUploadingPlaceholder) return false;
+    if (widget.isManagedVenueContent) return false;
     // NOT: _currentUserId async yüklenir; ilk açılışta null olabilir. Üç noktayı
     // ona bağlı erken-dönüşle GİZLEME — kişisel story'de group.isCurrentUserOwner
     // "başkasının story'si mi"yi zaten anında bilir; venue story'de de id
@@ -130,7 +137,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     // mekanının içeriğini report edemez — bu yüzden report yerine yalnızca
     // delete gösterilir. Report sadece yetkisiz (dışarıdan) izleyiciye çıkar.
     if (_canDeleteCurrentStory) return false;
-    final targetUserId = story.user?.id?.trim();
+    final targetUserId = story.user?.id.trim();
     if (targetUserId == null || targetUserId.isEmpty) return false;
     final me = _currentUserId?.trim();
     return me == null || me.isEmpty || targetUserId != me;

@@ -19,6 +19,7 @@ import 'package:kmstry_frontend/features/venue/presentation/followed_venues_page
 import 'dart:io';
 import '../../checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/edit_profile_page.dart';
@@ -667,10 +668,7 @@ class _ProfilePageState extends State<ProfilePage>
     try {
       captureResult = await Navigator.push(
         context,
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => const CameraScreen(useFrontCamera: true),
-        ),
+        cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
       );
     } finally {
       _openingStory = false;
@@ -899,7 +897,7 @@ class _ProfilePageState extends State<ProfilePage>
       // 🔥 Kendi kamera ekranımızı açıyoruz
       // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
       final dynamic captureResult = await navigator.push(
-        MaterialPageRoute(
+        cameraRoute(
           builder: (_) => const CameraScreen(
             useFrontCamera: true, // selfie
             optimizeForUpload: true,

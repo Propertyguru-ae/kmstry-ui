@@ -102,6 +102,7 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
         builder: (_) => StoryViewerPage(
           groups: [group],
           venueId: venueId,
+          isManagedVenueContent: widget.onAddStory != null,
           initialStoryIndex: initialIndex,
           onClose: (lastIndex, allFinished) {
             final justViewed = allFinished
