@@ -68,6 +68,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   bool _uploadingPhoto = false;
   bool _updatingType = false;
   bool _uploadingStory = false;
+  bool _openingStory = false;
   List<VenueStoryItem> _avatarStories = [];
   final _venueStoryRepo = VenueStoryRepository();
 
@@ -687,7 +688,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
 
   Future<void> _openAddStory() async {
     final venueId = _venue?.id;
-    if (venueId == null || _uploadingStory) return;
+    if (venueId == null || _openingStory || _uploadingStory) return;
 
     // Plan kilidi: Free venue story paylaşamaz. Kamerayı hiç açmadan,
     // baştan etkileyici bir upsell göster.
@@ -705,14 +706,26 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       return;
     }
 
-    setState(() => _uploadingStory = true);
+    // Keep the profile visually still while the camera opens. Starting the
+    // avatar's rotating upload ring before navigation made this entry point
+    // animate the profile away; the dashboard only shows it after capture.
+    _openingStory = true;
     try {
-      await Navigator.push<bool>(context, AddVenueStoryPage.route(venueId));
+      final added = await Navigator.push<bool>(
+        context,
+        AddVenueStoryPage.route(venueId),
+      );
+      if (added == true && mounted) {
+        setState(() => _uploadingStory = true);
+      }
     } finally {
+      _openingStory = false;
       if (mounted) {
-        setState(() => _uploadingStory = false);
         final venueId = _venue?.id;
-        if (venueId != null) _loadAvatarStories(venueId);
+        if (venueId != null) await _loadAvatarStories(venueId);
+        if (mounted && _uploadingStory) {
+          setState(() => _uploadingStory = false);
+        }
       }
     }
   }
@@ -1454,36 +1467,7 @@ class _VenueSquareAvatar extends StatefulWidget {
   State<_VenueSquareAvatar> createState() => _VenueSquareAvatarState();
 }
 
-class _VenueSquareAvatarState extends State<_VenueSquareAvatar>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _spin;
-
-  @override
-  void initState() {
-    super.initState();
-    _spin = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1100),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _VenueSquareAvatar old) {
-    super.didUpdateWidget(old);
-    if (widget.isUploading && !_spin.isAnimating) {
-      _spin.repeat();
-    } else if (!widget.isUploading && _spin.isAnimating) {
-      _spin.stop();
-      _spin.value = 0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _spin.dispose();
-    super.dispose();
-  }
-
+class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
   void _openViewer() {
     final stories = widget.stories;
     if (stories.isEmpty && !widget.isUploading) return;
@@ -1503,6 +1487,12 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar>
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            user: s.posterUserId == null
+                ? null
+                : StoryUser(id: s.posterUserId!),
+            isVenueStory: true,
+            venueId: venueId,
+            venueName: widget.venue.name,
           ),
         )
         .toList();
@@ -1523,6 +1513,7 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar>
           groups: [group],
           venueId: venueId,
           showViewers: widget.canViewStats,
+          isManagedVenueContent: true,
           canDelete: widget.canDeleteStory,
           initialStoryIndex: initialIndex,
           onClose: widget.onStoryClose,
@@ -1596,16 +1587,13 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar>
                 child: avatar,
               ),
               Positioned.fill(
-                child: RotationTransition(
-                  turns: _spin..repeat(),
-                  child: CustomPaint(
-                    painter: _SquareRingPainter(
-                      colors: logoColors,
-                      strokeWidth: ringWidth,
-                      radius: 16,
-                      allSeen: false,
-                      loading: true,
-                    ),
+                child: CustomPaint(
+                  painter: _SquareRingPainter(
+                    colors: logoColors,
+                    strokeWidth: ringWidth,
+                    radius: 16,
+                    allSeen: false,
+                    loading: true,
                   ),
                 ),
               ),

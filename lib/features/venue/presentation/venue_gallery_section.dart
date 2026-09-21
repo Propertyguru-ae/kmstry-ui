@@ -829,6 +829,8 @@ class _VideoPageState extends State<_VideoPage> {
 /// Kendi verisini yükler; boşsa hiç görünmez. Tap → salt-okunur fullscreen viewer.
 class VenueGalleryStrip extends StatefulWidget {
   final String venueId;
+  final int refreshEpoch;
+  final VenueGalleryRepository? repository;
 
   /// Galeri yüklendiğinde öğe sayısını üst widget'a bildirir — böylece sayı
   /// strip'in kendi başlığı yerine ebeveynin bölüm başlığında gösterilebilir.
@@ -837,6 +839,8 @@ class VenueGalleryStrip extends StatefulWidget {
   const VenueGalleryStrip({
     super.key,
     required this.venueId,
+    this.refreshEpoch = 0,
+    this.repository,
     this.onCountChanged,
   });
 
@@ -845,9 +849,10 @@ class VenueGalleryStrip extends StatefulWidget {
 }
 
 class _VenueGalleryStripState extends State<VenueGalleryStrip> {
-  final _repo = VenueGalleryRepository();
+  late final _repo = widget.repository ?? VenueGalleryRepository();
   List<VenueGalleryItem> _items = [];
   bool _loading = true;
+  int _loadRequest = 0;
 
   @override
   void initState() {
@@ -855,18 +860,29 @@ class _VenueGalleryStripState extends State<VenueGalleryStrip> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant VenueGalleryStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.venueId != widget.venueId ||
+        oldWidget.refreshEpoch != widget.refreshEpoch) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final request = ++_loadRequest;
     try {
       final items = await _repo.getGallery(widget.venueId);
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
       setState(() {
         _items = items;
         _loading = false;
       });
       widget.onCountChanged?.call(_items.length);
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
-      widget.onCountChanged?.call(0);
+      if (!mounted || request != _loadRequest) return;
+      setState(() => _loading = false);
+      widget.onCountChanged?.call(_items.length);
     }
   }
 

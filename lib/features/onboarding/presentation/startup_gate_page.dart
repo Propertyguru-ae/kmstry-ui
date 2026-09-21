@@ -302,32 +302,56 @@ class _StartupGatePageState extends State<StartupGatePage>
           },
           child: Column(
             children: [
-              const Text(
-                'KMSTRY',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 52,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 7,
-                  height: 1,
-                  shadows: [
-                    Shadow(
-                      color: Color(0x661A9FE8),
-                      blurRadius: 22,
-                      offset: Offset(0, 8),
+              // letterSpacing son harften SONRA da boşluk ekler → ortalanan
+              // metin sola kaymış görünür. Aralık kadar sol padding ile optik
+              // olarak ortalıyoruz.
+              const SizedBox(
+                width: double.infinity,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Padding(
+                    padding: EdgeInsets.only(left: 7),
+                    child: Text(
+                      'KMSTRY',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 52,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 7,
+                        height: 1,
+                        shadows: [
+                          Shadow(
+                            color: Color(0x661A9FE8),
+                            blurRadius: 22,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
               ),
               const SizedBox(height: 18),
-              Text(
-                'REAL PLACES. REAL FACES.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: _muted.withValues(alpha: 0.76),
-                  fontSize: 12,
-                  letterSpacing: 2.8,
-                  fontWeight: FontWeight.w700,
+              SizedBox(
+                width: double.infinity,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 2.8),
+                    child: Text(
+                      'REAL PLACES. REAL FACES.',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: _muted.withValues(alpha: 0.76),
+                        fontSize: 12,
+                        letterSpacing: 2.8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -364,25 +388,6 @@ class _StartupGatePageState extends State<StartupGatePage>
                     scale: _buttonScaleAnimation,
                     child: _buildContinueButton(),
                   ),
-          ),
-          const SizedBox(height: 34),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildTinyDot(),
-              const SizedBox(width: 10),
-              Text(
-                'KNOW BEFORE YOU GO',
-                style: TextStyle(
-                  color: _muted.withValues(alpha: 0.85),
-                  fontSize: 11,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(width: 10),
-              _buildTinyDot(),
-            ],
           ),
         ],
       ),
@@ -461,14 +466,6 @@ class _StartupGatePageState extends State<StartupGatePage>
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildTinyDot() {
-    return Container(
-      width: 4,
-      height: 4,
-      decoration: const BoxDecoration(color: _teal, shape: BoxShape.circle),
     );
   }
 }
