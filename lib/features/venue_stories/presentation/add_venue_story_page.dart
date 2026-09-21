@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import '../data/venue_story_repository.dart';
 
@@ -13,20 +14,16 @@ class AddVenueStoryPage extends StatefulWidget {
   final String venueId;
   const AddVenueStoryPage({super.key, required this.venueId});
 
-  /// Saydam route: sayfanın kendisi görsel bir zemin çizmez (kamera + yükleme
-  /// dialog'u yönetir). opaque:false ile arkadaki uygulama görünür kalır.
+  /// Hidden coordinator: only the camera itself should animate into view.
+  /// Keeping this route transparent preserves the venue behind upload dialogs.
   static Route<bool> route(String venueId) {
     return PageRouteBuilder<bool>(
       opaque: false,
       barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 150),
-      reverseTransitionDuration: const Duration(milliseconds: 150),
-      // Saydam sayfa: slide/döndürme yerine yumuşak fade (sayfa zaten görünmez,
-      // arkada uygulama kalır). Varsayılan geçişin "dönerek sola" görünmesini
-      // engeller.
-      transitionsBuilder: (_, animation, __, child) =>
-          FadeTransition(opacity: animation, child: child),
-      pageBuilder: (_, __, ___) => AddVenueStoryPage(venueId: venueId),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          AddVenueStoryPage(venueId: venueId),
     );
   }
 
@@ -48,9 +45,11 @@ class _AddVenueStoryPageState extends State<AddVenueStoryPage> {
 
     // Video akışı CapturedMedia (dosya + text overlay) dönebilir — dosyayı
     // çıkar (venue story'de overlay şimdilik desteklenmiyor).
+    // All camera entry points use the same transition; the underlying venue
+    // profile stays still instead of sliding to the left.
     final dynamic captureResult = await Navigator.push(
       context,
-      MaterialPageRoute(
+      cameraRoute(
         builder: (_) =>
             const CameraScreen(useFrontCamera: false, optimizeForUpload: true),
       ),
