@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Flutter device flags and secure-storage metadata must start clean
+         after reinstall on Android 11 and lower. -->
+    <exclude domain="sharedpref" path="." />
+</full-backup-content>

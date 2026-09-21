@@ -108,6 +108,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   bool _showPostsAndVibe = false;
   bool _showSuggestedForYou = false;
   bool _isBlocked = false;
+  // Karşı taraf BENİ blokladıysa true. Backend, iki yönlü blokta profili 403
+  // (`Profile unavailable`) ile reddeder — bunu yakalayıp mesaj butonunu iki
+  // taraf için de inaktif yapmakta kullanıyoruz. (_isBlocked = ben blokladım.)
+  bool _blockedByOther = false;
   bool _isBlocking = false;
   bool _isReporting = false;
   bool _isSendingAction = false;
@@ -244,6 +248,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _loadProfile() async {
+    // Profil fetch'i 403 (`Profile unavailable`) dönerse iki yönlü blok vardır;
+    // ben bloklamadıysam karşı taraf beni bloklamış demektir.
+    bool blockedByOther = false;
     try {
       bool showPostsAndVibe = false;
       String? resolvedVenueId = widget.venueId;
@@ -301,6 +308,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
               localState: localHint,
             );
             _isBlocked = blockedIds.contains(profile.user.id);
+            _blockedByOther = false;
             _showPostsAndVibe = showPostsAndVibe;
             _showSuggestedForYou = false;
             _loading = false;
@@ -309,7 +317,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           await _syncPendingInterestedState(profile.user.id, _actionState!);
           return;
         } catch (e) {
-          // If checkin profile is unavailable (expired/deleted), still allow opening by user fallback.
+          // 403 → iki yönlü blok (karşı taraf beni bloklamış olabilir). Diğer
+          // hatalar (expired/deleted checkin) fallback user mode ile devam eder.
+          if (e is ApiException && e.statusCode == 403) blockedByOther = true;
           debugPrint('⚠️ checkin profile fallback to user mode: $e');
         }
       }
@@ -323,6 +333,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           resolvedVenueId =
               publicProfile.activeCheckin?.venueId ?? resolvedVenueId;
         } catch (e) {
+          // 403 → iki yönlü blok: karşı taraf beni bloklamış (ben bloklasaydım
+          // _isBlocked zaten yakalıyor). Mesaj butonunu inaktif yapmak için işaretle.
+          if (e is ApiException && e.statusCode == 403) blockedByOther = true;
           debugPrint('⚠️ public profile fallback unavailable: $e');
         }
       }
@@ -339,6 +352,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   widget.actionStateHint ??
                   ProfileActionState.showActions);
         _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
+        _blockedByOther = blockedByOther;
         _showPostsAndVibe = false;
         _showSuggestedForYou =
             _actionState != ProfileActionState.matched &&
@@ -546,10 +560,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _openChat() async {
-    if (_isBlocked) {
+    if (_isBlocked || _blockedByOther) {
       await showPremiumErrorDialog(
         context,
-        message: 'User is blocked. Unblock to message.',
+        message: _blockedByOther
+            ? 'Messaging is unavailable with this user.'
+            : 'User is blocked. Unblock to message.',
       );
       return;
     }
@@ -1881,11 +1897,15 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Widget _buildMatchedMessageButton() {
+    // Herhangi bir yönde blok varsa (ben blokladım = _isBlocked, ya da karşı
+    // taraf beni blokladı = _blockedByOther) mesajlaşma duraklatılır → buton
+    // inaktif (gri + tıklanamaz). Basınca hata dialog'u yerine devre dışı görünür.
+    final blocked = _isBlocked || _blockedByOther;
     return SizedBox(
       width: 184,
       height: 44,
       child: FilledButton.icon(
-        onPressed: _openChat,
+        onPressed: blocked ? null : _openChat,
         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 17),
         label: const Text('Message'),
         style: FilledButton.styleFrom(
@@ -1893,6 +1913,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           backgroundColor: AppTheme.brandCta,
           foregroundColor: Colors.white,
+          disabledBackgroundColor: AppTheme.brandCta.withValues(alpha: 0.30),
+          disabledForegroundColor: Colors.white.withValues(alpha: 0.55),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),

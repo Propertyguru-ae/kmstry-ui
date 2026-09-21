@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/checkin/services/active_checkin_service
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/camera/presentation/preview_video_screen.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
@@ -442,7 +443,7 @@ class _CheckInPageState extends State<CheckInPage> {
     // Fotoğraf akışı File, video akışı CapturedMedia (dosya + text overlay) döner.
     final dynamic result = await Navigator.push(
       context,
-      MaterialPageRoute(
+      cameraRoute(
         builder: (_) =>
             const CameraScreen(useFrontCamera: true, optimizeForUpload: true),
       ),

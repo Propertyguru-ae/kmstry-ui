@@ -140,6 +140,12 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            user: s.posterUserId == null
+                ? null
+                : StoryUser(id: s.posterUserId!),
+            isVenueStory: true,
+            venueId: widget.venueId,
+            venueName: widget.venueName,
           ),
         )
         .toList();
@@ -163,6 +169,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
           initialStoryIndex: initialIndex,
           // Profildeki gibi "kimler gördü" sayacı/listesi görünsün.
           showViewers: widget.canEditStory,
+          isManagedVenueContent: true,
           canDelete: widget.canEditStory,
           onStoryDeleted: (storyId) {
             if (mounted) {

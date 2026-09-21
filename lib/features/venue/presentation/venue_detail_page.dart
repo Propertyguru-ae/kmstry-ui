@@ -32,6 +32,7 @@ import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_pag
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_tray.dart';
@@ -98,6 +99,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int _followerCount = 0;
   bool _followLoading = false;
   int _galleryCount = 0; // VenueGalleryStrip'ten gelen foto/video adedi
+  int _galleryRefreshEpoch = 0;
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
 
   // Açılır/kapanır bölümlerin durumu (varsayılan açık).
@@ -169,7 +171,10 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   Future<void> _refreshVenuePage() async {
     if (mounted) {
-      setState(() => _storyTrayRefreshCount++);
+      setState(() {
+        _storyTrayRefreshCount++;
+        _galleryRefreshEpoch++;
+      });
     }
     await Future.wait<void>([
       _loadVenueDetails(),
@@ -329,6 +334,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               expiresAt: s.expiresAt,
               createdAt: s.createdAt,
               viewCount: s.viewCount,
+              user: s.posterUserId == null
+                  ? null
+                  : StoryUser(id: s.posterUserId!),
+              isVenueStory: true,
+              venueId: venueId,
+              venueName: widget.venue.name,
             ),
           )
           .toList(),
@@ -1628,10 +1639,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
     final dynamic captureResult = await Navigator.push(
       context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => const CameraScreen(useFrontCamera: true),
-      ),
+      cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
     );
 
     final File? file = captureResult is CapturedMedia
@@ -2579,6 +2587,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                             ],
                             VenueGalleryStrip(
                               venueId: widget.venue.id,
+                              refreshEpoch: _galleryRefreshEpoch,
                               onCountChanged: (count) {
                                 if (mounted && count != _galleryCount) {
                                   setState(() => _galleryCount = count);

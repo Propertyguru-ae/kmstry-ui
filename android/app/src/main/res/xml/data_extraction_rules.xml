@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- intro_seen and the other device-only flags live in Flutter's
+             SharedPreferences file. Never restore them into a fresh install. -->
+        <exclude domain="sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Some Android 12+ devices permit device-to-device transfer even
+             when allowBackup is false, so exclude preferences explicitly. -->
+        <exclude domain="sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>
