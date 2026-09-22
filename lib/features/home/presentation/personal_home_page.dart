@@ -4,6 +4,7 @@ import 'package:kmstry_frontend/features/stories/data/story_visibility.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
@@ -13,6 +14,7 @@ import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
 import 'package:kmstry_frontend/features/people/presentation/find_friends_page.dart';
@@ -38,14 +40,17 @@ import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_d
 /// stories of followed venues & matched people, and today's events the user is
 /// attending. Sections only render when they have content.
 class PersonalHomePage extends StatefulWidget {
-  const PersonalHomePage({super.key});
+  const PersonalHomePage({super.key, this.checkinRepository});
+
+  final VenueCheckinRepository? checkinRepository;
 
   @override
   State<PersonalHomePage> createState() => _PersonalHomePageState();
 }
 
 class _PersonalHomePageState extends State<PersonalHomePage> {
-  final VenueCheckinRepository _checkinRepo = VenueCheckinRepository();
+  late final VenueCheckinRepository _checkinRepo =
+      widget.checkinRepository ?? VenueCheckinRepository();
   final VenueRepository _venueRepo = VenueRepository();
   final StoryRepository _storyRepo = StoryRepository();
   final VenueEventRepository _eventRepo = VenueEventRepository();
@@ -62,6 +67,8 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   bool _followsAnyVenue = false;
   List<StoryGroup> _stories = const [];
   int _storyLoadRequest = 0;
+  int _homeLoadRequest = 0;
+  int _checkinLoadRequest = 0;
   List<TodayEvent> _events = const [];
   List<Venue> _trendingVenues = const [];
   List<TodayEvent> _discoverEvents = const [];
@@ -87,6 +94,44 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     // home'da bazen gelmiyor" durumu olmaz.
     StoryRepository.changes.addListener(_onStoryChanged);
     StoryVisibility.changes.addListener(_onStoryVisibilityChanged);
+    ActiveCheckinService.changes.addListener(_onActiveCheckinChanged);
+  }
+
+  void _onActiveCheckinChanged() {
+    if (!mounted) return;
+    _refreshActiveCheckin();
+  }
+
+  Future<void> _refreshActiveCheckin() async {
+    final request = ++_checkinLoadRequest;
+    try {
+      final active = await _checkinRepo.getActiveCheckin();
+      if (!mounted || request != _checkinLoadRequest) return;
+      final previousVenueId = _activeCheckin?.venueId;
+      setState(() {
+        _activeCheckin = active;
+        if (active == null || active.venueId != previousVenueId) {
+          _activeVenue = null;
+        }
+      });
+      if (active != null) await _loadActiveVenue(active, request);
+      if (!mounted || request != _checkinLoadRequest) return;
+      _loadTrendingVenues();
+      _loadDiscoverEvents();
+    } catch (_) {
+      // Transient network errors must not incorrectly lock an active story.
+    }
+  }
+
+  Future<void> _loadActiveVenue(ActiveCheckin active, int request) async {
+    try {
+      final venue = await _venueRepo.getVenueById(active.venueId);
+      if (mounted && request == _checkinLoadRequest) {
+        setState(() => _activeVenue = venue);
+      }
+    } catch (_) {
+      // The active check-in and story bubble do not depend on venue details.
+    }
   }
 
   void _onStoryVisibilityChanged() {
@@ -107,11 +152,14 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   void dispose() {
     StoryRepository.changes.removeListener(_onStoryChanged);
     StoryVisibility.changes.removeListener(_onStoryVisibilityChanged);
+    ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
     super.dispose();
   }
 
   Future<void> _loadAll() async {
+    final homeRequest = ++_homeLoadRequest;
     final storyRequest = ++_storyLoadRequest;
+    final checkinRequest = ++_checkinLoadRequest;
     // Kendi story bubble'ı bağımsız — checkin/homeStories/venue lookup'ı
     // beklemeden hemen yükle ki geç görünmesin. (Kendi setState'ini yapıyor.)
     _loadMyStories();
@@ -120,22 +168,25 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
         _checkinRepo.getActiveCheckin().catchError((_) => null),
         _eventRepo.getMyTodayEvents().catchError((_) => <TodayEvent>[]),
       ]);
-      if (!mounted) return;
+      if (!mounted || homeRequest != _homeLoadRequest) return;
       final active = results[0] as ActiveCheckin?;
       // Real events the user is actually attending today come first, then the
       // dummy ones for layout preview.
       final realEvents = results[1] as List<TodayEvent>;
       setState(() {
-        _activeCheckin = active;
+        if (checkinRequest == _checkinLoadRequest) {
+          final previousVenueId = _activeCheckin?.venueId;
+          _activeCheckin = active;
+          if (active == null || active.venueId != previousVenueId) {
+            _activeVenue = null;
+          }
+        }
         _stories = _dummyStories();
         _events = [...realEvents, ..._dummyEvents()];
         _loading = false;
       });
-      if (active != null) {
-        try {
-          final venue = await _venueRepo.getVenueById(active.venueId);
-          if (mounted) setState(() => _activeVenue = venue);
-        } catch (_) {}
+      if (active != null && checkinRequest == _checkinLoadRequest) {
+        await _loadActiveVenue(active, checkinRequest);
       }
       await Future.wait([
         _loadFollowedEvents(),
@@ -150,24 +201,24 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       _storyRepo.getHomeStories().catchError((_) => <StoryGroup>[]),
       _eventRepo.getMyTodayEvents().catchError((_) => <TodayEvent>[]),
     ]);
-    if (!mounted) return;
+    if (!mounted || homeRequest != _homeLoadRequest) return;
     final active = results[0] as ActiveCheckin?;
     setState(() {
-      _activeCheckin = active;
+      if (checkinRequest == _checkinLoadRequest) {
+        final previousVenueId = _activeCheckin?.venueId;
+        _activeCheckin = active;
+        if (active == null || active.venueId != previousVenueId) {
+          _activeVenue = null;
+        }
+      }
       if (storyRequest == _storyLoadRequest) {
         _stories = results[1] as List<StoryGroup>;
       }
       _events = results[2] as List<TodayEvent>;
       _loading = false;
-      if (active == null) _activeVenue = null;
     });
-    if (active != null) {
-      try {
-        final venue = await _venueRepo.getVenueById(active.venueId);
-        if (mounted) setState(() => _activeVenue = venue);
-      } catch (_) {
-        // Non-fatal: banner still works with a minimal stub.
-      }
+    if (active != null && checkinRequest == _checkinLoadRequest) {
+      await _loadActiveVenue(active, checkinRequest);
     }
     await Future.wait([
       _loadFollowedEvents(),
@@ -527,10 +578,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
 
     final dynamic captureResult = await Navigator.push(
       context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => const CameraScreen(useFrontCamera: true),
-      ),
+      cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
     );
     if (!mounted) return;
 
@@ -768,9 +816,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
             ),
 
             // ── Explore map CTA ────────────────────────────────────────────
-            // Gated on !_loading so it doesn't pop in before the async sections
-            // (stories / events / active check-in) — everything appears together.
-            if (!_loading) ...[
+            // Show the discovery prompt only when there is no active check-in.
+            // Wait for loading so it cannot flash before check-in state arrives.
+            if (!_loading && active == null) ...[
               const SizedBox(height: 12),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -970,21 +1018,13 @@ class _StoriesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // İlk item her zaman "Your story" balonu.
-    // Bilgilendirme ipucu YALNIZCA kullanıcı henüz story paylaşmadıysa VE
-    // arkadaşları/mekanları da hiç story paylaşmamışsa gösterilir. Kullanıcı
-    // kendi story'sini paylaşınca ("Your story" balonu doldu) ipucu kalkar.
-    // "Check in to unlock stories" bannerı kaldırıldı: ipucu YALNIZCA kullanıcı
-    // bu venue'da aktif check-in'liyken ("Share your first story here.") ve henüz
-    // story paylaşmamışken, kimsede story yokken gösterilir.
-    final showEmptyHint = stories.isEmpty && !hasMyStory && hasActiveCheckin;
-    final itemCount = stories.length + 1 + (showEmptyHint ? 1 : 0);
+    // İlk item her zaman "Your story" balonu; boş durum banner'ı gösterilmez.
     return SizedBox(
       height: 104,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: itemCount,
+        itemCount: stories.length + 1,
         separatorBuilder: (context, index) => const SizedBox(width: 14),
         itemBuilder: (context, i) {
           if (i == 0) {
@@ -997,9 +1037,6 @@ class _StoriesRow extends StatelessWidget {
               uploading: isUploading,
             );
           }
-          if (showEmptyHint && i == 1) {
-            return _StoryUnlockHint(hasActiveCheckin: hasActiveCheckin);
-          }
           final s = stories[i - 1];
           return _StoryBubble(
             group: s,
@@ -1007,79 +1044,6 @@ class _StoriesRow extends StatelessWidget {
             onTap: () => onTap(i - 1),
           );
         },
-      ),
-    );
-  }
-}
-
-class _StoryUnlockHint extends StatelessWidget {
-  const _StoryUnlockHint({required this.hasActiveCheckin});
-
-  final bool hasActiveCheckin;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Container(
-      width: 188,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.045)
-            : Colors.black.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: hasActiveCheckin
-              ? AppColors.teal.withValues(alpha: 0.30)
-              : colors.onSurface.withValues(alpha: 0.10),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: hasActiveCheckin
-                  ? const LinearGradient(
-                      colors: [AppColors.blue, AppColors.teal],
-                    )
-                  : null,
-              color: hasActiveCheckin
-                  ? null
-                  : colors.onSurface.withValues(alpha: 0.08),
-            ),
-            child: Icon(
-              hasActiveCheckin
-                  ? Icons.auto_awesome_rounded
-                  : Icons.lock_rounded,
-              size: 18,
-              color: hasActiveCheckin
-                  ? Colors.white
-                  : colors.onSurface.withValues(alpha: 0.55),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              hasActiveCheckin
-                  ? 'Share your first story here.'
-                  : 'Check in to unlock stories.',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                height: 1.25,
-                fontWeight: FontWeight.w700,
-                color: colors.onSurface.withValues(alpha: 0.78),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

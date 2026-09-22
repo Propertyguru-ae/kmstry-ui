@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
+import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
@@ -57,7 +58,7 @@ class _AddStoryPageState extends State<AddStoryPage> {
     // Fotoğraf akışı File, video akışı CapturedMedia (dosya + text overlay) döner.
     final dynamic result = await Navigator.push(
       context,
-      MaterialPageRoute(
+      cameraRoute(
         builder: (_) => const CameraScreen(
           useFrontCamera: true,
           optimizeForUpload: true,
