@@ -56,6 +56,8 @@ class _AddVenueOfferPageState extends State<AddVenueOfferPage> {
       setState(() => _saving = false);
       await showPremiumErrorDialog(
         context,
+        title: publicTextErrorTitle(e),
+        icon: publicTextErrorIcon(e),
         message: publicTextErrorMessage(
           e,
           fallback: 'Could not save the offer. Please try again.',

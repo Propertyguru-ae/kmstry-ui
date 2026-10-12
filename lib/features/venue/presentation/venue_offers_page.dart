@@ -95,10 +95,10 @@ class _VenueOffersPageState extends State<VenueOffersPage> {
           child: AppBackButton(),
         ),
         title: Text(
-          'Offers & Benefits',
+          'Deals & Discounts',
           style: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
               color: colors.onSurface),
         ),
         actions: [

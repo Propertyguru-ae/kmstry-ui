@@ -1,26 +1,30 @@
+import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
 import 'dart:io';
 import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
-import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
-import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 
 class AddStoryPage extends StatefulWidget {
   final String checkinId;
   const AddStoryPage({super.key, required this.checkinId});
 
+  static Route<bool> route(String checkinId) => PageRouteBuilder<bool>(
+    opaque: false,
+    barrierColor: Colors.transparent,
+    transitionDuration: Duration.zero,
+    reverseTransitionDuration: Duration.zero,
+    pageBuilder: (_, _, _) => AddStoryPage(checkinId: checkinId),
+  );
+
   @override
   State<AddStoryPage> createState() => _AddStoryPageState();
 }
 
 class _AddStoryPageState extends State<AddStoryPage> {
-  final _repo = StoryRepository();
-  bool _uploading = false;
-
   @override
   void initState() {
     super.initState();
@@ -59,10 +63,10 @@ class _AddStoryPageState extends State<AddStoryPage> {
     final dynamic result = await Navigator.push(
       context,
       cameraRoute(
-        builder: (_) => const CameraScreen(
+        builder: (_) => const CameraScreen.publicMedia(
           useFrontCamera: true,
           optimizeForUpload: true,
-         // isStory: true,
+          // isStory: true,
         ),
       ),
     );
@@ -72,10 +76,12 @@ class _AddStoryPageState extends State<AddStoryPage> {
       Navigator.pop(context);
       return;
     }
-    final File captured =
-        result is CapturedMedia ? result.file : result as File;
-    final MediaTextOverlay? overlay =
-        result is CapturedMedia ? result.overlay : null;
+    final File captured = result is CapturedMedia
+        ? result.file
+        : result as File;
+    final MediaTextOverlay? overlay = result is CapturedMedia
+        ? result.overlay
+        : null;
 
     await _upload(captured, overlay);
   }
@@ -83,68 +89,20 @@ class _AddStoryPageState extends State<AddStoryPage> {
   Future<void> _upload(File file, MediaTextOverlay? overlay) async {
     if (!mounted) return;
 
-    final ext = file.path.toLowerCase();
-    final isVideo = ext.endsWith('.mp4') || ext.endsWith('.mov') || ext.endsWith('.avi');
-
-    setState(() => _uploading = true);
-
-    bool success = false;
-    try {
-      await _repo.createStory(
-        checkinId: widget.checkinId,
-        file: file,
-        mediaType: isVideo ? 'video' : 'photo',
-        textOverlayJson: overlay?.toJsonString(),
-      );
-      success = true;
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _uploading = false);
-      final blockedByAnonymous =
-          e.toString().contains('ANONYMOUS_STORY_BLOCKED');
-      await showPremiumErrorDialog(
-        context,
-        message: blockedByAnonymous
-            ? "You're in Anonymous Mode. Turn it off to share a story."
-            : publicTextErrorMessage(
-                e,
-                fallback: 'Could not upload story. Please try again.',
-              ),
-      );
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    if (!mounted || !success) return;
-    try {
-      showSuccessSnackBar(context, message: 'Story shared successfully!');
-    } catch (_) {}
-    Navigator.pop(context, true);
+    StoryUploadCoordinator.instance.sharePersonal(
+      file: file,
+      checkinId: widget.checkinId,
+      textOverlayJson: overlay?.toJsonString(),
+    );
+    final route = ModalRoute.of(context);
+    if (route?.isActive == true) route!.navigator?.removeRoute(route, true);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: _uploading
-            ? const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                  SizedBox(height: 18),
-                  Text(
-                    'Uploading...',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              )
-            : const CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-      ),
+    return const Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SizedBox.expand(),
     );
   }
 }

@@ -1,21 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
-import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 
 /// Bir venue'nun tek bir deal/indirim ortaklığının detay sayfası. Chip'e
 /// dokununca açılır; platform, teklif tipi, açıklama, geçerlilik ve varsa
-/// dış bağlantı + kanıt görselini gösterir.
+/// dış bağlantıyı gösterir. Kanıt görseli özelliği aktif değildir.
 class VenueDealDetailPage extends StatelessWidget {
   final ExternalPartnershipModel deal;
   final String venueName;
+
+  /// Rapor ikonu yalnızca venue'yu ziyaret edenlere gösterilir; venue hesabı
+  /// kendi deal'ini raporlayamaz (galerideki `allowReport` ile aynı kural).
+  final bool allowReport;
 
   const VenueDealDetailPage({
     super.key,
     required this.deal,
     required this.venueName,
+    this.allowReport = false,
   });
 
   Future<void> _openUrl(String url) async {
@@ -45,21 +50,34 @@ class VenueDealDetailPage extends StatelessWidget {
         backgroundColor: bg,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: const Text(
+        surfaceTintColor: Colors.transparent,
+        // Followers / Analytics ile aynı başlık çubuğu.
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
+        ),
+        title: Text(
           'Deal details',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Report benefit',
-            onPressed: () => showReportUserSheet(
-              context,
-              title: 'Why are you reporting this benefit?',
-              venueBenefitId: deal.id,
+          if (allowReport) ...[
+            IconButton(
+              tooltip: 'Report benefit',
+              onPressed: () => showReportUserSheet(
+                context,
+                title: 'Why are you reporting this benefit?',
+                venueBenefitId: deal.id,
+              ),
+              icon: const Icon(Icons.flag_outlined),
             ),
-            icon: const Icon(Icons.flag_outlined),
-          ),
-          const SizedBox(width: 4),
+            const SizedBox(width: 4),
+          ],
         ],
       ),
       body: ListView(
@@ -178,16 +196,6 @@ class VenueDealDetailPage extends StatelessWidget {
               ],
             ),
           ),
-
-          // Kanıt görseli (varsa)
-          if (deal.proofImageUrl != null &&
-              deal.proofImageUrl!.trim().isNotEmpty) ...[
-            const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: CachedImage(deal.proofImageUrl!, fit: BoxFit.cover),
-            ),
-          ],
 
           if (hasUrl) ...[
             const SizedBox(height: 24),

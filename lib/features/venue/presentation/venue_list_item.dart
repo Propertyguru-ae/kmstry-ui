@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
 import '../data/venue_model.dart';

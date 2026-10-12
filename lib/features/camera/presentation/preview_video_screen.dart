@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
+import 'package:kmstry_frontend/features/camera/presentation/preview_controls.dart';
 import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:video_player/video_player.dart';
@@ -15,11 +16,19 @@ class PreviewVideoScreen extends StatefulWidget {
   /// İzleme modunda videonun üstüne çizilecek metin overlay'i (varsa).
   final MediaTextOverlay? overlay;
 
+  /// Alt butonlar — foto önizlemesiyle aynı varsayılanlar.
+  final String cancelLabel;
+  final String confirmLabel;
+  final IconData? confirmIcon;
+
   const PreviewVideoScreen({
     super.key,
     required this.file,
     this.viewOnly = false,
     this.overlay,
+    this.cancelLabel = 'Retake',
+    this.confirmLabel = 'Use',
+    this.confirmIcon,
   });
 
   @override
@@ -123,9 +132,7 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
                       // İzleme modunda kayıtlı overlay'i çiz.
                       if (widget.overlay != null)
                         Positioned.fill(
-                          child: MediaTextOverlayView(
-                            overlay: widget.overlay!,
-                          ),
+                          child: MediaTextOverlayView(overlay: widget.overlay!),
                         ),
                     ],
                   )
@@ -137,56 +144,36 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
                   ),
           ),
 
-          // Sağ üst araçlar: yazı ekle (çekim modu) + indir (+ izleme modunda kapat).
+          // Sağ üst araçlar — foto önizlemesiyle aynı: X, (çekim modunda) Tt,
+          // indir.
           if (!_editingText)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               right: 12,
               child: Column(
                 children: [
-                  if (widget.viewOnly)
-                    Material(
-                      color: Colors.black38,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                      ),
+                  PreviewToolButton(
+                    tooltip: 'Close',
+                    icon: Icons.close_rounded,
+                    // Sonuçsuz dönüş → kamera açık kalır (foto ile aynı).
+                    onTap: _saving ? null : () => Navigator.of(context).pop(),
+                  ),
+                  if (!widget.viewOnly) ...[
+                    const SizedBox(height: 12),
+                    PreviewToolButton(
+                      tooltip: 'Add text',
+                      icon: Icons.text_fields_rounded,
+                      onTap: _saving
+                          ? null
+                          : () => _composerKey.currentState?.openEditor(),
                     ),
-                  if (widget.viewOnly) const SizedBox(height: 12),
-                  if (!widget.viewOnly)
-                    Material(
-                      color: Colors.black38,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.text_fields_rounded,
-                          color: Colors.white,
-                        ),
-                        onPressed: () =>
-                            _composerKey.currentState?.openEditor(),
-                      ),
-                    ),
-                  if (!widget.viewOnly) const SizedBox(height: 12),
-                  Material(
-                    color: Colors.black38,
-                    shape: const CircleBorder(),
-                    child: IconButton(
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(
-                              Icons.download_rounded,
-                              color: Colors.white,
-                            ),
-                      onPressed: _download,
-                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  PreviewToolButton(
+                    tooltip: 'Save to gallery',
+                    icon: Icons.download_rounded,
+                    onTap: _saving ? null : _download,
+                    loading: _saving,
                   ),
                 ],
               ),
@@ -199,55 +186,24 @@ class _PreviewVideoScreenState extends State<PreviewVideoScreen> {
               bottom: 24,
               child: SafeArea(
                 top: false,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size(0, 52),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: const VisualDensity(
-                            horizontal: VisualDensity.minimumDensity,
-                            vertical: VisualDensity.minimumDensity,
-                          ),
-                          backgroundColor: Colors.transparent,
-                          side: const BorderSide(color: Colors.white70),
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text("Retake"),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          final overlay =
-                              _composerKey.currentState?.buildOverlay();
-                          // TEK pop: sonucu CameraScreen'e döndür; kamera kendini
-                          // kapatır (alttan pop yok → CameraX crash yok).
+                child: PreviewBottomActions(
+                  cancelLabel: widget.cancelLabel,
+                  confirmLabel: widget.confirmLabel,
+                  confirmIcon: widget.confirmIcon,
+                  onCancel: _saving ? null : () => Navigator.pop(context),
+                  onConfirm: _saving
+                      ? null
+                      : () {
+                          final overlay = _composerKey.currentState
+                              ?.buildOverlay();
+                          // TEK pop: sonucu CameraScreen'e döndür; kamera
+                          // kendini kapatır (alttan pop yok → CameraX crash
+                          // yok).
                           Navigator.pop(
                             context,
-                            CapturedMedia(
-                              file: widget.file,
-                              overlay: overlay,
-                            ),
+                            CapturedMedia(file: widget.file, overlay: overlay),
                           );
                         },
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(0, 52),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: const VisualDensity(
-                            horizontal: VisualDensity.minimumDensity,
-                            vertical: VisualDensity.minimumDensity,
-                          ),
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                        ),
-                        child: const Text("Use Video"),
-                      ),
-                    ),
-                  ],
                 ),
               ),
             ),

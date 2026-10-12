@@ -45,6 +45,8 @@ class _EditBioPageState extends State<EditBioPage> {
       setState(() => _loading = false);
       await showPremiumErrorDialog(
         context,
+        title: publicTextErrorTitle(error),
+        icon: publicTextErrorIcon(error),
         message: publicTextErrorMessage(
           error,
           fallback: 'Could not save bio. Please try again.',

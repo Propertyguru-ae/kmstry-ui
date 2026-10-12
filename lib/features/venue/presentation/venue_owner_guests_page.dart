@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
@@ -20,14 +24,30 @@ class VenueOwnerGuestsPage extends StatefulWidget {
     this.venueId,
     this.isPendingClaim = false,
     this.isRejectedClaim = false,
+    this.repository,
+    this.authRepository,
   });
+  final VenueOwnerRepository? repository;
+  final AuthRepository? authRepository;
 
   @override
   State<VenueOwnerGuestsPage> createState() => _VenueOwnerGuestsPageState();
 }
 
 class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
-  final _repo = VenueOwnerRepository();
+  late final _repo = widget.repository ?? VenueOwnerRepository();
+  late final _authRepo = widget.authRepository ?? AuthRepository();
+  int _revision = 0;
+  bool _hasData = false;
+  late final _read = VisibleVenueRead(
+    isVisible: () =>
+        mounted && !widget.isPendingClaim && !widget.isRejectedClaim,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.guests,
+      _loadUnmeasured,
+      isMounted: () => mounted,
+    ),
+  );
 
   bool _loading = true;
   String? _error;
@@ -46,15 +66,50 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
     }
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant VenueOwnerGuestsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.venueId != widget.venueId ||
+        oldWidget.isPendingClaim != widget.isPendingClaim ||
+        oldWidget.isRejectedClaim != widget.isRejectedClaim) {
+      _revision++;
+      _hasData = false;
+      _guests = [];
+      _maleCount = _femaleCount = _todayTotal = 0;
+      _read.reset();
+      if (!widget.isPendingClaim && !widget.isRejectedClaim) _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _revision++;
+    _read.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() => _read.invalidate();
+
+  Future<bool> _loadUnmeasured() async {
+    final revision = ++_revision;
+    final requestedVenue = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool current() =>
+        mounted &&
+        revision == _revision &&
+        widget.venueId == requestedVenue &&
+        !widget.isPendingClaim &&
+        !widget.isRejectedClaim &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
     setState(() {
-      _loading = true;
+      _loading = !_hasData;
       _error = null;
     });
     try {
       String? venueId = widget.venueId;
       if (venueId == null || venueId.isEmpty) {
-        final me = await AuthRepository().getMe();
+        final me = await _authRepo.getMe();
+        if (!current()) return false;
         final ctx = MeContextModel.fromMe(me);
         venueId = ctx.activeVenueId;
         if ((venueId == null || venueId.isEmpty) &&
@@ -63,39 +118,56 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
         }
       }
       if (venueId == null || venueId.isEmpty) {
+        if (!current()) return false;
         setState(() {
           _loading = false;
           _error = 'No active venue found.';
         });
-        return;
+        return false;
       }
-      final stats = await _repo.getOwnerStats(venueId);
-      if (!mounted) return;
+      final stats = await _repo.getOwnerGuests(venueId);
+      if (!current()) return false;
       setState(() {
         _guests = stats.activeGuests;
-        _maleCount = stats.stats.maleNow;
-        _femaleCount = stats.stats.femaleNow;
-        _todayTotal = stats.stats.todayTotal;
+        _maleCount = stats.maleNow;
+        _femaleCount = stats.femaleNow;
+        _todayTotal = stats.todayTotal;
+        _hasData = true;
         _loading = false;
       });
-    } catch (_) {
-      if (!mounted) return;
+      return true;
+    } catch (error) {
+      if (!current()) return false;
       setState(() {
+        final denied =
+            error is ApiException && [401, 403, 404].contains(error.statusCode);
+        if (denied) {
+          _guests = [];
+          _hasData = false;
+          _maleCount = _femaleCount = _todayTotal = 0;
+        }
         _loading = false;
-        _error = 'Could not load guests. Tap to retry.';
+        if (!_hasData) _error = 'Could not load guests. Tap to retry.';
       });
+      return false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    return PerformancePageProbe(
+      page: PerformancePage.guests,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor:
-          isDark ? theme.scaffoldBackgroundColor : Colors.white,
+      backgroundColor: isDark ? theme.scaffoldBackgroundColor : Colors.white,
       appBar: AppBar(
         backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
@@ -123,10 +195,10 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
           : widget.isPendingClaim
           ? _buildPendingPlaceholder(colors)
           : _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? _buildError(colors)
-                  : _buildContent(colors, isDark),
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? _buildError(colors)
+          : _buildContent(colors, isDark),
     );
   }
 
@@ -138,42 +210,64 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 72, height: 72,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
                 color: AppColors.blue.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Icon(Icons.people_outline,
-                  size: 34, color: AppColors.blueDark),
+              child: const Icon(
+                Icons.people_outline,
+                size: 34,
+                color: AppColors.blueDark,
+              ),
             ),
             const SizedBox(height: 20),
             const Text(
               'Guest Management',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800,
-                  color: Color(0xFFC8D8F0)),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFFC8D8F0),
+              ),
             ),
             const SizedBox(height: 10),
             const Text(
               'Once your claim is approved, you\'ll be able to see and manage guests checking in to your venue in real time.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: Color(0xFF5B6F8D), height: 1.55),
+              style: TextStyle(
+                fontSize: 13.5,
+                color: Color(0xFF5B6F8D),
+                height: 1.55,
+              ),
             ),
             const SizedBox(height: 28),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: AppColors.blue.withValues(alpha: 0.08),
-                border: Border.all(color: AppColors.blue.withValues(alpha: 0.20)),
+                border: Border.all(
+                  color: AppColors.blue.withValues(alpha: 0.20),
+                ),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.hourglass_top_rounded, size: 15, color: AppColors.blueDark),
+                  Icon(
+                    Icons.hourglass_top_rounded,
+                    size: 15,
+                    color: AppColors.blueDark,
+                  ),
                   SizedBox(width: 8),
-                  Text('Awaiting claim approval',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                          color: AppColors.blueDark)),
+                  Text(
+                    'Awaiting claim approval',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.blueDark,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -191,7 +285,8 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 72, height: 72,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
                 color: colors.error.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(20),
@@ -201,29 +296,44 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
             const SizedBox(height: 20),
             Text(
               'Guest Management',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: colors.onSurface),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: colors.onSurface,
+              ),
             ),
             const SizedBox(height: 10),
             Text(
               'Your venue ownership claim was not approved. Guest management is unavailable.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: colors.onSurface.withValues(alpha: 0.55), height: 1.55),
+              style: TextStyle(
+                fontSize: 13.5,
+                color: colors.onSurface.withValues(alpha: 0.55),
+                height: 1.55,
+              ),
             ),
             const SizedBox(height: 28),
             GestureDetector(
               onTap: () {
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => VenueClaimRejectedPage(
-                    venueId: widget.venueId ?? '',
-                    venueName: '',
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => VenueClaimRejectedPage(
+                      venueId: widget.venueId ?? '',
+                      venueName: '',
+                    ),
                   ),
-                ));
+                );
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: colors.error.withValues(alpha: 0.08),
-                  border: Border.all(color: colors.error.withValues(alpha: 0.22)),
+                  border: Border.all(
+                    color: colors.error.withValues(alpha: 0.22),
+                  ),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -231,8 +341,14 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
                   children: [
                     Icon(Icons.store_outlined, size: 15, color: colors.error),
                     const SizedBox(width: 8),
-                    Text('Claim Not Approved — View Details',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colors.error)),
+                    Text(
+                      'Claim Not Approved — View Details',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: colors.error,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -250,8 +366,11 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline,
-                size: 48, color: colors.onSurface.withValues(alpha: 0.4)),
+            Icon(
+              Icons.error_outline,
+              size: 48,
+              color: colors.onSurface.withValues(alpha: 0.4),
+            ),
             const SizedBox(height: 16),
             Text(
               _error!,
@@ -314,14 +433,17 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.people_outline,
-                        size: 64,
-                        color: colors.onSurface.withValues(alpha: 0.25)),
+                    Icon(
+                      Icons.people_outline,
+                      size: 64,
+                      color: colors.onSurface.withValues(alpha: 0.25),
+                    ),
                     const SizedBox(height: 12),
                     Text(
                       'No guests checked in right now.',
                       style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.5)),
+                        color: colors.onSurface.withValues(alpha: 0.5),
+                      ),
                     ),
                   ],
                 ),
@@ -329,13 +451,10 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
             )
           else
             SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (ctx, i) {
-                  final guest = _guests[i];
-                  return _buildGuestTile(guest, colors);
-                },
-                childCount: _guests.length,
-              ),
+              delegate: SliverChildBuilderDelegate((ctx, i) {
+                final guest = _guests[i];
+                return _buildGuestTile(guest, colors);
+              }, childCount: _guests.length),
             ),
         ],
       ),
@@ -351,9 +470,7 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: isDark
-            ? colors.surface
-            : colors.primary.withValues(alpha: 0.07),
+        color: isDark ? colors.surface : colors.primary.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: colors.outline.withValues(alpha: 0.18)),
       ),
@@ -381,10 +498,9 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
       leading: CircleAvatar(
         radius: 22,
         backgroundColor: colors.primary.withValues(alpha: 0.12),
-        backgroundImage:
-            guest.photo != null && guest.photo!.isNotEmpty
-                ? NetworkImage(guest.photo!)
-                : null,
+        backgroundImage: guest.photo != null && guest.photo!.isNotEmpty
+            ? NetworkImage(guest.photo!)
+            : null,
         child: guest.photo == null || guest.photo!.isEmpty
             ? Icon(Icons.person_outline, color: colors.primary, size: 22)
             : null,
@@ -394,10 +510,13 @@ class _VenueOwnerGuestsPageState extends State<VenueOwnerGuestsPage> {
         style: const TextStyle(fontWeight: FontWeight.w600),
       ),
       subtitle: guest.username != null
-          ? Text('@${guest.username}',
+          ? Text(
+              '@${guest.username}',
               style: TextStyle(
-                  fontSize: 12,
-                  color: colors.onSurface.withValues(alpha: 0.5)))
+                fontSize: 12,
+                color: colors.onSurface.withValues(alpha: 0.5),
+              ),
+            )
           : null,
       trailing: guest.gender != null
           ? Icon(

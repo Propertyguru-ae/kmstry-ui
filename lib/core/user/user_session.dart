@@ -14,6 +14,7 @@ class UserSession extends ChangeNotifier {
   bool _isPremium = false;
   DateTime? _premiumUntil;
   bool _loaded = false;
+  int _generation = 0;
 
   bool get isPremium => _isPremium;
   DateTime? get premiumUntil => _premiumUntil;
@@ -29,12 +30,15 @@ class UserSession extends ChangeNotifier {
   }
 
   Future<void> load({bool force = false}) async {
+    final generation = ++_generation;
     try {
       final me = await _auth.getMe(forceRefresh: force);
+      if (generation != _generation) return;
       _isPremium = me['isPremium'] == true;
       final until = me['premiumUntil'] ?? me['premium_until'];
       _premiumUntil = until is String ? DateTime.tryParse(until) : null;
     } catch (_) {
+      if (generation != _generation) return;
       _isPremium = false;
       _premiumUntil = null;
     }
@@ -46,6 +50,7 @@ class UserSession extends ChangeNotifier {
   /// (e.g. AppShell). Marks the session loaded, so per-account switches reflect
   /// the current user immediately without a stale cached value.
   void applyFromMe(Map<String, dynamic> me) {
+    _generation++;
     _isPremium = me['isPremium'] == true;
     final until = me['premiumUntil'] ?? me['premium_until'];
     _premiumUntil = until is String ? DateTime.tryParse(until) : null;
@@ -56,12 +61,14 @@ class UserSession extends ChangeNotifier {
   /// Optimistic local update after a successful purchase/toggle, so UI reflects
   /// the change without a round-trip. Server remains source of truth on reload.
   void setPremium(bool value, {DateTime? until}) {
+    _generation++;
     _isPremium = value;
     _premiumUntil = until;
     notifyListeners();
   }
 
   void clear() {
+    _generation++;
     _isPremium = false;
     _premiumUntil = null;
     _loaded = false;

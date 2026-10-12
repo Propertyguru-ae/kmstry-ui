@@ -1,9 +1,19 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/venue/venue_read_changes.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'external_partnership_model.dart';
 
 class ExternalPartnershipRepository {
-  final ApiClient _api = ApiClient();
+  ExternalPartnershipRepository({ApiClient? apiClient})
+    : _api = apiClient ?? ApiClient();
+  final ApiClient _api;
+
+  void _changed(String venueId, int session) => VenueReadChanges.committed(
+    venueId,
+    {VenueReadSection.partnerships, VenueReadSection.events},
+    session,
+  );
 
   Future<Map<String, String>> _authHeaders() async {
     final token = await SecureStorage.getAccessToken();
@@ -13,13 +23,20 @@ class ExternalPartnershipRepository {
 
   Future<List<ExternalPartnershipModel>> getPartnerships(String venueId) async {
     final headers = await _authHeaders();
-    final data = await _api.get('/venues/$venueId/partnerships', headers: headers);
+    final data = await _api.get(
+      '/venues/$venueId/partnerships',
+      headers: headers,
+    );
     return (data as List<dynamic>)
-        .map((e) => ExternalPartnershipModel.fromJson(e as Map<String, dynamic>))
+        .map(
+          (e) => ExternalPartnershipModel.fromJson(e as Map<String, dynamic>),
+        )
         .toList();
   }
 
-  Future<List<ExternalPartnershipModel>> getActivePartnerships(String venueId) async {
+  Future<List<ExternalPartnershipModel>> getActivePartnerships(
+    String venueId,
+  ) async {
     // The "/public" route still sits behind JwtAuthGuard (class-level), so send
     // the viewer's token — any authenticated user may read a venue's active deals.
     final headers = await _authHeaders();
@@ -28,7 +45,9 @@ class ExternalPartnershipRepository {
       headers: headers,
     );
     return (data as List<dynamic>)
-        .map((e) => ExternalPartnershipModel.fromJson(e as Map<String, dynamic>))
+        .map(
+          (e) => ExternalPartnershipModel.fromJson(e as Map<String, dynamic>),
+        )
         .toList();
   }
 
@@ -42,6 +61,7 @@ class ExternalPartnershipRepository {
     String? proofImageUrl,
     DateTime? validUntil,
   }) async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     final headers = await _authHeaders();
     final body = {
       'platform': platform,
@@ -52,8 +72,16 @@ class ExternalPartnershipRepository {
       if (proofImageUrl != null) 'proof_image_url': proofImageUrl,
       if (validUntil != null) 'valid_until': validUntil.toIso8601String(),
     };
-    final data = await _api.post('/venues/$venueId/partnerships', headers: headers, body: body);
-    return ExternalPartnershipModel.fromJson(data as Map<String, dynamic>);
+    final data = await _api.post(
+      '/venues/$venueId/partnerships',
+      headers: headers,
+      body: body,
+    );
+    final result = ExternalPartnershipModel.fromJson(
+      data as Map<String, dynamic>,
+    );
+    _changed(venueId, session);
+    return result;
   }
 
   Future<ExternalPartnershipModel> update(
@@ -61,18 +89,28 @@ class ExternalPartnershipRepository {
     String partnershipId,
     Map<String, dynamic> updates,
   ) async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     final headers = await _authHeaders();
     final data = await _api.patch(
       '/venues/$venueId/partnerships/$partnershipId',
       headers: headers,
       body: updates,
     );
-    return ExternalPartnershipModel.fromJson(data as Map<String, dynamic>);
+    final result = ExternalPartnershipModel.fromJson(
+      data as Map<String, dynamic>,
+    );
+    _changed(venueId, session);
+    return result;
   }
 
   Future<void> delete(String venueId, String partnershipId) async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     final headers = await _authHeaders();
-    await _api.delete('/venues/$venueId/partnerships/$partnershipId', headers: headers);
+    await _api.delete(
+      '/venues/$venueId/partnerships/$partnershipId',
+      headers: headers,
+    );
+    _changed(venueId, session);
   }
 
   Future<List<ExternalPartnershipModel>> setEventPartnerships(
@@ -80,16 +118,21 @@ class ExternalPartnershipRepository {
     String eventId,
     List<String> partnershipIds,
   ) async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     final headers = await _authHeaders();
     final data = await _api.post(
       '/venues/$venueId/events/$eventId/partnerships',
       headers: headers,
       body: {'partnershipIds': partnershipIds},
     );
-    return (data as List<dynamic>)
-        .map((e) => ExternalPartnershipModel.fromJson(
-              (e as Map<String, dynamic>)['partnership'] as Map<String, dynamic>,
-            ))
+    final result = (data as List<dynamic>)
+        .map(
+          (e) => ExternalPartnershipModel.fromJson(
+            (e as Map<String, dynamic>)['partnership'] as Map<String, dynamic>,
+          ),
+        )
         .toList();
+    VenueReadChanges.committed(venueId, {VenueReadSection.events}, session);
+    return result;
   }
 }

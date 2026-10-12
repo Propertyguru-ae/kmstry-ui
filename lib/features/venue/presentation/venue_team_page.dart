@@ -2,8 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
@@ -13,29 +19,68 @@ import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
 import 'venue_permissions_page.dart';
 
+/// Plan koltuk sınırına takılan ekleme / davet denemesi.
+bool _isSeatLimitError(Object error) =>
+    error is ApiException && error.data['error'] == 'PLAN_MEMBER_LIMIT_REACHED';
+
+/// Koltuk dolu: standart popup + yükseltme seçeneği.
+Future<void> _showSeatLimitPopup(BuildContext context, Object error) async {
+  final limit = error is ApiException ? error.data['limit'] : null;
+  final message = limit is num
+      ? 'Your plan allows up to ${limit.toInt()} team ${limit == 1 ? 'account' : 'accounts'}, including pending invites. Upgrade your plan or cancel a pending invite to add someone new.'
+      : 'Your plan has no free team seats, including pending invites. Upgrade your plan or cancel a pending invite to add someone new.';
+  final upgrade = await showPremiumPromptDialog(
+    context,
+    icon: Icons.lock_outline_rounded,
+    title: 'No seats left',
+    message: message,
+    confirmLabel: 'Upgrade',
+    cancelLabel: 'Not now',
+  );
+  if (upgrade && context.mounted) await PlanGate.openPaywall(context);
+}
+
 class VenueTeamPage extends StatefulWidget {
   final String venueId;
 
-  /// Caller's role — only OWNER can manage team members.
+  /// Caller's role; management also requires the current venue permissions.
   final VenueMemberRole callerRole;
 
   const VenueTeamPage({
     super.key,
     required this.venueId,
     required this.callerRole,
+    this.repository,
+    this.inviteRepository,
   });
+  final VenueMemberRepository? repository;
+  final VenueInviteRepository? inviteRepository;
 
   @override
   State<VenueTeamPage> createState() => _VenueTeamPageState();
 }
 
 class _VenueTeamPageState extends State<VenueTeamPage> {
-  final _repo = VenueMemberRepository();
+  late final _repo = widget.repository ?? VenueMemberRepository();
+  late final _inviteRepo = widget.inviteRepository ?? VenueInviteRepository();
+  int _revision = 0;
+  bool _hasMembers = false;
+  late final _read = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.team,
+      _readTeam,
+      isMounted: () => mounted,
+    ),
+  );
 
   bool _loading = true;
   String? _error;
   List<VenueMember> _members = [];
-  int _roleCount = 0;
+  int? _roleCount;
+
+  /// Hesabı olmayan e-postalara gönderilmiş, henüz kullanılmamış davet linkleri.
+  List<CreatedInvite> _linkInvites = [];
 
   bool _pendingExpanded = true;
   bool _pastExpanded = false;
@@ -49,78 +94,151 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   bool get _canAccessPermissions =>
       _isOwner || VenueSession.instance.can(VenuePermission.roleManage);
 
+  bool _canManageMember(VenueMember member) =>
+      _canManage &&
+      member.isActive &&
+      member.isSelf == false &&
+      member.role != VenueMemberRole.owner;
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final results = await Future.wait([
-        _repo.getMembers(widget.venueId),
-        _repo.getRoles(widget.venueId),
-      ]);
-      if (!mounted) return;
+  @override
+  void didUpdateWidget(covariant VenueTeamPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.venueId != oldWidget.venueId ||
+        widget.callerRole != oldWidget.callerRole) {
+      _revision++;
+      _members = [];
+      _roleCount = null;
+      _linkInvites = [];
+      _hasMembers = false;
+      _read.reset();
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _revision++;
+    _read.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() => _read.invalidate();
+
+  Future<bool> _readTeam() async {
+    final revision = ++_revision;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool denied = false;
+    bool current() =>
+        mounted &&
+        revision == _revision &&
+        venueId == widget.venueId &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
+    void failed(Object error) {
+      if (!current()) return;
+      denied =
+          denied ||
+          (error is ApiException && [401, 403, 404].contains(error.statusCode));
       setState(() {
-        _members = results[0] as List<VenueMember>;
-        _roleCount = (results[1] as List<VenueRole>).length;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
+        if (denied) {
+          _members = [];
+          _roleCount = null;
+          _linkInvites = [];
+          _hasMembers = false;
+        }
         _loading = false;
         _error = 'Failed to load team.';
       });
     }
+
+    setState(() {
+      _loading = !_hasMembers;
+      _error = null;
+    });
+    // Link davetleri ek bilgi: ekip listesini bekletmez, alınamazsa liste
+    // yine açılır.
+    if (_canSeePending) {
+      unawaited(
+        _inviteRepo
+            .listInvites(venueId)
+            .then((invites) {
+              if (current() && !denied) {
+                setState(() => _linkInvites = invites);
+              }
+            })
+            .catchError((Object _) {}),
+      );
+    }
+    final results = await Future.wait([
+      () async {
+        try {
+          final members = await _repo.getMembers(venueId);
+          if (!current() || denied) return false;
+          setState(() {
+            _members = members;
+            _hasMembers = true;
+            _loading = false;
+          });
+          return true;
+        } catch (error) {
+          failed(error);
+          return false;
+        }
+      }(),
+      () async {
+        try {
+          final roles = await _repo.getRoles(venueId);
+          if (!current() || denied) return false;
+          setState(() => _roleCount = roles.length);
+          return true;
+        } catch (error) {
+          failed(error);
+          return false;
+        }
+      }(),
+    ]);
+    return results.every((success) => success);
   }
 
   Future<void> _cleanPastInvites() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Past invites temizlensin mi?'),
-        content: const Text(
-          'Reddedilen, iptal edilen ve süresi dolan davetler listeden kaldırılacak.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('İptal'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Temizle', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showPremiumPromptDialog(
+      context,
+      icon: Icons.cleaning_services_rounded,
+      title: 'Clear past invites?',
+      message:
+          'Declined, cancelled and expired invites will be removed from this list.',
+      confirmLabel: 'Clear',
+      cancelLabel: 'Cancel',
     );
-    if (confirmed != true) return;
+    if (!confirmed || !mounted) return;
     try {
       await _repo.cleanPastInvites(widget.venueId);
       _load();
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      showErrorToast(
         context,
-      ).showSnackBar(SnackBar(content: Text('Temizlenemedi: $e')));
+        message: 'Could not clear past invites. Please try again.',
+      );
     }
   }
 
   Future<void> _openAddMember() async {
-    final added = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) =>
             VenueAddMemberPage(venueId: widget.venueId, repo: _repo),
       ),
     );
-    if (added == true) _load();
+    // Davet gönderilip geri dönüldüğünde de bekleyen davet listede görünsün.
+    if (mounted) _load();
   }
 
   Future<void> _openPermissions() async {
@@ -133,9 +251,11 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         ),
       ),
     );
+    if (mounted) await _load();
   }
 
   Future<void> _changeRole(VenueMember member) async {
+    if (!_canManageMember(member)) return;
     // Tüm rolleri önce çek (owner hariç)
     List<VenueRole> roles;
     try {
@@ -199,229 +319,68 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   }
 
   Future<void> _cancelInvite(VenueMember member) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cancel Invite'),
-        content: Text(
-          'Cancel the pending invite for ${member.user.displayName}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.orange),
-            child: const Text('Cancel Invite'),
-          ),
-        ],
-      ),
+    final confirmed = await showPremiumPromptDialog(
+      context,
+      icon: Icons.cancel_schedule_send_rounded,
+      title: 'Cancel invite?',
+      message:
+          'The pending invite for ${member.user.displayName} will be cancelled. You can invite them again later.',
+      confirmLabel: 'Cancel invite',
+      cancelLabel: 'Keep invite',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       await _repo.cancelMemberInvite(widget.venueId, member.id);
       await _load();
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      showErrorToast(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to cancel invite: $e')));
+        message: 'Could not cancel the invite. Please try again.',
+      );
     }
   }
 
   Future<void> _resendInvite(VenueMember member) async {
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final colors = Theme.of(ctx).colorScheme;
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: colors.onSurface.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: _TeamColors.mavi.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.send_outlined,
-                  color: _TeamColors.mavi,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Daveti Yeniden Gönder',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: colors.onSurface,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${member.user.displayName} adlı kullanıcıya davet yeniden gönderilecek.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: colors.onSurface.withValues(alpha: 0.6),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _TeamColors.mavi,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: const Text(
-                    'Gönder',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(
-                    'İptal',
-                    style: TextStyle(
-                      color: colors.onSurface.withValues(alpha: 0.5),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    final name = member.user.displayName;
+    final confirmed = await showPremiumPromptDialog(
+      context,
+      icon: Icons.send_rounded,
+      title: 'Resend invite?',
+      message: '$name will get a new invite to join your team.',
+      confirmLabel: 'Resend',
+      cancelLabel: 'Cancel',
     );
-    if (confirmed != true) return;
+    if (!confirmed || !mounted) return;
 
     try {
       await _repo.addMember(widget.venueId, member.user.id, member.role);
       if (!mounted) return;
-      await showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (ctx) {
-          final colors = Theme.of(ctx).colorScheme;
-          final isDark = Theme.of(ctx).brightness == Brightness.dark;
-          return Container(
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24),
-              ),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: colors.onSurface.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: _TeamColors.turkuaz.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_circle_outline_rounded,
-                    color: _TeamColors.turkuaz,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Davet Gönderildi',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: colors.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${member.user.displayName} adlı kullanıcıya davet başarıyla yeniden gönderildi.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: colors.onSurface.withValues(alpha: 0.6),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _TeamColors.turkuaz,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text(
-                      'Tamam',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+      await showPremiumPromptDialog(
+        context,
+        icon: Icons.mark_email_read_rounded,
+        title: 'Invite sent',
+        message:
+            '$name will get a notification and join your team once they accept.',
+        confirmLabel: 'Done',
+        showCancel: false,
       );
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      if (_isSeatLimitError(e)) {
+        await _showSeatLimitPopup(context, e);
+        return;
+      }
+      showErrorToast(
         context,
-      ).showSnackBar(SnackBar(content: Text('Davet gönderilemedi: $e')));
+        message: 'Could not resend the invite. Please try again.',
+      );
     }
   }
 
   Future<void> _removeMember(VenueMember member) async {
+    if (!_canManageMember(member)) return;
     final isStaff =
         member.user.isStaff && member.user.staffVenueId == widget.venueId;
 
@@ -496,7 +455,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         title: Text(
           _canManage || _canManageRoles ? 'Team Management' : 'Team',
           style: TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: colors.onSurface,
           ),
@@ -551,6 +510,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         .where((m) => m.status == VenueMemberStatus.pending)
         .toList();
     final terminalMembers = _members.where((m) => m.status.isTerminal).toList();
+    final linkInvites = _canSeePending ? _linkInvites : const <CreatedInvite>[];
+    final pendingCount = pendingMembers.length + linkInvites.length;
     // Free plan tek operatörlü — rol hiyerarşisi yok, sadece owner sayılır.
     final roleCount = VenueSession.instance.hasFeature(VenueFeature.roleLevels)
         ? _roleCount
@@ -611,7 +572,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                 // ── Stats strip ──────────────────────────────────────────
                 _StatsStrip(
                   active: activeMembers.length,
-                  pending: pendingMembers.length,
+                  pending: pendingCount,
                   roles: roleCount,
                   isDark: isDark,
                   onRolesTap: _canAccessPermissions ? _openPermissions : null,
@@ -641,7 +602,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                   const SizedBox(height: 16),
                   _CollapsibleSection(
                     label: 'Pending Invites',
-                    count: pendingMembers.length,
+                    count: pendingCount,
                     badgeColor: _TeamColors.turuncu,
                     expanded: _pendingExpanded,
                     colors: colors,
@@ -649,14 +610,20 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     onToggle: () =>
                         setState(() => _pendingExpanded = !_pendingExpanded),
                     emptyText: 'No pending invites',
-                    children: pendingMembers
-                        .map(
-                          (m) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _buildPendingCard(m, colors, isDark),
-                          ),
-                        )
-                        .toList(),
+                    children: [
+                      ...pendingMembers.map(
+                        (m) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _buildPendingCard(m, colors, isDark),
+                        ),
+                      ),
+                      ...linkInvites.map(
+                        (invite) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _buildLinkInviteCard(invite, colors, isDark),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
 
@@ -713,14 +680,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
     final bg = isDark ? const Color(0xFF06091A) : const Color(0xFFF7F8FA);
     final plan = VenueSession.instance.plan;
     final limit = plan.staffLimit; // null = sınırsız
-    // Koltuğu dolduranlar: aktif + bekleyen üyeler (owner dahil).
-    final used = _members
-        .where(
-          (m) =>
-              m.status == VenueMemberStatus.active ||
-              m.status == VenueMemberStatus.pending,
-        )
-        .length;
+    // Koltuğu dolduranlar: aktif + bekleyen üyeler (owner dahil) ve bekleyen
+    // davet linkleri — backend de aynı şekilde sayar.
+    final used =
+        _members
+            .where(
+              (m) =>
+                  m.status == VenueMemberStatus.active ||
+                  m.status == VenueMemberStatus.pending,
+            )
+            .length +
+        (_canSeePending ? _linkInvites.length : 0);
     final atLimit = limit != null && used >= limit;
 
     return Container(
@@ -741,13 +711,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                   color: colors.onSurface.withValues(alpha: 0.5),
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  limit == null
-                      ? '$used staff · ${plan.label} plan (unlimited)'
-                      : '$used / $limit ${limit == 1 ? 'seat' : 'seats'} used · ${plan.label} plan',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: colors.onSurface.withValues(alpha: 0.6),
+                // Büyük yazı boyutunda taşmasın, gerekirse alt satıra geçsin.
+                Flexible(
+                  child: Text(
+                    limit == null
+                        ? '$used staff · ${plan.label} plan (unlimited)'
+                        : '$used / $limit ${limit == 1 ? 'seat' : 'seats'} used · ${plan.label} plan',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: colors.onSurface.withValues(alpha: 0.6),
+                    ),
                   ),
                 ),
               ],
@@ -781,8 +755,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
   }
 
   Widget _buildMemberCard(VenueMember member, ColorScheme colors, bool isDark) {
-    final isCurrentOwner = member.role == VenueMemberRole.owner;
-    final canManage = _canManage && !isCurrentOwner;
+    final canManage = _canManageMember(member);
     final isStaffAccount =
         member.user.isStaff && member.user.staffVenueId == widget.venueId;
     final roleLabel = (member.venueRoleName ?? member.role.label).toUpperCase();
@@ -840,6 +813,8 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
           ),
           if (canManage)
             PopupMenuButton<String>(
+              key: ValueKey('team-member-actions-${member.id}'),
+              tooltip: 'Member options',
               icon: Icon(
                 Icons.more_vert,
                 size: 20,
@@ -951,44 +926,23 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
                     '@${member.user.username}',
                     style: TextStyle(
                       fontSize: 12,
-                      color: colors.onSurface.withValues(alpha: 0.45),
+                      color: colors.onSurface.withValues(alpha: 0.55),
                     ),
                   ),
+                // Uygulama içi istek: link yok, kişi bildirimden kabul eder.
+                Text(
+                  'In-app request',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: colors.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
               ],
             ),
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _TeamColors.turuncu.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: _TeamColors.turuncu,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    const Text(
-                      'Awaiting',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: _TeamColors.turuncu,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               if (_canManage)
                 PopupMenuButton<String>(
                   icon: Icon(
@@ -1027,6 +981,158 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         ],
       ),
     );
+  }
+
+  // Hesabı olmayan e-postaya gönderilmiş davet linki: linki tekrar kopyala
+  // ya da iptal et.
+  Widget _buildLinkInviteCard(
+    CreatedInvite invite,
+    ColorScheme colors,
+    bool isDark,
+  ) {
+    final role = invite.role.toUpperCase() == 'ADMIN'
+        ? VenueMemberRole.admin
+        : VenueMemberRole.staff;
+    final roleLabel = (invite.venueRoleName ?? role.label).toUpperCase();
+    final roleColor = _TeamColors.forRole(role, invite.venueRoleName);
+    final email = invite.email ?? 'Invite link';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0B1322) : colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _TeamColors.turuncu.withValues(alpha: 0.25)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          _TeamAvatar(displayName: email, photo: null, color: roleColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  roleLabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: roleColor,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  email,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
+                ),
+                Text(
+                  'Invite link · ${_expiryLabel(invite.expiresAt)}',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: colors.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_canManage)
+            PopupMenuButton<String>(
+              tooltip: 'Invite options',
+              icon: Icon(
+                Icons.more_vert,
+                size: 20,
+                color: colors.onSurface.withValues(alpha: 0.55),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'copy',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.copy_rounded,
+                        size: 18,
+                        color: _TeamColors.accent(isDark),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text('Copy link'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'cancel',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.cancel_outlined,
+                        size: 18,
+                        color: _TeamColors.turuncu,
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Cancel invite',
+                        style: TextStyle(color: _TeamColors.turuncu),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              onSelected: (action) {
+                if (action == 'copy') _copyInviteLink(invite);
+                if (action == 'cancel') _revokeLinkInvite(invite);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _expiryLabel(String expiresAt) {
+    final expires = DateTime.tryParse(expiresAt);
+    if (expires == null) return 'pending';
+    final days = expires.difference(DateTime.now()).inHours / 24;
+    if (days < 1) return 'expires today';
+    final whole = days.ceil();
+    return 'expires in $whole ${whole == 1 ? 'day' : 'days'}';
+  }
+
+  void _copyInviteLink(CreatedInvite invite) {
+    if (invite.inviteUrl.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: invite.inviteUrl));
+    showSuccessSnackBar(context, message: 'Link copied');
+  }
+
+  Future<void> _revokeLinkInvite(CreatedInvite invite) async {
+    final who = invite.email ?? 'this person';
+    final confirmed = await showPremiumPromptDialog(
+      context,
+      icon: Icons.cancel_schedule_send_rounded,
+      title: 'Cancel invite?',
+      message:
+          'The invite link for $who will stop working. You can invite them again later.',
+      confirmLabel: 'Cancel invite',
+      cancelLabel: 'Keep invite',
+    );
+    if (!confirmed || !mounted) return;
+    try {
+      await _inviteRepo.revokeInvite(widget.venueId, invite.id);
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      showErrorToast(
+        context,
+        message: 'Could not cancel the invite. Please try again.',
+      );
+    }
   }
 
   Widget _buildTerminalCard(
@@ -1149,6 +1255,10 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 // ─── Brand colors ─────────────────────────────────────────────────────────────
 
 class _TeamColors {
+  /// Butonlarla aynı mavi; yazı/ikon olarak kullanılırken zeminde okunur ton.
+  static Color accent(bool isDark) =>
+      isDark ? AppColors.blueDark : AppColors.blueLight;
+
   static const magenta = Color(0xFFE020D8);
   static const turkuaz = Color(0xFF1FD9A8);
   static const mavi = Color(0xFF1A9FE8);
@@ -1170,7 +1280,7 @@ class _TeamColors {
 class _StatsStrip extends StatelessWidget {
   final int active;
   final int pending;
-  final int roles;
+  final int? roles;
   final bool isDark;
   final VoidCallback? onRolesTap;
 
@@ -1202,7 +1312,7 @@ class _StatsStrip extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         _StatCard(
-          value: '$roles',
+          value: roles?.toString() ?? '—',
           label: 'Roles',
           color: _TeamColors.magenta,
           bg: bg,
@@ -1509,38 +1619,6 @@ class _InitialAvatar extends StatelessWidget {
   }
 }
 
-// ─── AppBar nav button ────────────────────────────────────────────────────────
-
-class _NavBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool isDark;
-
-  const _NavBtn({
-    required this.icon,
-    required this.onTap,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8);
-    final fg = isDark
-        ? Colors.white.withValues(alpha: 0.85)
-        : const Color(0xFF0B1322);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.all(8),
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-        child: Icon(icon, size: 18, color: fg),
-      ),
-    );
-  }
-}
-
 // ─── Üye Ekleme Bottom Sheet (iki sekme) ─────────────────────────────────────
 
 // ─── Add Member Page ──────────────────────────────────────────────────────────
@@ -1548,11 +1626,13 @@ class _NavBtn extends StatelessWidget {
 class VenueAddMemberPage extends StatefulWidget {
   final String venueId;
   final VenueMemberRepository repo;
+  final VenueInviteRepository? inviteRepository;
 
   const VenueAddMemberPage({
     super.key,
     required this.venueId,
     required this.repo,
+    this.inviteRepository,
   });
 
   @override
@@ -1567,22 +1647,28 @@ class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF0B1322) : theme.scaffoldBackgroundColor;
+    final bg = theme.scaffoldBackgroundColor;
 
     return Scaffold(
       backgroundColor: bg,
+      // Uygulamanın standart sayfa başlığı (Team Management ile aynı).
       appBar: AppBar(
         backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        leading: _NavBtn(
-          icon: Icons.arrow_back_ios_new_rounded,
-          onTap: () => Navigator.pop(context),
-          isDark: isDark,
+        automaticallyImplyLeading: false,
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
         ),
-        title: const Text(
+        title: Text(
           'Add Member',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
         ),
         centerTitle: true,
       ),
@@ -1600,7 +1686,12 @@ class _VenueAddMemberPageState extends State<VenueAddMemberPage> {
           // ── Content ───────────────────────────────────────────────────
           Expanded(
             child: _showInviteLink
-                ? _InviteLinkTab(venueId: widget.venueId, venueRoles: const [])
+                ? _InviteLinkTab(
+                    venueId: widget.venueId,
+                    venueRoles: const [],
+                    memberRepo: widget.repo,
+                    inviteRepo: widget.inviteRepository,
+                  )
                 : _UsernameSearchTab(
                     venueId: widget.venueId,
                     repo: widget.repo,
@@ -1630,6 +1721,8 @@ class _ModeToggle extends StatelessWidget {
     final bg = isDark ? const Color(0xFF0F1520) : const Color(0xFFEEF0F8);
     final activeBg = isDark ? const Color(0xFF1C2A3A) : Colors.white;
     final colors = Theme.of(context).colorScheme;
+    final accent = _TeamColors.accent(isDark);
+    final inactive = colors.onSurface.withValues(alpha: 0.6);
 
     return Container(
       padding: const EdgeInsets.all(4),
@@ -1644,8 +1737,8 @@ class _ModeToggle extends StatelessWidget {
             icon: Icons.person_search_outlined,
             isActive: !showInviteLink,
             activeBg: activeBg,
-            activeColor: _TeamColors.turkuaz,
-            inactiveColor: colors.onSurface.withValues(alpha: 0.45),
+            activeColor: accent,
+            inactiveColor: inactive,
             onTap: () => onChanged(false),
           ),
           _ToggleTab(
@@ -1653,8 +1746,8 @@ class _ModeToggle extends StatelessWidget {
             icon: Icons.link_rounded,
             isActive: showInviteLink,
             activeBg: activeBg,
-            activeColor: _TeamColors.mavi,
-            inactiveColor: colors.onSurface.withValues(alpha: 0.45),
+            activeColor: accent,
+            inactiveColor: inactive,
             onTap: () => onChanged(true),
           ),
         ],
@@ -1712,12 +1805,17 @@ class _ToggleTab extends StatelessWidget {
                 color: isActive ? activeColor : inactiveColor,
               ),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                  color: isActive ? activeColor : inactiveColor,
+              // Büyük yazı boyutunda sekmeden taşmasın.
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                    color: isActive ? activeColor : inactiveColor,
+                  ),
                 ),
               ),
             ],
@@ -1837,11 +1935,13 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _adding = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to add: $e'),
-          behavior: SnackBarBehavior.floating,
-        ),
+      if (_isSeatLimitError(e)) {
+        await _showSeatLimitPopup(context, e);
+        return;
+      }
+      showErrorToast(
+        context,
+        message: 'Could not add this member. Please try again.',
       );
     }
   }
@@ -1852,9 +1952,11 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
+    final accent = _TeamColors.accent(isDark);
+
     if (_loadingRoles) {
       return const Center(
-        child: CircularProgressIndicator(color: _TeamColors.turkuaz),
+        child: CircularProgressIndicator(color: AppColors.blue),
       );
     }
 
@@ -1884,7 +1986,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                               height: 16,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: _TeamColors.turkuaz,
+                                color: AppColors.blue,
                               ),
                             ),
                           )
@@ -1910,7 +2012,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(
-                        color: _TeamColors.turkuaz,
+                        color: AppColors.blue,
                         width: 1.5,
                       ),
                     ),
@@ -1947,7 +2049,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                           ),
                           leading: CircleAvatar(
                             radius: 18,
-                            backgroundColor: _TeamColors.turkuaz.withValues(
+                            backgroundColor: AppColors.blue.withValues(
                               alpha: 0.14,
                             ),
                             backgroundImage:
@@ -1959,8 +2061,8 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                     u.displayName.isNotEmpty
                                         ? u.displayName[0].toUpperCase()
                                         : '?',
-                                    style: const TextStyle(
-                                      color: _TeamColors.turkuaz,
+                                    style: TextStyle(
+                                      color: accent,
                                       fontSize: 13,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -1980,7 +2082,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: colors.onSurface.withValues(
-                                      alpha: 0.5,
+                                      alpha: 0.6,
                                     ),
                                   ),
                                 )
@@ -2007,7 +2109,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: colors.onSurface.withValues(alpha: 0.5),
+                      color: colors.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -2017,9 +2119,9 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: _TeamColors.turkuaz.withValues(alpha: 0.08),
+                      color: AppColors.blue.withValues(alpha: 0.08),
                       border: Border.all(
-                        color: _TeamColors.turkuaz.withValues(alpha: 0.28),
+                        color: AppColors.blue.withValues(alpha: 0.35),
                       ),
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -2027,8 +2129,8 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                       children: [
                         CircleAvatar(
                           radius: 20,
-                          backgroundColor: _TeamColors.turkuaz.withValues(
-                            alpha: 0.2,
+                          backgroundColor: AppColors.blue.withValues(
+                            alpha: 0.18,
                           ),
                           backgroundImage:
                               _selected!.photo != null &&
@@ -2042,8 +2144,8 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                   _selected!.displayName.isNotEmpty
                                       ? _selected!.displayName[0].toUpperCase()
                                       : '?',
-                                  style: const TextStyle(
-                                    color: _TeamColors.turkuaz,
+                                  style: TextStyle(
+                                    color: accent,
                                     fontSize: 15,
                                     fontWeight: FontWeight.w800,
                                   ),
@@ -2057,10 +2159,10 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                             children: [
                               Text(
                                 _selected!.displayName,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,
-                                  color: _TeamColors.turkuaz,
+                                  color: colors.onSurface,
                                 ),
                               ),
                               if (_selected!.username != null)
@@ -2068,8 +2170,8 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                   '@${_selected!.username}',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: _TeamColors.turkuaz.withValues(
-                                      alpha: 0.65,
+                                    color: colors.onSurface.withValues(
+                                      alpha: 0.6,
                                     ),
                                   ),
                                 ),
@@ -2081,7 +2183,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                           child: Icon(
                             Icons.close_rounded,
                             size: 18,
-                            color: _TeamColors.turkuaz.withValues(alpha: 0.6),
+                            color: colors.onSurface.withValues(alpha: 0.55),
                           ),
                         ),
                       ],
@@ -2097,7 +2199,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: colors.onSurface.withValues(alpha: 0.5),
+                      color: colors.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -2224,7 +2326,7 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                             ? FontWeight.w700
                                             : FontWeight.w500,
                                         color: isSelected
-                                            ? _TeamColors.mavi
+                                            ? accent
                                             : colors.onSurface.withValues(
                                                 alpha: 0.85,
                                               ),
@@ -2232,9 +2334,9 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
                                     ),
                                   ),
                                   if (isSelected)
-                                    const Icon(
+                                    Icon(
                                       Icons.check_rounded,
-                                      color: _TeamColors.mavi,
+                                      color: accent,
                                       size: 18,
                                     ),
                                 ],
@@ -2257,37 +2359,12 @@ class _UsernameSearchTabState extends State<_UsernameSearchTab> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
             child: SizedBox(
               width: double.infinity,
-              child: FilledButton(
-                onPressed: _selected == null || _adding ? null : _add,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _TeamColors.turkuaz,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: _TeamColors.turkuaz.withValues(
-                    alpha: 0.3,
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: _adding
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Text(
-                        _selected == null
-                            ? 'Select a user first'
-                            : 'Add as ${_selectedRole?.name ?? 'Member'}',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+              child: PrimaryButton(
+                label: _selected == null
+                    ? 'Select a user first'
+                    : 'Add as ${_selectedRole?.name ?? 'Member'}',
+                loading: _adding,
+                onPressed: _selected == null ? null : _add,
               ),
             ),
           ),
@@ -2389,16 +2466,29 @@ class _InviteLinkSheetLoaderState extends State<_InviteLinkSheetLoader> {
 class _InviteLinkTab extends StatefulWidget {
   final String venueId;
   final List<VenueRole> venueRoles;
+  final VenueMemberRepository? memberRepo;
+  final VenueInviteRepository? inviteRepo;
 
-  const _InviteLinkTab({required this.venueId, required this.venueRoles});
+  const _InviteLinkTab({
+    required this.venueId,
+    required this.venueRoles,
+    this.memberRepo,
+    this.inviteRepo,
+  });
 
   @override
   State<_InviteLinkTab> createState() => _InviteLinkTabState();
 }
 
 class _InviteLinkTabState extends State<_InviteLinkTab> {
-  final _inviteRepo = VenueInviteRepository();
-  final _memberRepo = VenueMemberRepository();
+  /// Davet linki sonucu yalnızca popup'ta gösterilir; sayfadaki kart şimdilik
+  /// kapalı (popup ile aynı bilgiyi tekrarlıyordu).
+  static const _showInlineLinkCard = false;
+
+  late final VenueInviteRepository _inviteRepo =
+      widget.inviteRepo ?? VenueInviteRepository();
+  late final VenueMemberRepository _memberRepo =
+      widget.memberRepo ?? VenueMemberRepository();
   final _emailCtrl = TextEditingController();
   VenueRole? _selectedRole;
   bool _generating = false;
@@ -2416,11 +2506,7 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
   void initState() {
     super.initState();
     if (widget.venueRoles.isNotEmpty) {
-      _roles = widget.venueRoles;
-      _selectedRole = widget.venueRoles.firstWhere(
-        (r) => r.id == 'STAFF',
-        orElse: () => widget.venueRoles.last,
-      );
+      _setAssignableRoles(widget.venueRoles);
     } else {
       _loadRoles();
     }
@@ -2432,11 +2518,7 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
       final roles = await _memberRepo.getRoles(widget.venueId);
       if (!mounted) return;
       setState(() {
-        _roles = roles;
-        _selectedRole = roles.firstWhere(
-          (r) => r.id == 'STAFF',
-          orElse: () => roles.isNotEmpty ? roles.last : roles.first,
-        );
+        _setAssignableRoles(roles);
         _loadingRoles = false;
       });
     } catch (_) {
@@ -2450,18 +2532,22 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(s);
   }
 
+  void _setAssignableRoles(List<VenueRole> roles) {
+    _roles = roles.where((r) => !r.isOwnerRole && r.id != 'OWNER').toList();
+    _selectedRole = _roles.isEmpty
+        ? null
+        : _roles.firstWhere((r) => r.id == 'STAFF', orElse: () => _roles.last);
+  }
+
   Future<void> _generate() async {
     final role = _selectedRole;
-    if (role == null || _generating) return;
+    if (role == null || role.isOwnerRole || role.id == 'OWNER' || _generating) {
+      return;
+    }
 
     final email = _emailCtrl.text.trim();
     if (!_isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email address'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      showErrorToast(context, message: 'Please enter a valid email address.');
       return;
     }
 
@@ -2481,42 +2567,98 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         venueRoleId: customId,
       );
       if (!mounted) return;
-      setState(() {
-        _result = result;
-        _generating = false;
-      });
+      setState(() => _generating = false);
+      await _showResult(result);
     } catch (e) {
       if (!mounted) return;
       setState(() => _generating = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed: $e'),
-          behavior: SnackBarBehavior.floating,
-        ),
+      if (_isSeatLimitError(e)) {
+        await _showSeatLimitPopup(context, e);
+        return;
+      }
+      showErrorToast(
+        context,
+        message: 'Could not send the invite. Please try again.',
       );
     }
   }
 
-  void _copyLink() {
-    final url = _result?.inviteUrl;
-    if (url == null) return;
-    Clipboard.setData(ClipboardData(text: url));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Link copied'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
+  /// Davet gönderildikten sonra sonucu uygulamanın standart popup'ında gösterir.
+  Future<void> _showResult(InviteResult result) async {
+    if (result.type == InviteResultType.linkCreated) {
+      final url = result.inviteUrl ?? '';
+      final copy = await showPremiumPromptDialog(
+        context,
+        icon: Icons.link_rounded,
+        title: 'Invite link ready',
+        message:
+            "${result.email} doesn't have a KMSTRY account yet. Share this link with them. It expires in 7 days.",
+        content: _InviteLinkBox(url: url),
+        confirmLabel: 'Copy link',
+        confirmIcon: Icons.copy_rounded,
+        cancelLabel: 'Done',
+      );
+      if (!mounted) return;
+      if (copy) _copyLink(url);
+      // Sayfadaki link kartı şimdilik gizli: sonuç yalnızca popup'ta. Kopyalanmadan
+      // kapatılırsa aynı e-postaya tekrar gönderilebilir; backend yeni link üretir.
+      setState(() {
+        _result = _showInlineLinkCard ? result : null;
+        if (!_showInlineLinkCard) _emailCtrl.clear();
+      });
+      return;
+    }
+
+    final (icon, title, message) = switch (result.type) {
+      InviteResultType.existingUserRequestSent => (
+        Icons.mark_email_read_rounded,
+        'Request sent',
+        "${result.email} already has a KMSTRY account. They'll get a notification and join your team once they accept.",
       ),
+      InviteResultType.alreadyMember => (
+        Icons.group_rounded,
+        'Already a member',
+        '${result.email} is already an active member of this venue.',
+      ),
+      _ => (
+        Icons.hourglass_top_rounded,
+        'Invite pending',
+        '${result.email} already has a pending invite for this venue. They just need to accept it.',
+      ),
+    };
+    await showPremiumPromptDialog(
+      context,
+      icon: icon,
+      title: title,
+      message: message,
+      confirmLabel: 'Done',
+      showCancel: false,
     );
+    if (!mounted) return;
+    // Yeni bir davet için formu sıfırla.
+    setState(() {
+      _result = null;
+      _emailCtrl.clear();
+    });
+  }
+
+  void _copyLink([String? link]) {
+    final url = link ?? _result?.inviteUrl;
+    if (url == null || url.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: url));
+    showSuccessSnackBar(context, message: 'Link copied');
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final accent = _TeamColors.accent(
+      Theme.of(context).brightness == Brightness.dark,
+    );
 
     if (_loadingRoles) {
       return const Center(
-        child: CircularProgressIndicator(color: _TeamColors.mavi),
+        child: CircularProgressIndicator(color: AppColors.blue),
       );
     }
 
@@ -2529,13 +2671,14 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: colors.primaryContainer.withValues(alpha: 0.4),
+              color: AppColors.blue.withValues(alpha: 0.08),
+              border: Border.all(color: AppColors.blue.withValues(alpha: 0.22)),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline, size: 18, color: colors.primary),
+                Icon(Icons.info_outline, size: 18, color: accent),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -2592,71 +2735,24 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
           if (_result == null)
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _generating ? null : _generate,
-                icon: _generating
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.send_rounded, size: 18),
-                label: Text(
-                  _generating ? 'Sending...' : 'Send Invite',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
+              child: PrimaryButton(
+                label: 'Send Invite',
+                loading: _generating,
+                onPressed: _generate,
               ),
             ),
 
-          // Result card
-          if (_result != null) ...[
-            switch (_result!.type) {
-              InviteResultType.linkCreated => _buildLinkResult(colors),
-              InviteResultType.existingUserRequestSent => _buildInfoResult(
-                colors,
-                icon: Icons.mark_email_read_outlined,
-                title: 'Request sent',
-                message:
-                    '${_result!.email} already has a KMSTRY account. A join request '
-                    'was sent — they\'ll get a notification and appear in the team '
-                    'list once they accept.',
-              ),
-              InviteResultType.alreadyMember => _buildInfoResult(
-                colors,
-                icon: Icons.group_rounded,
-                title: 'Already a member',
-                message:
-                    '${_result!.email} is already an active member of this venue.',
-              ),
-              InviteResultType.alreadyInvited => _buildInfoResult(
-                colors,
-                icon: Icons.hourglass_top_rounded,
-                title: 'Invite pending',
-                message:
-                    '${_result!.email} already has a pending invite for this venue. '
-                    'They just need to accept it.',
-              ),
-            },
-          ],
+          // Link sonucu kartı (şimdilik gizli, bkz. _showInlineLinkCard).
+          if (_showInlineLinkCard &&
+              _result?.type == InviteResultType.linkCreated)
+            _buildLinkResult(colors, accent),
         ],
       ),
     );
   }
 
   // Yeni kişi: paylaşılacak kayıt linki
-  Widget _buildLinkResult(ColorScheme colors) {
+  Widget _buildLinkResult(ColorScheme colors, Color accent) {
     final r = _result!;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -2664,7 +2760,7 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         color: colors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: colors.primary.withValues(alpha: 0.3),
+          color: AppColors.blue.withValues(alpha: 0.35),
           width: 1.5,
         ),
       ),
@@ -2673,14 +2769,14 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
         children: [
           Row(
             children: [
-              Icon(Icons.check_circle, color: colors.primary, size: 18),
+              Icon(Icons.check_circle, color: accent, size: 18),
               const SizedBox(width: 8),
               Text(
                 'Invite link ready',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: colors.primary,
+                  color: accent,
                 ),
               ),
             ],
@@ -2698,8 +2794,8 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
           Text(
             '${r.email}  ·  Expires in 7 days',
             style: TextStyle(
-              fontSize: 11,
-              color: colors.onSurface.withValues(alpha: 0.45),
+              fontSize: 11.5,
+              color: colors.onSurface.withValues(alpha: 0.6),
             ),
           ),
           const SizedBox(height: 14),
@@ -2711,6 +2807,8 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                   icon: const Icon(Icons.copy, size: 16),
                   label: const Text('Copy Link'),
                   style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.blue,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -2726,6 +2824,10 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
                     _emailCtrl.clear();
                   }),
                   style: OutlinedButton.styleFrom(
+                    foregroundColor: accent,
+                    side: BorderSide(
+                      color: AppColors.blue.withValues(alpha: 0.5),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -2740,67 +2842,47 @@ class _InviteLinkTabState extends State<_InviteLinkTab> {
       ),
     );
   }
+}
 
-  // Bilgi kartı: istek gönderildi / zaten üye / davet bekliyor
-  Widget _buildInfoResult(
-    ColorScheme colors, {
-    required IconData icon,
-    required String title,
-    required String message,
-  }) {
+/// Davet popup'ında paylaşılacak link; uzun linkler kutu içinde kırılır.
+class _InviteLinkBox extends StatelessWidget {
+  const _InviteLinkBox({required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: colors.surface,
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.05)
+            : const Color(0xFFF5F7FA),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: colors.primary.withValues(alpha: 0.3),
-          width: 1.5,
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.10)
+              : Colors.black.withValues(alpha: 0.08),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, color: colors.primary, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: colors.primary,
-                  ),
-                ),
+          Icon(Icons.link_rounded, size: 18, color: _TeamColors.accent(isDark)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              url,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: isDark
+                    ? AppColors.darkTextPrimary
+                    : AppColors.lightTextPrimary,
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.5,
-              color: colors.onSurface.withValues(alpha: 0.75),
-            ),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => setState(() {
-                _result = null;
-                _emailCtrl.clear();
-              }),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: const Text('Send another'),
             ),
           ),
         ],
@@ -3138,7 +3220,11 @@ class _VenueRolePicker extends StatelessWidget {
       value: selected,
       decoration: InputDecoration(
         labelText: 'Role',
-        labelStyle: const TextStyle(color: _TeamColors.mavi),
+        labelStyle: TextStyle(
+          color: _TeamColors.accent(
+            Theme.of(context).brightness == Brightness.dark,
+          ),
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: _TeamColors.mavi),

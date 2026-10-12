@@ -43,6 +43,7 @@ dependencies:
   sign_in_with_apple: ^6.1.0
   image_picker: ^1.0.4
   file_picker: ^8.1.2
+  pdfx: ^2.11.0
   permission_handler: ^11.3.1
   flutter_local_notifications: ^17.0.0
   google_maps_flutter: ^2.14.0
@@ -104,6 +105,32 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    # Paketlenen fontların OFL lisansları (LicenseRegistry'ye eklenir).
+    # Klasör değil dosya dosya listelenir ki .ttf'ler asset olarak ikinci kez
+    # paketlenmesin.
+    - assets/fonts/OFL-PlayfairDisplay.txt
+    - assets/fonts/OFL-CourierPrime.txt
+    - assets/fonts/OFL-BebasNeue.txt
+    - assets/fonts/OFL-Caveat.txt
+
+  # Foto/video metin overlay fontları — her platformda aynı görünsün diye
+  # paketlenir (sistem Georgia/Courier Android'de yoktu). Google Fonts, OFL.
+  fonts:
+    - family: Playfair Display
+      fonts:
+        - asset: assets/fonts/PlayfairDisplay-Bold.ttf
+          weight: 700
+    - family: Courier Prime
+      fonts:
+        - asset: assets/fonts/CourierPrime-Bold.ttf
+          weight: 700
+    - family: Bebas Neue
+      fonts:
+        - asset: assets/fonts/BebasNeue-Regular.ttf
+    - family: Caveat
+      fonts:
+        - asset: assets/fonts/Caveat-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

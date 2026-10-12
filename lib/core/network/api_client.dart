@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import 'app_request_headers.dart';
 import 'api_exception.dart';
+import '../performance/performance_diagnostics.dart';
+import '../storage/secure_storage.dart';
+import 'request_session.dart';
 
 class ApiClient {
   ApiClient({
@@ -34,8 +37,20 @@ class ApiClient {
   /// on their next app-open (`/auth/me`) after they update, without re-login.
   /// Resolved once and cached for the app's lifetime (build info can't change
   /// mid-session).
-  Future<Map<String, String>> _appMetadataHeaders() =>
-      AppRequestHeaders.appMetadata();
+  Future<Map<String, String>> _appMetadataHeaders() async {
+    final metadata = await AppRequestHeaders.appMetadata();
+    PerformanceDiagnostics.headersReady();
+    return metadata;
+  }
+
+  void _noteResponse(http.Response response) {
+    if (!PerformanceDiagnostics.enabled) return;
+    PerformanceDiagnostics.response(
+      status: response.statusCode,
+      bytes: response.bodyBytes.length,
+      backendId: response.headers['x-kmstry-perf-id'],
+    );
+  }
 
   // ── Silent token refresh ──────────────────────────────────────────────────
   /// Registered once by AuthRepository.init().
@@ -50,12 +65,27 @@ class ApiClient {
 
   /// In-flight refresh future — prevents parallel refresh calls.
   static Future<String?>? _activeRefresh;
+  static int? _activeRefreshRevision;
 
-  Future<String?> _tryRefresh() {
+  /// Shared by HTTP and realtime, so rotating refresh tokens are never raced.
+  static Future<String?> refreshSessionToken() {
     if (onRefreshToken == null) return Future.value(null);
-    _activeRefresh ??= onRefreshToken!().whenComplete(
-      () => _activeRefresh = null,
-    );
+    final revision = SecureStorage.sessionRevision;
+    if (_activeRefresh == null || _activeRefreshRevision != revision) {
+      _activeRefreshRevision = revision;
+      late final Future<String?> flight;
+      flight = onRefreshToken!()
+          .then(
+            (token) => revision == SecureStorage.sessionRevision ? token : null,
+          )
+          .whenComplete(() {
+            if (identical(_activeRefresh, flight)) {
+              _activeRefresh = null;
+              _activeRefreshRevision = null;
+            }
+          });
+      _activeRefresh = flight;
+    }
     return _activeRefresh!;
   }
 
@@ -99,7 +129,8 @@ class ApiClient {
   ) {
     return {
       'Content-Type': 'application/json',
-      ...?headers,
+      for (final entry in (headers ?? const <String, String>{}).entries)
+        if (entry.key.toLowerCase() != 'authorization') entry.key: entry.value,
       'Authorization': 'Bearer $newToken',
     };
   }
@@ -117,12 +148,21 @@ class ApiClient {
     http.Response first,
     Map<String, String> originalHeaders,
     Future<http.Response> Function(Map<String, String> newHeaders) retry,
+    RequestSession session,
   ) async {
     final freshAppCheck = await _appCheckHeader(forceRefresh: true);
+    session.check();
     if (freshAppCheck.isEmpty) {
       return _throwApiException(first.statusCode, _tryDecode(first.body));
     }
-    final replay = await retry({...originalHeaders, ...freshAppCheck});
+    final current = await session.currentToken();
+    final replay = await retry({
+      ...(current == null
+          ? originalHeaders
+          : _withNewToken(originalHeaders, current)),
+      ...freshAppCheck,
+    });
+    _noteResponse(replay);
     final replayData = _tryDecode(replay.body);
     if (replay.statusCode >= 400) {
       return _throwApiException(replay.statusCode, replayData);
@@ -141,15 +181,28 @@ class ApiClient {
     String path,
     Map<String, String>? originalHeaders,
     Future<http.Response> Function(Map<String, String> newHeaders) retry,
+    RequestSession session,
   ) async {
+    session.check();
+    Future<http.Response> checkedRetry(Map<String, String> headers) async {
+      await session.currentToken(candidate: RequestSession.bearer(headers));
+      final response = await retry(headers);
+      session.check();
+      return response;
+    }
+
     if (_isAppCheck401(first)) {
-      return _retryAppCheck401(first, originalHeaders ?? const {}, retry);
+      return _retryAppCheck401(
+        first,
+        originalHeaders ?? const {},
+        checkedRetry,
+        session,
+      );
     }
 
     // No Authorization header → this is a credential error (wrong password,
     // invalid OTP, etc.), not a session expiry. Let it propagate normally.
-    final hasAuthHeader =
-        originalHeaders?.containsKey('Authorization') ?? false;
+    final hasAuthHeader = session.initialToken != null;
     if (!hasAuthHeader) {
       throw ApiException(
         statusCode: first.statusCode,
@@ -167,7 +220,11 @@ class ApiClient {
       );
     }
 
-    final newToken = await _tryRefresh();
+    final currentToken = await session.currentToken();
+    final newToken = currentToken != session.initialToken
+        ? currentToken
+        : await refreshSessionToken();
+    await session.currentToken(candidate: newToken);
     if (newToken == null) {
       // Refresh failed — session is truly expired.
       await onSessionExpired?.call();
@@ -179,11 +236,17 @@ class ApiClient {
 
     // Retry the original request with the new token.
     final refreshedHeaders = _withNewToken(originalHeaders, newToken);
-    final retryResp = await retry(refreshedHeaders);
+    final retryResp = await checkedRetry(refreshedHeaders);
+    _noteResponse(retryResp);
     _log('🌐 [HTTP] retry statusCode = ${retryResp.statusCode}');
 
     if (_isAppCheck401(retryResp)) {
-      return _retryAppCheck401(retryResp, refreshedHeaders, retry);
+      return _retryAppCheck401(
+        retryResp,
+        refreshedHeaders,
+        checkedRetry,
+        session,
+      );
     }
 
     final retryData = _tryDecode(retryResp.body);
@@ -200,7 +263,18 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
+  }) => PerformanceDiagnostics.request(
+    'POST',
+    path,
+    () => _post(path, body: body, headers: headers),
+  );
+
+  Future<dynamic> _post(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
+    final session = RequestSession(headers);
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -214,10 +288,13 @@ class ApiClient {
     _log('🌐 [HTTP] body = ${_truncate(body)}');
 
     try {
+      await session.currentToken();
       final response = await _client
           .post(url, headers: merged, body: jsonEncode(body ?? {}))
           .timeout(const Duration(seconds: 10));
 
+      session.check();
+      _noteResponse(response);
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
@@ -229,6 +306,7 @@ class ApiClient {
           (h) => _client
               .post(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
+          session,
         );
       }
 
@@ -253,7 +331,18 @@ class ApiClient {
     String path, {
     Map<String, String>? headers,
     Duration timeout = const Duration(seconds: 10),
+  }) => PerformanceDiagnostics.request(
+    'GET',
+    path,
+    () => _get(path, headers: headers, timeout: timeout),
+  );
+
+  Future<dynamic> _get(
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 10),
   }) async {
+    final session = RequestSession(headers);
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -266,8 +355,11 @@ class ApiClient {
     _log('🌐 [HTTP] headers = ${_truncate(headers)}');
 
     try {
+      await session.currentToken();
       final response = await _client.get(url, headers: merged).timeout(timeout);
 
+      session.check();
+      _noteResponse(response);
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
@@ -277,6 +369,7 @@ class ApiClient {
           path,
           merged,
           (h) => _client.get(url, headers: h).timeout(timeout),
+          session,
         );
       }
 
@@ -295,7 +388,18 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
+  }) => PerformanceDiagnostics.request(
+    'PATCH',
+    path,
+    () => _patch(path, body: body, headers: headers),
+  );
+
+  Future<dynamic> _patch(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
+    final session = RequestSession(headers);
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -309,10 +413,13 @@ class ApiClient {
     _log('🌐 [HTTP] body = ${_truncate(body)}');
 
     try {
+      await session.currentToken();
       final response = await _client
           .patch(url, headers: merged, body: jsonEncode(body ?? {}))
           .timeout(const Duration(seconds: 10));
 
+      session.check();
+      _noteResponse(response);
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
@@ -324,6 +431,7 @@ class ApiClient {
           (h) => _client
               .patch(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
+          session,
         );
       }
 
@@ -348,7 +456,18 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
+  }) => PerformanceDiagnostics.request(
+    'PUT',
+    path,
+    () => _put(path, body: body, headers: headers),
+  );
+
+  Future<dynamic> _put(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
+    final session = RequestSession(headers);
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -361,10 +480,13 @@ class ApiClient {
     _log('🌐 [HTTP] body = ${_truncate(body)}');
 
     try {
+      await session.currentToken();
       final response = await _client
           .put(url, headers: merged, body: jsonEncode(body ?? {}))
           .timeout(const Duration(seconds: 10));
 
+      session.check();
+      _noteResponse(response);
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
@@ -376,6 +498,7 @@ class ApiClient {
           (h) => _client
               .put(url, headers: h, body: jsonEncode(body ?? {}))
               .timeout(const Duration(seconds: 10)),
+          session,
         );
       }
 
@@ -396,7 +519,15 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> delete(String path, {Map<String, String>? headers}) async {
+  Future<dynamic> delete(String path, {Map<String, String>? headers}) =>
+      PerformanceDiagnostics.request(
+        'DELETE',
+        path,
+        () => _delete(path, headers: headers),
+      );
+
+  Future<dynamic> _delete(String path, {Map<String, String>? headers}) async {
+    final session = RequestSession(headers);
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -408,10 +539,13 @@ class ApiClient {
     _log('🌐 [HTTP] DELETE $url');
 
     try {
+      await session.currentToken();
       final response = await _client
           .delete(url, headers: merged)
           .timeout(const Duration(seconds: 10));
 
+      session.check();
+      _noteResponse(response);
       _log('🌐 [HTTP] statusCode = ${response.statusCode}');
       _log('🌐 [HTTP] raw response = ${_truncate(response.body)}');
 
@@ -423,6 +557,7 @@ class ApiClient {
           (h) => _client
               .delete(url, headers: h)
               .timeout(const Duration(seconds: 10)),
+          session,
         );
       }
 

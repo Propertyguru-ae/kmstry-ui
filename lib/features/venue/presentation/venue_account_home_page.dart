@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_home_read.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_analytics_screen.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_media_cards.dart';
@@ -21,9 +23,13 @@ import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/core/venue/venue_read_changes.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 /// DEMO bayrağı — "Here right now" boşken tasarımı göstermek için sahte misafir
 /// enjekte eder (patrona demo). Canlıya çıkmadan ÖNCE false yap.
@@ -31,15 +37,39 @@ const bool _kDemoHereNow = true;
 
 class VenueAccountHomePage extends StatefulWidget {
   final String? venueId;
-  const VenueAccountHomePage({super.key, this.venueId});
+  const VenueAccountHomePage({
+    super.key,
+    this.venueId,
+    this.repository,
+    this.authRepository,
+    this.isActive = true,
+  });
+  final VenueOwnerRepository? repository;
+  final AuthRepository? authRepository;
+  final bool isActive;
 
   @override
   State<VenueAccountHomePage> createState() => _VenueAccountHomePageState();
 }
 
-class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
-  final _repo = VenueOwnerRepository();
-  final _authRepo = AuthRepository();
+class _VenueAccountHomePageState extends State<VenueAccountHomePage>
+    with WidgetsBindingObserver {
+  late final _repo = widget.repository ?? VenueOwnerRepository();
+  late final _authRepo = widget.authRepository ?? AuthRepository();
+  late final _homeRead = VenueHomeRead(
+    readMe: () => _authRepo.getMe(forceRefresh: _hasReadContext),
+    readDashboard: (venueId) => _repo.getOwnerDashboard(venueId),
+  );
+  int _loadRevision = 0;
+  bool _hasReadContext = false;
+  late final _visibleRead = VisibleVenueRead(
+    isVisible: () => mounted && widget.isActive,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.venueHome,
+      _loadUnmeasured,
+      isMounted: () => mounted,
+    ),
+  );
 
   bool _loading = true;
   String? _error;
@@ -56,94 +86,119 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    VenueReadChanges.changes.addListener(_onVenueChanged);
+    PendingPublicMediaService.instance.avatarPublicationChanges.addListener(
+      _onPublished,
+    );
+    PendingPublicMediaService.instance.eventPublicationChanges.addListener(
+      _onPublished,
+    );
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(VenueAccountHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.venueId != widget.venueId) {
+      _data = null;
+      _pendingVenue = null;
+      _rejectedVenue = null;
+      _isPendingClaim = false;
+      _isRejectedClaim = false;
+      _showPersonalBanner = false;
+      _pendingHasDocuments = false;
+      _hasReadContext = false;
+      _loadRevision++;
+      _visibleRead.reset();
+      _load();
+    } else if (widget.isActive && !oldWidget.isActive) {
+      unawaited(_visibleRead.activate());
+    }
+  }
+
+  @override
+  void dispose() {
+    _visibleRead.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    VenueReadChanges.changes.removeListener(_onVenueChanged);
+    PendingPublicMediaService.instance.avatarPublicationChanges.removeListener(
+      _onPublished,
+    );
+    PendingPublicMediaService.instance.eventPublicationChanges.removeListener(
+      _onPublished,
+    );
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_visibleRead.activate());
+  }
+
+  void _onPublished() => unawaited(_visibleRead.invalidate());
+
+  void _onVenueChanged() {
+    final change = VenueReadChanges.changes.value;
+    if (change == null ||
+        change.venueId != (_data?.venue.id ?? widget.venueId) ||
+        !PendingPublicMediaService.instance.isCurrentSession(change.session)) {
+      return;
+    }
+    _onPublished();
+  }
+
+  Future<void> _load() => _visibleRead.invalidate();
+
+  Future<bool> _loadUnmeasured() async {
+    final revision = ++_loadRevision;
+    final uploads = PendingPublicMediaService.instance;
+    final generation = uploads.sessionGeneration;
+    final venueId = widget.venueId;
+    bool isCurrent() =>
+        mounted &&
+        revision == _loadRevision &&
+        venueId == widget.venueId &&
+        uploads.isCurrentSession(generation);
     setState(() {
-      _loading = true;
+      // Keep the same dashboard and scroll position during a return refresh.
+      _loading = _data == null && !_isPendingClaim && !_isRejectedClaim;
       _error = null;
     });
     try {
-      final me = await _authRepo.getMe();
-      final ctx = MeContextModel.fromMe(me);
-
-      String? venueId = widget.venueId;
-      if (venueId == null || venueId.isEmpty) {
-        venueId = ctx.activeVenueId;
-        if ((venueId == null || venueId.isEmpty) &&
-            ctx.memberVenues.isNotEmpty) {
-          venueId = ctx.memberVenues.first.id;
-        }
+      final result = await _homeRead.load(
+        venueId: venueId,
+        isCurrent: isCurrent,
+      );
+      if (!isCurrent() || result == null) {
+        return false;
       }
-      if (!mounted) return;
-
-      // Onaylı bir venue seçiliyken, sahip olunan BAŞKA bir venue'nun bekleyen/
-      // reddedilen claim'i tüm dashboard'u "Claim Under Review" ile kilitlememeli.
-      // Bu yüzden pending/rejected durumunu "herhangi bir venue" yerine AKTİF
-      // (seçili) venue'ye göre belirliyoruz. Aktif venue üyelik listesinde yoksa
-      // (ör. henüz venue oluşmadan bekleyen claim) global next-action'a düşeriz.
-      final activeVenue = ctx.memberVenues
-          .where((v) => v.id == venueId)
-          .firstOrNull;
-
-      final pendingVenue = (activeVenue?.isPendingOwnerClaim ?? false)
-          ? activeVenue
-          : (activeVenue == null
-                ? ctx.memberVenues
-                      .where((v) => v.isPendingOwnerClaim)
-                      .firstOrNull
-                : null);
-      final rejectedVenue = (activeVenue?.isRejectedOwnerClaim ?? false)
-          ? activeVenue
-          : (activeVenue == null
-                ? ctx.memberVenues
-                      .where((v) => v.isRejectedOwnerClaim)
-                      .firstOrNull
-                : null);
-
-      final isPending =
-          pendingVenue != null ||
-          (activeVenue == null && ctx.nextAction == 'AWAIT_VENUE_APPROVAL');
-      final isRejected =
-          rejectedVenue != null ||
-          (activeVenue == null &&
-              (ctx.nextAction == 'VENUE_CLAIM_REJECTED' ||
-                  ctx.hasRejectedClaimOnly));
-
+      final ctx = result.context;
       setState(() {
-        _showPersonalBanner = !ctx.hasPersonalProfile && !isRejected;
-        _isPendingClaim = isPending;
-        _isRejectedClaim = isRejected && !isPending;
-        _pendingHasDocuments = pendingVenue?.hasDocuments ?? false;
-        _pendingVenue = pendingVenue;
-        _rejectedVenue = rejectedVenue;
-      });
-
-      if (isPending || isRejected) {
-        setState(() => _loading = false);
-        return;
-      }
-
-      if (venueId == null || venueId.isEmpty) {
-        setState(() {
-          _loading = false;
+        _showPersonalBanner = ctx.showPersonalBanner;
+        _isPendingClaim = ctx.isPendingClaim;
+        _isRejectedClaim = ctx.isRejectedClaim;
+        _pendingHasDocuments = ctx.pendingHasDocuments;
+        _pendingVenue = ctx.pendingVenue;
+        _rejectedVenue = ctx.rejectedVenue;
+        _data = result.dashboard;
+        _hasReadContext = true;
+        if (!ctx.hasClaimView && !ctx.hasVenue) {
           _error = 'No active venue found.';
-        });
-        return;
-      }
-      final stats = await _repo.getOwnerStats(venueId);
-      if (!mounted) return;
-      setState(() {
-        _data = stats;
+        }
         _loading = false;
       });
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!isCurrent()) return false;
+      final accessDenied =
+          e is ApiException && [401, 403, 404].contains(e.statusCode);
       setState(() {
         _loading = false;
-        _error = 'Could not load venue stats. Tap to retry.';
+        if (accessDenied) _data = null;
+        if (_data == null) _error = 'Could not load venue stats. Tap to retry.';
       });
+      return false;
     }
   }
 
@@ -182,6 +237,13 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    return PerformancePageProbe(
+      page: PerformancePage.venueHome,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
@@ -258,6 +320,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
+    final guestRow = _buildGuestRow(d.activeGuests, s.anonymousNow);
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -269,6 +332,7 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: VenueHomeMediaCards(
+              isActive: widget.isActive,
               venueId: d.venue.id,
               venueName: d.venue.name,
               venuePhotoUrl: d.venue.photo,
@@ -282,20 +346,30 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
             ),
           ),
 
-          // 1) Live pulse — "right now"
-          const Padding(
-            padding: EdgeInsets.fromLTRB(18, 16, 18, 0),
+          // 1) Right now — tek kart: canlı sayı + cinsiyet dağılımı + o an
+          // içerideki misafirler (eskiden ayrı "Here right now" bölümüydü).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
             child: _DashSectionTitle(
-              color: Color(0xFF1FD9A8),
+              color: const Color(0xFF1FD9A8),
               label: 'Right now',
+              trailing: guestRow == null
+                  ? null
+                  : _SeeAllCta(
+                      color: const Color(0xFF1FD9A8),
+                      onTap: () => AppShellNav.of(
+                        context,
+                      )?.selectTabId(kVenueGuestsTabId),
+                    ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: _LivePulseCard(
+            child: VenueLivePulseCard(
               activeNow: s.activeNow,
               maleNow: s.maleNow,
               femaleNow: s.femaleNow,
+              guests: guestRow,
             ),
           ),
 
@@ -330,10 +404,6 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
               child: _buildPersonalBanner(context),
             ),
           ],
-
-          // 4) Live guests + stories (kimse yoksa bile göster)
-          const SizedBox(height: 12),
-          _buildGuestChips(context, d.activeGuests, s.anonymousNow),
 
           // 4) Mini haftalık trend → tam analytics'e giriş.
           // Advanced analytics (Live+) yoksa "See full analytics" gösterme,
@@ -1001,18 +1071,11 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
     );
   }
 
-  // ── Guest chips ───────────────────────────────────────────────────────────────
+  // ── Guest row (Right now kartının içinde) ─────────────────────────────────────
 
-  Widget _buildGuestChips(
-    BuildContext context,
-    List<VenueActiveGuest> guests,
-    int anonymousNow,
-  ) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final colors = Theme.of(context).colorScheme;
-    final kSheet = isDark ? const Color(0xFF0B1322) : const Color(0xFFF7F8FA);
-    final kText = colors.onSurface;
-
+  /// O an içerideki misafirlerin yatay avatar sırası; kimse yoksa null
+  /// (kart o zaman yalnızca "Quiet" durumunu gösterir).
+  Widget? _buildGuestRow(List<VenueActiveGuest> guests, int anonymousNow) {
     // DEMO: gerçek check-in yokken tasarımı göstermek için. Canlıya çıkmadan
     // _kDemoHereNow = false yap.
     if (_kDemoHereNow && guests.isEmpty && anonymousNow == 0) {
@@ -1044,77 +1107,19 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage> {
       ];
       anonymousNow = 2;
     }
+    if (guests.isEmpty && anonymousNow == 0) return null;
 
-    final totalHere = guests.length + anonymousNow;
-
-    return Container(
-      color: kSheet,
-      padding: const EdgeInsets.fromLTRB(18, 14, 0, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 18),
-            child: _DashSectionTitle(
-              color: const Color(0xFFE020D8),
-              label: 'Here right now',
-              count: totalHere,
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (guests.isEmpty && anonymousNow == 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 18, top: 6, bottom: 10),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.people_outline,
-                    size: 18,
-                    color: kText.withValues(alpha: 0.35),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'No one here yet',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: kText.withValues(alpha: 0.68),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            SizedBox(
-              height: 88,
-              // Görünür misafirler + (varsa) anonimleri temsil eden tek kesikli baloncuk
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.only(right: 18),
-                itemCount: guests.length + (anonymousNow > 0 ? 1 : 0),
-                separatorBuilder: (context, index) => const SizedBox(width: 10),
-                itemBuilder: (_, i) => i < guests.length
-                    ? _GuestChip(guest: guests[i])
-                    : _AnonymousChip(count: anonymousNow),
-              ),
-            ),
-
-          // "See all" → Guests sekmesi (aynı aktif misafirler). Sağ alt köşe.
-          if (totalHere > 0) ...[
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(right: 18),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: _SeeAllCta(
-                  color: const Color(0xFFE020D8),
-                  onTap: () =>
-                      AppShellNav.of(context)?.selectTabId(kVenueGuestsTabId),
-                ),
-              ),
-            ),
-          ],
-        ],
+    return SizedBox(
+      height: 88,
+      // Görünür misafirler + (varsa) anonimleri temsil eden tek kesikli baloncuk
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        itemCount: guests.length + (anonymousNow > 0 ? 1 : 0),
+        separatorBuilder: (context, index) => const SizedBox(width: 10),
+        itemBuilder: (_, i) => i < guests.length
+            ? _GuestChip(guest: guests[i])
+            : _AnonymousChip(count: anonymousNow),
       ),
     );
   }
@@ -1556,14 +1561,21 @@ class _SquareStoryRingPainter extends CustomPainter {
 // ── Analytics glance card (dashboard → full analytics) ────────────────────────
 
 // ── Dashboard: Live pulse ("right now") ─────────────────────────────────────────
-class _LivePulseCard extends StatelessWidget {
+/// Home "Right now" kartı: canlı sayı + cinsiyet dağılımı + (varsa) o an
+/// içerideki misafirler. Public: kart tek başına test edilebilsin diye.
+class VenueLivePulseCard extends StatelessWidget {
   final int activeNow;
   final int maleNow;
   final int femaleNow;
-  const _LivePulseCard({
+
+  /// O an içerideki misafirlerin avatar sırası (yoksa null).
+  final Widget? guests;
+  const VenueLivePulseCard({
+    super.key,
     required this.activeNow,
     required this.maleNow,
     required this.femaleNow,
+    this.guests,
   });
 
   @override
@@ -1595,75 +1607,100 @@ class _LivePulseCard extends StatelessWidget {
         ),
         border: Border.all(color: accent.withValues(alpha: 0.35)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: accent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    live ? 'LIVE NOW' : 'QUIET',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                      color: accent,
-                    ),
-                  ),
-                ],
+          _summaryRow(colors, accent, live),
+          if (guests != null) ...[
+            const SizedBox(height: 14),
+            Divider(height: 1, color: accent.withValues(alpha: 0.22)),
+            const SizedBox(height: 12),
+            guests!,
+          ] else if (!live) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Guests appear here as they check in.',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                color: colors.onSurface.withValues(alpha: 0.6),
               ),
-              const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    '$activeNow',
-                    style: TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w800,
-                      color: colors.onSurface,
-                      height: 1,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      activeNow == 1 ? 'guest here' : 'guests here',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: colors.onSurface.withValues(alpha: 0.78),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const Spacer(),
-          if (live)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                _genderRow('♂', maleNow, const Color(0xFF1A9FE8)),
-                const SizedBox(height: 8),
-                _genderRow('♀', femaleNow, const Color(0xFFE020D8)),
-              ],
             ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _summaryRow(ColorScheme colors, Color accent, bool live) {
+    return Row(
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  live ? 'LIVE NOW' : 'QUIET',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: accent,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  '$activeNow',
+                  style: TextStyle(
+                    fontSize: 40,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurface,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    activeNow == 1 ? 'guest here' : 'guests here',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurface.withValues(alpha: 0.78),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const Spacer(),
+        if (live)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _genderRow('♂', maleNow, const Color(0xFF1A9FE8)),
+              const SizedBox(height: 8),
+              _genderRow('♀', femaleNow, const Color(0xFFE020D8)),
+            ],
+          ),
+      ],
     );
   }
 

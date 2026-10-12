@@ -18,7 +18,7 @@ class AppConfig {
 
   static const String baseUrl = _definedApiUrl != ''
       ? _definedApiUrl
-      : 'http://192.168.1.190:3000';
+      : 'http://192.168.1.191:3000';
 
   /// Public marketing/legal site (privacy, terms, support, invite landing).
   /// Distinct from [baseUrl] which is the API host.

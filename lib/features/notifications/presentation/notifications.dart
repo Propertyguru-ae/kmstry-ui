@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -19,22 +20,35 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_member_status_
 import 'package:kmstry_frontend/features/venue/presentation/venue_team_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_claim_rejected_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 const _kKmstryBlue = Color(0xFF1A9FE8);
 const _kKmstryTeal = Color(0xFF1FD9A8);
 const _kKmstryPink = Color(0xFFE020D8);
 
 class NotificationPage extends StatefulWidget {
-  const NotificationPage({super.key});
+  const NotificationPage({
+    super.key,
+    this.repository,
+    this.matchRepository,
+    this.authRepository,
+    this.realtimeService,
+  });
+  final NotificationRepository? repository;
+  final MatchRepository? matchRepository;
+  final AuthRepository? authRepository;
+  final NotificationRealtimeService? realtimeService;
 
   @override
   State<NotificationPage> createState() => _NotificationPageState();
 }
 
 class _NotificationPageState extends State<NotificationPage> {
-  final NotificationRepository _repo = NotificationRepository();
-  final MatchRepository _matchRepo = MatchRepository();
-  final NotificationRealtimeService _realtime = NotificationRealtimeService();
+  late final _repo = widget.repository ?? NotificationRepository();
+  late final _matchRepo = widget.matchRepository ?? MatchRepository();
+  late final _authRepo = widget.authRepository ?? AuthRepository();
+  late final _realtime =
+      widget.realtimeService ?? NotificationRealtimeService();
   List<NotificationModel> _list = [];
   bool _loading = true;
   String? _error;
@@ -43,6 +57,15 @@ class _NotificationPageState extends State<NotificationPage> {
   static const int _daysWindow = 30;
   StreamSubscription<NotificationRealtimeEnvelope>? _eventsSub;
   StreamSubscription<ChatRealtimeConnectionState>? _stateSub;
+  Future<void>? _readFlight;
+  Future<void>? _markReadFlight;
+  final _eventsDuringRead = <String, NotificationModel>{};
+  int _unreadEventRevision = 0;
+
+  bool _currentRead(int generation, String? venueId) =>
+      mounted &&
+      PendingPublicMediaService.instance.isCurrentSession(generation) &&
+      VenueSession.instance.venueId == venueId;
 
   @override
   void initState() {
@@ -59,30 +82,50 @@ class _NotificationPageState extends State<NotificationPage> {
     super.dispose();
   }
 
-  Future<void> _loadNotifications() async {
+  Future<void> _loadNotifications() {
+    if (!mounted) return Future.value();
+    final existing = _readFlight;
+    if (existing != null) return existing;
+    late final Future<void> read;
+    read =
+        PerformanceDiagnostics.pageLoad(
+          PerformancePage.notifications,
+          () => _loadNotificationsUnmeasured(),
+          isMounted: () => mounted,
+        ).whenComplete(() {
+          if (identical(_readFlight, read)) _readFlight = null;
+        });
+    return _readFlight = read;
+  }
+
+  Future<void> _loadNotificationsUnmeasured() async {
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    final venueId = VenueSession.instance.venueId;
+    _eventsDuringRead.clear();
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      try {
-        final me = await AuthRepository().getMe();
-        final lastContext =
-            (me['lastActiveContext'] ?? me['last_active_context'])
-                ?.toString()
-                .toUpperCase();
-        _activeContextType = lastContext == 'VENUE' ? 'VENUE' : 'PERSONAL';
-        _activeVenueId = (me['activeVenueId'] ?? me['active_venue_id'])
-            ?.toString()
-            .trim();
-        if (_activeVenueId?.isEmpty == true) _activeVenueId = null;
-      } catch (_) {}
-
-      final list = await _repo.getNotifications(limit: 50);
-      List<MatchItem> matches = const [];
-      try {
-        matches = await _matchRepo.getMatches();
-      } catch (_) {}
+      // These reads do not depend on one another. Optional match enrichment
+      // retains its fallback, but account/context validation must succeed.
+      final results = await Future.wait<Object>([
+        _authRepo.getMe(),
+        _repo.getNotifications(limit: 50),
+        _optionalMatches(),
+      ]);
+      if (!_currentRead(generation, venueId)) return;
+      final me = results[0] as Map<String, dynamic>;
+      final lastContext = (me['lastActiveContext'] ?? me['last_active_context'])
+          ?.toString()
+          .toUpperCase();
+      _activeContextType = lastContext == 'VENUE' ? 'VENUE' : 'PERSONAL';
+      _activeVenueId = (me['activeVenueId'] ?? me['active_venue_id'])
+          ?.toString()
+          .trim();
+      if (_activeVenueId?.isEmpty == true) _activeVenueId = null;
+      final list = results[1] as List<NotificationModel>;
+      final matches = results[2] as List<MatchItem>;
 
       final matchById = <String, MatchItem>{
         for (final m in matches)
@@ -93,12 +136,6 @@ class _NotificationPageState extends State<NotificationPage> {
           if (m.userId.isNotEmpty) m.userId: m,
       };
 
-      if (!mounted) return;
-      try {
-        await _repo.markAllAsRead();
-      } catch (_) {}
-      if (!mounted) return;
-      NotificationUnreadScope.of(context)?.updateUnreadCount(0);
       final asRead = list
           .where(_isVisibleForCurrentContext)
           .where((n) => n.type != 'new_message')
@@ -123,7 +160,7 @@ class _NotificationPageState extends State<NotificationPage> {
               ),
               contextType: n.contextType,
               venueId: n.venueId,
-              isRead: true,
+              isRead: n.isRead,
               createdAt: n.createdAt,
               dedupeKey: n.dedupeKey,
             ),
@@ -131,16 +168,84 @@ class _NotificationPageState extends State<NotificationPage> {
           .where((n) => !_isStaleInterestedAfterMatch(n))
           .toList();
       setState(() {
-        _list = asRead;
+        // A realtime event received while the snapshot was in flight must not
+        // disappear when that older snapshot finishes.
+        final merged = {for (final n in asRead) n.id: n};
+        for (final n in _eventsDuringRead.values) {
+          if (_isVisibleForCurrentContext(n) &&
+              !_isStaleInterestedAfterMatch(n)) {
+            merged[n.id] = n;
+          }
+        }
+        _list = merged.values.toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
         _loading = false;
       });
+      // Painting the list never waits for the read-receipt write. The bell is
+      // only cleared after a successful server acknowledgment, not on failure.
+      unawaited(_markVisibleRead(generation, venueId));
     } catch (e) {
-      if (!mounted) return;
+      if (!_currentRead(generation, venueId)) return;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
     }
+  }
+
+  Future<List<MatchItem>> _optionalMatches() async {
+    try {
+      return await _matchRepo.getMatches();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _markVisibleRead(int generation, String? venueId) {
+    if (!_currentRead(generation, venueId)) return Future.value();
+    final existing = _markReadFlight;
+    if (existing != null) return existing;
+    final visibleIds = _list.map((n) => n.id).toSet();
+    final unreadRevision = _unreadEventRevision;
+    late final Future<void> read;
+    read =
+        (() async {
+          try {
+            await _repo.markAllAsRead();
+            if (!mounted || !_currentRead(generation, venueId)) return;
+            // A realtime count (including a newly arrived notification) is newer
+            // than our local receipt assumption; never overwrite it with zero.
+            if (unreadRevision == _unreadEventRevision) {
+              NotificationUnreadScope.of(context)?.updateUnreadCount(0);
+            }
+            setState(() {
+              _list = _list
+                  .map(
+                    (n) => !visibleIds.contains(n.id)
+                        ? n
+                        : NotificationModel(
+                            id: n.id,
+                            type: n.type,
+                            title: n.title,
+                            body: n.body,
+                            data: n.data,
+                            contextType: n.contextType,
+                            venueId: n.venueId,
+                            isRead: true,
+                            createdAt: n.createdAt,
+                            dedupeKey: n.dedupeKey,
+                          ),
+                  )
+                  .toList();
+            });
+          } catch (_) {
+            // Keep the server-provided read state and allow a later visit/refresh
+            // to retry. A receipt failure must not hide the notification list.
+          }
+        })().whenComplete(() {
+          if (identical(_markReadFlight, read)) _markReadFlight = null;
+        });
+    return _markReadFlight = read;
   }
 
   bool _isVisibleForCurrentContext(NotificationModel n) {
@@ -169,6 +274,7 @@ class _NotificationPageState extends State<NotificationPage> {
       if (!mounted) return;
       final unread = _readUnreadCount(envelope.payload);
       if (unread != null) {
+        _unreadEventRevision++;
         NotificationUnreadScope.of(context)?.updateUnreadCount(unread);
       }
 
@@ -206,6 +312,9 @@ class _NotificationPageState extends State<NotificationPage> {
     // 'system' type entries are internal signals, not displayable notifications.
     if (model.type == 'system') return true;
     if (model.type == 'new_message') return true;
+    // Context validation may still be pending on first opening. Buffer the
+    // event now, then filter it against the validated context before painting.
+    if (_readFlight != null) _eventsDuringRead[model.id] = model;
     if (!_isVisibleForCurrentContext(model)) return true;
     if (_isStaleInterestedAfterMatch(model)) return true;
 
@@ -711,6 +820,13 @@ class _NotificationPageState extends State<NotificationPage> {
 
   @override
   Widget build(BuildContext context) {
+    return PerformancePageProbe(
+      page: PerformancePage.notifications,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;

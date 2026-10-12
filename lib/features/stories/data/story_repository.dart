@@ -6,13 +6,23 @@ import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
-import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/authenticated_multipart_upload.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'story_model.dart';
+import 'story_upload_failure.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 class StoryRepository {
+  StoryRepository({
+    AuthenticatedMultipartUpload? uploads,
+    PendingPublicMediaService? uploadService,
+  }) : _uploads = uploads ?? AuthenticatedMultipartUpload(),
+       _uploadService = uploadService ?? PendingPublicMediaService.instance;
+
   final ApiClient _api = ApiClient();
+  final AuthenticatedMultipartUpload _uploads;
+  final PendingPublicMediaService _uploadService;
 
   /// Kişisel story oluşturulunca/silinince artar. Home gibi ekranlar bunu
   /// dinleyip kendi story listesini anında tazeler (paylaşımdan sonra "bazen
@@ -28,46 +38,81 @@ class StoryRepository {
     int? durationSecs,
     String? textOverlayJson,
     MultipartUploadProgress? onProgress,
+    int? uploadSession,
+    PendingPublicMedia? pendingDraft,
   }) async {
     final token = await SecureStorage.getAccessToken();
-    final uri = Uri.parse('${AppConfig.baseUrl}/checkins/$checkinId/stories');
+    if (token == null) throw Exception('Not authenticated');
+    final session = uploadSession ?? _uploadService.sessionGeneration;
+    final draft =
+        pendingDraft ??
+        PendingPublicMedia(
+          id: PendingPublicMediaService.newUploadId(),
+          kind: PendingPublicMediaKind.personalStory,
+          venueId: null,
+          checkinId: checkinId,
+          localPath: file.path,
+          isVideo: mediaType == 'video',
+          createdAt: DateTime.now(),
+          hasServerReceipt: false,
+        );
+    return _uploadService.runUpload<StoryItem>(
+      token: token,
+      expectedGeneration: session,
+      draft: draft,
+      receiptId: (item) => item.id,
+      receiptVenueId: (item) => item.venueId,
+      onProgress: onProgress,
+      send: (onProgress) async {
+        final uri = Uri.parse(
+          '${AppConfig.baseUrl}/checkins/$checkinId/stories',
+        );
 
-    final request = http.MultipartRequest('POST', uri);
-    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
+        final response = await _uploads.send(
+          initialToken: token,
+          isCurrentSession: () => _uploadService.isCurrentSession(session),
+          timeout: const Duration(minutes: 5),
+          cancellation: _uploadService.storyCancellation(draft.id),
+          createRequest: (headers) async {
+            final request = http.MultipartRequest('POST', uri);
+            request.headers.addAll(headers);
+            final mimeType =
+                lookupMimeType(file.path) ?? 'application/octet-stream';
+            final mimeSplit = mimeType.split('/');
+            request.files.add(
+              await multipartFileWithProgress(
+                field: 'file',
+                file: file,
+                contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
+                onProgress: onProgress,
+              ),
+            );
+            request.fields['media_type'] = mediaType;
+            request.fields['upload_id'] = draft.id;
+            if (durationSecs != null) {
+              request.fields['duration_secs'] = durationSecs.toString();
+            }
+            if (textOverlayJson != null && textOverlayJson.isNotEmpty) {
+              request.fields['textOverlay'] = textOverlayJson;
+            }
+            return request;
+          },
+        );
+        final body = response.body;
 
-    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
-    final mimeSplit = mimeType.split('/');
+        if (response.statusCode >= 400) {
+          if (response.statusCode < 500 && response.statusCode != 408) {
+            throw StoryUploadFailure.fromResponse(response.statusCode, body);
+          }
+          throw Exception('Story upload failed (${response.statusCode})');
+        }
 
-    request.files.add(
-      await multipartFileWithProgress(
-        field: 'file',
-        file: file,
-        contentType: http_parser.MediaType(mimeSplit[0], mimeSplit[1]),
-        onProgress: onProgress,
-      ),
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        // The receipt confirms upload, not publication. The shared tracker
+        // notifies story lists only once the approved story is publicly readable.
+        return StoryItem.fromJson(json);
+      },
     );
-
-    request.fields['media_type'] = mediaType;
-    if (durationSecs != null) {
-      request.fields['duration_secs'] = durationSecs.toString();
-    }
-    if (textOverlayJson != null && textOverlayJson.isNotEmpty) {
-      request.fields['textOverlay'] = textOverlayJson;
-    }
-
-    final streamed = await sendMultipartRequest(
-      request,
-      timeout: const Duration(minutes: 5),
-    );
-    final body = await streamed.stream.bytesToString();
-
-    if (streamed.statusCode >= 400) {
-      throw Exception('Story upload failed (${streamed.statusCode}): $body');
-    }
-
-    final json = jsonDecode(body) as Map<String, dynamic>;
-    _notifyChanged();
-    return StoryItem.fromJson(json);
   }
 
   /// Returns story groups for the venue (other users).
@@ -87,6 +132,9 @@ class StoryRepository {
   /// Returns the current user's own active stories.
   Future<List<StoryItem>> getMyStories() async {
     final token = await SecureStorage.getAccessToken();
+    // Signed out: never send "Bearer null" (the 401 would look like an
+    // expired session).
+    if (token == null) throw Exception('Not authenticated');
     final data = await _api.get(
       '/stories/me',
       headers: {'Authorization': 'Bearer $token'},

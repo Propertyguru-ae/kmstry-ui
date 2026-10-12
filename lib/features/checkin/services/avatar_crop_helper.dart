@@ -7,6 +7,8 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'active_checkin_service.dart';
 
 /// Bir fotoğrafı kare (1:1) avatar olarak kırpma yardımcısı. Kullanıcı pan/zoom
 /// ile istediği bölgeyi kareye getirir; sonuç sıkıştırılmış JPEG dosyası olarak
@@ -61,12 +63,18 @@ Future<String?> recropCheckinAvatarFromUrl(
   required String featuredUrl,
 }) async {
   if (checkinId.isEmpty || featuredUrl.isEmpty) return null;
+  final uploads = PendingPublicMediaService.instance;
+  final session = uploads.sessionGeneration;
 
   final local = await _downloadToTemp(featuredUrl);
   if (local == null || !context.mounted) return null;
 
   final cropped = await cropSquareAvatar(context, local);
-  if (cropped == null) return null;
+  if (cropped == null ||
+      !uploads.isCurrentSession(session) ||
+      ActiveCheckinService().activeCheckinId != checkinId) {
+    return null;
+  }
 
   return CheckinRepository().uploadCheckinAvatar(
     checkinId: checkinId,

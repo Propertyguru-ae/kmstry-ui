@@ -22,6 +22,7 @@ class AuthGatePage extends StatefulWidget {
 }
 
 class _AuthGatePageState extends State<AuthGatePage> {
+  int? _routingRevision;
   @override
   void initState() {
     super.initState();
@@ -37,8 +38,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
         _go(const LoginPage());
         return;
       }
+      _routingRevision = SecureStorage.sessionRevision;
 
-      final me = await AuthRepository().getMe(forceRefresh: true);
+      // restoreSession just validated /auth/me against the server. Reuse that
+      // exact short-lived, session-scoped result instead of querying it twice.
+      final me = await AuthRepository().getMe();
       if (_legalConsentRequired(me)) {
         _logDecision('legal_consent_required');
         _go(const LegalUpdateRequiredPage());
@@ -470,7 +474,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
           final devicePermissionsDone =
               await SecureStorage.isDevicePermissionsOnboardingDone();
           if (!devicePermissionsDone) {
-            _go(PermissionsFlowPage(markProfileCompleted: false, forceDark: false));
+            _go(
+              PermissionsFlowPage(
+                markProfileCompleted: false,
+                forceDark: false,
+              ),
+            );
             return;
           }
           await PushManager.instance.ensureRegisteredIfAllowed();
@@ -482,7 +491,12 @@ class _AuthGatePageState extends State<AuthGatePage> {
           final devicePermissionsDone =
               await SecureStorage.isDevicePermissionsOnboardingDone();
           if (!devicePermissionsDone) {
-            _go(PermissionsFlowPage(markProfileCompleted: false, forceDark: false));
+            _go(
+              PermissionsFlowPage(
+                markProfileCompleted: false,
+                forceDark: false,
+              ),
+            );
             return;
           }
           await PushManager.instance.ensureRegisteredIfAllowed();
@@ -490,6 +504,10 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _go(const AppShell());
           return;
       }
+    } on AccountSessionChangedError {
+      // Another login/logout owns navigation now; this old gate must not
+      // redirect the replacement account back to Login.
+      return;
     } catch (e) {
       if (!mounted) return;
       debugPrint('[AuthGate] decision_error=$e');
@@ -558,6 +576,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
   }
 
   Future<void> _applyVenueContextIfNeeded(String? venueId) async {
+    if (!_isCurrentSession) return;
     if (venueId == null || venueId.isEmpty) return;
     try {
       await AuthRepository().switchContext(
@@ -570,6 +589,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
   String? _lastResolvedVenueId;
 
   Future<void> _routeToVenueHome() async {
+    if (!_isCurrentSession) return;
     await PushManager.instance.ensureRegisteredIfAllowed();
     _go(
       AppShell(
@@ -581,11 +601,18 @@ class _AuthGatePageState extends State<AuthGatePage> {
   }
 
   Future<void> _routeToPersonalHome() async {
+    if (!_isCurrentSession) return;
     await PushManager.instance.ensureRegisteredIfAllowed();
     _go(const AppShell(initialIndex: 0));
   }
 
+  bool get _isCurrentSession =>
+      mounted &&
+      (_routingRevision == null ||
+          _routingRevision == SecureStorage.sessionRevision);
+
   void _go(Widget page) {
+    if (!_isCurrentSession) return;
     // Remove every route beneath so no ghost personal/venue shell lingers
     // behind the transition and bleeds through.
     Navigator.of(context).pushAndRemoveUntil(

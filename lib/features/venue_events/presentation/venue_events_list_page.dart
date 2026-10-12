@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
@@ -7,6 +8,10 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'add_venue_event_page.dart';
 import 'venue_event_detail_page.dart';
 import '../data/venue_event_repository.dart';
+import '../data/venue_event_mutation.dart';
+import '../data/venue_event_deletion.dart';
+import '../data/venue_event_calendar_store.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 // ─── Brand colors ─────────────────────────────────────────────────────────────
 
@@ -28,15 +33,28 @@ class VenueEventsListPage extends StatefulWidget {
     required this.venueId,
     required this.events,
     required this.onRefresh,
+    this.repository,
+    this.createPageBuilder,
+    this.detailPageBuilder,
   });
+  final VenueEventRepository? repository;
+  final Widget Function(BuildContext, ValueChanged<List<VenueUpcomingEvent>>)?
+  createPageBuilder;
+  final Widget Function(
+    BuildContext,
+    VenueUpcomingEvent,
+    ValueChanged<VenueEventMutation>,
+  )?
+  detailPageBuilder;
 
   @override
   State<VenueEventsListPage> createState() => _VenueEventsListPageState();
 }
 
 class _VenueEventsListPageState extends State<VenueEventsListPage> {
-  late List<VenueUpcomingEvent> _events;
-  final _repo = VenueEventRepository();
+  late VenueEventCalendarStore _calendar;
+  List<VenueUpcomingEvent> get _events => _calendar.events;
+  late final _repo = widget.repository ?? VenueEventRepository();
 
   // Day strip state
   late DateTime _selectedDay; // single-day OR range start
@@ -53,24 +71,65 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
   @override
   void initState() {
     super.initState();
-    _events = List.from(widget.events);
+    _initCalendar();
     final now = DateTime.now();
     _selectedDay = DateTime(now.year, now.month, now.day);
     _viewMonth = DateTime(now.year, now.month);
-    // Caller (ör. Manage) event'leri henüz yüklememiş olabilir — kendimiz çekiyoruz.
-    _fetchEvents();
+    PendingPublicMediaService.instance.eventPublicationChanges.addListener(
+      _fetchEvents,
+    );
+    VenueSession.instance.addListener(_onVenueChanged);
+    _loadSelection();
   }
 
-  Future<void> _fetchEvents() async {
-    try {
-      final events = await _repo.listEvents(widget.venueId);
-      if (!mounted) return;
-      setState(() => _events = events);
-    } catch (_) {}
+  void _initCalendar() {
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    final venueId = widget.venueId;
+    _calendar = VenueEventCalendarStore(
+      venueId: venueId,
+      repository: _repo,
+      seed: widget.events,
+      isCurrentSession: () =>
+          mounted &&
+          widget.venueId == venueId &&
+          VenueSession.instance.venueId == venueId &&
+          PendingPublicMediaService.instance.isCurrentSession(generation),
+    )..addListener(_onEventsChanged);
+  }
+
+  void _onEventsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _fetchEvents() {
+    _calendar.invalidate();
+    return _loadSelection();
+  }
+
+  Future<void> _loadSelection() => PerformanceDiagnostics.pageLoad(
+    PerformancePage.events,
+    () async {
+      // Neither response waits for the other to update its part of the screen.
+      await Future.wait([
+        _calendar.loadCalendar().catchError((_) {}),
+        _calendar.loadSelection(_selectedDay, _rangeEnd),
+      ]);
+    },
+    isMounted: () => mounted,
+  );
+
+  void _onVenueChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    PendingPublicMediaService.instance.eventPublicationChanges.removeListener(
+      _fetchEvents,
+    );
+    VenueSession.instance.removeListener(_onVenueChanged);
+    _calendar.removeListener(_onEventsChanged);
+    _calendar.dispose();
     _stripController.dispose();
     super.dispose();
   }
@@ -78,18 +137,57 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
   @override
   void didUpdateWidget(VenueEventsListPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.events != widget.events) {
-      setState(() => _events = List.from(widget.events));
+    // Parent summaries must not overwrite authoritative month reads/mutations.
+    if (oldWidget.venueId != widget.venueId) {
+      _calendar.removeListener(_onEventsChanged);
+      _calendar.dispose();
+      _initCalendar();
+      _loadSelection();
     }
   }
 
   Future<void> _refreshEvents() async {
-    widget.onRefresh();
-    try {
-      final events = await _repo.listEvents(widget.venueId);
-      if (!mounted) return;
-      setState(() => _events = events);
-    } catch (_) {}
+    await _fetchEvents();
+    if (mounted) widget.onRefresh();
+  }
+
+  void _onCreated(List<VenueUpcomingEvent> created) {
+    if (!mounted || created.isEmpty) return;
+    _calendar.created(created);
+    setState(() {
+      // Show the saved event's day, even when it is not today's event.
+      final day = created.first.startAt.toLocal();
+      _selectedDay = DateTime(day.year, day.month, day.day);
+      _viewMonth = DateTime(day.year, day.month);
+      _rangeEnd = null;
+      _rangeMode = false;
+      _filterOffer = false;
+      _filterPartner = false;
+    });
+    _scrollToSelected();
+  }
+
+  void _onUpdated(VenueEventMutation mutation) {
+    if (!mounted) return;
+    _calendar.updated(mutation);
+    setState(() {
+      final day = mutation.event.startAt.toLocal();
+      _selectedDay = DateTime(day.year, day.month, day.day);
+      _viewMonth = DateTime(day.year, day.month);
+      _rangeEnd = null;
+      _rangeMode = false;
+      _filterOffer = false;
+      _filterPartner = false;
+    });
+    _scrollToSelected();
+  }
+
+  void _onDeleted(VenueEventDeletion deletion) {
+    if (!mounted) return;
+    _calendar.removed(deletion);
+    // Empty now means a committed deletion, not an outstanding initial read.
+    // Refresh the affected month in the background while keeping other rows.
+    _loadSelection();
   }
 
   // All days in the currently viewed month
@@ -119,12 +217,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
   }
 
   // Days in current month that have events
-  Set<String> get _daysWithEvents {
-    return _events.map((e) {
-      final d = e.startAt.toLocal();
-      return '${d.year}-${d.month}-${d.day}';
-    }).toSet();
-  }
+  Set<String> get _daysWithEvents => _calendar.daysWithEvents;
 
   bool _dayHasEvent(DateTime d) =>
       _daysWithEvents.contains('${d.year}-${d.month}-${d.day}');
@@ -139,6 +232,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
       }
     });
     _scrollToSelected();
+    _loadSelection();
   }
 
   void _goToNextMonth() {
@@ -151,6 +245,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
       }
     });
     _scrollToSelected();
+    _loadSelection();
   }
 
   void _scrollToSelected() {
@@ -207,97 +302,22 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
       }
     });
     _scrollToSelected();
-  }
-
-  Future<void> _delete(VenueUpcomingEvent event) async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    String? deleteScope;
-    if (event.isRecurring) {
-      deleteScope = await showModalBottomSheet<String>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _DeleteScopeSheet(event: event),
-      );
-      if (deleteScope == null || !mounted) return;
-    }
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF0B1322) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text(
-          'Delete Event',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827),
-          ),
-        ),
-        content: Text(
-          deleteScope == 'series'
-              ? 'All events in this series will be permanently deleted.'
-              : '"${event.title}" will be permanently deleted.',
-          style: TextStyle(
-            fontSize: 13,
-            color: isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'Cancel',
-              style: TextStyle(
-                color: isDark
-                    ? const Color(0xFF3A5070)
-                    : const Color(0xFF5D6B7B),
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: _kRed, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    try {
-      if (deleteScope == 'series' && event.recurringRuleId != null) {
-        await _repo.deleteRecurringSeries(
-          venueId: widget.venueId,
-          ruleId: event.recurringRuleId!,
-        );
-        setState(
-          () => _events.removeWhere(
-            (e) => e.recurringRuleId == event.recurringRuleId,
-          ),
-        );
-      } else {
-        await _repo.deleteEvent(venueId: widget.venueId, eventId: event.id);
-        setState(() => _events.removeWhere((e) => e.id == event.id));
-      }
-      _refreshEvents();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not delete event'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+    _loadSelection();
   }
 
   @override
   Widget build(BuildContext context) {
+    return PerformancePageProbe(
+      page: PerformancePage.events,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final canManage = VenueSession.instance.can(VenuePermission.eventManage);
+    final canManage =
+        VenueSession.instance.venueId == widget.venueId &&
+        VenueSession.instance.can(VenuePermission.eventManage);
     final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
     final kCard = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
     final kBorder = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
@@ -338,9 +358,9 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
         title: Text(
           'Events',
           style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: kText,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
         centerTitle: true,
@@ -405,6 +425,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                           _selectedDay = today;
                         });
                         _scrollToSelected();
+                        _loadSelection();
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -433,10 +454,13 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                 const Spacer(),
                 // Range mode toggle
                 GestureDetector(
-                  onTap: () => setState(() {
-                    _rangeMode = !_rangeMode;
-                    if (!_rangeMode) _rangeEnd = null;
-                  }),
+                  onTap: () {
+                    setState(() {
+                      _rangeMode = !_rangeMode;
+                      if (!_rangeMode) _rangeEnd = null;
+                    });
+                    _loadSelection();
+                  },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 160),
                     padding: const EdgeInsets.symmetric(
@@ -522,7 +546,10 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                   final label = dayLabels[(d.weekday - 1) % 7];
 
                   return GestureDetector(
-                    onTap: () => setState(() => _selectedDay = d),
+                    onTap: () {
+                      setState(() => _selectedDay = d);
+                      _loadSelection();
+                    },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 160),
                       width: 44,
@@ -551,15 +578,6 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                           width: isSelected ? 1.5 : 1,
                         ),
                         borderRadius: BorderRadius.circular(13),
-                        boxShadow: isSelected
-                            ? [
-                                BoxShadow(
-                                  color: _kMavi.withValues(alpha: 0.30),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ]
-                            : null,
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -627,7 +645,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                           builder: (_) => _CalendarSheet(
                             initial: _selectedDay,
                             minDate: null,
-                            daysWithEvents: _daysWithEvents,
+                            calendar: _calendar,
                             isDark: isDark,
                             kBg: kBg,
                             kCard: kCard,
@@ -645,6 +663,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                               _rangeEnd = null;
                             }
                           });
+                          _loadSelection();
                         }
                       },
                     ),
@@ -675,7 +694,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                           builder: (_) => _CalendarSheet(
                             initial: _rangeEnd ?? _selectedDay,
                             minDate: _selectedDay.add(const Duration(days: 1)),
-                            daysWithEvents: _daysWithEvents,
+                            calendar: _calendar,
                             isDark: isDark,
                             kBg: kBg,
                             kCard: kCard,
@@ -686,6 +705,7 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                         );
                         if (picked != null && mounted) {
                           setState(() => _rangeEnd = picked);
+                          _loadSelection();
                         }
                       },
                     ),
@@ -769,58 +789,76 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
           // ── Events list ──────────────────────────────────────────────
           Expanded(
             child: filtered.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xFF0D1525)
-                                : const Color(0xFFF3F6FA),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.event_outlined,
-                            size: 24,
-                            color: isDark
-                                ? const Color(0xFF1E3050)
-                                : const Color(0xFFD1D5DB),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _rangeEnd != null
-                              ? 'No events in this range'
-                              : 'No events on this day',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: kDim,
-                          ),
-                        ),
-                        if (_filterOffer || _filterPartner) ...[
-                          const SizedBox(height: 8),
-                          GestureDetector(
-                            onTap: () => setState(() {
-                              _filterOffer = false;
-                              _filterPartner = false;
-                            }),
-                            child: const Text(
-                              'Clear filters',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: _kTurkuaz,
+                ? _calendar.selectionError(_selectedDay, _rangeEnd) != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Could not load events',
+                                style: TextStyle(color: kDim),
                               ),
-                            ),
+                              TextButton(
+                                onPressed: _loadSelection,
+                                child: const Text('Retry'),
+                              ),
+                            ],
                           ),
-                        ],
-                      ],
-                    ),
-                  )
+                        )
+                      : !_calendar.hasLoadedSelection(_selectedDay, _rangeEnd)
+                      ? const _EventsLoadingPlaceholder()
+                      : Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? const Color(0xFF0D1525)
+                                      : const Color(0xFFF3F6FA),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.event_outlined,
+                                  size: 24,
+                                  color: isDark
+                                      ? const Color(0xFF1E3050)
+                                      : const Color(0xFFD1D5DB),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                _rangeEnd != null
+                                    ? 'No events in this range'
+                                    : 'No events on this day',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: kDim,
+                                ),
+                              ),
+                              if (_filterOffer || _filterPartner) ...[
+                                const SizedBox(height: 8),
+                                GestureDetector(
+                                  onTap: () => setState(() {
+                                    _filterOffer = false;
+                                    _filterPartner = false;
+                                  }),
+                                  child: const Text(
+                                    'Clear filters',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: _kTurkuaz,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        )
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                     itemCount: filtered.length,
@@ -840,6 +878,10 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
                           kDim: kDim,
                           showDate: _rangeEnd != null,
                           onChanged: _refreshEvents,
+                          onUpdated: _onUpdated,
+                          onDeleted: _onDeleted,
+                          repository: _repo,
+                          detailPageBuilder: widget.detailPageBuilder,
                         ),
                       );
                     },
@@ -851,16 +893,81 @@ class _VenueEventsListPageState extends State<VenueEventsListPage> {
             _CreateEventBar(
               isDark: isDark,
               onTap: () async {
-                await Navigator.push(
+                final saved = await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => AddVenueEventPage(venueId: widget.venueId),
+                    builder: (context) =>
+                        widget.createPageBuilder?.call(context, _onCreated) ??
+                        AddVenueEventPage(
+                          venueId: widget.venueId,
+                          onCreated: _onCreated,
+                        ),
                   ),
                 );
-                _refreshEvents();
+                if (saved == true && mounted) _refreshEvents();
               },
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Matches the list footprint without inventing an event, count or date dot.
+class _EventsLoadingPlaceholder extends StatelessWidget {
+  const _EventsLoadingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    return Semantics(
+      label: 'Loading events',
+      child: ListView(
+        key: const ValueKey('events-initial-loading'),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        children: List.generate(
+          2,
+          (_) => Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.035),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: color.withValues(alpha: 0.06)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 12,
+                        width: 150,
+                        color: color.withValues(alpha: 0.06),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        height: 10,
+                        width: 110,
+                        color: color.withValues(alpha: 0.04),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -888,10 +995,7 @@ class _CreateEventBar extends StatelessWidget {
           ),
         ),
       ),
-      child: PrimaryButton(
-        label: 'Create Event',
-        onPressed: onTap,
-      ),
+      child: PrimaryButton(label: 'Create Event', onPressed: onTap),
     );
   }
 }
@@ -1004,6 +1108,15 @@ class _EventRow extends StatelessWidget {
   final bool showDate;
   final Color kCard, kBorder, kText, kDim;
   final VoidCallback? onChanged;
+  final ValueChanged<VenueEventMutation>? onUpdated;
+  final ValueChanged<VenueEventDeletion>? onDeleted;
+  final VenueEventRepository? repository;
+  final Widget Function(
+    BuildContext,
+    VenueUpcomingEvent,
+    ValueChanged<VenueEventMutation>,
+  )?
+  detailPageBuilder;
 
   const _EventRow({
     super.key,
@@ -1017,6 +1130,10 @@ class _EventRow extends StatelessWidget {
     required this.kDim,
     this.showDate = false,
     this.onChanged,
+    this.onUpdated,
+    this.onDeleted,
+    this.repository,
+    this.detailPageBuilder,
   });
 
   @override
@@ -1050,11 +1167,20 @@ class _EventRow extends StatelessWidget {
         final result = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
-            builder: (_) => VenueEventDetailPage(
-              event: event,
-              venueId: venueId,
-              onChanged: onChanged,
-            ),
+            builder: (context) =>
+                detailPageBuilder?.call(
+                  context,
+                  event,
+                  (mutation) => onUpdated?.call(mutation),
+                ) ??
+                VenueEventDetailPage(
+                  event: event,
+                  venueId: venueId,
+                  onChanged: onChanged,
+                  onUpdated: onUpdated,
+                  onDeleted: onDeleted,
+                  repository: repository,
+                ),
           ),
         );
         if (result == true) onChanged?.call();
@@ -1165,6 +1291,8 @@ class _EventRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
+                  // Fotoğraf yükleme durumu (Sharing / Under review …) kartta
+                  // gösterilmez; etkinlik detayındaki galeride görünür.
                   if (event.hasOffer ||
                       event.partnershipCount > 0 ||
                       event.capacity != null ||
@@ -1225,14 +1353,19 @@ class _EventRow extends StatelessWidget {
                       ),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.repeat_rounded, size: 9, color: _kMagenta),
-                        SizedBox(width: 3),
+                        const Icon(
+                          Icons.repeat_rounded,
+                          size: 9,
+                          color: _kMagenta,
+                        ),
+                        const SizedBox(width: 3),
+                        // Detay sayfasıyla aynı: Weekly / Monthly / Yearly.
                         Text(
-                          'Repeat',
-                          style: TextStyle(
+                          event.recurrence?.shortLabel ?? 'Repeat',
+                          style: const TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w700,
                             color: _kMagenta,
@@ -1386,158 +1519,6 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
   }
 }
 
-// ─── Delete scope sheet ───────────────────────────────────────────────────────
-
-class _DeleteScopeSheet extends StatelessWidget {
-  final VenueUpcomingEvent event;
-  const _DeleteScopeSheet({required this.event});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final kCard = isDark ? const Color(0xFF0D1525) : Colors.white;
-    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim = isDark ? const Color(0xFF8EA0BA) : const Color(0xFF4F5D6D);
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-      decoration: BoxDecoration(
-        color: kCard,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 36,
-            height: 4,
-            decoration: BoxDecoration(
-              color: kDim.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: _kRed.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.delete_outline,
-                    size: 15,
-                    color: _kRed,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'Delete recurring event',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: kText,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Text(
-              'Which events do you want to delete?',
-              style: TextStyle(fontSize: 13, color: kDim),
-            ),
-          ),
-          _ScopeOption(
-            label: 'Only this event',
-            sublabel: 'Just this occurrence',
-            icon: Icons.event_outlined,
-            color: _kTuruncu,
-            onTap: () => Navigator.pop(context, 'single'),
-          ),
-          _ScopeOption(
-            label: 'All events in series',
-            sublabel: 'Delete entire series',
-            icon: Icons.repeat_rounded,
-            color: _kRed,
-            onTap: () => Navigator.pop(context, 'series'),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Scope option row ─────────────────────────────────────────────────────────
-
-class _ScopeOption extends StatelessWidget {
-  final String label;
-  final String sublabel;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _ScopeOption({
-    required this.label,
-    required this.sublabel,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
-    final kDim = isDark ? const Color(0xFF8EA0BA) : const Color(0xFF4F5D6D);
-
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 17, color: color),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: kText,
-                  ),
-                ),
-                Text(sublabel, style: TextStyle(fontSize: 11.5, color: kDim)),
-              ],
-            ),
-            const Spacer(),
-            Icon(Icons.chevron_right_rounded, size: 18, color: kDim),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ─── Date field ───────────────────────────────────────────────────────────────
 
 class _DateField extends StatelessWidget {
@@ -1624,14 +1605,14 @@ class _DateField extends StatelessWidget {
 class _CalendarSheet extends StatefulWidget {
   final DateTime initial;
   final DateTime? minDate;
-  final Set<String> daysWithEvents;
+  final VenueEventCalendarStore calendar;
   final bool isDark;
   final Color kBg, kCard, kBorder, kText, kDim;
 
   const _CalendarSheet({
     required this.initial,
     required this.minDate,
-    required this.daysWithEvents,
+    required this.calendar,
     required this.isDark,
     required this.kBg,
     required this.kCard,
@@ -1651,6 +1632,26 @@ class _CalendarSheetState extends State<_CalendarSheet> {
   void initState() {
     super.initState();
     _viewMonth = DateTime(widget.initial.year, widget.initial.month);
+    widget.calendar.addListener(_calendarChanged);
+  }
+
+  void _calendarChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(_CalendarSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.calendar != widget.calendar) {
+      oldWidget.calendar.removeListener(_calendarChanged);
+      widget.calendar.addListener(_calendarChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.calendar.removeListener(_calendarChanged);
+    super.dispose();
   }
 
   List<DateTime?> get _calendarDays {
@@ -1676,7 +1677,7 @@ class _CalendarSheetState extends State<_CalendarSheet> {
   }
 
   bool _hasEvent(DateTime d) =>
-      widget.daysWithEvents.contains('${d.year}-${d.month}-${d.day}');
+      widget.calendar.daysWithEvents.contains('${d.year}-${d.month}-${d.day}');
 
   @override
   Widget build(BuildContext context) {

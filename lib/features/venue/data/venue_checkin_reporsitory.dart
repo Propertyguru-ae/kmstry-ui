@@ -16,6 +16,9 @@ class RenewableCheckin {
   final String? venueName;
   final double venueLatitude;
   final double venueLongitude;
+  final DateTime? expiresAt;
+  final double? renewalLatitude;
+  final double? renewalLongitude;
 
   RenewableCheckin({
     required this.checkinId,
@@ -23,6 +26,9 @@ class RenewableCheckin {
     this.venueName,
     required this.venueLatitude,
     required this.venueLongitude,
+    this.expiresAt,
+    this.renewalLatitude,
+    this.renewalLongitude,
   });
 
   factory RenewableCheckin.fromJson(Map<String, dynamic> json) {
@@ -32,6 +38,9 @@ class RenewableCheckin {
       venueName: json['venueName']?.toString(),
       venueLatitude: (json['venueLatitude'] as num?)?.toDouble() ?? 0,
       venueLongitude: (json['venueLongitude'] as num?)?.toDouble() ?? 0,
+      expiresAt: DateTime.tryParse((json['expiresAt'] ?? '').toString()),
+      renewalLatitude: (json['renewalLatitude'] as num?)?.toDouble(),
+      renewalLongitude: (json['renewalLongitude'] as num?)?.toDouble(),
     );
   }
 }

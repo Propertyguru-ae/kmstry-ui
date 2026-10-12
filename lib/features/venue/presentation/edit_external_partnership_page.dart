@@ -64,6 +64,8 @@ class _EditExternalPartnershipPageState
       setState(() => _saving = false);
       await showPremiumErrorDialog(
         context,
+        title: publicTextErrorTitle(e),
+        icon: publicTextErrorIcon(e),
         message: publicTextErrorMessage(
           e,
           fallback: 'Could not save the partnership. Please try again.',

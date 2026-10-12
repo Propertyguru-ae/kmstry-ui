@@ -76,6 +76,9 @@ class CreatedInvite {
   final String? venueRoleName;
   final String expiresAt;
 
+  /// Linkin gönderildiği e-posta (eski davetlerde boş olabilir).
+  final String? email;
+
   const CreatedInvite({
     required this.id,
     required this.token,
@@ -83,6 +86,7 @@ class CreatedInvite {
     required this.role,
     this.venueRoleName,
     required this.expiresAt,
+    this.email,
   });
 
   factory CreatedInvite.fromJson(Map<String, dynamic> json) {
@@ -93,6 +97,7 @@ class CreatedInvite {
       role: json['role']?.toString() ?? '',
       venueRoleName: json['venueRoleName']?.toString(),
       expiresAt: json['expiresAt']?.toString() ?? '',
+      email: json['email']?.toString(),
     );
   }
 

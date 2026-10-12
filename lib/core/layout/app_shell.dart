@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
@@ -10,6 +13,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart
 import 'package:kmstry_frontend/features/home/presentation/personal_home_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
+import 'package:kmstry_frontend/features/checkin/services/personal_avatar_selection.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/messages/presntation/messages.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_unread_scope.dart';
@@ -24,9 +28,10 @@ import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
 import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
-import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
+import 'package:kmstry_frontend/core/checkin/checkin_expiry_notice.dart';
+import 'package:kmstry_frontend/core/checkin/checkin_ended_card.dart';
+import 'package:kmstry_frontend/features/checkin/presentation/checkin_upload_page.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
@@ -37,7 +42,9 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_manage_page.da
 import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/google_photo_updates.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
+import 'retained_home_body.dart';
 
 class AppShell extends StatefulWidget {
   final int initialIndex;
@@ -71,6 +78,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String _userInitial = '?';
   String? _userAvatarUrl;
   MediaReference? _userAvatarReference;
+  Map<String, dynamic>? _avatarMe;
+  PersonalAvatarSelection _avatarSelection = const PersonalAvatarSelection();
+  int _userLoadRequest = 0;
   int _unreadNotificationCount = 0;
   int _unreadDmCount = 0;
   final NotificationRepository _notificationRepo = NotificationRepository();
@@ -86,8 +96,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<dynamic>? _foregroundPushSub;
   Timer? _dmRefreshDebounce;
   Timer? _notificationRefreshDebounce;
-  // Cold start yenileme popup'ı aynı check-in için tek sefer gösterilsin.
-  final Set<String> _promptedRenewalCheckinIds = <String>{};
+  final CheckinExpiryNotice _expiryNotice = CheckinExpiryNotice();
+  bool _accountReady = false;
+  bool _switchingContext = false;
+  bool _foreground = true;
+  bool _startingCheckin = false;
 
   final GlobalKey<DmListPageState> _dmListKey =
       GlobalKey<
@@ -100,10 +113,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _isRejectedClaim = false;
   String _personalAccountLabel = 'Personal';
   String? _activeVenueId;
+  int _retainedSession = PendingPublicMediaService.instance.sessionGeneration;
 
   @override
   void initState() {
     super.initState();
+    _expiryNotice.addListener(_onExpiryNoticeChanged);
     _currentIndex = widget.initialIndex;
     _openProfilePending = widget.openProfileTab;
     // Apply auth-gate context immediately so the first frame is correct.
@@ -119,6 +134,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     // Aktif check-in değişince (yeni check-in / temizleme) navbar avatarını
     // tazele — avatarı olmayan kullanıcının geçici (featured) avatarı yansısın.
     ActiveCheckinService.changes.addListener(_onActiveCheckinChanged);
+    ActiveCheckinService.avatarChanges.addListener(_onFeaturedAvatarChanged);
+    PendingPublicMediaService.instance.changes.addListener(_onSessionChanged);
     _loadUserInitial();
     _loadUnreadNotificationCount();
     _loadUnreadDmCount();
@@ -136,7 +153,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         // check-in'lerde mesafe sınırını yanlışlıkla aşıp check-in'i erken kapatabiliyordu.
         final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 8),
         );
+        if (!isFreshRenewalPosition(pos, DateTime.now())) {
+          throw StateError('A fresh location is required');
+        }
         return (lat: pos.latitude, lng: pos.longitude);
       },
       getCurrentUserId: () async {
@@ -155,123 +176,134 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         AuthRepository.invalidateMeCache();
         _loadUserInitial();
       },
-      onCheckinRenewable: (info) {
+      onCheckinTimedOut: (info) {
         if (!mounted) return;
-        // Süre doldu ama kullanıcı hâlâ mekanda → yenileme popup'ı.
+        _syncExpiryNoticeContext();
+        _expiryNotice.offer(
+          info,
+          hasActiveCheckin: ActiveCheckinService().hasActiveCheckin,
+        );
         AuthRepository.invalidateMeCache();
         _loadUserInitial();
-        _showCheckinRenewalDialog(info);
       },
     );
     CheckinPingManager.I.ensureRunning();
-    // Cold start: aktif check-in yoksa, yakın zamanda süre dolan bir check-in
-    // varsa ve kullanıcı hâlâ o mekandaysa yenileme popup'ı göster.
-    unawaited(_maybePromptColdStartRenewal());
+    // No cold-start/deferred expiry prompt: only live foreground expirations.
   }
 
-  /// Aktif check-in olmadığında: backend'e "yenilenebilir son check-in" sor;
-  /// varsa ve mevcut konum izin verilen mesafedeyse yenileme dialog'unu göster. Konum yoksa
-  /// (izin/GPS) sessizce atlar — açılışta zorla GPS istemez.
-  Future<void> _maybePromptColdStartRenewal() async {
-    try {
-      if (ActiveCheckinService().hasActiveCheckin) return;
-      final r = await VenueCheckinRepository().getRenewableCheckin();
-      if (r == null || !mounted) return;
-      if (_promptedRenewalCheckinIds.contains(r.checkinId)) return;
+  String? get _currentUserId => _avatarMe?['id']?.toString();
 
-      final pos = await Geolocator.getLastKnownPosition();
-      if (pos == null) return; // Zorla GPS isteme; son bilinen yoksa atla.
-      final distance = Geolocator.distanceBetween(
-        pos.latitude,
-        pos.longitude,
-        r.venueLatitude,
-        r.venueLongitude,
-      );
-      if (distance > CheckinLocationPolicy.maxDistanceMeters || !mounted) {
-        return;
-      }
+  void _syncExpiryNoticeContext() {
+    _expiryNotice.setContext(
+      userId: _currentUserId,
+      session: PendingPublicMediaService.instance.sessionGeneration,
+      personal: _accountReady && !_isVenueContext && !_switchingContext,
+      foreground: _foreground,
+    );
+  }
 
-      await _showCheckinRenewalDialog(
-        CheckinRenewalInfo(
-          checkinId: r.checkinId,
-          venueId: r.venueId,
-          venueName: r.venueName,
-        ),
-      );
-    } catch (_) {
-      // Sessiz geç — açılışı bozma.
+  void _onExpiryNoticeChanged() {
+    if (mounted) {
+      setState(() {
+        if (_expiryNotice.current == null) _startingCheckin = false;
+      });
     }
   }
 
-  /// Süre dolduğunda kullanıcı hâlâ mekandaysa: "yenile" popup'ı.
-  Future<void> _showCheckinRenewalDialog(CheckinRenewalInfo info) async {
-    // Ping-tetikli ve cold-start yolları aynı check-in için ikinci kez
-    // göstermesin.
-    if (_promptedRenewalCheckinIds.contains(info.checkinId)) return;
-    _promptedRenewalCheckinIds.add(info.checkinId);
-
-    final venueLabel = (info.venueName ?? '').trim().isNotEmpty
-        ? info.venueName!.trim()
-        : 'this venue';
-    final renew = await showCheckinExpiredDialog(
-      context,
-      venueLabel: venueLabel,
-    );
-    if (!renew || !mounted) return;
-    await _renewCheckin(info);
-  }
-
-  Future<void> _renewCheckin(CheckinRenewalInfo info) async {
+  Future<void> _startNewCheckin(CheckinRenewalInfo info) async {
+    if (_startingCheckin) return;
+    final attempt = _expiryNotice.revision;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool isCurrent() =>
+        mounted &&
+        !_isVenueContext &&
+        session == PendingPublicMediaService.instance.sessionGeneration &&
+        _expiryNotice.isCurrent(info, attempt) &&
+        !ActiveCheckinService().hasActiveCheckin;
+    if (!isCurrent()) return;
+    setState(() => _startingCheckin = true);
     try {
+      final permission = await Geolocator.checkPermission();
+      if (!isCurrent()) return;
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
+        throw StateError('Location permission required');
+      }
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 8),
       );
-      final result = await VenueCheckinRepository().renewCheckin(
-        checkinId: info.checkinId,
-        latitude: pos.latitude,
-        longitude: pos.longitude,
-      );
-      if (!mounted) return;
-      final newId = (result['checkinId'] ?? result['id'])?.toString();
-      if (newId != null && newId.isNotEmpty) {
-        final me = await AuthRepository().getMe();
-        ActiveCheckinService().setActiveCheckin(
-          newId,
-          venueId: info.venueId,
-          userId: me['id']?.toString(),
-        );
-        CheckinPingManager.I.ensureRunning();
-        AuthRepository.invalidateMeCache();
-        _loadUserInitial();
+      if (!isCurrent()) return;
+      if (!isFreshRenewalPosition(pos, DateTime.now()) ||
+          !info.isNear((lat: pos.latitude, lng: pos.longitude))) {
+        throw StateError('A fresh nearby location is required');
       }
+      _expiryNotice.dismiss();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Your check-in has been renewed.'),
-          behavior: SnackBarBehavior.floating,
+      // This is a NEW check-in: the existing page rechecks location, requests
+      // a new Moment, and waits for approval before granting room access.
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CheckInPage(
+            venueId: info.venueId,
+            venueLatitude: info.position!.lat,
+            venueLongitude: info.position!.lng,
+          ),
         ),
       );
     } catch (_) {
+      if (!isCurrent()) return;
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Couldn\'t renew. Make sure you\'re near the venue.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+      await showPremiumErrorDialog(
+        context,
+        message:
+            'Make sure location access is enabled and you are at the venue, then try again.',
       );
+    } finally {
+      if (isCurrent()) setState(() => _startingCheckin = false);
     }
   }
 
   void _onActiveCheckinChanged() {
-    if (!mounted) return;
+    if (!mounted || LogoutFlow.busy.value) return;
+    if (ActiveCheckinService().hasActiveCheckin) _expiryNotice.dismiss();
     // Check-in avatar'ı /auth/me üzerinden gelir → cache'i tazele ve yeniden çek.
     AuthRepository.invalidateMeCache();
     _loadUserInitial();
   }
 
+  void _onFeaturedAvatarChanged() {
+    if (!mounted || _avatarMe == null) return;
+    setState(() => _applyPersonalAvatar(_avatarMe!));
+  }
+
+  void _onSessionChanged() {
+    // Logout owns the transition to Login. Re-keying the retained profile in
+    // the meantime would flash an empty profile and launch unauthorized reads.
+    if (LogoutFlow.busy.value) return;
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    if (!mounted || generation == _retainedSession) return;
+    _accountReady = false;
+    _syncExpiryNoticeContext();
+    // Upload progress must not rebuild the shell. Only login/environment
+    // changes reset its retained subtree; no previous account data is reused.
+    setState(() => _retainedSession = generation);
+  }
+
+  void _applyPersonalAvatar(Map<String, dynamic> me) {
+    _avatarSelection = PersonalAvatarSelection.fromMe(me);
+    _userAvatarUrl = _avatarSelection.url;
+    _userAvatarReference = _avatarSelection.reference;
+  }
+
   @override
   void dispose() {
+    _expiryNotice.dispose();
     ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
+    ActiveCheckinService.avatarChanges.removeListener(_onFeaturedAvatarChanged);
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onSessionChanged,
+    );
     WidgetsBinding.instance.removeObserver(this);
     _chatEventsSub?.cancel();
     _chatStateSub?.cancel();
@@ -285,7 +317,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _syncExpiryNoticeContext();
     if (state == AppLifecycleState.resumed) {
+      PendingPublicMediaService.instance.recheckPending();
+      GooglePhotoUpdates.instance.revalidate();
       unawaited(_connectChatRealtime());
       unawaited(_notificationRealtime.ensureConnected());
       // Ön plana dönünce presence'i anında "online" yap.
@@ -294,7 +330,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _loadUnreadNotificationCount();
       _loadUnreadDmCount();
       CheckinPingManager.I.ensureRunning();
-      unawaited(_maybePromptColdStartRenewal());
       // Venue onay/red durumu arka plandan dönerken güncellensin.
       AuthRepository.invalidateMeCache();
       _loadUserInitial();
@@ -356,6 +391,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void _bindChatRealtime() {
     _chatStateSub = _chatRealtime.connectionState.listen((state) {
       if (!mounted) return;
+      if (state == ChatRealtimeConnectionState.connected) {
+        PendingPublicMediaService.instance.recheckPending();
+      }
       if (state == ChatRealtimeConnectionState.connected ||
           state == ChatRealtimeConnectionState.reconnecting) {
         _scheduleDmRefresh();
@@ -365,6 +403,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _chatEventsSub = _chatRealtime.events.listen((envelope) {
       if (!mounted) return;
       switch (envelope.event) {
+        case 'content-moderation.updated':
+          PendingPublicMediaService.instance.handleModerationUpdate(
+            envelope.payload,
+            currentUserId: _currentUserId,
+          );
+          return;
+        case 'venue.google-photos.sync':
+          GooglePhotoUpdates.instance.revalidate();
+          return;
+        case 'venue.google-photo.updated':
+          GooglePhotoUpdates.instance.handleUpdate(envelope.payload);
+          return;
         case 'chat.unread.updated':
           if (!_applyDmUnreadPatch(envelope.payload)) {
             _scheduleDmRefresh();
@@ -498,8 +548,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String _activeAccount = 'Personal';
 
   Future<void> _loadUserInitial() async {
+    if (LogoutFlow.busy.value) return;
+    final request = ++_userLoadRequest;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     try {
       final me = await AuthRepository().getMe();
+      if (!mounted ||
+          LogoutFlow.busy.value ||
+          request != _userLoadRequest ||
+          !uploads.isCurrentSession(session)) {
+        return;
+      }
       // Keep KMSTRY+ entitlement fresh for the CURRENT account (fixes stale
       // premium leaking across account switches).
       UserSession.instance.applyFromMe(me);
@@ -508,8 +568,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       if (!mounted) return;
       final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
       final username = (me['username'])?.toString().trim();
-      final avatarUrl = _readUserAvatarUrl(me);
-      final profileReference = MediaReference.profilePhoto(me);
       String activeLabel = 'Personal';
       final lastContext = context.lastActiveContext?.toUpperCase();
       // Sadece ACTIVE venue'lar context switching için kullanılır.
@@ -568,10 +626,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         } else if (email != null && email.isNotEmpty) {
           _userInitial = email[0].toUpperCase();
         }
-        _userAvatarUrl = avatarUrl;
-        _userAvatarReference = profileReference.url.isEmpty
-            ? null
-            : profileReference;
+        _avatarMe = me;
+        _applyPersonalAvatar(me);
         _isVenueContext = isVenueCtx;
         _isPendingClaim = resolvedVenue?.isPendingOwnerClaim ?? false;
         _isRejectedClaim = resolvedVenue?.isRejectedOwnerClaim ?? false;
@@ -589,6 +645,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _currentIndex = 0;
         }
       });
+      _accountReady = true;
+      _syncExpiryNoticeContext();
 
       // Venue izinlerini context çözülür çözülmez yükle — böylece Manage/Profile'a
       // gidildiğinde gecikme/pop-in olmaz. Kişisel context'te oturumu temizle.
@@ -606,34 +664,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         VenueSession.instance.clear();
       }
     } catch (_) {}
-  }
-
-  String? _readUserAvatarUrl(Map<String, dynamic> me) {
-    for (final key in const [
-      'photo',
-      'profilePhoto',
-      'profile_photo',
-      'avatarUrl',
-      'avatar_url',
-    ]) {
-      final value = me[key]?.toString().trim();
-      if (value != null && value.isNotEmpty) return value;
-    }
-    // Profil fotosu yoksa: aktif check-in'in geçici avatarını (featured foto'dan
-    // kırpılan) kullan — diğer ekranlarda (who's here vb.) gösterilenle tutarlı.
-    final active = me['activeCheckin'];
-    if (active is Map) {
-      for (final key in const [
-        'avatarPhoto',
-        'avatar_photo',
-        'featuredPhoto',
-        'featured_photo',
-      ]) {
-        final value = active[key]?.toString().trim();
-        if (value != null && value.isNotEmpty) return value;
-      }
-    }
-    return null;
   }
 
   void _syncActiveCheckinFromMe(Map<String, dynamic> me) {
@@ -668,21 +698,33 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _logout(BuildContext context) async {
-    try {
-      CheckinPingManager.I.stop();
-      ActiveCheckinService().clear();
-      UserSession.instance.clear();
-      await AuthRepository().logout();
-      if (!context.mounted) return;
+    _accountReady = false;
+    _userLoadRequest++;
+    _syncExpiryNoticeContext();
+    await LogoutFlow.run(context, logout: AuthRepository().logout);
+  }
 
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
-    } catch (_) {}
+  Future<void> _changeContext({
+    required String lastActiveContext,
+    String? activeVenueId,
+  }) async {
+    _switchingContext = true;
+    _userLoadRequest++;
+    _syncExpiryNoticeContext();
+    try {
+      await AuthRepository().switchContext(
+        lastActiveContext: lastActiveContext,
+        activeVenueId: activeVenueId,
+      );
+    } finally {
+      _switchingContext = false;
+      // Keep notices suppressed until the authoritative new context is loaded.
+      _accountReady = false;
+    }
   }
 
   Future<void> _switchToPersonal() async {
-    await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+    await _changeContext(lastActiveContext: 'PERSONAL');
     if (!mounted) return;
     if (!_hasPersonalProfile) {
       Navigator.of(context).pushReplacement(
@@ -696,7 +738,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// In-place switch to the personal context landing on the Profile tab — the
   /// smooth counterpart of [_switchToVenue] for the profile-screen switcher.
   Future<void> _switchToPersonalProfile() async {
-    await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+    await _changeContext(lastActiveContext: 'PERSONAL');
     if (!mounted) return;
     if (!_hasPersonalProfile) {
       // No personal profile yet → let the gate handle onboarding.
@@ -719,10 +761,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     MemberVenue venue, {
     bool openProfile = false,
   }) async {
-    await AuthRepository().switchContext(
-      lastActiveContext: 'VENUE',
-      activeVenueId: venue.id,
-    );
+    await _changeContext(lastActiveContext: 'VENUE', activeVenueId: venue.id);
     if (!mounted) return;
     setState(() {
       _isVenueContext = true;
@@ -773,237 +812,247 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.85,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Handle bar
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 16, bottom: 8),
-                  decoration: BoxDecoration(
-                    color: colors.onSurface.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(2),
+        return LogoutGuard(
+          child: SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.85,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Handle bar
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(top: 16, bottom: 8),
+                    decoration: BoxDecoration(
+                      color: colors.onSurface.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                ),
 
-                // ── Venue listesi — scroll edilebilir ──
-                if (activeVenues.isNotEmpty || pendingVenues.isNotEmpty)
-                  Flexible(
-                    child: ListView(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      children: [
-                        // ACTIVE venue'lar
-                        ...activeVenues.map(
-                          (venue) => ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: colors.primary.withValues(
-                                alpha: 0.12,
-                              ),
-                              child: Icon(
-                                Icons.storefront,
-                                color: colors.primary,
-                              ),
-                            ),
-                            title: Text(
-                              venue.name,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: colors.onSurface,
-                              ),
-                            ),
-                            trailing: _activeAccount == venue.name
-                                ? Icon(
-                                    Icons.check_circle,
-                                    color: colors.primary,
-                                  )
-                                : null,
-                            onTap: () async {
-                              Navigator.pop(context);
-                              final rootContext = this.context;
-                              try {
-                                await _switchToVenue(venue);
-                              } catch (_) {
-                                if (!rootContext.mounted) return;
-                                await showPremiumErrorDialog(
-                                  rootContext,
-                                  message: 'Could not switch to venue account.',
-                                );
-                              }
-                            },
-                          ),
-                        ),
-
-                        // PENDING venue'lar
-                        ...pendingVenues.map(
-                          (venue) => ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: colors.onSurface.withValues(
-                                alpha: 0.08,
-                              ),
-                              child: Icon(
-                                Icons.hourglass_top_rounded,
-                                color: colors.onSurface.withValues(alpha: 0.45),
-                                size: 20,
-                              ),
-                            ),
-                            title: Text(
-                              venue.name,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: colors.onSurface.withValues(alpha: 0.55),
-                              ),
-                            ),
-                            trailing: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Text(
-                                'Pending',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.orange,
+                  // ── Venue listesi — scroll edilebilir ──
+                  if (activeVenues.isNotEmpty || pendingVenues.isNotEmpty)
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        padding: EdgeInsets.zero,
+                        children: [
+                          // ACTIVE venue'lar
+                          ...activeVenues.map(
+                            (venue) => ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: colors.primary.withValues(
+                                  alpha: 0.12,
+                                ),
+                                child: Icon(
+                                  Icons.storefront,
+                                  color: colors.primary,
                                 ),
                               ),
+                              title: Text(
+                                venue.name,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: colors.onSurface,
+                                ),
+                              ),
+                              trailing: _activeAccount == venue.name
+                                  ? Icon(
+                                      Icons.check_circle,
+                                      color: colors.primary,
+                                    )
+                                  : null,
+                              onTap: () async {
+                                Navigator.pop(context);
+                                final rootContext = this.context;
+                                try {
+                                  await _switchToVenue(venue);
+                                } catch (_) {
+                                  if (!rootContext.mounted) return;
+                                  await showPremiumErrorDialog(
+                                    rootContext,
+                                    message:
+                                        'Could not switch to venue account.',
+                                  );
+                                }
+                              },
                             ),
-                            onTap: () async {
-                              Navigator.pop(context);
-                              final rootContext = this.context;
-                              try {
-                                await _switchToVenue(venue);
-                                if (!rootContext.mounted) return;
-                                Navigator.of(
-                                  rootContext,
-                                ).pushNamedAndRemoveUntil(
-                                  AuthRoutes.authGate,
-                                  (r) => false,
-                                );
-                              } catch (_) {
-                                if (!rootContext.mounted) return;
-                                await showPremiumErrorDialog(
-                                  rootContext,
-                                  message: 'Could not switch to venue account.',
-                                );
-                              }
-                            },
+                          ),
+
+                          // PENDING venue'lar
+                          ...pendingVenues.map(
+                            (venue) => ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: colors.onSurface.withValues(
+                                  alpha: 0.08,
+                                ),
+                                child: Icon(
+                                  Icons.hourglass_top_rounded,
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.45,
+                                  ),
+                                  size: 20,
+                                ),
+                              ),
+                              title: Text(
+                                venue.name,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: colors.onSurface.withValues(
+                                    alpha: 0.55,
+                                  ),
+                                ),
+                              ),
+                              trailing: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Text(
+                                  'Pending',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.orange,
+                                  ),
+                                ),
+                              ),
+                              onTap: () async {
+                                Navigator.pop(context);
+                                final rootContext = this.context;
+                                try {
+                                  await _switchToVenue(venue);
+                                  if (!rootContext.mounted) return;
+                                  Navigator.of(
+                                    rootContext,
+                                  ).pushNamedAndRemoveUntil(
+                                    AuthRoutes.authGate,
+                                    (r) => false,
+                                  );
+                                } catch (_) {
+                                  if (!rootContext.mounted) return;
+                                  await showPremiumErrorDialog(
+                                    rootContext,
+                                    message:
+                                        'Could not switch to venue account.',
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // ── Sabit footer ──
+                  // Add Venue Account
+                  ListTile(
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.10),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.add, color: colors.primary, size: 22),
+                    ),
+                    title: Text(
+                      'Add Venue Account',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: colors.primary,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.of(this.context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const VenueContextOnboardingPage(
+                            fromAppShell: true,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-
-                // ── Sabit footer ──
-                // Add Venue Account
-                ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: colors.primary.withValues(alpha: 0.10),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(Icons.add, color: colors.primary, size: 22),
-                  ),
-                  title: Text(
-                    'Add Venue Account',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: colors.primary,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const VenueContextOnboardingPage(
-                          fromAppShell: true,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-
-                const Divider(height: 1),
-
-                // Account Settings
-                ListTile(
-                  leading: Icon(
-                    Icons.settings_outlined,
-                    color: colors.onSurface,
-                  ),
-                  title: Text(
-                    'Accounts Center',
-                    style: TextStyle(color: colors.onSurface),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.of(this.context).push(
-                      MaterialPageRoute(builder: (_) => const SettingsPage()),
-                    );
-                  },
-                ),
-
-                // Personal hesap
-                ListTile(
-                  leading: Icon(Icons.person_outline, color: colors.onSurface),
-                  title: Text(
-                    _isVenueContext
-                        ? (_hasPersonalProfile
-                              ? 'Switch to $_personalAccountLabel'
-                              : 'Create Personal Account')
-                        : _personalAccountLabel,
-                    style: TextStyle(color: colors.onSurface),
-                  ),
-                  trailing: !_isVenueContext
-                      ? Icon(Icons.check_circle, color: colors.primary)
-                      : null,
-                  onTap: () async {
-                    Navigator.pop(context);
-                    if (!_isVenueContext) return;
-                    final rootContext = this.context;
-                    try {
-                      await _switchToPersonal();
-                    } catch (_) {
-                      if (!rootContext.mounted) return;
-                      await showPremiumErrorDialog(
-                        rootContext,
-                        message: 'Could not switch to personal account.',
                       );
-                    }
-                  },
-                ),
-
-                // Log out
-                ListTile(
-                  leading: Icon(Icons.logout, color: colors.error),
-                  title: Text(
-                    'Log out',
-                    style: TextStyle(
-                      color: colors.error,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    },
                   ),
-                  onTap: () async {
-                    final rootContext = this.context;
-                    Navigator.pop(context);
-                    await _logout(rootContext);
-                  },
-                ),
 
-                const SizedBox(height: 8),
-              ],
+                  const Divider(height: 1),
+
+                  // Account Settings
+                  ListTile(
+                    leading: Icon(
+                      Icons.settings_outlined,
+                      color: colors.onSurface,
+                    ),
+                    title: Text(
+                      'Accounts Center',
+                      style: TextStyle(color: colors.onSurface),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.of(this.context).push(
+                        MaterialPageRoute(builder: (_) => const SettingsPage()),
+                      );
+                    },
+                  ),
+
+                  // Personal hesap
+                  ListTile(
+                    leading: Icon(
+                      Icons.person_outline,
+                      color: colors.onSurface,
+                    ),
+                    title: Text(
+                      _isVenueContext
+                          ? (_hasPersonalProfile
+                                ? 'Switch to $_personalAccountLabel'
+                                : 'Create Personal Account')
+                          : _personalAccountLabel,
+                      style: TextStyle(color: colors.onSurface),
+                    ),
+                    trailing: !_isVenueContext
+                        ? Icon(Icons.check_circle, color: colors.primary)
+                        : null,
+                    onTap: () async {
+                      Navigator.pop(context);
+                      if (!_isVenueContext) return;
+                      final rootContext = this.context;
+                      try {
+                        await _switchToPersonal();
+                      } catch (_) {
+                        if (!rootContext.mounted) return;
+                        await showPremiumErrorDialog(
+                          rootContext,
+                          message: 'Could not switch to personal account.',
+                        );
+                      }
+                    },
+                  ),
+
+                  // Log out
+                  ListTile(
+                    leading: Icon(Icons.logout, color: colors.error),
+                    trailing: const LogoutProgress(),
+                    title: Text(
+                      'Log out',
+                      style: TextStyle(
+                        color: colors.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onTap: () async {
+                      await _logout(this.context);
+                    },
+                  ),
+
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
           ),
         );
@@ -1055,7 +1104,54 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           // open. Resizing the native map view shifts its camera and briefly
           // exposes the Scaffold background behind the search field.
           resizeToAvoidBottomInset: !isPersonalDiscoverTab,
-          body: tabs[safeIndex].page,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: _isVenueContext
+                    ? RetainedHomeBody(
+                        key: ValueKey((
+                          'venue',
+                          _retainedSession,
+                          _activeVenueId,
+                          _isPendingClaim,
+                          _isRejectedClaim,
+                        )),
+                        isHome: tabs[safeIndex].id == kVenueHomeTabId,
+                        home: _venueHomePage(
+                          tabs[safeIndex].id == kVenueHomeTabId,
+                        ),
+                        isProfile: tabs[safeIndex].id == kVenueProfileTabId,
+                        profile: _venueProfilePage(
+                          tabs[safeIndex].id == kVenueProfileTabId,
+                        ),
+                        destination: tabs[safeIndex].page,
+                      )
+                    : RetainedHomeBody(
+                        key: ValueKey(('personal', _retainedSession)),
+                        isHome: tabs[safeIndex].id == kPersonalHomeTabId,
+                        home: PersonalHomePage(
+                          isActive: tabs[safeIndex].id == kPersonalHomeTabId,
+                        ),
+                        isProfile: tabs[safeIndex].id == kPersonalProfileTabId,
+                        profile: ProfilePage(
+                          isActive: tabs[safeIndex].id == kPersonalProfileTabId,
+                        ),
+                        destination: tabs[safeIndex].page,
+                      ),
+              ),
+              if (!_isVenueContext && _expiryNotice.current != null)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: MediaQuery.paddingOf(context).bottom + 80,
+                  child: CheckinEndedCard(
+                    busy: _startingCheckin,
+                    onDismiss: _expiryNotice.dismiss,
+                    onCheckin: () => _startNewCheckin(_expiryNotice.current!),
+                  ),
+                ),
+            ],
+          ),
           bottomNavigationBar: _buildNavBar(tabs, safeIndex, isDark, theme),
         ),
       ),
@@ -1138,29 +1234,41 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               : colors.primary.withValues(alpha: 0.10),
         ),
         alignment: Alignment.center,
-        child: avatarUrl != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(9),
-                child: CachedImage(
-                  avatarUrl,
-                  width: 32,
-                  height: 32,
-                  fit: BoxFit.cover,
-                  mediaReference: avatarReference,
-                  errorWidget: (context) => _ProfileInitial(
-                    initial: initial,
-                    isActive: isActive,
-                    isDark: isDark,
-                    colors: colors,
+        child: OwnerPhotoPreview(
+          kind: _isVenueContext
+              ? PendingPublicMediaKind.venueAvatar
+              : PendingPublicMediaKind.personalAvatar,
+          venueId: _isVenueContext ? _activeVenueId : null,
+          checkinId: !_isVenueContext && !_avatarSelection.hasProfilePhoto
+              ? _avatarSelection.checkinId
+              : null,
+          width: 32,
+          height: 32,
+          radius: 9,
+          child: avatarUrl != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: CachedImage(
+                    avatarUrl,
+                    width: 32,
+                    height: 32,
+                    fit: BoxFit.cover,
+                    mediaReference: avatarReference,
+                    errorWidget: (context) => _ProfileInitial(
+                      initial: initial,
+                      isActive: isActive,
+                      isDark: isDark,
+                      colors: colors,
+                    ),
                   ),
+                )
+              : _ProfileInitial(
+                  initial: initial,
+                  isActive: isActive,
+                  isDark: isDark,
+                  colors: colors,
                 ),
-              )
-            : _ProfileInitial(
-                initial: initial,
-                isActive: isActive,
-                isDark: isDark,
-                colors: colors,
-              ),
+        ),
       ),
     );
   }
@@ -1301,10 +1409,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return [
       _NavTab(
         id: kVenueHomeTabId,
-        page: VenueAccountHomePage(
-          key: ValueKey('venueHome_$_activeVenueId'),
-          venueId: _activeVenueId,
-        ),
+        page: _venueHomePage(true),
         icon: _navIconBuilder(Icons.home, Icons.home_outlined, theme),
       ),
       _NavTab(
@@ -1327,17 +1432,26 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
       _NavTab(
         id: kVenueProfileTabId,
-        page: VenueProfilePage(
-          key: ValueKey('venueProfile_$_activeVenueId'),
-          activeVenueName: _activeAccount == 'Personal' ? null : _activeAccount,
-          venueNames: _memberVenues.map((v) => v.name).toList(),
-          venueId: _activeVenueId,
-        ),
+        page: _venueProfilePage(true),
         icon: (active) =>
             _buildProfileAvatar(isActive: active, isDark: isDark, theme: theme),
       ),
     ];
   }
+
+  Widget _venueHomePage(bool active) => VenueAccountHomePage(
+    key: ValueKey('venueHome_$_activeVenueId'),
+    venueId: _activeVenueId,
+    isActive: active,
+  );
+
+  Widget _venueProfilePage(bool active) => VenueProfilePage(
+    key: ValueKey('venueProfile_$_activeVenueId'),
+    activeVenueName: _activeAccount == 'Personal' ? null : _activeAccount,
+    venueNames: _memberVenues.map((v) => v.name).toList(),
+    venueId: _activeVenueId,
+    isActive: active,
+  );
 
   Widget _buildNavBar(
     List<_NavTab> tabs,
