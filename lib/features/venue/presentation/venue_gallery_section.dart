@@ -506,6 +506,7 @@ class _GalleryViewerState extends State<GalleryViewer> {
   late final PageController _controller;
   late List<VenueGalleryItem> _items;
   late int _index;
+  bool _pendingRemovalOpen = false;
 
   @override
   void initState() {
@@ -567,6 +568,52 @@ class _GalleryViewerState extends State<GalleryViewer> {
     if (_pending.length + _items.length == 0) Navigator.of(context).pop();
   }
 
+  Future<void> _cancelPending(PendingPublicMedia item) async {
+    final uploads = widget.pendingUploads;
+    if (_pendingRemovalOpen ||
+        !widget.canEdit ||
+        uploads == null ||
+        uploads.isRemovingGalleryPhoto(item.id)) {
+      return;
+    }
+    final session = uploads.sessionGeneration;
+    _pendingRemovalOpen = true;
+    final ok = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Remove this upload?',
+      message: 'This photo will be removed from your gallery.',
+      confirmLabel: 'Remove upload',
+      cancelLabel: 'Keep photo',
+      icon: Icons.delete_outline_rounded,
+    );
+    if (!ok || !mounted || !uploads.isCurrentSession(session)) {
+      if (mounted) setState(() => _pendingRemovalOpen = false);
+      return;
+    }
+    try {
+      await uploads.removeGalleryPhoto(item, expectedGeneration: session);
+      if (!mounted || !uploads.isCurrentSession(session)) return;
+      setState(
+        () => _items.removeWhere((published) => published.id == item.id),
+      );
+      if (_pending.isEmpty &&
+          _items.isEmpty &&
+          ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop();
+      }
+    } catch (_) {
+      if (mounted && uploads.isCurrentSession(session)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not remove this upload. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pendingRemovalOpen = false);
+    }
+  }
+
   Future<void> _report() async {
     final item = _publishedAt(_index, _pending.length);
     if (item == null) return;
@@ -590,9 +637,16 @@ class _GalleryViewerState extends State<GalleryViewer> {
   /// Bekleyen bir yükleme kaybolunca (yayınlandı / kapatıldı) görünen sayfayı
   /// aralıkta tut; hiç sayfa kalmazsa kapat.
   void _keepIndexInRange(int count) {
+    if (_pendingRemovalOpen) return;
     if (count == 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).maybePop();
+        if (mounted &&
+            !_pendingRemovalOpen &&
+            ModalRoute.of(context)?.isCurrent == true &&
+            _pending.isEmpty &&
+            _items.isEmpty) {
+          Navigator.of(context).maybePop();
+        }
       });
       return;
     }
@@ -606,6 +660,7 @@ class _GalleryViewerState extends State<GalleryViewer> {
   }
 
   Widget _buildPage(List<PendingPublicMedia> pending) {
+    final uploads = widget.pendingUploads;
     final count = pending.length + _items.length;
     _keepIndexInRange(count);
     final index = count == 0 ? 0 : _index.clamp(0, count - 1);
@@ -669,6 +724,25 @@ class _GalleryViewerState extends State<GalleryViewer> {
                       MediaViewerReportButton(onPressed: _report),
                     if (widget.canEdit && isPublished)
                       MediaViewerDeleteButton(onPressed: _delete),
+                    if (widget.canEdit &&
+                        currentPending != null &&
+                        currentPending.hasServerReceipt &&
+                        !ownerStoryHasNoPreview(currentPending))
+                      MediaViewerDeleteButton(
+                        tooltip: 'Remove upload',
+                        busy:
+                            uploads?.isRemovingGalleryPhoto(
+                              currentPending.id,
+                            ) ??
+                            false,
+                        onPressed:
+                            uploads?.isRemovingGalleryPhoto(
+                                  currentPending.id,
+                                ) ==
+                                true
+                            ? null
+                            : () => _cancelPending(currentPending),
+                      ),
                     MediaViewerCloseButton(
                       onPressed: () => Navigator.of(context).pop(),
                     ),

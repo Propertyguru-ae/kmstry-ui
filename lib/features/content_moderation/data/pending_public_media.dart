@@ -247,13 +247,15 @@ class PendingPublicMediaService {
     PendingPublicMediaStore? store,
     StoryUploadCanceller? cancelStory,
     EventPhotoRemover? removeEventPhoto,
+    EventPhotoRemover? removeGalleryPhoto,
   }) : _publishedLookup = publishedLookup ?? _defaultPublishedLookup,
        _moderationLookup = moderationLookup ?? _defaultModerationLookup,
        _delay = delay ?? Future<void>.delayed,
        _now = now ?? DateTime.now,
        _store = store,
        _cancelStory = cancelStory ?? _defaultCancelStory,
-       _removeEventPhoto = removeEventPhoto ?? _defaultRemoveEventPhoto;
+       _removeEventPhoto = removeEventPhoto ?? _defaultRemoveEventPhoto,
+       _removeGalleryPhoto = removeGalleryPhoto ?? _defaultRemoveGalleryPhoto;
 
   @visibleForTesting
   PendingPublicMediaService.forTest({
@@ -264,6 +266,7 @@ class PendingPublicMediaService {
     PendingPublicMediaStore? store,
     StoryUploadCanceller? cancelStory,
     EventPhotoRemover? removeEventPhoto,
+    EventPhotoRemover? removeGalleryPhoto,
   }) : this._(
          publishedLookup: publishedLookup,
          moderationLookup: moderationLookup,
@@ -272,6 +275,7 @@ class PendingPublicMediaService {
          store: store,
          cancelStory: cancelStory,
          removeEventPhoto: removeEventPhoto,
+         removeGalleryPhoto: removeGalleryPhoto,
        );
 
   static final PendingPublicMediaService instance = PendingPublicMediaService._(
@@ -285,6 +289,8 @@ class PendingPublicMediaService {
   final PendingPublicMediaStore? _store;
   final StoryUploadCanceller _cancelStory;
   final EventPhotoRemover _removeEventPhoto;
+  final EventPhotoRemover _removeGalleryPhoto;
+  final Set<String> _removingGalleryPhotos = {};
   final Set<String> _removingEventPhotos = {};
   final Set<String> _cancellingStories = {};
   final Map<String, MultipartUploadCancellation> _storyCancellations = {};
@@ -461,7 +467,57 @@ class PendingPublicMediaService {
       _removingEventPhotos.contains(byId(id)?.id ?? id);
 
   bool _isRemovingUpload(String id) =>
-      isCancellingStory(id) || isRemovingEventPhoto(id);
+      isCancellingStory(id) ||
+      isRemovingEventPhoto(id) ||
+      isRemovingGalleryPhoto(id);
+
+  bool isRemovingGalleryPhoto(String id) =>
+      _removingGalleryPhotos.contains(byId(id)?.id ?? id);
+
+  /// A local Dismiss is not a cancellation: withdraw the exact server upload.
+  /// Retain the captured item if approval removes it from the tracker meanwhile.
+  Future<void> removeGalleryPhoto(
+    PendingPublicMedia item, {
+    required int expectedGeneration,
+  }) async {
+    if (!isCurrentSession(expectedGeneration)) return;
+    if (item.kind != PendingPublicMediaKind.venueGallery ||
+        !item.hasServerReceipt ||
+        (item.venueId?.isEmpty ?? true)) {
+      throw StateError('Upload removal could not be confirmed');
+    }
+    if (!_removingGalleryPhotos.add(item.id)) return;
+    _notify();
+    try {
+      await _removeGalleryPhoto(
+        item,
+        () => isCurrentSession(expectedGeneration),
+      );
+      if (!isCurrentSession(expectedGeneration)) return;
+      _items.remove(item.id);
+      _publishedIds.remove(item.id);
+      if (item.uploadId != null) _publishedIds.remove(item.uploadId!);
+      _notify();
+      VenueGalleryRepository.notifyChanged();
+      // The server already confirmed withdrawal. Local disk work must not
+      // leave an empty fullscreen viewer waiting; restored receipts revalidate.
+      unawaited(flushPersistence());
+    } finally {
+      if (isCurrentSession(expectedGeneration)) {
+        _removingGalleryPhotos.remove(item.id);
+        _notify();
+      }
+    }
+  }
+
+  static Future<void> _defaultRemoveGalleryPhoto(
+    PendingPublicMedia item,
+    bool Function() isCurrentSession,
+  ) => VenueGalleryRepository().deleteItem(
+    item.venueId!,
+    item.id,
+    isCurrentSession: isCurrentSession,
+  );
 
   Future<void> removeEventPhoto(
     String id, {
@@ -1037,6 +1093,7 @@ class PendingPublicMediaService {
     _watching.clear();
     _cancellingStories.clear();
     _removingEventPhotos.clear();
+    _removingGalleryPhotos.clear();
     _storyCancellations.clear();
     _eventPhotoCancellations.clear();
     _deletedEventTargets.clear();

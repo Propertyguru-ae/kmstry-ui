@@ -5,7 +5,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/branded_notice.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 enum CheckinModerationFlowResult { approved, retake, cancelled }
@@ -52,6 +55,7 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
   Timer? _pollTimer;
   _ReviewState _state = _ReviewState.checking;
   bool _leaving = false;
+  bool _confirmingCancellation = false;
   bool _finished = false;
   bool _polling = false;
   int _foregroundRevision = 0;
@@ -72,6 +76,7 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
   bool get _canFinishHere =>
       _isCurrent &&
       !_leaving &&
+      !_confirmingCancellation &&
       _cancelError == null &&
       _foreground &&
       ModalRoute.of(context)?.isCurrent == true;
@@ -150,7 +155,13 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
   }
 
   Future<void> _poll() async {
-    if (!_isCurrent || _leaving || _polling || !_foreground) return;
+    if (!_isCurrent ||
+        _leaving ||
+        _confirmingCancellation ||
+        _polling ||
+        !_foreground) {
+      return;
+    }
     _pollTimer?.cancel();
     _polling = true;
     final foregroundRevision = _foregroundRevision;
@@ -254,6 +265,30 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
     }
   }
 
+  Future<void> _confirmCancel() async {
+    if (!_isCurrent || _leaving || _confirmingCancellation) return;
+    _confirmingCancellation = true;
+    _pollTimer?.cancel();
+    // Invalidate in-flight status/GPS results while the user makes a choice.
+    _foregroundRevision++;
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Cancel this check-in?',
+      message:
+          'Your Moment will be removed and you won’t join Who’s Here. You can start a new check-in later.',
+      confirmLabel: 'Yes, cancel check-in',
+      cancelLabel: 'Keep waiting',
+      icon: Icons.close_rounded,
+    );
+    _confirmingCancellation = false;
+    if (!_isCurrent) return;
+    if (confirmed) {
+      await _leave(CheckinModerationFlowResult.cancelled);
+    } else {
+      unawaited(_poll());
+    }
+  }
+
   Future<void> _leave(CheckinModerationFlowResult result) async {
     if (!_isCurrent || _leaving) return;
     _pollTimer?.cancel();
@@ -264,12 +299,23 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
     try {
       try {
         await _repository
-            .checkout(widget.checkinId)
+            .cancelPendingCheckin(widget.checkinId)
             .timeout(const Duration(seconds: 10));
       } on ApiException catch (error) {
-        if (error.statusCode != 404) rethrow;
+        // A missing API route (e.g. an older backend) is NOT confirmation.
+        if (error.statusCode != 404 ||
+            error.data['errorCode'] != 'CHECKIN_NOT_FOUND') {
+          rethrow;
+        }
       }
       if (!mounted || !_isCurrent) return;
+      AuthRepository.invalidateMeCache();
+      final active = ActiveCheckinService();
+      if (active.activeCheckinId == widget.checkinId) {
+        active.clear();
+      } else {
+        active.notifyMediaUpdated();
+      }
       _finished = true;
       Navigator.pop(context, result);
     } catch (_) {
@@ -356,7 +402,7 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_leave(CheckinModerationFlowResult.cancelled));
+        if (!didPop) unawaited(_confirmCancel());
       },
       child: Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
@@ -369,9 +415,7 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
           automaticallyImplyLeading: false,
           leading: IconButton(
             tooltip: 'Cancel check-in',
-            onPressed: _leaving
-                ? null
-                : () => _leave(CheckinModerationFlowResult.cancelled),
+            onPressed: _leaving ? null : _confirmCancel,
             icon: Icon(Icons.close, color: colors.onSurface, size: 28),
           ),
           title: Text(
@@ -454,9 +498,7 @@ class _CheckinModerationPageState extends State<CheckinModerationPage>
                       const SizedBox(height: 6),
                     ],
                     TextButton(
-                      onPressed: _leaving
-                          ? null
-                          : () => _leave(CheckinModerationFlowResult.cancelled),
+                      onPressed: _leaving ? null : _confirmCancel,
                       style: TextButton.styleFrom(
                         minimumSize: const Size.fromHeight(44),
                         foregroundColor: bodyColor,

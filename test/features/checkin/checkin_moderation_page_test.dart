@@ -57,7 +57,7 @@ class FakeCheckinRepository extends CheckinRepository {
   Future<CheckinActivationStatus> getCheckinActivationStatus(String id) =>
       load();
   @override
-  Future<void> checkout(String id) async {
+  Future<void> cancelPendingCheckin(String id) async {
     checkoutCalls++;
     await cancel();
   }
@@ -122,6 +122,13 @@ void main() {
 
   Future<void> close(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox());
+  }
+
+  Future<void> confirmCancel(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel this check-in?'), findsOneWidget);
+    await tester.tap(find.text('Yes, cancel check-in'));
+    await tester.pumpAndSettle();
   }
 
   test('maps server moderation and activation separately', () {
@@ -289,7 +296,8 @@ void main() {
     (tester) async {
       await open(tester);
       await tester.tap(find.text('Cancel check-in'));
-      await tester.pumpAndSettle();
+      expect(repository.checkoutCalls, 0);
+      await confirmCancel(tester);
       expect(result, CheckinModerationFlowResult.cancelled);
       expect(find.text('Origin'), findsOneWidget);
       expect(repository.checkoutCalls, 1);
@@ -302,7 +310,7 @@ void main() {
     repository.cancel = () async => throw StateError('offline');
     await open(tester);
     await tester.tap(find.text('Cancel check-in'));
-    await tester.pumpAndSettle();
+    await confirmCancel(tester);
     expect(result, isNull);
     expect(
       find.textContaining('could not confirm cancellation'),
@@ -314,7 +322,7 @@ void main() {
     expect(result, isNull);
     repository.cancel = () async {};
     await tester.tap(find.byTooltip('Cancel check-in'));
-    await tester.pumpAndSettle();
+    await confirmCancel(tester);
     expect(result, CheckinModerationFlowResult.cancelled);
     expect(repository.checkoutCalls, 2);
     await close(tester);
@@ -328,6 +336,7 @@ void main() {
       repository.cancel = () => cancelling.future;
       await open(tester);
       await tester.tap(find.text('Cancel check-in'));
+      await confirmCancel(tester);
       reading.complete(status(CheckinActivationState.approved, canJoin: true));
       await tester.pump();
       expect(result, isNull);
@@ -352,11 +361,13 @@ void main() {
   testWidgets('already deleted pending check-in can close safely', (
     tester,
   ) async {
-    repository.cancel = () async =>
-        throw ApiException(statusCode: 404, data: {});
+    repository.cancel = () async => throw ApiException(
+      statusCode: 404,
+      data: {'errorCode': 'CHECKIN_NOT_FOUND'},
+    );
     await open(tester);
     await tester.tap(find.text('Cancel check-in'));
-    await tester.pumpAndSettle();
+    await confirmCancel(tester);
     expect(result, CheckinModerationFlowResult.cancelled);
     await close(tester);
   });
@@ -491,7 +502,7 @@ void main() {
         expect(find.text('Finishing your check-in'), findsOneWidget);
         if (action == 'cancel') {
           await tester.tap(find.text('Cancel check-in'));
-          await tester.pumpAndSettle();
+          await confirmCancel(tester);
         } else if (action == 'logout') {
           PendingPublicMediaService.instance.clear();
         } else if (action == 'background') {
@@ -580,6 +591,7 @@ void main() {
     repository.cancel = () => cancellation.future;
     await open(tester);
     await tester.tap(find.text('Cancel check-in'));
+    await confirmCancel(tester);
     activation.complete(status(CheckinActivationState.approved, canJoin: true));
     await tester.pump();
     expect(result, isNull);
@@ -589,6 +601,49 @@ void main() {
     expect(repository.activationCalls, 1);
     await close(tester);
   });
+
+  for (final trigger in ['close', 'back']) {
+    testWidgets(
+      '$trigger asks before cancelling and Keep waiting resumes approval',
+      (tester) async {
+        await open(tester);
+        if (trigger == 'close') {
+          await tester.tap(find.byTooltip('Cancel check-in'));
+        } else {
+          await tester.binding.handlePopRoute();
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('Cancel this check-in?'), findsOneWidget);
+        expect(repository.checkoutCalls, 0);
+        repository.load = () async =>
+            status(CheckinActivationState.approved, canJoin: true);
+        await tester.pump(const Duration(seconds: 3));
+        expect(result, isNull);
+        await tester.tap(find.text('Keep waiting'));
+        await tester.pumpAndSettle();
+        expect(repository.checkoutCalls, 0);
+        expect(result, CheckinModerationFlowResult.approved);
+        await close(tester);
+      },
+    );
+  }
+
+  testWidgets(
+    'missing cancellation API is not mistaken for a removed check-in',
+    (tester) async {
+      repository.cancel = () async =>
+          throw ApiException(statusCode: 404, data: {});
+      await open(tester);
+      await tester.tap(find.text('Cancel check-in'));
+      await confirmCancel(tester);
+      expect(result, isNull);
+      expect(
+        find.textContaining('could not confirm cancellation'),
+        findsOneWidget,
+      );
+      await close(tester);
+    },
+  );
 
   for (final invalid in [
     status(CheckinActivationState.approved, canJoin: false),

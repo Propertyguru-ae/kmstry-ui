@@ -888,4 +888,15 @@ class CheckinRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
   }
+
+  /// Withdraw the first Moment and close its check-in, even after late approval.
+  /// Normal checkout deliberately keeps the user's completed Moment history.
+  Future<void> cancelPendingCheckin(String checkinId) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    await _api.delete(
+      '/checkins/$checkinId/pending',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
 }

@@ -7,6 +7,7 @@ import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/network/app_request_headers.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -20,7 +21,7 @@ class VenueGalleryRepository {
   /// kartı gibi bağımsız state'ler bunu dinleyip kendini tazeleyebilir — böylece
   /// profil sayfasından eklenen medya home kartında da anında görünür.
   static final ValueNotifier<int> changes = ValueNotifier<int>(0);
-  static void _notifyChanged() => changes.value++;
+  static void notifyChanged() => changes.value++;
 
   Future<List<VenueGalleryItem>> getGallery(String venueId) async {
     // Endpoint JwtAuthGuard ile korumalı → token gönderilmezse 401 döner ve
@@ -119,12 +120,25 @@ class VenueGalleryRepository {
     );
   }
 
-  Future<void> deleteItem(String venueId, String itemId) async {
+  Future<void> deleteItem(
+    String venueId,
+    String itemId, {
+    bool Function()? isCurrentSession,
+  }) async {
     final token = await SecureStorage.getAccessToken();
-    await _api.delete(
-      '/venues/$venueId/gallery/$itemId',
-      headers: {'Authorization': 'Bearer $token'},
-    );
-    _notifyChanged();
+    if (token == null) throw StateError('Not authenticated');
+    if (isCurrentSession?.call() == false) {
+      throw StateError('Upload session changed');
+    }
+    try {
+      await _api.delete(
+        '/venues/$venueId/gallery/$itemId',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } on ApiException catch (error) {
+      // A simultaneous removal/cleanup is already the requested outcome.
+      if (error.statusCode != 404) rethrow;
+    }
+    if (isCurrentSession?.call() != false) notifyChanged();
   }
 }

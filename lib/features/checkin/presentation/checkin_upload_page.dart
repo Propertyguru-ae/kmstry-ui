@@ -865,8 +865,13 @@ class _CheckInPageState extends State<CheckInPage> {
       debugPrint('❌ Check-in error: $e');
       if (createdCheckinId != null && uploads.isCurrentSession(uploadSession)) {
         try {
-          await _repo.checkout(createdCheckinId);
-          ActiveCheckinService().clear();
+          await _repo.cancelPendingCheckin(createdCheckinId);
+          if (uploads.isCurrentSession(uploadSession)) {
+            AuthRepository.invalidateMeCache();
+            if (ActiveCheckinService().activeCheckinId == createdCheckinId) {
+              ActiveCheckinService().clear();
+            }
+          }
         } catch (cleanupError) {
           debugPrint('⚠️ Check-in rollback failed: $cleanupError');
         }
