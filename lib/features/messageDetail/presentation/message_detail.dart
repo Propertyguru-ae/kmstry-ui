@@ -5,8 +5,10 @@ import 'dart:ui';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/main.dart' show navigatorKey;
 import 'package:kmstry_frontend/core/network/network_error.dart';
@@ -28,6 +30,11 @@ import 'package:kmstry_frontend/features/chat/data/chat_list_item_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_message_model.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_repository.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_memory_cache.dart';
+import 'package:kmstry_frontend/features/chat/data/chat_pdf_preview_service.dart';
+import 'package:kmstry_frontend/features/chat/presentation/chat_document_preview_page.dart';
+import 'package:kmstry_frontend/features/chat/presentation/chat_document_card.dart';
+import 'package:kmstry_frontend/features/chat/presentation/chat_media_frame.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
@@ -46,6 +53,7 @@ class MessageDetailPage extends StatefulWidget {
   /// Sohbet listesinden gelen okunmamış sayısı — "Unread messages" ayracını
   /// ilk okunmamış mesajın üstüne koymak için (0 = ayraç yok).
   final int initialUnreadCount;
+  final ChatRepository? repository;
 
   const MessageDetailPage({
     super.key,
@@ -54,6 +62,7 @@ class MessageDetailPage extends StatefulWidget {
     required this.otherName,
     required this.otherPhotoUrl,
     this.initialUnreadCount = 0,
+    this.repository,
   });
 
   @override
@@ -62,7 +71,7 @@ class MessageDetailPage extends StatefulWidget {
 
 class _MessageDetailPageState extends State<MessageDetailPage>
     with WidgetsBindingObserver {
-  final ChatRepository _repo = ChatRepository();
+  late final ChatRepository _repo = widget.repository ?? ChatRepository();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ChatRealtimeService _realtime = ChatRealtimeService();
@@ -119,7 +128,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   String? _highlightedMessageId;
   StreamSubscription<String>? _cacheChangesSub;
   int _chatLoadRequest = 0;
+  bool _markReadInFlight = false;
   final Map<String, String> _confirmedImagePreviews = {};
+  final Map<String, String> _confirmedDocumentPreviews = {};
+  final ChatPdfPreviewService _pdfPreviews = ChatPdfPreviewService();
+  bool _openingDocument = false;
 
   // Reply: alıntı balonu için görünür metne referans satırı gömülür VE yapısal
   // reply_to_id gönderilir (balona dokununca orijinale zıplamak için).
@@ -169,6 +182,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   @override
   void dispose() {
+    _pdfPreviews.dispose();
     _cacheChangesSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     debugPrint('💬 [Detail] Listener temizleniyor');
@@ -369,17 +383,31 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   // nefes payı yeterli.
   double _messageListBottomPadding() => 12;
 
+  /// Sabit fotoğraf çerçevesi (dikey/kare/yatay); fotoğraf çerçeveyi
+  /// dolduracak şekilde yakınlaştırılır. Bkz. [chatMediaFrameSize].
+  Size _messageImagePreviewSize({int? imageWidth, int? imageHeight}) =>
+      chatMediaFrameSize(
+        MediaQuery.sizeOf(context),
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+      );
+
   double _estimatedMessageHeight(ChatMessage message) {
-    if (message.messageType == 'image' && message.imageUrl != null) {
-      final width = message.imageWidth;
-      final height = message.imageHeight;
-      if (width != null && width > 0 && height != null && height > 0) {
-        final ratio = height / width;
-        return (300 * ratio).clamp(160, 330).toDouble() + 12;
-      }
-      return 260;
+    if (_hasImageMedia(message)) {
+      return _messageImagePreviewSize(
+            imageWidth: message.imageWidth,
+            imageHeight: message.imageHeight,
+          ).height +
+          8 +
+          12;
     }
-    if (message.messageType == 'file') return 86;
+    if (message.messageType == 'file') {
+      // Bilgi paneli (~62) + saat satırı (~22) + balon boşlukları (~13);
+      // PDF'te üstte sabit önizleme alanı da var.
+      return isChatPdf(message.fileName ?? '')
+          ? ChatDocumentCard.previewHeight + 97
+          : 97;
+    }
     if (message.messageType == 'venue') return 305;
 
     final body = _visibleMessageBody(message.text ?? '');
@@ -481,15 +509,31 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final cid = _chatId;
     if (cid == null || cid.isEmpty) return;
     final token = await SecureStorage.getAccessToken();
+    if (!mounted) return;
     if (token == null || token.isEmpty) return;
     await _realtime.connectWithToken(token: token);
+    if (!mounted || _chatId != cid) return;
     debugPrint('💬 [Detail] chat.join => $cid');
     PushManager.instance.markChatVisible(cid);
     _realtime.joinChat(cid);
     _startActiveChatRefresh(cid);
+  }
+
+  Future<void> _markDisplayedChatRead(String cid) async {
+    if (!mounted ||
+        _chatId != cid ||
+        _markReadInFlight ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return;
+    }
+    _markReadInFlight = true;
     try {
       await _repo.markChatRead(cid);
-    } catch (_) {}
+    } catch (_) {
+      // Keep loaded messages usable; resume/next refresh retries the read.
+    } finally {
+      _markReadInFlight = false;
+    }
   }
 
   void _startActiveChatRefresh(String cid) {
@@ -872,7 +916,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       });
     }
     try {
-      final detail = await _repo.getChat(cid, markRead: true, take: 30);
+      // Reading messages must not wait for the separate multi-query read receipt.
+      final timer = Stopwatch()..start();
+      final detail = await _repo.getChat(cid, markRead: false, take: 30);
+      if (kDebugMode) {
+        debugPrint('[Perf] chat_open ${timer.elapsedMilliseconds}ms');
+      }
       if (!mounted || request != _chatLoadRequest) return;
       setState(() {
         // Per-message read_at is carried on each message, so "Seen" persists
@@ -901,6 +950,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       _resolveUnreadDivider(detail.messages);
       _messageListReady = true;
       _scrollToBottom();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_markDisplayedChatRead(cid));
+      });
     } catch (e) {
       debugPrint('❌ getChat error: $e');
       if (!mounted || request != _chatLoadRequest) return;
@@ -1919,8 +1971,8 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         targetChatId,
         messageType: 'image',
         imageUrl: message.imageUrl,
-        // En-boy oranını taşı: aksi halde forward edilen resim boyut bilgisini
-        // kaybedip kare/yanlış oranla (tüm foto görünmeden) çiziliyordu.
+        // Preserve the original size metadata when forwarding. Only the chat
+        // thumbnail is cropped; the uploaded image itself stays unchanged.
         imageWidth: message.imageWidth,
         imageHeight: message.imageHeight,
       );
@@ -2467,6 +2519,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
       return _buildFileBubble(
         fileUrl: _fileSource(message),
         fileMedia: message.fileMedia,
+        localPreviewPath: _confirmedDocumentPreviews[message.id],
         fileName: message.fileName ?? 'Document',
         isMe: isMe,
         time: time,
@@ -3412,7 +3465,32 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
   Widget _buildMessageList() {
     if (_loading && _chat == null && _chatId != null) {
-      return const Center(child: CircularProgressIndicator());
+      return Padding(
+        key: const ValueKey('chat-opening-placeholder'),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: List.generate(
+            3,
+            (index) => Align(
+              alignment: index == 1
+                  ? Alignment.centerRight
+                  : Alignment.centerLeft,
+              child: Container(
+                width: index == 1 ? 140 : 200,
+                height: 44,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
     }
     if (_error != null && _chat == null && _chatId != null) {
       return Center(
@@ -3571,15 +3649,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                             : () => _openMessageOverlay(msg, isMe),
                         onTap: _forwardSelectionMode
                             ? null
-                            : () => unawaited(
-                                _openFileUrl(
-                                  _fileSource(msg),
-                                  media: msg.fileMedia,
-                                ),
-                              ),
+                            : () => unawaited(_openDocument(msg)),
                         child: _buildFileBubble(
                           fileUrl: _fileSource(msg),
                           fileMedia: msg.fileMedia,
+                          localPreviewPath: _confirmedDocumentPreviews[msg.id],
                           fileName: msg.fileName ?? 'Document',
                           isMe: isMe,
                           time: time,
@@ -3866,19 +3940,57 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   }
 
   Widget _buildForwardMessageSelector({required bool selected}) {
+    // Seçili: marka gradyanı (light: mavi → mor, dark: parlak mavi →
+    // magenta) + beyaz tik. Boş: light'ta gri kenarlık + beyaz dolgu,
+    // dark'ta yarı saydam beyaz kenarlık — her iki zeminde de görünür.
+    final brandColors = _isDarkMode
+        ? AppColors.gradientDark
+        : AppColors.gradientLight;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       width: 28,
       height: 28,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: selected ? const Color(0xFFE85D55) : Colors.transparent,
+        color: selected
+            ? null
+            : (_isDarkMode
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.white),
+        gradient: selected
+            ? LinearGradient(
+                colors: brandColors,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
         border: Border.all(
           color: selected
-              ? const Color(0xFFE85D55)
-              : Colors.white.withValues(alpha: _isDarkMode ? 0.32 : 0.65),
+              ? Colors.transparent
+              : (_isDarkMode
+                    ? Colors.white.withValues(alpha: 0.42)
+                    : const Color(0xFF8E9BAE)),
           width: 2,
         ),
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  color: brandColors.first.withValues(
+                    alpha: _isDarkMode ? 0.35 : 0.30,
+                  ),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : _isDarkMode
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
       ),
       child: selected
           ? const Icon(Icons.check_rounded, color: Colors.white, size: 18)
@@ -4681,8 +4793,67 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     String? localPreviewPath,
     bool highlighted = false,
   }) {
-    final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
     final bubbleRadius = _messageBubbleRadius(isMe);
+    final previewSize = _messageImagePreviewSize(
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
+    );
+    final boxW = previewSize.width;
+    final boxH = previewSize.height;
+    // http olmayan url (lokal önizleme/medya referansı yok) = henüz
+    // yüklenmekte olan lokal dosya.
+    final isUploading =
+        localPreviewPath == null &&
+        imageMedia == null &&
+        !imageUrl.startsWith('http');
+
+    Widget image(BoxFit fit) {
+      Widget placeholder(BuildContext context) => const Center(
+        child: SizedBox(
+          width: 26,
+          height: 26,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: Colors.white70,
+          ),
+        ),
+      );
+      Widget error(BuildContext context) => const Center(
+        child: Icon(
+          Icons.broken_image_rounded,
+          size: 44,
+          color: Colors.white54,
+        ),
+      );
+      Widget remote() => CachedImage(
+        imageUrl,
+        mediaReference: imageMedia,
+        width: boxW,
+        height: boxH,
+        fit: fit,
+        placeholder: placeholder,
+        errorWidget: error,
+      );
+
+      if (localPreviewPath != null) {
+        return Image.file(
+          File(localPreviewPath),
+          width: boxW,
+          height: boxH,
+          fit: fit,
+          errorBuilder: (context, _, _) => remote(),
+        );
+      }
+      if (imageMedia != null || imageUrl.startsWith('http')) return remote();
+      return Image.file(
+        File(imageUrl),
+        width: boxW,
+        height: boxH,
+        fit: fit,
+        errorBuilder: (context, _, _) => error(context),
+      );
+    }
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: _buildStyledBubbleContainer(
@@ -4690,157 +4861,77 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         isMe: isMe,
         borderRadius: bubbleRadius,
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.68,
+          maxWidth: MediaQuery.sizeOf(context).width * 0.68,
         ),
         padding: const EdgeInsets.all(3),
         highlighted: highlighted,
-        child: Stack(
-          alignment: Alignment.bottomRight,
-          children: [
-            _wrapHero(
-              heroTag,
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                // WhatsApp tarzı: sabit kare değil — resmin kendi en-boy oranına
-                // göre boyutlanır (max genişlik/yükseklik sınırları içinde), böylece
-                // fotoğrafın tamamı kırpılmadan görünür.
-                child: Builder(
-                  builder: (context) {
-                    final maxW = min(
-                      MediaQuery.of(context).size.width * 0.68,
-                      280.0,
-                    );
-                    final maxH = MediaQuery.of(context).size.height * 0.5;
-
-                    // Boyut biliniyorsa (backend/optimistic) kutuyu resmin
-                    // en-boy oranında ÖNCEDEN ayarla → placeholder gerçek kutu
-                    // boyutunda olur, resim gelince zıplama/kayma olmaz.
-                    double boxW = maxW;
-                    // Her balona build anında SABİT yükseklik ver → liste
-                    // yüksekliği ilk frame'den kesin, maxScrollExtent doğru,
-                    // alta kaydırma tam dibe oturur ve resim gelince kaymaz.
-                    // Boyut biliniyorsa gerçek oran; bilinmiyorsa makul varsayılan.
-                    double boxH = maxW * 0.75;
-                    if (imageWidth != null &&
-                        imageHeight != null &&
-                        imageWidth > 0 &&
-                        imageHeight > 0) {
-                      boxW = maxW;
-                      boxH = maxW * imageHeight / imageWidth;
-                      if (boxH > maxH) {
-                        boxH = maxH;
-                        boxW = maxH * imageWidth / imageHeight;
-                      }
-                    }
-
-                    Widget placeholder = Container(
-                      width: boxW,
-                      height: boxH,
-                      color: Colors.white.withValues(alpha: 0.06),
-                      alignment: Alignment.center,
-                      child: const SizedBox(
-                        width: 26,
-                        height: 26,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            children: [
+              _wrapHero(
+                heroTag,
+                ChatImageFrame(
+                  key: const ValueKey('chat-image-preview-frame'),
+                  size: previewSize,
+                  imageBuilder: image,
+                ),
+              ),
+              if (isUploading)
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: Center(
+                      child: SizedBox(
+                        width: 34,
+                        height: 34,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.white70,
+                          strokeWidth: 3,
+                          color: Colors.white,
                         ),
                       ),
-                    );
-
-                    return ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: maxH),
-                      // http olmayan url = henüz yüklenmemiş lokal dosya.
-                      child: localPreviewPath != null
-                          ? Image.file(
-                              File(localPreviewPath),
-                              width: boxW,
-                              height: boxH,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, _, _) => CachedImage(
-                                imageUrl,
-                                mediaReference: imageMedia,
-                                width: boxW,
-                                height: boxH,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                          : imageMedia != null
-                          ? CachedImage(
-                              imageUrl,
-                              mediaReference: imageMedia,
-                              width: boxW,
-                              height: boxH,
-                              fit: BoxFit.cover,
-                              placeholder: (context) => placeholder,
-                              errorWidget: (context) =>
-                                  const Icon(Icons.broken_image, size: 48),
-                            )
-                          : imageUrl.startsWith('http')
-                          ? CachedImage(
-                              imageUrl,
-                              width: boxW,
-                              height: boxH,
-                              fit: BoxFit.cover,
-                              placeholder: (context) => placeholder,
-                              errorWidget: (context) =>
-                                  const Icon(Icons.broken_image, size: 48),
-                            )
-                          : Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Image.file(
-                                  File(imageUrl),
-                                  width: boxW,
-                                  height: boxH,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      const Icon(Icons.broken_image, size: 48),
-                                ),
-                                const SizedBox(
-                                  width: 34,
-                                  height: 34,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 3,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            Positioned(
-              right: 8,
-              bottom: 8,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.38),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 3,
+                    ),
                   ),
-                  child: _buildMessageMeta(
-                    time: time,
-                    isMe: isMe,
-                    isSeenByOther: isSeenByOther,
-                    textColor: isMe ? Colors.white : textColor,
+                ),
+              // WhatsApp gibi: alt kenarda hafif karartma, üstünde saat/tik.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.42),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              Positioned(
+                right: 8,
+                bottom: 6,
+                child: _buildMessageMeta(
+                  time: time,
+                  isMe: isMe,
+                  isSeenByOther: isSeenByOther,
+                  textColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// Belge balonu: ikon + dosya adı; http olmayan url = yükleniyor (spinner).
+  /// Belge balonu (WhatsApp düzeni): PDF'te ilk sayfa önizlemesi + bilgi
+  /// paneli; http olmayan url = yükleniyor (rozette spinner).
   Widget _buildFileBubble({
     required String fileUrl,
     required String fileName,
@@ -4848,75 +4939,39 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     required String time,
     required bool isSeenByOther,
     MediaReference? fileMedia,
+    String? localPreviewPath,
     Key? bubbleKey,
     bool highlighted = false,
   }) {
     final textColor = isMe ? _outgoingTextColor : _incomingTextColor;
     final isUploading =
         !fileUrl.startsWith('http') && fileMedia?.canRefresh != true;
-    final bubbleRadius = _messageBubbleRadius(isMe);
+    final screen = MediaQuery.sizeOf(context);
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: _buildStyledBubbleContainer(
         key: bubbleKey,
         isMe: isMe,
-        borderRadius: bubbleRadius,
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.72,
-        ),
-        padding: const EdgeInsets.fromLTRB(10, 9, 9, 5),
+        borderRadius: _messageBubbleRadius(isMe),
+        constraints: BoxConstraints(maxWidth: screen.width * 0.68),
+        padding: const EdgeInsets.all(3),
         highlighted: highlighted,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: isUploading
-                      ? Padding(
-                          padding: const EdgeInsets.all(9),
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.4,
-                            color: textColor,
-                          ),
-                        )
-                      : Icon(
-                          Icons.description_rounded,
-                          color: textColor.withValues(alpha: 0.85),
-                          size: 21,
-                        ),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    fileName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 3),
-            _buildMessageMeta(
-              time: time,
-              isMe: isMe,
-              isSeenByOther: isSeenByOther,
-              textColor: textColor,
-            ),
-          ],
+        child: ChatDocumentCard(
+          fileName: fileName,
+          source: fileUrl,
+          media: fileMedia,
+          localPreviewPath: localPreviewPath,
+          service: _pdfPreviews,
+          width: chatMediaWidth(screen),
+          isDark: _isDarkMode,
+          textColor: textColor,
+          uploading: isUploading,
+          meta: _buildMessageMeta(
+            time: time,
+            isMe: isMe,
+            isSeenByOther: isSeenByOther,
+            textColor: textColor,
+          ),
         ),
       ),
     );
@@ -5171,95 +5226,127 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   /// WhatsApp tarzı ek menüsü: + butonuna basınca çıkan seçenekler.
   void _openAttachmentSheet() {
     FocusManager.instance.primaryFocus?.unfocus();
+    final isDark = _isDarkMode;
+    // Uygulamanın sheet/dialog paleti: sayfa zemininden bir ton ayrışır.
+    final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
+    final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+    final labelColor = isDark
+        ? Colors.white.withValues(alpha: 0.78)
+        : AppColors.lightTextSecondary;
+
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: _composerBackground,
+      backgroundColor: surface,
+      barrierColor: Colors.black.withValues(alpha: isDark ? 0.55 : 0.35),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
       builder: (ctx) {
         Widget option({
           required IconData icon,
           required String label,
           required Color color,
-          VoidCallback? onTap,
+          required VoidCallback onTap,
         }) {
-          final enabled = onTap != null;
-          final effectiveColor = enabled
-              ? color
-              : _mutedTextColor.withValues(alpha: 0.45);
-          return InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: enabled
-                ? () {
-                    Navigator.of(ctx).pop();
-                    onTap();
-                  }
-                : null,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: effectiveColor.withValues(alpha: 0.14),
-                    shape: BoxShape.circle,
+          return Expanded(
+            child: Semantics(
+              button: true,
+              label: label,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(ctx).pop();
+                  onTap();
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: isDark ? 0.18 : 0.12),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: color.withValues(
+                              alpha: isDark ? 0.28 : 0.18,
+                            ),
+                          ),
+                        ),
+                        child: Icon(icon, color: color, size: 27),
+                      ),
+                      const SizedBox(height: 9),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          color: labelColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                  child: Icon(icon, color: effectiveColor, size: 27),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: enabled
-                        ? _mutedTextColor
-                        : _mutedTextColor.withValues(alpha: 0.45),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+              ),
             ),
           );
         }
 
         return SafeArea(
+          top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
-            child: Wrap(
-              alignment: WrapAlignment.spaceEvenly,
-              runSpacing: 22,
-              spacing: 26,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                option(
-                  icon: Icons.photo_camera_rounded,
-                  label: 'Camera',
-                  color: const Color(0xFFE0457B),
-                  onTap: () => _pickAndSendImage(ImageSource.camera),
+                // Tutma çubuğu — uygulamadaki diğer sheet'lerle aynı.
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: (isDark ? Colors.white : Colors.black).withValues(
+                      alpha: isDark ? 0.22 : 0.14,
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-                option(
-                  icon: Icons.photo_library_rounded,
-                  label: 'Photos',
-                  color: const Color(0xFF7C5CFF),
-                  onTap: () => _pickAndSendImage(ImageSource.gallery),
+                const SizedBox(height: 16),
+                Text(
+                  'Share',
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
+                  ),
                 ),
-                // Location ve Event henüz hazır değil — pasif (basılamaz).
-                option(
-                  icon: Icons.location_on_rounded,
-                  label: 'Location',
-                  color: const Color(0xFF1FA855),
-                ),
-                option(
-                  icon: Icons.description_rounded,
-                  label: 'Document',
-                  color: const Color(0xFF4A7DFF),
-                  onTap: _pickAndSendFile,
-                ),
-                option(
-                  icon: Icons.event_rounded,
-                  label: 'Event',
-                  color: const Color(0xFFE8A13A),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    option(
+                      icon: Icons.photo_camera_rounded,
+                      label: 'Camera',
+                      color: AppColors.magenta,
+                      onTap: () => _pickAndSendImage(ImageSource.camera),
+                    ),
+                    option(
+                      icon: Icons.photo_library_rounded,
+                      label: 'Photos',
+                      color: AppColors.blue,
+                      onTap: () => _pickAndSendImage(ImageSource.gallery),
+                    ),
+                    option(
+                      icon: Icons.description_rounded,
+                      label: 'Document',
+                      color: AppColors.teal,
+                      onTap: _pickAndSendFile,
+                    ),
+                    // Location ve Event şimdilik gizli — hazır olunca buraya
+                    // eklenecek.
+                  ],
                 ),
               ],
             ),
@@ -5269,10 +5356,11 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
   }
 
-  /// Belge seç → optimistic lokal bubble → Spaces'e yükle → file mesajı gönder.
+  /// Belge seç → önizleme/onay → optimistic bubble → yükle → mesajı gönder.
   Future<void> _pickAndSendFile() async {
     if (_chat?.canSendMessages == false) return;
     final cid = _normalizeChatId(_chatId);
+    final sessionGeneration = ChatMemoryCache.shared.generation;
     if (cid == null) {
       unawaited(
         showPremiumErrorDialog(
@@ -5312,6 +5400,30 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final pickedPath = result?.files.single.path;
     if (pickedPath == null || !mounted) return;
     final pickedName = result!.files.single.name;
+    final pickedSize = result.files.single.size;
+    if (pickedSize > ChatPdfPreviewService.maxDocumentBytes) {
+      await showPremiumErrorDialog(
+        context,
+        message: 'Documents must be 25 MB or smaller.',
+      );
+      return;
+    }
+    final confirmed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ChatDocumentPreviewPage(
+          file: File(pickedPath),
+          fileName: pickedName,
+          fileSize: pickedSize,
+        ),
+      ),
+    );
+    if (!mounted ||
+        confirmed != true ||
+        sessionGeneration != ChatMemoryCache.shared.generation ||
+        _chat?.canSendMessages == false) {
+      return;
+    }
 
     final clientMessageId = _nextClientMessageId();
     final optimisticTempId = 'temp-$clientMessageId';
@@ -5331,6 +5443,9 @@ class _MessageDetailPageState extends State<MessageDetailPage>
 
     try {
       final uploaded = await _repo.uploadChatFile(File(pickedPath));
+      if (!mounted || sessionGeneration != ChatMemoryCache.shared.generation) {
+        return;
+      }
       final sentMessage = await _repo.sendMessage(
         cid,
         messageType: 'file',
@@ -5339,12 +5454,17 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         fileName: uploaded.fileName.isNotEmpty ? uploaded.fileName : pickedName,
         clientMessageId: clientMessageId,
       );
-      if (!mounted) return;
+      if (!mounted || sessionGeneration != ChatMemoryCache.shared.generation) {
+        return;
+      }
+      _confirmedDocumentPreviews[sentMessage.id] = pickedPath;
       _removeMessageById(optimisticTempId);
       _mergeOrInsertMessage(sentMessage);
     } catch (e) {
       debugPrint('❌ sendFile error: $e');
-      if (!mounted) return;
+      if (!mounted || sessionGeneration != ChatMemoryCache.shared.generation) {
+        return;
+      }
       _removeMessageById(optimisticTempId);
       if (_isBlockedOrInactiveError(e)) {
         final accountUnavailable = _isRecipientUnavailableError(e);
@@ -5368,37 +5488,87 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
   }
 
-  Future<void> _openFileUrl(String url, {MediaReference? media}) async {
-    if (!url.startsWith('http') && media?.canRefresh != true) {
+  /// Belgeyi WhatsApp gibi UYGULAMA İÇİNDE açar: dosya güvenli şekilde
+  /// indirilir (imzalı URL yenileme + boyut sınırı servis içinde), PDF'ler
+  /// uygulama içi görüntüleyicide, diğer belgeler sistemin dosya
+  /// önizlemesinde açılır. Depolama linki tarayıcıya hiç verilmez.
+  Future<void> _openDocument(ChatMessage message) async {
+    final source = _fileSource(message);
+    final media = message.fileMedia;
+    final localPath = _confirmedDocumentPreviews[message.id];
+    if (localPath == null &&
+        !source.startsWith('http') &&
+        media?.canRefresh != true) {
       return; // henüz yükleniyor
     }
-    // Private dosya: imzalı URL süresi dolmuş olabilir. Açmadan önce, ref
-    // yenilenebiliyor ve süresi geçmişse BİR kez taze imzalı URL al (sonsuz
-    // döngü yok — refreshOnce in-flight dedupe'lu). Aksi halde mevcut URL.
-    var openUrl = url;
-    if (media != null && media.canRefresh) {
-      final expired = media.expiresAt == null
-          ? false
-          : media.expiresAt!.isBefore(
-              DateTime.now().add(const Duration(seconds: 10)),
-            );
-      if (openUrl.isEmpty || expired) {
-        final refreshed = await SignedMediaResolver.instance.refreshOnce(media);
-        if (refreshed != null && refreshed.url.isNotEmpty) {
-          openUrl = refreshed.url;
-        }
-      }
-    }
-    if (!openUrl.startsWith('http')) return;
-    final ok = await launchUrl(
-      Uri.parse(openUrl),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open the document.')),
+    if (_openingDocument) return;
+    _openingDocument = true;
+    final fileName = message.fileName ?? 'Document';
+    final navigator = Navigator.of(context, rootNavigator: true);
+    var loaderShown = false;
+    // Hızlı (önbellekteki) açılışlarda yükleme göstergesi yanıp sönmesin.
+    final loaderTimer = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      loaderShown = true;
+      unawaited(
+        showDialog<void>(
+          context: context,
+          useRootNavigator: true,
+          barrierDismissible: false,
+          barrierColor: Colors.black.withValues(alpha: 0.35),
+          builder: (_) => const PopScope(
+            canPop: false,
+            child: Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+          ),
+        ),
       );
+    });
+    File? file;
+    try {
+      file = await _pdfPreviews.documentFile(
+        source: source,
+        fileName: fileName,
+        media: media,
+        localPath: localPath,
+      );
+    } catch (error) {
+      debugPrint('[chat] document open failed: $error');
+    } finally {
+      loaderTimer.cancel();
+      if (loaderShown) navigator.pop();
+      _openingDocument = false;
     }
+    if (!mounted) return;
+    if (file == null) {
+      _showDocumentOpenError();
+      return;
+    }
+    if (isChatPdf(fileName)) {
+      final size = await file.length();
+      if (!mounted) return;
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => ChatDocumentPreviewPage(
+            file: file!,
+            fileName: fileName,
+            fileSize: size,
+            viewOnly: true,
+          ),
+        ),
+      );
+      return;
+    }
+    final result = await OpenFilex.open(file.path);
+    if (mounted && result.type != ResultType.done) _showDocumentOpenError();
+  }
+
+  void _showDocumentOpenError() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open the document.')),
+    );
   }
 
   /// Galeriden seç ya da kameradan çek → optimistic lokal bubble → Spaces'e

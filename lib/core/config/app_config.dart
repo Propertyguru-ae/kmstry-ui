@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
+  // Marketing emails are not currently used. Hide the settings control in
+  // every environment without modifying stored preferences or registration.
+  static const bool marketingEmailSettingsEnabled = false;
+
   static const String buildEnv = String.fromEnvironment('BUILD_ENV');
   static const String _definedApiUrl = String.fromEnvironment('API_URL');
   static const String _definedSiteUrl = String.fromEnvironment('SITE_URL');
@@ -18,7 +22,7 @@ class AppConfig {
 
   static const String baseUrl = _definedApiUrl != ''
       ? _definedApiUrl
-      : 'http://192.168.1.190:3000';
+      : 'http://192.168.1.191:3000';
 
   /// Public marketing/legal site (privacy, terms, support, invite landing).
   /// Distinct from [baseUrl] which is the API host.

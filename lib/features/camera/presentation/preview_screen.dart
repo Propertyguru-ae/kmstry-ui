@@ -7,38 +7,12 @@ import 'package:gal/gal.dart';
 import 'package:image/image.dart' as img;
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/branded_notice.dart';
+import 'package:kmstry_frontend/features/camera/presentation/preview_controls.dart';
+import 'package:kmstry_frontend/features/media/overlay_font_chip.dart';
+import 'package:kmstry_frontend/features/media/overlay_fonts.dart';
+import 'package:kmstry_frontend/features/media/placed_overlay_text.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-
-/// Metin overlay'inin stil ön-ayarları (Instagram'daki Modern/Classic/Signature
-/// şeridine karşılık gelir).
-enum _TextFontStyle { modern, classic, typewriter }
-
-extension _TextFontStyleX on _TextFontStyle {
-  String get label => switch (this) {
-    _TextFontStyle.modern => 'Modern',
-    _TextFontStyle.classic => 'Classic',
-    _TextFontStyle.typewriter => 'Typewriter',
-  };
-
-  TextStyle base(Color color) => switch (this) {
-    _TextFontStyle.modern => TextStyle(
-      color: color,
-      fontWeight: FontWeight.w800,
-      letterSpacing: 0.2,
-    ),
-    _TextFontStyle.classic => TextStyle(
-      color: color,
-      fontFamily: 'Georgia',
-      fontWeight: FontWeight.w600,
-    ),
-    _TextFontStyle.typewriter => TextStyle(
-      color: color,
-      fontFamily: 'Courier',
-      fontWeight: FontWeight.w700,
-    ),
-  };
-}
 
 /// Fotoğraf çekimi sonrası önizleme + Instagram tarzı metin düzenleme ekranı.
 /// Yazı: sürüklenebilir, iki parmakla büyütülüp küçültülebilir ve döndürülebilir;
@@ -99,7 +73,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
   double _rotation = 0.0; // radyan
   double _fontSize = 28; // sol dikey slider ile ayarlanır (Instagram gibi)
   TextAlign _align = TextAlign.center;
-  _TextFontStyle _fontStyle = _TextFontStyle.modern;
+  OverlayFont _fontStyle = OverlayFont.modern;
 
   bool _editing = false;
   bool _confirming = false;
@@ -111,8 +85,6 @@ class _PreviewScreenState extends State<PreviewScreen> {
   bool _mirrorInstant = false; // ham ön-kamera fotoğrafını gösterirken aynala
 
   // Pinch jesti için başlangıç değerleri.
-  double _gestureStartScale = 1.0;
-  double _gestureStartRotation = 0.0;
 
   @override
   void initState() {
@@ -337,7 +309,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
               right: 12,
               child: Column(
                 children: [
-                  _ToolButton(
+                  PreviewToolButton(
+                    tooltip: 'Close',
                     icon: Icons.close_rounded,
                     onTap: _saving || _confirming
                         ? null
@@ -345,13 +318,15 @@ class _PreviewScreenState extends State<PreviewScreen> {
                   ),
                   if (widget.allowText) const SizedBox(height: 12),
                   if (widget.allowText)
-                    _ToolButton(
+                    PreviewToolButton(
+                      tooltip: 'Add text',
                       icon: Icons.text_fields_rounded,
                       onTap: _saving || _confirming ? null : _openEditor,
                     ),
                   if (widget.allowDownload) const SizedBox(height: 12),
                   if (widget.allowDownload)
-                    _ToolButton(
+                    PreviewToolButton(
+                      tooltip: 'Save to gallery',
                       icon: Icons.download_rounded,
                       onTap: _saving || _confirming ? null : _download,
                       loading: _saving,
@@ -370,44 +345,22 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   /// Fotoğrafın üzerine yerleştirilmiş yazı — sürükle + pinch (ölçek/rotasyon).
   Widget _buildPlacedText(Size screen) {
-    final center = _offset ?? Offset(screen.width / 2, screen.height / 2);
+    // Sürükle (tek parmak, yazının üstünden) + iki parmakla her yerden
+    // büyüt/küçült/döndür — bkz. PlacedOverlayText.
     return Positioned.fill(
-      child: GestureDetector(
-        behavior: HitTestBehavior.deferToChild,
+      child: PlacedOverlayText(
+        text: _text,
+        style: _overlayStyle,
+        textAlign: _align,
+        center: _offset,
+        scale: _scale,
+        rotation: _rotation,
         onTap: _openEditor,
-        onScaleStart: (details) {
-          _gestureStartScale = _scale;
-          _gestureStartRotation = _rotation;
-        },
-        onScaleUpdate: (details) {
-          setState(() {
-            // Tek parmak sürükleme de scale jestinin focalPoint delta'sıyla gelir.
-            _offset =
-                (_offset ?? Offset(screen.width / 2, screen.height / 2)) +
-                details.focalPointDelta;
-            _scale = (_gestureStartScale * details.scale).clamp(0.4, 4.0);
-            _rotation = _gestureStartRotation + details.rotation;
-          });
-        },
-        child: Stack(
-          children: [
-            Positioned(
-              left: center.dx - 160,
-              top: center.dy - 60,
-              child: Transform.rotate(
-                angle: _rotation,
-                child: Transform.scale(
-                  scale: _scale,
-                  child: Container(
-                    width: 320,
-                    alignment: Alignment.center,
-                    child: Text(_text, textAlign: _align, style: _overlayStyle),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+        onTransform: (center, scale, rotation) => setState(() {
+          _offset = center;
+          _scale = scale;
+          _rotation = rotation;
+        }),
       ),
     );
   }
@@ -524,36 +477,19 @@ class _PreviewScreenState extends State<PreviewScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Font stili seçici (Modern / Classic / Typewriter).
-                  SizedBox(
-                    height: 44,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      children: _TextFontStyle.values.map((style) {
-                        final selected = style == _fontStyle;
-                        return GestureDetector(
+                  // Font stili seçici (Modern / Classic / Typewriter) —
+                  // ortalı, uygulama dilinde balonlar.
+                  OverlayFontChipRow(
+                    chips: [
+                      for (final style in OverlayFont.values)
+                        OverlayFontChip(
+                          label: style.label,
+                          fontStyle: style.base(Colors.white),
+                          fontSize: style.chipFontSize,
+                          selected: style == _fontStyle,
                           onTap: () => setState(() => _fontStyle = style),
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: selected ? Colors.white : Colors.white24,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              style.label,
-                              style: style
-                                  .base(selected ? Colors.black : Colors.white)
-                                  .copyWith(fontSize: 15),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 10),
 
@@ -602,163 +538,21 @@ class _PreviewScreenState extends State<PreviewScreen> {
   }
 
   Widget _buildBottomButtons() {
+    final busy = _saving || _confirming;
     return Positioned(
       left: 24,
       right: 24,
       bottom: 24,
       child: SafeArea(
         top: false,
-        child: Row(
-          children: [
-            Expanded(
-              child: _PreviewActionButton(
-                label: widget.cancelLabel,
-                icon: widget.cancelLabel == 'Retake'
-                    ? Icons.refresh_rounded
-                    : Icons.arrow_back_rounded,
-                primary: false,
-                onPressed: _saving || _confirming
-                    ? null
-                    : () => Navigator.pop(context),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _PreviewActionButton(
-                label: widget.confirmLabel,
-                icon: widget.confirmIcon ?? Icons.check_rounded,
-                primary: true,
-                loading: _confirming,
-                onPressed: _saving || _confirming ? null : _usePhoto,
-              ),
-            ),
-          ],
+        child: PreviewBottomActions(
+          cancelLabel: widget.cancelLabel,
+          confirmLabel: widget.confirmLabel,
+          confirmIcon: widget.confirmIcon,
+          confirming: _confirming,
+          onCancel: busy ? null : () => Navigator.pop(context),
+          onConfirm: busy ? null : _usePhoto,
         ),
-      ),
-    );
-  }
-}
-
-class _PreviewActionButton extends StatelessWidget {
-  const _PreviewActionButton({
-    required this.label,
-    required this.icon,
-    required this.primary,
-    required this.onPressed,
-    this.loading = false,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool primary;
-  final VoidCallback? onPressed;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = onPressed != null;
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 160),
-      opacity: enabled || loading ? 1 : 0.48,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          // Primary (Use/Send): uygulama mavisi. Secondary: fotoğraf üstünde
-          // her iki modda okunur yarı-saydam koyu pill + ince beyaz kenar.
-          color: primary
-              ? AppColors.blue
-              : Colors.black.withValues(alpha: 0.40),
-          borderRadius: BorderRadius.circular(14),
-          border: primary
-              ? null
-              : Border.all(color: Colors.white.withValues(alpha: 0.28)),
-          boxShadow: primary && enabled
-              ? [
-                  BoxShadow(
-                    color: AppColors.blue.withValues(alpha: 0.35),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6),
-                  ),
-                ]
-              : null,
-        ),
-        child: ElevatedButton(
-          onPressed: onPressed,
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(0, 46),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            elevation: 0,
-            shadowColor: Colors.transparent,
-            backgroundColor: Colors.transparent,
-            disabledBackgroundColor: Colors.transparent,
-            foregroundColor: Colors.white,
-            disabledForegroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          child: loading
-              ? const SizedBox(
-                  width: 19,
-                  height: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: Colors.white,
-                  ),
-                )
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(icon, size: 18),
-                    const SizedBox(width: 7),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.1,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ToolButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-  final bool loading;
-
-  const _ToolButton({
-    required this.icon,
-    required this.onTap,
-    this.loading = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black38,
-      shape: const CircleBorder(),
-      child: IconButton(
-        icon: loading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : Icon(icon, color: Colors.white),
-        onPressed: onTap,
       ),
     );
   }

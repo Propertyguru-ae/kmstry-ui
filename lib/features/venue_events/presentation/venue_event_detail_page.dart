@@ -1,17 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_offer_repository.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'add_venue_event_page.dart';
 import '../data/venue_event_repository.dart';
+import '../data/venue_event_mutation.dart';
+import '../data/venue_event_deletion.dart';
+import 'event_deletion.dart';
+import 'event_photo_uploads.dart';
+import 'event_gallery_viewer.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 const _kMagenta = Color(0xFFE020D8);
 const _kTurkuaz = Color(0xFF1FD9A8);
-const _kMavi    = Color(0xFF1A9FE8);
+const _kMavi = Color(0xFF1A9FE8);
 const _kTuruncu = Color(0xFFF08838);
-const _kRed     = Color(0xFFEF4444);
+const _kRed = Color(0xFFEF4444);
 
 class VenueEventDetailPage extends StatefulWidget {
   final VenueUpcomingEvent event;
@@ -23,7 +31,17 @@ class VenueEventDetailPage extends StatefulWidget {
     required this.event,
     required this.venueId,
     this.onChanged,
+    this.onUpdated,
+    this.repository,
+    this.partnershipRepository,
+    this.offerRepository,
+    this.onDeleted,
   });
+  final ValueChanged<VenueEventMutation>? onUpdated;
+  final VenueEventRepository? repository;
+  final ExternalPartnershipRepository? partnershipRepository;
+  final VenueOfferRepository? offerRepository;
+  final ValueChanged<VenueEventDeletion>? onDeleted;
 
   @override
   State<VenueEventDetailPage> createState() => _VenueEventDetailPageState();
@@ -31,26 +49,60 @@ class VenueEventDetailPage extends StatefulWidget {
 
 class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
   late VenueUpcomingEvent _event;
+  late final _repo = widget.repository ?? VenueEventRepository();
+  int _eventRevision = 0;
+  bool _deleting = false;
+  bool _confirmingDeletion = false;
 
   /// EVENT_ATTENDEES_VIEW yetkisi olan kullanıcılar için katılımcı listesi.
   List<Map<String, dynamic>>? _attendees;
   bool _loadingAttendees = false;
 
   bool get _canViewAttendees =>
+      VenueSession.instance.venueId == widget.venueId &&
       VenueSession.instance.can(VenuePermission.eventAttendeesView);
 
   @override
   void initState() {
     super.initState();
     _event = widget.event;
+    PendingPublicMediaService.instance.eventPublicationChanges.addListener(
+      _onPhotoPublished,
+    );
+    VenueSession.instance.addListener(_onVenueChanged);
     if (_canViewAttendees) _loadAttendees();
+  }
+
+  void _onVenueChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onPhotoPublished() {
+    if (ownerEventPhotos(
+      PendingPublicMediaService.instance,
+      widget.venueId,
+      _event.id,
+      _event.recurringRuleId,
+    ).any((item) => item.state == PendingPublicMediaState.published)) {
+      _photoRefreshNeeded = true;
+      _reloadEvent(refreshAttendees: false);
+    }
+  }
+
+  @override
+  void dispose() {
+    PendingPublicMediaService.instance.eventPublicationChanges.removeListener(
+      _onPhotoPublished,
+    );
+    VenueSession.instance.removeListener(_onVenueChanged);
+    super.dispose();
   }
 
   Future<void> _loadAttendees() async {
     if (_loadingAttendees) return;
     setState(() => _loadingAttendees = true);
     try {
-      final list = await VenueEventRepository().getEventRsvps(
+      final list = await _repo.getEventRsvps(
         venueId: widget.venueId,
         eventId: _event.id,
       );
@@ -62,34 +114,72 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
     }
   }
 
-  Future<void> _reloadEvent() async {
+  Future<void>? _eventRefresh;
+  bool _photoRefreshNeeded = false;
+  Future<void> _reloadEvent({bool refreshAttendees = true}) =>
+      _eventRefresh ??= _drainEventRefresh(
+        refreshAttendees,
+      ).whenComplete(() => _eventRefresh = null);
+  Future<void> _drainEventRefresh(bool attendees) async {
+    do {
+      _photoRefreshNeeded = false;
+      await _fetchEvent(attendees);
+      attendees = false;
+    } while (mounted && _photoRefreshNeeded);
+  }
+
+  Future<void> _fetchEvent(bool refreshAttendees) async {
+    final uploads = PendingPublicMediaService.instance;
+    final generation = uploads.sessionGeneration;
+    final revision = _eventRevision;
+    final handedOver =
+        ownerEventPhotos(
+              uploads,
+              widget.venueId,
+              _event.id,
+              _event.recurringRuleId,
+            )
+            .where((item) => item.state == PendingPublicMediaState.published)
+            .map((item) => item.id)
+            .toList();
     try {
       // Tek event'i dedike endpoint'ten çekiyoruz — getVenueById listesi
       // is_published+end_at>now+take:5 ile filtreli olduğundan güncel event'i kaçırabilir.
-      final updated = await VenueEventRepository().getEventDetail(
+      final updated = await _repo.getEventDetail(
         venueId: widget.venueId,
         eventId: _event.id,
       );
-      if (mounted) setState(() => _event = updated);
+      if (!mounted || !uploads.isCurrentSession(generation)) return;
+      if (revision != _eventRevision) {
+        _photoRefreshNeeded = true;
+        return;
+      }
+      setState(() => _event = updated);
+      for (final id in handedOver) {
+        uploads.dismiss(id);
+      }
     } catch (_) {}
-    if (_canViewAttendees) await _loadAttendees();
+    if (!mounted || !uploads.isCurrentSession(generation)) return;
+    if (refreshAttendees && _canViewAttendees) await _loadAttendees();
     widget.onChanged?.call();
   }
 
   @override
   Widget build(BuildContext context) {
-    final event    = _event;
-    final isDark   = Theme.of(context).brightness == Brightness.dark;
-    final kBg      = isDark ? const Color(0xFF06091A) : Colors.white;
-    final kCard    = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
-    final kBorder  = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
-    final kText    = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
+    final event = _event;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
+    final kCard = isDark ? const Color(0xFF0D1525) : const Color(0xFFF3F6FA);
+    final kBorder = isDark ? const Color(0xFF162040) : const Color(0xFFD9E1EA);
+    final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
     // Açıklama gövde metni için okunaklı, daha yüksek kontrastlı renk.
-    final kBody    = isDark ? const Color(0xFFB8C4DA) : const Color(0xFF334155);
-    final kDim     = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
-    final kLabel   = isDark ? const Color(0xFF44597A) : const Color(0xFF8794A6);
-    final kFaint   = isDark ? const Color(0xFF3A5070) : const Color(0xFF9AA6B6);
-    final canManage = VenueSession.instance.can(VenuePermission.eventManage);
+    final kBody = isDark ? const Color(0xFFB8C4DA) : const Color(0xFF334155);
+    final kDim = isDark ? const Color(0xFF9AA8C2) : const Color(0xFF5D6B7B);
+    final kLabel = isDark ? const Color(0xFF44597A) : const Color(0xFF8794A6);
+    final kFaint = isDark ? const Color(0xFF3A5070) : const Color(0xFF9AA6B6);
+    final canManage =
+        VenueSession.instance.venueId == widget.venueId &&
+        VenueSession.instance.can(VenuePermission.eventManage);
 
     final photos = event.photos.isNotEmpty
         ? event.photos
@@ -111,212 +201,263 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
               ),
               padding: const EdgeInsets.only(bottom: 40),
               child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── COVER HERO ─────────────────────────────────────────────
-                _EventCover(photo: coverPhoto, pageBg: kBg),
-
-                // ── TITLE + CHIPS (cover'a biner) ──────────────────────────
-                Transform.translate(
-                  offset: const Offset(0, -36),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          event.title,
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.5,
-                            color: kText,
-                            height: 1.15,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 7,
-                          runSpacing: 7,
-                          children: [
-                            _InfoChip(
-                              icon: isFree
-                                  ? Icons.confirmation_num_outlined
-                                  : Icons.local_activity_outlined,
-                              label: isFree
-                                  ? 'Free entry'
-                                  : '${event.currency} ${event.priceAed} min.',
-                              color: isFree ? _kTurkuaz : _kTuruncu,
-                              isDark: isDark,
-                            ),
-                            if (event.isRecurring)
-                              _InfoChip(
-                                icon: Icons.repeat_rounded,
-                                label: 'Recurring',
-                                color: _kMagenta,
-                                isDark: isDark,
-                              ),
-                            if (event.capacity != null || event.rsvpCount > 0)
-                              _InfoChip(
-                                icon: Icons.people_outline_rounded,
-                                label: event.capacity != null
-                                    ? '${event.rsvpCount} / ${event.capacity}'
-                                    : '${event.rsvpCount} interested',
-                                color: isFull ? _kRed : _kMavi,
-                                isDark: isDark,
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── COVER HERO ─────────────────────────────────────────────
+                  _EventCover(
+                    photo: coverPhoto,
+                    pageBg: kBg,
+                    venueId: widget.venueId,
+                    event: event,
                   ),
-                ),
 
-                // ── CONTENT ────────────────────────────────────────────────
-                Transform.translate(
-                  offset: const Offset(0, -20),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // DATE & TIME
-                        _InfoCard(
-                          icon: Icons.calendar_month_rounded,
-                          accent: _kTurkuaz,
-                          label: 'Date & Time',
-                          value: event.formattedDate,
-                          sub: _durationLabel(
-                            event.endAt.difference(event.startAt),
-                          ),
-                          kCard: kCard,
-                          kBorder: kBorder,
-                          kText: kText,
-                          kLabel: kLabel,
-                          kFaint: kFaint,
-                        ),
-                        const SizedBox(height: 10),
-
-                        // ENTRY
-                        _InfoCard(
-                          icon: Icons.local_activity_rounded,
-                          accent: _kTuruncu,
-                          label: 'Entry',
-                          value: isFree
-                              ? 'Free · No ticket required'
-                              : '${event.currency} ${event.priceAed} minimum spend',
-                          kCard: kCard,
-                          kBorder: kBorder,
-                          kText: kText,
-                          kLabel: kLabel,
-                          kFaint: kFaint,
-                        ),
-
-                        // RECURRING BANNER
-                        if (event.isRecurring) ...[
-                          const SizedBox(height: 14),
-                          _RecurringBanner(label: _recurrenceLabel(event)),
-                        ],
-
-                        // ABOUT
-                        if (event.description != null &&
-                            event.description!.isNotEmpty) ...[
-                          const SizedBox(height: 20),
-                          _DotTitle(color: _kMagenta, label: 'About', kText: kText),
-                          const SizedBox(height: 8),
+                  // ── TITLE + CHIPS (cover'a biner) ──────────────────────────
+                  Transform.translate(
+                    offset: const Offset(0, -36),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            event.description!,
+                            event.title,
                             style: TextStyle(
-                              fontSize: 14,
-                              color: kBody,
-                              height: 1.7,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.5,
+                              color: kText,
+                              height: 1.15,
                             ),
-                          ),
-                        ],
-
-                        // KMSTRY OFFER
-                        if (event.offerType != null) ...[
-                          const SizedBox(height: 20),
-                          _DotTitle(
-                            color: _kTuruncu,
-                            label: 'Kmstry Offer',
-                            kText: kText,
-                          ),
-                          const SizedBox(height: 8),
-                          _OfferCard(
-                            conditions: event.offerTitle,
-                            type: event.offerType,
-                            price: event.offerPrice,
-                            isDark: isDark,
-                            kCard: kCard,
-                            kBorder: kBorder,
-                            kText: kText,
-                            kDim: kDim,
-                          ),
-                        ],
-
-                        // ATTENDEES
-                        if (_canViewAttendees &&
-                            (event.capacity != null ||
-                                event.rsvpCount > 0)) ...[
-                          const SizedBox(height: 20),
-                          _DotTitle(
-                            color: _kTurkuaz,
-                            label: 'Interested',
-                            kText: kText,
-                            count: _attendees?.length ?? event.rsvpCount,
                           ),
                           const SizedBox(height: 12),
-                          _AttendeeList(
-                            attendees: _attendees,
-                            loading: _loadingAttendees,
-                            isDark: isDark,
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: [
+                              _InfoChip(
+                                icon: isFree
+                                    ? Icons.confirmation_num_outlined
+                                    : Icons.local_activity_outlined,
+                                label: isFree
+                                    ? 'Free entry'
+                                    : '${event.currency} ${event.priceAed} min.',
+                                color: isFree ? _kTurkuaz : _kTuruncu,
+                                isDark: isDark,
+                              ),
+                              if (event.isRecurring)
+                                _InfoChip(
+                                  icon: Icons.repeat_rounded,
+                                  // Haftalık / aylık / yıllık bilgisi.
+                                  label:
+                                      event.recurrence?.shortLabel ??
+                                      'Recurring',
+                                  color: _kMagenta,
+                                  isDark: isDark,
+                                ),
+                              if (event.capacity != null || event.rsvpCount > 0)
+                                _InfoChip(
+                                  icon: Icons.people_outline_rounded,
+                                  label: event.capacity != null
+                                      ? '${event.rsvpCount} / ${event.capacity}'
+                                      : '${event.rsvpCount} interested',
+                                  color: isFull ? _kRed : _kMavi,
+                                  isDark: isDark,
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // ── CONTENT ────────────────────────────────────────────────
+                  Transform.translate(
+                    offset: const Offset(0, -20),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // DATE & TIME
+                          _InfoCard(
+                            icon: Icons.calendar_month_rounded,
+                            accent: _kTurkuaz,
+                            label: 'Date & Time',
+                            value: event.formattedDate,
+                            sub: _durationLabel(
+                              event.endAt.difference(event.startAt),
+                            ),
                             kCard: kCard,
                             kBorder: kBorder,
                             kText: kText,
-                          ),
-                        ],
-
-                        // PARTNER BENEFITS
-                        if (event.partnershipBenefits.isNotEmpty) ...[
-                          const SizedBox(height: 20),
-                          _DotTitle(
-                            color: _kMavi,
-                            label: 'Partner Benefits',
-                            kText: kText,
+                            kLabel: kLabel,
+                            kFaint: kFaint,
                           ),
                           const SizedBox(height: 10),
-                          ...event.partnershipBenefits.map(
-                            (b) => Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: _BenefitCard(
-                                benefit: b,
-                                isDark: isDark,
-                                kCard: kCard,
-                                kBorder: kBorder,
-                                kText: kText,
-                                kDim: kDim,
+
+                          // ENTRY
+                          _InfoCard(
+                            icon: Icons.local_activity_rounded,
+                            accent: _kTuruncu,
+                            label: 'Entry',
+                            value: isFree
+                                ? 'Free · No ticket required'
+                                : '${event.currency} ${event.priceAed} minimum spend',
+                            kCard: kCard,
+                            kBorder: kBorder,
+                            kText: kText,
+                            kLabel: kLabel,
+                            kFaint: kFaint,
+                          ),
+
+                          // RECURRING BANNER
+                          if (event.isRecurring) ...[
+                            const SizedBox(height: 14),
+                            _RecurringBanner(label: _recurrenceLabel(event)),
+                          ],
+
+                          // ABOUT
+                          if (event.description != null &&
+                              event.description!.isNotEmpty) ...[
+                            const SizedBox(height: 20),
+                            _DotTitle(
+                              color: _kMagenta,
+                              label: 'About',
+                              kText: kText,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              event.description!,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: kBody,
+                                height: 1.7,
                               ),
                             ),
-                          ),
-                        ],
+                          ],
 
-                        // GALLERY
-                        if (photos.isNotEmpty) ...[
-                          const SizedBox(height: 20),
-                          _DotTitle(
-                            color: _kMagenta,
-                            label: 'Gallery',
-                            kText: kText,
+                          // KMSTRY OFFER
+                          if (event.offerType != null) ...[
+                            const SizedBox(height: 20),
+                            _DotTitle(
+                              color: _kTuruncu,
+                              label: 'Kmstry Offer',
+                              kText: kText,
+                            ),
+                            const SizedBox(height: 8),
+                            _OfferCard(
+                              conditions: event.offerTitle,
+                              type: event.offerType,
+                              price: event.offerPrice,
+                              isDark: isDark,
+                              kCard: kCard,
+                              kBorder: kBorder,
+                              kText: kText,
+                              kDim: kDim,
+                            ),
+                          ],
+
+                          // ATTENDEES
+                          if (_canViewAttendees &&
+                              (event.capacity != null ||
+                                  event.rsvpCount > 0)) ...[
+                            const SizedBox(height: 20),
+                            _DotTitle(
+                              color: _kTurkuaz,
+                              label: 'Interested',
+                              kText: kText,
+                              count: _attendees?.length ?? event.rsvpCount,
+                            ),
+                            const SizedBox(height: 12),
+                            _AttendeeList(
+                              attendees: _attendees,
+                              loading: _loadingAttendees,
+                              isDark: isDark,
+                              kCard: kCard,
+                              kBorder: kBorder,
+                              kText: kText,
+                            ),
+                          ],
+
+                          // PARTNER BENEFITS
+                          if (event.partnershipBenefits.isNotEmpty) ...[
+                            const SizedBox(height: 20),
+                            _DotTitle(
+                              color: _kMavi,
+                              label: 'Partner Benefits',
+                              kText: kText,
+                            ),
+                            const SizedBox(height: 10),
+                            ...event.partnershipBenefits.map(
+                              (b) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _BenefitCard(
+                                  benefit: b,
+                                  isDark: isDark,
+                                  kCard: kCard,
+                                  kBorder: kBorder,
+                                  kText: kText,
+                                  kDim: kDim,
+                                ),
+                              ),
+                            ),
+                          ],
+
+                          // GALLERY — yayınlanmış + henüz yayınlanmamış
+                          // (Sharing / Under review …) fotoğraflar tek ızgarada.
+                          ListenableBuilder(
+                            listenable: Listenable.merge([
+                              PendingPublicMediaService.instance.changes,
+                              VenueSession.instance,
+                            ]),
+                            builder: (context, _) {
+                              final pending = ownerUnpublishedEventPhotos(
+                                PendingPublicMediaService.instance,
+                                widget.venueId,
+                                event.id,
+                                event.recurringRuleId,
+                              );
+                              if (photos.isEmpty && pending.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 20),
+                                  _DotTitle(
+                                    color: _kMagenta,
+                                    label: 'Gallery',
+                                    kText: kText,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  EventGalleryGrid(
+                                    photos: photos,
+                                    pending: pending,
+                                    // Büyük gösterim: kaydırılabilir galeri.
+                                    onOpen: (index) =>
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            fullscreenDialog: true,
+                                            builder: (_) => EventGalleryViewer(
+                                              photos: photos,
+                                              venueId: widget.venueId,
+                                              eventId: event.id,
+                                              recurringRuleId:
+                                                  event.recurringRuleId,
+                                              initialIndex: index,
+                                            ),
+                                          ),
+                                        ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
-                          const SizedBox(height: 10),
-                          _Gallery(photos: photos),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
               ),
             ),
           ),
@@ -339,14 +480,20 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
                     Icons.edit_outlined,
                     _kTurkuaz,
                     () => _openEdit(
-                      context, isDark, kBg, kCard, kBorder, kText, kDim,
+                      context,
+                      isDark,
+                      kBg,
+                      kCard,
+                      kBorder,
+                      kText,
+                      kDim,
                     ),
                   ),
                   const SizedBox(width: 8),
                   _coverCircleButton(
                     Icons.delete_outline_rounded,
                     _kRed,
-                    () => _confirmDelete(context, isDark),
+                    () => _confirmDelete(context),
                   ),
                 ],
               ),
@@ -356,7 +503,11 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
     );
   }
 
-  Widget _coverCircleButton(IconData icon, Color iconColor, VoidCallback onTap) {
+  Widget _coverCircleButton(
+    IconData icon,
+    Color iconColor,
+    VoidCallback onTap,
+  ) {
     return Material(
       color: Colors.black.withValues(alpha: 0.38),
       shape: const CircleBorder(),
@@ -381,36 +532,37 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
     return 'Duration: ${m}m';
   }
 
-  String _recurrenceLabel(VenueUpcomingEvent event) {
-    final freq = event.recurrence?.frequency.toLowerCase();
-    switch (freq) {
-      case 'daily':
-        return 'Repeats every day';
-      case 'weekly':
-        return 'Repeats every week';
-      case 'monthly':
-        return 'Repeats every month';
-      default:
-        return 'This is a recurring event';
-    }
-  }
+  String _recurrenceLabel(VenueUpcomingEvent event) =>
+      event.recurrence?.summary ?? 'This is a recurring event';
 
   Future<void> _openEdit(
-    BuildContext context, bool isDark,
-    Color kBg, Color kCard, Color kBorder, Color kText, Color kDim,
+    BuildContext context,
+    bool isDark,
+    Color kBg,
+    Color kCard,
+    Color kBorder,
+    Color kText,
+    Color kDim,
   ) async {
+    if (_deleting || _confirmingDeletion) return;
     String? editScope;
     if (_event.isRecurring) {
       editScope = await showModalBottomSheet<String>(
         context: context,
         backgroundColor: Colors.transparent,
         builder: (_) => _EditScopeSheet(
-          event: _event, isDark: isDark,
-          kBg: kBg, kCard: kCard, kBorder: kBorder, kText: kText, kDim: kDim,
+          event: _event,
+          isDark: isDark,
+          kBg: kBg,
+          kCard: kCard,
+          kBorder: kBorder,
+          kText: kText,
+          kDim: kDim,
         ),
       );
       if (editScope == null || !context.mounted) return;
     }
+    var requiresDetailRefresh = true;
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -418,66 +570,75 @@ class _VenueEventDetailPageState extends State<VenueEventDetailPage> {
           venueId: widget.venueId,
           existing: _event,
           editScope: editScope,
+          repository: _repo,
+          partnershipRepository: widget.partnershipRepository,
+          offerRepository: widget.offerRepository,
+          onUpdated: (mutation) {
+            if (!mounted) return;
+            requiresDetailRefresh = mutation.requiresDetailRefresh;
+            setState(() {
+              _eventRevision++;
+              _event = mutation.event;
+            });
+            widget.onUpdated?.call(mutation);
+          },
         ),
       ),
     );
-    if (result == true && context.mounted) {
-      await _reloadEvent();
+    // Only changed links/offers need a fresh detail read. The metadata update
+    // response already includes committed dates, recurrence, photos and counts.
+    // Editing metadata does not change the attendees list.
+    if (result == true && context.mounted && requiresDetailRefresh) {
+      await _reloadEvent(refreshAttendees: false);
     }
   }
 
-  Future<void> _confirmDelete(BuildContext context, bool isDark) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF0B1322) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text('Delete Event',
-            style: TextStyle(
-              fontSize: 16, fontWeight: FontWeight.w800,
-              color: isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827),
-            )),
-        content: Text(
-          '"${_event.title}" will be permanently deleted.',
-          style: TextStyle(
-            fontSize: 13,
-            color: isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel',
-                style: TextStyle(
-                    color: isDark ? const Color(0xFF3A5070) : const Color(0xFF5D6B7B))),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
-                style: TextStyle(color: _kRed, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !context.mounted) return;
+  Future<void> _confirmDelete(BuildContext context) async {
+    if (_deleting || _confirmingDeletion) return;
+    final event = _event;
+    final venueId = widget.venueId;
+    final onDeleted = widget.onDeleted;
+    final onChanged = widget.onChanged;
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    _confirmingDeletion = true;
+    final scope = await confirmEventDeletion(context, event);
+    _confirmingDeletion = false;
+    if (scope == null ||
+        !context.mounted ||
+        !PendingPublicMediaService.instance.isCurrentSession(generation) ||
+        VenueSession.instance.venueId != venueId) {
+      return;
+    }
+    setState(() => _deleting = true);
     try {
-      await VenueEventRepository().deleteEvent(venueId: widget.venueId, eventId: _event.id);
-      if (context.mounted) {
-        widget.onChanged?.call();
-        Navigator.pop(context, true);
+      final deletion = scope == EventDeleteScope.series
+          ? await _repo.deleteRecurringSeries(
+              venueId: venueId,
+              ruleId: event.recurringRuleId!,
+            )
+          : await _repo.deleteEvent(venueId: venueId, eventId: event.id);
+      if (!PendingPublicMediaService.instance.isCurrentSession(generation) ||
+          VenueSession.instance.venueId != venueId) {
+        return;
       }
-    } catch (_) {
-      if (context.mounted) {
+      onDeleted?.call(deletion);
+      if (!context.mounted) return;
+      // The list can remove exact IDs immediately without another month read.
+      if (onDeleted == null) onChanged?.call();
+      Navigator.pop(context, onDeleted == null);
+    } catch (error) {
+      if (context.mounted &&
+          PendingPublicMediaService.instance.isCurrentSession(generation)) {
+        setState(() => _deleting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not delete event'),
+          SnackBar(
+            content: Text(eventDeletionError(error)),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     }
   }
-
 }
 
 // ─── Info chip ────────────────────────────────────────────────────────────────
@@ -509,12 +670,14 @@ class _InfoChip extends StatelessWidget {
         children: [
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 5),
-          Text(label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: color,
-              )),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -526,7 +689,14 @@ class _InfoChip extends StatelessWidget {
 class _EventCover extends StatelessWidget {
   final String? photo;
   final Color pageBg;
-  const _EventCover({required this.photo, required this.pageBg});
+  final String venueId;
+  final VenueUpcomingEvent event;
+  const _EventCover({
+    required this.photo,
+    required this.pageBg,
+    required this.venueId,
+    required this.event,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -536,27 +706,42 @@ class _EventCover extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (photo != null && photo!.isNotEmpty)
-            CachedImage(photo!, fit: BoxFit.cover)
-          else ...[
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF1A0828), Color(0xFF0A1840), Color(0xFF0A2010)],
-                ),
-              ),
+          EventPhotoUploadCover(
+            venueId: venueId,
+            eventId: event.id,
+            recurringRuleId: event.recurringRuleId,
+            hasPublishedPhoto: photo?.isNotEmpty == true,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (photo != null && photo!.isNotEmpty)
+                  CachedImage(photo!, fit: BoxFit.cover)
+                else ...[
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF1A0828),
+                          Color(0xFF0A1840),
+                          Color(0xFF0A2010),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: const Alignment(-0.5, -0.2),
+                    child: _glow(_kMagenta.withValues(alpha: 0.22), 240),
+                  ),
+                  Align(
+                    alignment: const Alignment(0.6, 0.4),
+                    child: _glow(_kTurkuaz.withValues(alpha: 0.16), 220),
+                  ),
+                ],
+              ],
             ),
-            Align(
-              alignment: const Alignment(-0.5, -0.2),
-              child: _glow(_kMagenta.withValues(alpha: 0.22), 240),
-            ),
-            Align(
-              alignment: const Alignment(0.6, 0.4),
-              child: _glow(_kTurkuaz.withValues(alpha: 0.16), 220),
-            ),
-          ],
+          ),
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
@@ -576,17 +761,15 @@ class _EventCover extends StatelessWidget {
   }
 
   Widget _glow(Color color, double size) => IgnorePointer(
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              colors: [color, color.withValues(alpha: 0)],
-            ),
-          ),
-        ),
-      );
+    child: Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
+      ),
+    ),
+  );
 }
 
 // ─── Info card (Date & Time, Entry) ───────────────────────────────────────────
@@ -785,17 +968,27 @@ class _OfferCard extends StatelessWidget {
 
   String get _typeLabel {
     switch (type) {
-      case 'BUFFET':     return 'Buffet';
-      case 'SET_MENU':   return 'Set Menu';
-      case 'OPEN_DRINK': return 'Open Drink';
-      case 'OPEN_FOOD':  return 'Open Food';
+      case 'BUFFET':
+        return 'Buffet';
+      case 'SET_MENU':
+        return 'Set Menu';
+      case 'OPEN_DRINK':
+        return 'Open Drink';
+      case 'OPEN_FOOD':
+        return 'Open Food';
       // Eski tipler (geriye dönük)
-      case 'BOGO':           return 'Buy 1 Get 1 Free';
-      case 'PERCENT_OFF':    return 'Percentage discount';
-      case 'FIXED_DISCOUNT': return 'Fixed discount';
-      case 'FREE_ITEM':      return 'Free item included';
-      case 'BUNDLE':         return 'Bundle deal';
-      default:               return type ?? '';
+      case 'BOGO':
+        return 'Buy 1 Get 1 Free';
+      case 'PERCENT_OFF':
+        return 'Percentage discount';
+      case 'FIXED_DISCOUNT':
+        return 'Fixed discount';
+      case 'FREE_ITEM':
+        return 'Free item included';
+      case 'BUNDLE':
+        return 'Bundle deal';
+      default:
+        return type ?? '';
     }
   }
 
@@ -813,26 +1006,37 @@ class _OfferCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 38, height: 38,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: _kTuruncu.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: const Icon(Icons.local_offer_outlined, size: 17, color: _kTuruncu),
+            child: const Icon(
+              Icons.local_offer_outlined,
+              size: 17,
+              color: _kTuruncu,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_typeLabel,
-                    style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700, color: kText,
-                    )),
+                Text(
+                  _typeLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: kText,
+                  ),
+                ),
                 if (conditions != null && conditions!.trim().isNotEmpty) ...[
                   const SizedBox(height: 3),
-                  Text(conditions!,
-                      style: TextStyle(fontSize: 12, color: kDim)),
+                  Text(
+                    conditions!,
+                    style: TextStyle(fontSize: 12, color: kDim),
+                  ),
                 ],
               ],
             ),
@@ -846,10 +1050,14 @@ class _OfferCard extends StatelessWidget {
                 border: Border.all(color: _kTuruncu.withValues(alpha: 0.3)),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(_badge,
-                  style: const TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w800, color: _kTuruncu,
-                  )),
+              child: Text(
+                _badge,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: _kTuruncu,
+                ),
+              ),
             ),
           ],
         ],
@@ -886,25 +1094,36 @@ class _BenefitCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 36, height: 36,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: _kMavi.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(Icons.handshake_outlined, size: 16, color: _kMavi),
+            child: const Icon(
+              Icons.handshake_outlined,
+              size: 16,
+              color: _kMavi,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(benefit.platformDisplayName,
-                    style: TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w700, color: kText,
-                    )),
+                Text(
+                  benefit.platformDisplayName,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: kText,
+                  ),
+                ),
                 const SizedBox(height: 3),
-                Text(benefit.offerLabel,
-                    style: TextStyle(fontSize: 12, color: kDim)),
+                Text(
+                  benefit.offerLabel,
+                  style: TextStyle(fontSize: 12, color: kDim),
+                ),
               ],
             ),
           ),
@@ -916,10 +1135,14 @@ class _BenefitCard extends StatelessWidget {
               border: Border.all(color: _kMavi.withValues(alpha: 0.25)),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(benefit.offerTypeDisplayName,
-                style: const TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w700, color: _kMavi,
-                )),
+            child: Text(
+              benefit.offerTypeDisplayName,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: _kMavi,
+              ),
+            ),
           ),
         ],
       ),
@@ -929,38 +1152,57 @@ class _BenefitCard extends StatelessWidget {
 
 // ─── Gallery ──────────────────────────────────────────────────────────────────
 
-class _Gallery extends StatelessWidget {
+/// Event galerisi: yayınlanmış fotoğraflar + (sahibine) henüz yayınlanmamış
+/// yüklemeler tek 3'lü kare ızgarada.
+class EventGalleryGrid extends StatelessWidget {
   final List<String> photos;
-  const _Gallery({required this.photos});
+
+  /// Henüz yayınlanmamış yüklemeler; yayınlanmışların hemen ardından,
+  /// aynı kare kutularla gösterilir.
+  final List<PendingPublicMedia> pending;
+  const EventGalleryGrid({
+    super.key,
+    required this.photos,
+    this.pending = const [],
+    this.service,
+    this.onOpen,
+  });
+  final PendingPublicMediaService? service;
+
+  /// Dokunulan karenin (yayınlanmış + bekleyen sırasıyla) indeksi.
+  final ValueChanged<int>? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    if (photos.length == 1) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: Image.network(
-          photos.first,
-          width: double.infinity,
-          height: 200,
-          fit: BoxFit.cover,
-        ),
-      );
-    }
-
+    // Tek fotoğraf da ikili/üçlüdeki gibi aynı kare kutuda gösterilir.
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      // Explicit zero: without it GridView inherits the screen's safe-area
+      // insets (notch + home indicator) as padding, leaving a big gap
+      // between the "Gallery" title and the photos.
+      padding: EdgeInsets.zero,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         crossAxisSpacing: 6,
         mainAxisSpacing: 6,
         childAspectRatio: 1,
       ),
-      itemCount: photos.length,
-      itemBuilder: (_, i) => ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Image.network(photos[i], fit: BoxFit.cover),
-      ),
+      itemCount: photos.length + pending.length,
+      itemBuilder: (_, i) => i < photos.length
+          ? GestureDetector(
+              onTap: onOpen == null ? null : () => onOpen!(i),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(photos[i], fit: BoxFit.cover),
+              ),
+            )
+          : EventPendingPhotoTile(
+              item: pending[i - photos.length],
+              service: service,
+              radius: 10,
+              onTap: onOpen == null ? null : () => onOpen!(i),
+            ),
     );
   }
 }
@@ -983,8 +1225,18 @@ class _AttendeeList extends StatelessWidget {
   });
 
   static const _months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   String _joinedLabel(String? iso) {
@@ -1141,10 +1393,7 @@ class _AttendeeRow extends StatelessWidget {
                 ),
                 if (subtitle.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: TextStyle(fontSize: 11, color: kDim),
-                  ),
+                  Text(subtitle, style: TextStyle(fontSize: 11, color: kDim)),
                 ],
               ],
             ),
@@ -1184,23 +1433,38 @@ class _EditScopeSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 36, height: 4,
+            width: 36,
+            height: 4,
             decoration: BoxDecoration(
               color: isDark ? Colors.white12 : Colors.black12,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
           const SizedBox(height: 18),
-          Text('Edit recurring event',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kText)),
+          Text(
+            'Edit recurring event',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: kText,
+            ),
+          ),
           const SizedBox(height: 6),
-          Text('"${event.title}"',
-              style: TextStyle(fontSize: 13, color: kDim),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(
+            '"${event.title}"',
+            style: TextStyle(fontSize: 13, color: kDim),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           const SizedBox(height: 18),
           _option(context, 'this', 'This event only', Icons.looks_one_outlined),
           const SizedBox(height: 8),
-          _option(context, 'thisAndFollowing', 'This and following events', Icons.arrow_forward_rounded),
+          _option(
+            context,
+            'thisAndFollowing',
+            'This and following events',
+            Icons.arrow_forward_rounded,
+          ),
           const SizedBox(height: 8),
           _option(context, 'all', 'All events in series', Icons.repeat_rounded),
         ],
@@ -1223,8 +1487,14 @@ class _EditScopeSheet extends StatelessWidget {
           children: [
             Icon(icon, size: 16, color: _kTurkuaz),
             const SizedBox(width: 12),
-            Text(label,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kText)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: kText,
+              ),
+            ),
           ],
         ),
       ),

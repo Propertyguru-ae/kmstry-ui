@@ -1,6 +1,7 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_model.dart';
+import 'claim_document_policy.dart';
 
 class NearbyVenuesResponse {
   final List<Venue> mapItems;
@@ -88,7 +89,9 @@ class PlaceGeometry {
 }
 
 class VenueRepository {
-  final ApiClient _api = ApiClient();
+  final ApiClient _api;
+
+  VenueRepository({ApiClient? apiClient}) : _api = apiClient ?? ApiClient();
 
   Future<List<Venue>> getNearbyVenues1({
     required double latitude,
@@ -378,7 +381,8 @@ class VenueRepository {
         if (ownerFullName != null && ownerFullName.isNotEmpty)
           'ownerFullName': ownerFullName,
         if (tradeLicenceUrl != null) 'tradeLicenceUrl': tradeLicenceUrl,
-        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+        if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
+          'ownerVideoUrl': ownerVideoUrl,
       },
       headers: {'Authorization': 'Bearer $token'},
     );
@@ -398,7 +402,8 @@ class VenueRepository {
       '/venues/claim/documents',
       body: {
         'tradeLicenceUrl': tradeLicenceUrl,
-        if (ownerVideoUrl != null) 'ownerVideoUrl': ownerVideoUrl,
+        if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
+          'ownerVideoUrl': ownerVideoUrl,
       },
       headers: {'Authorization': 'Bearer $token'},
     );
@@ -466,7 +471,8 @@ class VenueRepository {
       if (ownerFullName != null) 'owner_full_name': ownerFullName,
       if (ownerPhone != null) 'owner_phone': ownerPhone,
       if (tradeLicenceUrl != null) 'trade_licence_url': tradeLicenceUrl,
-      if (ownerVideoUrl != null) 'owner_video_url': ownerVideoUrl,
+      if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
+        'owner_video_url': ownerVideoUrl,
       if (currentStep != null) 'current_step': currentStep,
     };
 

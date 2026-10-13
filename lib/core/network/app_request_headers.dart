@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../config/app_config.dart';
+import 'app_check_token_cache.dart';
 
 /// Security and app metadata headers shared by JSON and multipart API calls.
 ///
@@ -12,6 +13,10 @@ class AppRequestHeaders {
   AppRequestHeaders._();
 
   static Map<String, String>? _metadataCache;
+  static final _appCheckTokens = AppCheckTokenCache(
+    loadToken: (forceRefresh) =>
+        FirebaseAppCheck.instance.getToken(forceRefresh),
+  );
 
   static Future<Map<String, String>> build({String? accessToken}) async {
     return {
@@ -25,19 +30,10 @@ class AppRequestHeaders {
   static Future<Map<String, String>> appCheck({
     bool forceRefresh = false,
   }) async {
-    try {
-      var token = await FirebaseAppCheck.instance.getToken(forceRefresh);
-      if (!forceRefresh && (token == null || token.isEmpty)) {
-        token = await FirebaseAppCheck.instance.getToken(true);
-      }
-      if (token != null && token.isNotEmpty) {
-        return {'X-Firebase-AppCheck': token};
-      }
-    } catch (_) {
-      // Keep monitor/off environments usable during App Check warm-up. In
-      // enforce mode the backend remains the source of truth and rejects calls
-      // that cannot present a valid token.
-    }
+    final token = await _appCheckTokens.getToken(forceRefresh: forceRefresh);
+    if (token != null) return {'X-Firebase-AppCheck': token};
+    // Bounded warm-up never disables the server's enforce policy. ApiClient
+    // retries an App Check 401 with one forced lookup, without logging out.
     return const {};
   }
 

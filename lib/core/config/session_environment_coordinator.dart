@@ -8,8 +8,11 @@ import 'package:http/http.dart' as http;
 import '../network/app_request_headers.dart';
 import '../push/push_manager.dart';
 import '../storage/secure_storage.dart';
+import '../checkin/checkin_ping_manager.dart';
+import '../../features/checkin/services/active_checkin_service.dart';
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/stories/data/story_viewed_cache.dart';
+import '../../features/content_moderation/data/pending_public_media.dart';
 import '../../features/venue_stories/data/venue_story_viewed_cache.dart';
 import '../../features/venue/presentation/profile_preview_page.dart';
 import 'app_config.dart';
@@ -118,6 +121,9 @@ class SessionEnvironmentCoordinator {
       }
     }
 
+    PendingPublicMediaService.instance.clear();
+    CheckinPingManager.I.stop();
+    ActiveCheckinService().clear();
     await SecureStorage.clearSession();
     PushManager.instance.onSessionEnded();
     AuthRepository.invalidateMeCache();

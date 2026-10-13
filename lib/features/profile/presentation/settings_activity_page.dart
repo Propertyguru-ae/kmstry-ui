@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -150,13 +151,8 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
   Future<void> _logout() async {
     if (_loggingOut) return;
     setState(() => _loggingOut = true);
-    try {
-      await AuthRepository().logout();
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pushNamedAndRemoveUntil(AuthRoutes.login, (r) => false);
+    await LogoutFlow.run(context, logout: AuthRepository().logout);
+    if (mounted) setState(() => _loggingOut = false);
   }
 
   Future<void> _deleteAccount() async {
@@ -216,135 +212,138 @@ class _SettingsActivityPageState extends State<SettingsActivityPage>
     final kBorder = isDark
         ? Colors.white.withValues(alpha: 0.05)
         : const Color(0xFFD9E1EA);
-    return Scaffold(
-      backgroundColor: kBg,
-      appBar: AppBar(
+    return LogoutGuard(
+      child: Scaffold(
         backgroundColor: kBg,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: colors.onSurface),
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        title: Text(
-          'Settings & Activity',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: colors.onSurface,
+        appBar: AppBar(
+          backgroundColor: kBg,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: colors.onSurface),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          title: Text(
+            'Settings & Activity',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: colors.onSurface,
+            ),
+          ),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Container(color: kBorder, height: 1),
           ),
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(color: kBorder, height: 1),
-        ),
-      ),
-      body: _loading
-          ? Center(child: CircularProgressIndicator(color: colors.primary))
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                physics: const BouncingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics(),
-                ),
-                padding: const EdgeInsets.all(16),
-                children: [
-                // ── Account Center ───────────────────────────────
-                _SectionLabel(label: 'Account'),
-                const SizedBox(height: 8),
-                _Card(
-                  child: ListTile(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const AccountSettingsPage(),
-                      ),
-                    ),
-                    leading: Icon(
-                      Icons.manage_accounts_outlined,
-                      color: colors.primary,
-                    ),
-                    title: Text(
-                      'Account Center',
-                      style: TextStyle(
-                        color: colors.onSurface,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'Email, password, theme & more',
-                      style: TextStyle(
-                        color: colors.onSurface.withValues(alpha: 0.6),
-                        fontSize: 13,
-                      ),
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
+        body: _loading
+            ? Center(child: CircularProgressIndicator(color: colors.primary))
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
                   ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Device Permissions ───────────────────────────
-                _SectionLabel(label: 'Device Permissions'),
-                const SizedBox(height: 8),
-                _PermissionTile(
-                  icon: Icons.camera_alt_outlined,
-                  title: 'Camera',
-                  subtitle: 'Used for check-in photos and videos',
-                  granted: _cameraGranted,
-                  colors: colors,
-                ),
-                const SizedBox(height: 8),
-                _PermissionTile(
-                  icon: Icons.location_on_outlined,
-                  title: 'Location',
-                  subtitle: 'Used to show nearby venues',
-                  granted: _locationGranted,
-                  colors: colors,
-                ),
-                const SizedBox(height: 8),
-                _PermissionTile(
-                  icon: Icons.notifications_outlined,
-                  title: 'Notifications',
-                  subtitle:
-                      _notificationGranted && !_accountNotificationsEnabled
-                      ? 'Tap to enable in-app notifications'
-                      : 'System-level notification permission',
-                  granted: _notificationGranted && _accountNotificationsEnabled,
-                  onTap: _handleNotificationTileTap,
-                  colors: colors,
-                ),
-
-                const SizedBox(height: 8),
-
-                // ── Log Out ──────────────────────────────────────
-                _Card(
-                  child: ListTile(
-                    onTap: _loggingOut ? null : _logout,
-                    leading: _loggingOut
-                        ? SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colors.error,
-                            ),
-                          )
-                        : Icon(Icons.logout, color: colors.error),
-                    title: Text(
-                      'Log Out',
-                      style: TextStyle(
-                        color: colors.error,
-                        fontWeight: FontWeight.w600,
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    // ── Account Center ───────────────────────────────
+                    _SectionLabel(label: 'Account'),
+                    const SizedBox(height: 8),
+                    _Card(
+                      child: ListTile(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AccountSettingsPage(),
+                          ),
+                        ),
+                        leading: Icon(
+                          Icons.manage_accounts_outlined,
+                          color: colors.primary,
+                        ),
+                        title: Text(
+                          'Account Center',
+                          style: TextStyle(
+                            color: colors.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Email, password, theme & more',
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.6),
+                            fontSize: 13,
+                          ),
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
                       ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(height: 32),
-                ],
+                    const SizedBox(height: 24),
+
+                    // ── Device Permissions ───────────────────────────
+                    _SectionLabel(label: 'Device Permissions'),
+                    const SizedBox(height: 8),
+                    _PermissionTile(
+                      icon: Icons.camera_alt_outlined,
+                      title: 'Camera',
+                      subtitle: 'Used for check-in photos',
+                      granted: _cameraGranted,
+                      colors: colors,
+                    ),
+                    const SizedBox(height: 8),
+                    _PermissionTile(
+                      icon: Icons.location_on_outlined,
+                      title: 'Location',
+                      subtitle: 'Used to show nearby venues',
+                      granted: _locationGranted,
+                      colors: colors,
+                    ),
+                    const SizedBox(height: 8),
+                    _PermissionTile(
+                      icon: Icons.notifications_outlined,
+                      title: 'Notifications',
+                      subtitle:
+                          _notificationGranted && !_accountNotificationsEnabled
+                          ? 'Tap to enable in-app notifications'
+                          : 'System-level notification permission',
+                      granted:
+                          _notificationGranted && _accountNotificationsEnabled,
+                      onTap: _handleNotificationTileTap,
+                      colors: colors,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // ── Log Out ──────────────────────────────────────
+                    _Card(
+                      child: ListTile(
+                        onTap: _loggingOut ? null : _logout,
+                        leading: _loggingOut
+                            ? SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colors.error,
+                                ),
+                              )
+                            : Icon(Icons.logout, color: colors.error),
+                        title: Text(
+                          'Log Out',
+                          style: TextStyle(
+                            color: colors.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
 import '../data/venue_story_model.dart';
 import '../data/venue_story_repository.dart';
 import '../data/venue_story_viewed_cache.dart';
@@ -36,7 +38,26 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
   @override
   void initState() {
     super.initState();
+    VenueStoryRepository.changes.addListener(_onPublishedChanged);
+    PendingPublicMediaService.instance.changes.addListener(_onPendingChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    VenueStoryRepository.changes.removeListener(_onPublishedChanged);
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onPendingChanged,
+    );
+    super.dispose();
+  }
+
+  void _onPublishedChanged() {
+    if (mounted) _load();
+  }
+
+  void _onPendingChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -56,7 +77,14 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
   }
 
   void _openViewer() {
-    if (_stories.isEmpty && !widget.isUploading) return;
+    if (_stories.isEmpty &&
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.venueStory,
+              venueId: widget.venueId,
+            ) ==
+            null) {
+      return;
+    }
     final venueId = widget.venueId;
 
     // Kaldığı yerden devam: ilk izlenmemiş story'den başla
@@ -71,9 +99,11 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
             mediaType: s.mediaType,
             thumbnailUrl: s.thumbnailUrl,
             durationSecs: s.durationSecs,
+            textOverlay: s.textOverlay,
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            canViewStats: s.canViewStats,
             user: s.posterUserId == null
                 ? null
                 : StoryUser(id: s.posterUserId!),
@@ -83,8 +113,6 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
           ),
         )
         .toList();
-
-    if (widget.isUploading) storyItems.add(StoryItem.uploadingPlaceholder());
 
     final group = StoryGroup(
       user: StoryUser(
@@ -102,6 +130,10 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
         builder: (_) => StoryViewerPage(
           groups: [group],
           venueId: venueId,
+          ownerUploadKind: widget.onAddStory != null
+              ? PendingPublicMediaKind.venueStory
+              : null,
+          onCreateStory: widget.onAddStory,
           isManagedVenueContent: widget.onAddStory != null,
           initialStoryIndex: initialIndex,
           onClose: (lastIndex, allFinished) {
@@ -133,8 +165,14 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
   Widget build(BuildContext context) {
     final hasStories = _stories.isNotEmpty;
     final canAdd = widget.onAddStory != null;
+    final pending = canAdd
+        ? PendingPublicMediaService.instance.latest(
+            PendingPublicMediaKind.venueStory,
+            venueId: widget.venueId,
+          )
+        : null;
 
-    if (!hasStories && !canAdd && !widget.isUploading) {
+    if (!hasStories && !canAdd && !widget.isUploading && pending == null) {
       return const SizedBox.shrink();
     }
 
@@ -146,8 +184,11 @@ class _VenueStoryBubbleState extends State<VenueStoryBubble> {
       hasStories: hasStories,
       allSeen: allSeen,
       isUploading: widget.isUploading,
+      pending: pending,
       onAddStory: canAdd ? widget.onAddStory! : null,
-      onViewStories: hasStories || widget.isUploading ? _openViewer : null,
+      onViewStories: pending != null || hasStories || widget.isUploading
+          ? _openViewer
+          : null,
     );
   }
 }
@@ -160,6 +201,7 @@ class _VenueBubble extends StatefulWidget {
   final bool hasStories;
   final bool allSeen;
   final bool isUploading;
+  final PendingPublicMedia? pending;
   final VoidCallback? onAddStory;
   final VoidCallback? onViewStories;
 
@@ -169,6 +211,7 @@ class _VenueBubble extends StatefulWidget {
     required this.hasStories,
     required this.allSeen,
     this.isUploading = false,
+    this.pending,
     this.onAddStory,
     this.onViewStories,
   });
@@ -226,7 +269,8 @@ class _VenueBubbleState extends State<_VenueBubble>
       );
     }
 
-    final showGradient = widget.hasStories && !widget.allSeen;
+    final showGradient =
+        widget.pending == null && widget.hasStories && !widget.allSeen;
     final showGray = widget.hasStories && widget.allSeen;
 
     return Container(
@@ -263,7 +307,7 @@ class _VenueBubbleState extends State<_VenueBubble>
     final photo = widget.venuePhotoUrl;
 
     return GestureDetector(
-      onTap: uploading ? widget.onViewStories : widget.onViewStories,
+      onTap: widget.onViewStories,
       child: Padding(
         padding: const EdgeInsets.only(right: 12),
         child: Column(
@@ -279,16 +323,26 @@ class _VenueBubbleState extends State<_VenueBubble>
                       shape: BoxShape.circle,
                       color: Theme.of(context).scaffoldBackgroundColor,
                     ),
-                    child: CircleAvatar(
-                      radius: 27,
-                      backgroundColor: color.withValues(alpha: 0.12),
-                      backgroundImage: photo != null && photo.isNotEmpty
-                          ? NetworkImage(photo)
-                          : null,
-                      child: photo == null || photo.isEmpty
-                          ? Icon(Icons.storefront, color: color, size: 26)
-                          : null,
-                    ),
+                    child: widget.pending != null
+                        ? ClipOval(
+                            child: SizedBox(
+                              width: 54,
+                              height: 54,
+                              child: PendingPublicMediaPreview(
+                                item: widget.pending!,
+                              ),
+                            ),
+                          )
+                        : CircleAvatar(
+                            radius: 27,
+                            backgroundColor: color.withValues(alpha: 0.12),
+                            backgroundImage: photo != null && photo.isNotEmpty
+                                ? NetworkImage(photo)
+                                : null,
+                            child: photo == null || photo.isEmpty
+                                ? Icon(Icons.storefront, color: color, size: 26)
+                                : null,
+                          ),
                   ),
                 ),
                 if (canAdd && !uploading)
@@ -319,6 +373,8 @@ class _VenueBubbleState extends State<_VenueBubble>
                   ),
               ],
             ),
+            if (widget.pending != null)
+              StoryUploadStatus(item: widget.pending!),
           ],
         ),
       ),

@@ -16,41 +16,48 @@ class MediaUploadProgressState {
   final double? progress;
 }
 
-/// Displays a non-dismissible upload status dialog.
-///
-/// Media uploads are intentionally kept on the current route: navigating away
-/// during a large multipart request can make an otherwise healthy upload look
-/// cancelled. Call [update] while preparing/uploading, then [close] in a
-/// `finally` block.
+/// Transfer progress. Use [allowBackground] only when a repository owns the
+/// upload and its result independently of the current route.
 class MediaUploadProgressController {
   MediaUploadProgressController({
     required String title,
     required String message,
+    this.allowBackground = false,
+    this.onKeepBrowsing,
   }) : _state = ValueNotifier(
          MediaUploadProgressState(title: title, message: message),
        );
 
   final ValueNotifier<MediaUploadProgressState> _state;
-  BuildContext? _dialogContext;
+  final bool allowBackground;
+  final VoidCallback? onKeepBrowsing;
+  DialogRoute<void>? _dialogRoute;
   Future<void>? _dialogFuture;
 
   Future<void> show(BuildContext context) async {
     final ready = Completer<void>();
-    _dialogFuture = showDialog<void>(
+    final route = DialogRoute<void>(
       context: context,
-      useRootNavigator: true,
       barrierDismissible: false,
       builder: (dialogContext) {
-        _dialogContext = dialogContext;
         if (!ready.isCompleted) {
           scheduleMicrotask(ready.complete);
         }
         return PopScope(
           canPop: false,
-          child: _MediaUploadProgressDialog(state: _state),
+          child: _MediaUploadProgressDialog(
+            state: _state,
+            allowBackground: allowBackground,
+            onKeepBrowsing: () async {
+              await close();
+              onKeepBrowsing?.call();
+            },
+          ),
         );
       },
     );
+    _dialogRoute = route;
+    _dialogFuture = Navigator.of(context, rootNavigator: true).push(route);
     await ready.future;
   }
 
@@ -73,12 +80,17 @@ class MediaUploadProgressController {
   }
 
   Future<void> close() async {
-    final dialogContext = _dialogContext;
-    if (dialogContext != null && dialogContext.mounted) {
-      Navigator.of(dialogContext, rootNavigator: true).pop();
+    final route = _dialogRoute;
+    _dialogRoute = null;
+    if (route != null && route.isActive) {
+      // Another route may have opened while the upload finished. Never pop it.
+      if (route.isCurrent) {
+        route.navigator?.pop();
+      } else {
+        route.navigator?.removeRoute(route);
+      }
     }
     await _dialogFuture;
-    _dialogContext = null;
     _dialogFuture = null;
   }
 
@@ -86,14 +98,28 @@ class MediaUploadProgressController {
 }
 
 class _MediaUploadProgressDialog extends StatelessWidget {
-  const _MediaUploadProgressDialog({required this.state});
+  const _MediaUploadProgressDialog({
+    required this.state,
+    required this.allowBackground,
+    required this.onKeepBrowsing,
+  });
 
   final ValueListenable<MediaUploadProgressState> state;
+  final bool allowBackground;
+  final VoidCallback onKeepBrowsing;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return AlertDialog(
+      actions: allowBackground
+          ? [
+              TextButton(
+                onPressed: onKeepBrowsing,
+                child: const Text('Keep browsing'),
+              ),
+            ]
+          : null,
       icon: Container(
         width: 52,
         height: 52,
@@ -166,7 +192,9 @@ class _MediaUploadProgressDialog extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Please keep KMSTRY open and stay on this screen until the upload finishes.',
+                      allowBackground
+                          ? 'You can keep browsing in KMSTRY while your upload continues.'
+                          : 'Please keep KMSTRY open and stay on this screen until the upload finishes.',
                       style: TextStyle(
                         color: colors.onSurface.withValues(alpha: 0.55),
                         fontSize: 11.5,

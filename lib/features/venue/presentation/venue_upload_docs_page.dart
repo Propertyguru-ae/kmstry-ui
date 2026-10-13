@@ -13,6 +13,7 @@ import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 
 // Renksiz sabitler — tema bağımsız
 const _kBlue = AppColors.blue;
@@ -67,6 +68,7 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
   }
 
   Future<void> _pickVideo() async {
+    if (!ClaimDocumentPolicy.ownershipVideoEnabled) return;
     if (_uploadingVideo) return;
     final source = await _showVideoSourceSheet();
     if (source == null) return;
@@ -164,7 +166,7 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
 
   Future<void> _submit() async {
     if (_submitting) return;
-    if (_licenceUrl == null || _videoUrl == null) {
+    if (!ClaimDocumentPolicy.hasRequiredDocuments(_licenceUrl, _videoUrl)) {
       setState(() => _showValidationError = true);
       return;
     }
@@ -530,18 +532,19 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                       isDark: isDark,
                       onTap: _pickLicence,
                     ),
-                    const SizedBox(height: 9),
-
-                    _DocCard(
-                      icon: Icons.videocam_outlined,
-                      name: 'Ownership Video',
-                      required: true,
-                      formats: const ['MP4', 'MOV'],
-                      uploaded: _videoUrl != null,
-                      loading: _uploadingVideo,
-                      isDark: isDark,
-                      onTap: _pickVideo,
-                    ),
+                    if (ClaimDocumentPolicy.ownershipVideoEnabled) ...[
+                      const SizedBox(height: 9),
+                      _DocCard(
+                        icon: Icons.videocam_outlined,
+                        name: 'Ownership Video',
+                        required: true,
+                        formats: const ['MP4', 'MOV'],
+                        uploaded: _videoUrl != null,
+                        loading: _uploadingVideo,
+                        isDark: isDark,
+                        onTap: _pickVideo,
+                      ),
+                    ],
                     const SizedBox(height: 16),
 
                     // Teaser

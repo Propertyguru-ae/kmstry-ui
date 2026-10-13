@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/app_sheet.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'report_ui.dart';
 import '../../checkin/data/checkin_repository.dart';
 
 /// The backend `ReportReason` enum only has coarse buckets
@@ -38,19 +42,36 @@ Future<bool> showReportUserSheet(
   String? venueStoryId,
   String? checkinMediaId,
   String? venueId,
+  String? venuePhotoId,
+  String? venuePhotoUrl,
+  String? googlePhotoToken,
   String? venueGalleryItemId,
   String? eventId,
   String? venueOfferId,
   String? venueMenuItemId,
   String? venueBenefitId,
+  CheckinRepository? repository,
 }) async {
-  final repo = CheckinRepository();
+  final repo = repository ?? CheckinRepository();
   final reportsSelectedContent =
       messageId != null ||
       storyId != null ||
       venueStoryId != null ||
       checkinMediaId != null ||
       venueId != null ||
+      venuePhotoId != null ||
+      googlePhotoToken != null ||
+      venueGalleryItemId != null ||
+      eventId != null ||
+      venueOfferId != null ||
+      venueMenuItemId != null ||
+      venueBenefitId != null;
+  // Venue içeriği raporu venue tarafına gider; venue'nun kendi kullanıcısı
+  // (ör. sahibi personal hesabından) raporlarsa backend CANNOT_REPORT_SELF döner.
+  final reportsVenueContent =
+      venueStoryId != null ||
+      venueId != null ||
+      venuePhotoId != null ||
       venueGalleryItemId != null ||
       eventId != null ||
       venueOfferId != null ||
@@ -59,21 +80,24 @@ Future<bool> showReportUserSheet(
 
   int? selectedIndex;
   bool submitting = false;
-  bool submitted = false;
   String? submitError;
   var reportSucceeded = false;
+  var alreadyReported = false;
+  final reportTarget = venuePhotoId != null || googlePhotoToken != null
+      ? 'this photo'
+      : reportsSelectedContent
+      ? 'this content'
+      : 'this account';
 
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    barrierColor: AppSheetPalette.of(context).barrier,
     builder: (ctx) {
-      final theme = Theme.of(ctx);
-      final colors = theme.colorScheme;
-      final isDark = theme.brightness == Brightness.dark;
+      final palette = AppSheetPalette.of(ctx);
       final screenHeight = MediaQuery.of(ctx).size.height;
       final bottomInset = MediaQuery.of(ctx).padding.bottom;
-      const destructive = Color(0xFFEF4444);
 
       return StatefulBuilder(
         builder: (ctx, setModalState) {
@@ -83,150 +107,89 @@ Future<bool> showReportUserSheet(
             height: screenHeight * 0.86,
             child: Container(
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF161C28) : colors.surface,
+                color: palette.surface,
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
+                  top: Radius.circular(26),
                 ),
+                border: Border.all(color: palette.border),
               ),
               child: Column(
                 children: [
                   const SizedBox(height: 10),
-                  Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colors.onSurface.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  if (!submitted) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: TextStyle(
-                                color: colors.onSurface,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                  const AppSheetHeader(),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const ReportHeaderIcon(),
+                        const SizedBox(height: 14),
+                        Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: palette.title,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
                           ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(
-                              Icons.close_rounded,
-                              color: colors.onSurface.withValues(alpha: 0.6),
-                            ),
-                            onPressed: submitting
-                                ? null
-                                : () => Navigator.of(ctx).pop(),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: colors.onSurface.withValues(alpha: 0.05),
-                          borderRadius: BorderRadius.circular(14),
                         ),
-                        child: Text(
+                        const SizedBox(height: 6),
+                        Text(
                           reportsSelectedContent
                               ? 'The selected content will be shared with authorised KMSTRY moderators. This person won\'t know you reported it. Reporting content does not block the account.'
                               : 'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: colors.onSurface.withValues(alpha: 0.72),
-                            fontSize: 12.5,
-                            height: 1.4,
+                            color: palette.muted,
+                            fontSize: 13,
+                            height: 1.35,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Expanded(
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                        itemCount: _kReportCategories.length,
-                        separatorBuilder: (_, _) => Divider(
-                          height: 1,
-                          indent: 20,
-                          endIndent: 20,
-                          color: colors.onSurface.withValues(alpha: 0.08),
-                        ),
-                        itemBuilder: (ctx, i) {
-                          final selected = selectedIndex == i;
-                          return InkWell(
-                            onTap: submitting
-                                ? null
-                                : () => setModalState(() => selectedIndex = i),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 14,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      _kReportCategories[i].label,
-                                      style: TextStyle(
-                                        color: colors.onSurface,
-                                        fontSize: 14.5,
-                                        fontWeight: selected
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                      ),
-                                    ),
-                                  ),
-                                  Icon(
-                                    selected
-                                        ? Icons.radio_button_checked_rounded
-                                        : Icons.radio_button_off_rounded,
-                                    size: 20,
-                                    color: selected
-                                        ? colors.primary
-                                        : colors.onSurface.withValues(
-                                            alpha: 0.3,
-                                          ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    if (submitError != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                        child: Text(
-                          submitError!,
-                          style: TextStyle(color: colors.error, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(22, 0, 22, 4),
+                      itemCount: _kReportCategories.length,
+                      itemBuilder: (ctx, i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: ReportReasonTile(
+                          label: _kReportCategories[i].label,
+                          selected: selectedIndex == i,
+                          onTap: submitting
+                              ? null
+                              : () => setModalState(() => selectedIndex = i),
                         ),
                       ),
+                    ),
+                  ),
+                  if (submitError != null)
                     Padding(
-                      padding: EdgeInsets.fromLTRB(20, 8, 20, bottomInset + 16),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: destructive.withValues(
-                              alpha: canSubmit ? 1 : 0.4,
-                            ),
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
+                      padding: const EdgeInsets.fromLTRB(22, 6, 22, 0),
+                      child: Text(
+                        submitError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFF04438),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(22, 12, 22, bottomInset + 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ReportSubmitButton(
+                          label: reportsSelectedContent
+                              ? 'Report'
+                              : 'Report & block',
+                          loading: submitting,
                           onPressed: canSubmit
                               ? () async {
                                   final category =
@@ -245,6 +208,9 @@ Future<bool> showReportUserSheet(
                                       venueStoryId: venueStoryId,
                                       checkinMediaId: checkinMediaId,
                                       venueId: venueId,
+                                      venuePhotoId: venuePhotoId,
+                                      venuePhotoUrl: venuePhotoUrl,
+                                      googlePhotoToken: googlePhotoToken,
                                       venueGalleryItemId: venueGalleryItemId,
                                       eventId: eventId,
                                       venueOfferId: venueOfferId,
@@ -252,12 +218,33 @@ Future<bool> showReportUserSheet(
                                       venueBenefitId: venueBenefitId,
                                     );
                                     reportSucceeded = true;
-                                  } catch (_) {
+                                  } catch (error) {
                                     if (!ctx.mounted) return;
+                                    if (error is ApiException &&
+                                        error.data['errorCode'] ==
+                                            'ALREADY_REPORTED_RECENTLY') {
+                                      // Show an informational outcome, not a
+                                      // submission failure or a new success.
+                                      alreadyReported = true;
+                                      Navigator.of(ctx).pop();
+                                      return;
+                                    }
+                                    final errorCode = error is ApiException
+                                        ? error.data['errorCode']
+                                        : null;
                                     setModalState(() {
                                       submitting = false;
-                                      submitError =
-                                          'Could not submit report. Please try again.';
+                                      submitError = switch (errorCode) {
+                                        'REPORTED_PHOTO_CHANGED' =>
+                                          'This photo has changed. Refresh the venue and try again.',
+                                        'CANNOT_REPORT_SELF'
+                                            when reportsVenueContent =>
+                                          'You manage this venue, so you cannot report its content.',
+                                        'CANNOT_REPORT_SELF' =>
+                                          'You cannot report your own content.',
+                                        _ =>
+                                          'Could not submit report. Please try again.',
+                                      };
                                     });
                                     return;
                                   }
@@ -272,114 +259,32 @@ Future<bool> showReportUserSheet(
                                     } catch (_) {}
                                   }
 
-                                  if (!ctx.mounted) return;
-                                  setModalState(() {
-                                    submitting = false;
-                                    submitted = true;
-                                  });
+                                  // Teşekkür mesajı uygulamanın standart
+                                  // bilgilendirme penceresinde gösterilir.
+                                  if (ctx.mounted) Navigator.of(ctx).pop();
                                 }
                               : null,
-                          child: submitting
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.flag_rounded,
-                                      size: 18,
-                                      color: Colors.white,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Report',
-                                      style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        TextButton(
+                          onPressed: submitting
+                              ? null
+                              : () => Navigator.of(ctx).pop(),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size.fromHeight(44),
+                            foregroundColor: palette.muted,
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ] else
-                    Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          24,
-                          24,
-                          24,
-                          bottomInset + 16,
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF22C55E,
-                                ).withValues(alpha: 0.12),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.verified_user_rounded,
-                                color: Color(0xFF22C55E),
-                                size: 28,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Thanks for your report',
-                              style: TextStyle(
-                                color: colors.onSurface,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              reportsSelectedContent
-                                  ? 'The selected content has been sent to the KMSTRY moderation team.'
-                                  : 'This user has been blocked automatically, and messaging has been paused for your safety.',
-                              style: TextStyle(
-                                color: colors.onSurface.withValues(alpha: 0.7),
-                                fontSize: 13.5,
-                                height: 1.4,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 24),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  elevation: 0,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                                onPressed: () => Navigator.pop(ctx),
-                                child: const Text(
-                                  'Done',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  ),
                 ],
               ),
             ),
@@ -389,5 +294,21 @@ Future<bool> showReportUserSheet(
     },
   );
 
+  if (reportSucceeded && !alreadyReported && context.mounted) {
+    await showReportThanksDialog(
+      context,
+      contentReport: reportsSelectedContent,
+    );
+  } else if (alreadyReported && context.mounted) {
+    await showPremiumPromptDialog(
+      context,
+      icon: Icons.info_outline_rounded,
+      title: 'Already reported',
+      message:
+          "You've already sent a similar report for $reportTarget in the last 24 hours. No new report was sent.",
+      confirmLabel: 'Done',
+      showCancel: false,
+    );
+  }
   return reportSucceeded;
 }

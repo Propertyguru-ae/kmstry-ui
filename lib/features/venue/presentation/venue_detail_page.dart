@@ -1,23 +1,27 @@
 import 'dart:async';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
+import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:kmstry_frontend/core/location/checkin_location_policy.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
-import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
-import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_report_options_sheet.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_deal_detail_page.dart';
@@ -35,11 +39,13 @@ import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart'
 import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_tray.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
 
 import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -51,24 +57,46 @@ import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.
 
 class VenueDetailPage extends StatefulWidget {
   final Venue venue;
+  final VenueContextRepository? venueContextRepository;
+  final VenueCheckinRepository? checkinRepository;
+  final VenueStoryRepository? venueStoryRepository;
+  final ExternalPartnershipRepository? partnershipRepository;
+  final StoryRepository? storyRepository;
+  final VenueGalleryRepository? galleryRepository;
+  final AuthRepository? authRepository;
+  final GooglePhotoLinkLauncher? reportLinkLauncher;
 
-  const VenueDetailPage({super.key, required this.venue});
+  const VenueDetailPage({
+    super.key,
+    required this.venue,
+    this.venueContextRepository,
+    this.checkinRepository,
+    this.venueStoryRepository,
+    this.partnershipRepository,
+    this.storyRepository,
+    this.galleryRepository,
+    this.authRepository,
+    this.reportLinkLauncher,
+  });
 
   @override
   State<VenueDetailPage> createState() => _VenueDetailPageState();
 }
 
 class _VenueDetailPageState extends State<VenueDetailPage> {
-  final _repo = VenueCheckinRepository();
+  late final _repo = widget.checkinRepository ?? VenueCheckinRepository();
   final _checkinRepo = CheckinRepository();
-  final _venueContextRepo = VenueContextRepository();
-  final _storyRepo = StoryRepository();
-  final _venueStoryRepo = VenueStoryRepository();
-  final _partnershipRepo = ExternalPartnershipRepository();
+  late final _venueContextRepo =
+      widget.venueContextRepository ?? VenueContextRepository();
+  late final _venueStoryRepo =
+      widget.venueStoryRepository ?? VenueStoryRepository();
+  late final _partnershipRepo =
+      widget.partnershipRepository ?? ExternalPartnershipRepository();
+  late final _authRepo = widget.authRepository ?? AuthRepository();
   final _chatRepo = ChatRepository();
   List<ExternalPartnershipModel> _partnerships = const [];
   int _storyTrayRefreshCount = 0;
-  bool _storyUploading = false;
+  final bool _storyUploading = false;
   bool _hasMyStoryHere =
       false; // kullanıcının bu venue'da kendi story'si var mı
   bool _storyStateKnown =
@@ -89,6 +117,13 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   bool _resolvingVenueForCheckin = false;
   Map<String, dynamic>? _venueDetails;
   Map<String, dynamic>? _enrichedVenueData;
+  late List<VenueUpcomingEvent> _upcomingEvents;
+  int _identityRequest = 0;
+  int _eventsRequest = 0;
+  int _partnershipRequest = 0;
+  int _googleDetailsRequest = 0;
+  int _headerStoriesRequest = 0;
+  int _followRevision = 0;
   late String _venuePhotoUrl;
   MediaReference? _venuePhotoReference;
   bool _loadingCheckinStats = false;
@@ -101,6 +136,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   int _galleryCount = 0; // VenueGalleryStrip'ten gelen foto/video adedi
   int _galleryRefreshEpoch = 0;
   bool _isAnonymous = false; // Anonymous Mode blocks story sharing
+  bool _openingReport = false;
+  bool _loadingReportLink = false;
 
   // Açılır/kapanır bölümlerin durumu (varsayılan açık).
   bool _eventsExpanded = true;
@@ -124,6 +161,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     _checkinCountFemale = widget.venue.checkinCountFemale;
     _isFollowing = widget.venue.isFollowing;
     _followerCount = widget.venue.followerCount;
+    _upcomingEvents = widget.venue.upcomingEvents;
     _primeResolvedVenueId();
     _primeActiveCheckinFromMemory();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -151,6 +189,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     unawaited(_loadVenueDetails());
     unawaited(_loadActiveCheckin());
     unawaited(_loadEnrichedVenueData());
+    unawaited(_loadUpcomingEvents());
+    unawaited(_loadPartnerships());
     unawaited(_checkProximity(useFreshGps: false));
 
     if (_checkinCountActive == null &&
@@ -179,6 +219,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     await Future.wait<void>([
       _loadVenueDetails(),
       _loadEnrichedVenueData(),
+      _loadUpcomingEvents(),
+      _loadPartnerships(),
       _loadActiveCheckin(),
       _refreshCheckinStats(),
       _loadHeaderStories(),
@@ -188,13 +230,114 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   Future<void> _reportVenue() async {
-    final venueId = widget.venue.id.trim();
-    if (!widget.venue.isInDb || venueId.isEmpty || !mounted) return;
+    final venueId =
+        _resolvedVenueIdForCurrentDetail?.trim() ??
+        (widget.venue.isInDb ? widget.venue.id.trim() : '');
+    if (!mounted) return;
+    if (venueId.isEmpty) {
+      final placeId = widget.venue.placeId?.trim() ?? widget.venue.id.trim();
+      if (placeId.isEmpty) return;
+      final url = Uri.https('www.google.com', '/maps/search/', {
+        'api': '1',
+        'query': widget.venue.name,
+        'query_place_id': placeId,
+      });
+      await _openExternalReport(
+        url,
+        instructions:
+            'On the place page, choose Suggest an edit or Report a problem.',
+      );
+      return;
+    }
+    setState(() => _loadingReportLink = true);
+    final externalUrl = await _venueContextRepo.getVenueReportUrl(venueId);
+    if (!mounted) return;
+    setState(() => _loadingReportLink = false);
+    if (externalUrl != null) {
+      await _openExternalReport(
+        externalUrl,
+        instructions:
+            'On the place page, choose Suggest an edit or Report a problem.',
+      );
+      return;
+    }
     await showReportUserSheet(
       context,
       title: 'Why are you reporting this venue?',
       venueId: venueId,
     );
+  }
+
+  Future<void> _openReportOptions() async {
+    if (_openingReport) return;
+    setState(() => _openingReport = true);
+    final photoUrl = _venuePhotoUrl.trim();
+    try {
+      final target = await showVenueReportOptions(
+        context,
+        hasPhoto: photoUrl.isNotEmpty,
+      );
+      if (!mounted || target == null) return;
+      if (target == VenueReportTarget.venue) {
+        await _reportVenue();
+      } else if (isGooglePlacePhotoProxyUrl(photoUrl)) {
+        setState(() => _loadingReportLink = true);
+        final source = await _venueContextRepo.getGooglePhotoSource(photoUrl);
+        if (!mounted) return;
+        setState(() => _loadingReportLink = false);
+        await showReportUserSheet(
+          context,
+          title: 'Why are you reporting this photo?',
+          googlePhotoToken: Uri.parse(source.photoUrl).pathSegments.last,
+        );
+      } else if (widget.venue.isInDb) {
+        await showReportUserSheet(
+          context,
+          title: 'Why are you reporting this photo?',
+          venuePhotoId: widget.venue.id,
+          venuePhotoUrl: photoUrl,
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is ApiException &&
+                      error.data['errorCode'] == 'CANNOT_REPORT_SELF'
+                  ? 'You cannot report your own venue.'
+                  : "Couldn't open reporting. Refresh the venue and try again.",
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _openingReport = false;
+          _loadingReportLink = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openExternalReport(Uri url, {String? instructions}) async {
+    if (!mounted) return;
+    if (instructions != null) {
+      setState(() => _loadingReportLink = false);
+      final confirmed = await confirmGoogleReportNavigation(
+        context,
+        instructions: instructions,
+      );
+      if (!mounted || !confirmed) return;
+    }
+    setState(() => _loadingReportLink = true);
+    final opened =
+        await (widget.reportLinkLauncher?.call(url) ??
+            launchUrl(url, mode: LaunchMode.externalApplication));
+    if (!opened) {
+      throw StateError('Report page unavailable');
+    }
   }
 
   /// Gerçek venue'lerde kullanıcının fiziksel olarak mekânda olup olmadığını
@@ -278,13 +421,15 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   Future<void> _loadAnonymousStatus() async {
     try {
-      final me = await AuthRepository().getMe();
+      final me = await _authRepo.getMe();
       if (!mounted) return;
       setState(() => _isAnonymous = me['isAnonymous'] == true);
     } catch (_) {}
   }
 
   Future<void> _loadHeaderStories() async {
+    final request = ++_headerStoriesRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     if (mounted && _resolvedVenueIdForCurrentDetail == null) {
       setState(() {
         _storySectionLoading = true;
@@ -295,7 +440,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     try {
       final venueId = await _resolveVenueIdForDetail();
       final stories = await _venueStoryRepo.getVenueStories(venueId);
-      if (!mounted) return;
+      if (!_isCurrentRead(request, _headerStoriesRequest, session)) return;
       setState(() {
         _headerStories = stories;
         _storySectionLoading = false;
@@ -303,7 +448,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       });
     } catch (e) {
       debugPrint('⚠️ Could not prepare venue stories: $e');
-      if (!mounted) return;
+      if (!_isCurrentRead(request, _headerStoriesRequest, session)) return;
       setState(() {
         _storySectionLoading = false;
         _storySectionUnavailable = true;
@@ -331,9 +476,11 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               mediaType: s.mediaType,
               thumbnailUrl: s.thumbnailUrl,
               durationSecs: s.durationSecs,
+              textOverlay: s.textOverlay,
               expiresAt: s.expiresAt,
               createdAt: s.createdAt,
               viewCount: s.viewCount,
+              canViewStats: s.canViewStats,
               user: s.posterUserId == null
                   ? null
                   : StoryUser(id: s.posterUserId!),
@@ -394,9 +541,16 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   Future<void> _loadEnrichedVenueData() async {
     if (!widget.venue.isInDb || widget.venue.id.isEmpty) return;
+    final request = ++_identityRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    final followRevision = _followRevision;
     try {
-      final data = await _venueContextRepo.getVenueById(widget.venue.id);
-      if (!mounted) return;
+      final data = await PerformanceDiagnostics.pageLoad(
+        PerformancePage.venueDetail,
+        () => _venueContextRepo.getVenueDetailIdentity(widget.venue.id),
+        isMounted: () => mounted,
+      );
+      if (!_isCurrentRead(request, _identityRequest, session)) return;
       final freshPhoto = MediaReference.venuePhoto(
         data,
         venueId: widget.venue.id,
@@ -404,16 +558,19 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       );
       setState(() {
         _enrichedVenueData = data;
-        if (freshPhoto.url.isNotEmpty || freshPhoto.canRefresh) {
-          _venuePhotoUrl = freshPhoto.url;
-          _venuePhotoReference = freshPhoto;
+        // An authoritative empty photo must also clear an old card snapshot.
+        _venuePhotoUrl = freshPhoto.url;
+        // Do not let a previously refreshed URL revive an explicitly empty
+        // response through the signed-link cache.
+        _venuePhotoReference = freshPhoto.url.isEmpty ? null : freshPhoto;
+        if (followRevision == _followRevision) {
+          _isFollowing = (data['isFollowing'] ?? data['is_following']) == true;
+          _followerCount =
+              _parseOptionalInt(
+                data['followerCount'] ?? data['follower_count'],
+              ) ??
+              _followerCount;
         }
-        _isFollowing = (data['isFollowing'] ?? data['is_following']) == true;
-        _followerCount =
-            _parseOptionalInt(
-              data['followerCount'] ?? data['follower_count'],
-            ) ??
-            _followerCount;
         if (data['isTestVenue'] == true) {
           _isNearVenue = true;
           _checkingProximity = false;
@@ -422,16 +579,44 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     } catch (e) {
       debugPrint('⚠️ Could not load enriched venue data: $e');
     }
-    // Deals & discounts (external partnerships) — public, best-effort.
+  }
+
+  bool _isCurrentRead(int request, int current, int session) =>
+      mounted &&
+      request == current &&
+      PendingPublicMediaService.instance.isCurrentSession(session);
+
+  Future<void> _loadUpcomingEvents() async {
+    if (!widget.venue.isInDb || widget.venue.id.isEmpty) return;
+    final request = ++_eventsRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    try {
+      final events = await _venueContextRepo.getVenueDetailUpcomingEvents(
+        widget.venue.id,
+      );
+      if (!_isCurrentRead(request, _eventsRequest, session)) return;
+      setState(() => _upcomingEvents = events);
+    } catch (_) {
+      // Keep the already-public card snapshot on a transient read failure.
+    }
+  }
+
+  Future<void> _loadPartnerships() async {
+    if (!widget.venue.isInDb || widget.venue.id.isEmpty) return;
+    final request = ++_partnershipRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final partnerships = await _partnershipRepo.getActivePartnerships(
         widget.venue.id,
       );
-      if (mounted) setState(() => _partnerships = partnerships);
+      if (!_isCurrentRead(request, _partnershipRequest, session)) return;
+      setState(() => _partnerships = partnerships);
     } catch (_) {}
   }
 
   Future<void> _loadVenueDetails() async {
+    final request = ++_googleDetailsRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final placeId = widget.venue.placeId;
 
@@ -441,7 +626,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
       final data = await _venueContextRepo.getVenueDetails(placeId);
 
-      if (!mounted) return;
+      if (!_isCurrentRead(request, _googleDetailsRequest, session)) return;
 
       setState(() {
         _venueDetails = data;
@@ -461,6 +646,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
   Future<void> _toggleFollow() async {
     if (_followLoading) return;
+    _followRevision++;
     final previousFollowing = _isFollowing;
     final previousCount = _followerCount;
     final nextFollowing = !previousFollowing;
@@ -1387,7 +1573,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       }
 
       try {
-        final venueData = await _venueContextRepo.getVenueById(activeVenueId);
+        final venueData = await _venueContextRepo.getVenueDetailIdentity(
+          activeVenueId,
+        );
         final placeId =
             (venueData['placeId'] ??
                     venueData['place_id'] ??
@@ -1639,7 +1827,9 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
     final dynamic captureResult = await Navigator.push(
       context,
-      cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
+      cameraRoute(
+        builder: (_) => const CameraScreen.publicMedia(useFrontCamera: true),
+      ),
     );
 
     final File? file = captureResult is CapturedMedia
@@ -1650,78 +1840,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
         : null;
     if (file == null || !mounted) return;
 
-    // Determine media type from extension.
-    final filePath = file.path;
-    final isVideo =
-        filePath.endsWith('.mp4') ||
-        filePath.endsWith('.mov') ||
-        filePath.endsWith('.avi');
-    final mediaType = isVideo ? 'video' : 'photo';
-
-    // Overlay'i async gap'ten ÖNCE yakala — kullanıcı başka sayfaya geçse bile
-    // kart root overlay üzerinde gösterilecek.
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    final uploadProgress = MediaUploadProgressController(
-      title: isVideo ? 'Preparing video' : 'Uploading story',
-      message: isVideo
-          ? 'Optimizing your video for a faster upload…'
-          : 'Your photo is being uploaded…',
+    StoryUploadCoordinator.instance.sharePersonal(
+      file: file,
+      checkinId: checkinId,
+      venueId: widget.venue.id,
+      textOverlayJson: storyOverlay?.toJsonString(),
     );
-
-    setState(() => _storyUploading = true);
-    await uploadProgress.show(context);
-    Object? uploadError;
-    StackTrace? uploadStack;
-    try {
-      final uploadFile = isVideo
-          ? await MediaCompressor.compressVenueVideo(file)
-          : file;
-      if (isVideo) {
-        uploadProgress.update(
-          title: 'Uploading video',
-          message: 'Your optimized story is being uploaded…',
-          progress: 0,
-        );
-      }
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: uploadFile,
-        mediaType: mediaType,
-        textOverlayJson: storyOverlay?.toJsonString(),
-        onProgress: (sent, total) {
-          if (total <= 0) return;
-          uploadProgress.update(progress: sent / total);
-        },
-      );
-    } catch (e, st) {
-      uploadError = e;
-      uploadStack = st;
-    } finally {
-      await uploadProgress.close();
-      uploadProgress.dispose();
-      if (mounted) setState(() => _storyUploading = false);
-    }
-
-    if (!mounted) return;
-    if (uploadError != null) {
-      debugPrint('❌ Story upload error: $uploadError\n$uploadStack');
-      await showPremiumErrorDialog(
-        context,
-        message: 'Story could not be uploaded. Please try again.',
-      );
-      return;
-    }
-
-    setState(() => _storyTrayRefreshCount++);
-    // Kutlama kartını göster — kullanıcı nerede olursa olsun.
-    if (overlay != null) {
-      showStorySharedCard(
-        overlay,
-        mediaFile: file,
-        venueName: widget.venue.name,
-        isVideo: isVideo,
-      );
-    }
   }
 
   Future<void> _checkout() async {
@@ -1875,8 +1999,12 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            VenueDealDetailPage(deal: p, venueName: widget.venue.name),
+        // Ziyaretçi görünümü: deal raporlanabilir.
+        builder: (_) => VenueDealDetailPage(
+          deal: p,
+          venueName: widget.venue.name,
+          allowReport: true,
+        ),
       ),
     );
   }
@@ -2178,489 +2306,495 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   @override
   Widget build(BuildContext context) {
     final hasActiveCheckinHere = _isActiveCheckinAtCurrentVenue();
-    final opening = _venueDetails?['openingHours'];
-    final isOpen = opening?['open_now'] == true;
+    final opening =
+        _venueDetails?['openingHours'] ??
+        _enrichedVenueData?['openingHours'] ??
+        widget.venue.openingHours;
+    final isOpen = (opening?['open_now'] ?? widget.venue.openNow) == true;
     final weekdayText = opening?['weekday_text'];
-    final rating = _venueDetails?['rating'];
+    final rating = _venueDetails?['rating'] ?? widget.venue.rating;
+    final description = _enrichedVenueData == null
+        ? widget.venue.description
+        : _enrichedVenueData!['description'] as String?;
+    final weeklyEvents = VenueUpcomingEventsSection.weeklyUpcoming(
+      _upcomingEvents,
+    );
     final live = (_displayCheckinTotal ?? 0) > 0;
     final statusDotColor = live ? AppColors.teal : AppColors.orange;
     final address = (_venueDetails?['address'] ?? widget.venue.address ?? '')
         .toString()
         .trim();
-    return Scaffold(
-      backgroundColor: _pageBg,
-      body: Stack(
-        children: [
-          // ── Scrollable content ──────────────────────────────────────────
-          RefreshIndicator(
-            onRefresh: _refreshVenuePage,
-            color: AppColors.blueDark,
-            backgroundColor: _pageBg,
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
-              ),
-              padding: EdgeInsets.zero,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir
-                  SizedBox(
-                    height: 210,
-                    width: double.infinity,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        CachedImage(
-                          _safeDisplayPhotoUrl(_venuePhotoUrl),
-                          mediaReference: _venuePhotoReference,
-                          fit: BoxFit.cover,
-                        ),
-                        Align(
-                          alignment: Alignment.bottomCenter,
-                          child: Container(
-                            height: 120,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Colors.transparent, _pageBg],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  /// COVER ALTI — cover'ı örtmek için 28px yukarı çekilir
-                  Transform.translate(
-                    offset: const Offset(0, -28),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+    return PerformancePageProbe(
+      page: PerformancePage.venueDetail,
+      child: Scaffold(
+        backgroundColor: _pageBg,
+        body: Stack(
+          children: [
+            // ── Scrollable content ──────────────────────────────────────────
+            RefreshIndicator(
+              onRefresh: _refreshVenuePage,
+              color: AppColors.blueDark,
+              backgroundColor: _pageBg,
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir
+                    SizedBox(
+                      height: 210,
+                      width: double.infinity,
+                      child: Stack(
+                        fit: StackFit.expand,
                         children: [
-                          /// IDENTITY — avatar + isim + durum
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              _VenueDetailAvatarRing(
-                                photoUrl: _venuePhotoUrl,
-                                mediaReference: _venuePhotoReference,
-                                hasStories: _headerStories.isNotEmpty,
-                                allSeen:
-                                    _headerStories.isNotEmpty &&
-                                    _headerStories.every((s) => s.viewedByMe),
-                                onTap: _headerStories.isNotEmpty
-                                    ? _openStoryViewer
-                                    : null,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(bottom: 6),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        widget.venue.name,
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w800,
-                                          height: 1.1,
-                                          letterSpacing: -0.3,
-                                          color: _textPrimary,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 7,
-                                            height: 7,
-                                            decoration: BoxDecoration(
-                                              color: statusDotColor,
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Flexible(
-                                            child: Text(
-                                              widget.venue.status,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: _textMuted,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                          GooglePlacePhoto(
+                            _safeDisplayPhotoUrl(_venuePhotoUrl),
+                            mediaReference: _venuePhotoReference,
+                            fit: BoxFit.cover,
+                            sourceLoader:
+                                _venueContextRepo.getGooglePhotoSource,
+                            badgeBottom: 44,
+                            overlay: Align(
+                              alignment: Alignment.bottomCenter,
+                              child: Container(
+                                height: 120,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [Colors.transparent, _pageBg],
                                   ),
                                 ),
                               ),
-                            ],
+                            ),
                           ),
-
-                          /// CHECK-IN İSTATİSTİK SATIRI (varsa)
-                          if (_displayCheckinTotal != null) ...[
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                _headerCount(
-                                  Icons.people_rounded,
-                                  '$_displayCheckinTotal',
-                                ),
-                                ..._headerGenderPcts(),
-                              ],
-                            ),
-                          ],
-
-                          const SizedBox(height: 14),
-
-                          /// ADDRESS
-                          if (address.isNotEmpty) ...[
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(
-                                  Icons.location_on_rounded,
-                                  size: 15,
-                                  color: AppColors.blue,
-                                ),
-                                const SizedBox(width: 7),
-                                Expanded(
-                                  child: Text(
-                                    address,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: _textMuted,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                          ],
-
-                          /// OPEN / RATING / HOURS
-                          if (opening != null || rating != null)
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 14,
-                              runSpacing: 6,
-                              children: [
-                                if (opening != null)
-                                  Text(
-                                    isOpen ? 'Open now' : 'Closed',
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: isOpen
-                                          ? AppColors.teal
-                                          : AppColors.orange,
-                                    ),
-                                  ),
-                                if (rating != null)
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.star_rounded,
-                                        color: Color(0xFFFFC24B),
-                                        size: 15,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        (rating as num).toStringAsFixed(1),
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w600,
-                                          color: _textMuted,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                          if (weekdayText != null &&
-                              weekdayText.isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              weekdayText[DateTime.now().weekday - 1],
-                              style: TextStyle(fontSize: 12, color: _textFaint),
-                            ),
-                          ],
-
-                          /// "İlk check-in ol" daveti
-                          if (_displayCheckinTotal == null &&
-                              !_loadingCheckinStats) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Be the first to check in.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: _textMuted,
-                              ),
-                            ),
-                          ],
-
-                          const SizedBox(height: 14),
-
-                          /// ACTIONS — Follow · Directions · Share (satır), ardından
-                          /// Menu ve Check in tam genişlikte.
-                          Row(
-                            children: [
-                              Expanded(child: _buildFollowButton()),
-                              const SizedBox(width: 9),
-                              Expanded(child: _buildDirectionsButton()),
-                              const SizedBox(width: 9),
-                              Expanded(child: _buildShareButton()),
-                            ],
-                          ),
-                          if (VenueFeatureVisibility.menu) ...[
-                            const SizedBox(height: 9),
-                            SizedBox(
-                              width: double.infinity,
-                              child: _buildMenuButton(height: 48),
-                            ),
-                          ],
-                          const SizedBox(height: 9),
-                          _buildCheckinButton(hasActiveCheckinHere),
-
-                          /// CHECK OUT — sadece bu venue'da aktif check-in varken
-                          if (hasActiveCheckinHere) ...[
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: TextButton(
-                                onPressed: _checkingOut
-                                    ? null
-                                    : () async {
-                                        final confirmed =
-                                            await showDestructiveConfirmationDialog(
-                                              context,
-                                              title: 'Check out?',
-                                              message:
-                                                  'You will leave this venue and your check-in will end.',
-                                              confirmLabel: 'Check out',
-                                              icon: Icons.logout_rounded,
-                                            );
-                                        if (confirmed == true) {
-                                          await _checkout();
-                                        }
-                                      },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.redAccent,
-                                ),
-                                child: _checkingOut
-                                    ? const SizedBox(
-                                        height: 16,
-                                        width: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Text('Check out'),
-                              ),
-                            ),
-                          ],
-
-                          /// STORY TRAY
-                          const SizedBox(height: 18),
-                          _sectionTitle(AppColors.magenta, 'Stories'),
-                          if (_resolvedVenueIdForCurrentDetail == null) ...[
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              height: 72,
-                              child: Center(
-                                child: _storySectionLoading
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Text(
-                                        _storySectionUnavailable
-                                            ? 'Stories are unavailable right now.'
-                                            : 'No stories here yet.',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: _textMuted,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ] else ...[
-                            // Check-in'li ama henüz story paylaşmamış kullanıcıyı
-                            // teşvik et + baloncuğun ne olduğunu açıkla.
-                            if (hasActiveCheckinHere &&
-                                _storyStateKnown &&
-                                !_hasMyStoryHere &&
-                                !_storyUploading &&
-                                !_isAnonymous) ...[
-                              const SizedBox(height: 8),
-                              _buildShareStoryHint(),
-                            ],
-                            const SizedBox(height: 10),
-                            // Hiç story yok + kullanıcı burada check-in'li değil →
-                            // ilk story'yi paylaşmaya teşvik eden CTA.
-                            if (_noStoriesHere &&
-                                !hasActiveCheckinHere &&
-                                !_isAnonymous)
-                              _buildFirstStoryCta(),
-                            StoryTray(
-                              key: ValueKey(
-                                '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
-                              ),
-                              venueId: _resolvedVenueIdForCurrentDetail!,
-                              isUploading: _storyUploading,
-                              onAddStory: hasActiveCheckinHere
-                                  ? _openAddStory
-                                  : null,
-                              anonymousLocked: _isAnonymous,
-                              myPhotoUrl:
-                                  (_activeCheckinUserPhoto?.isNotEmpty ?? false)
-                                  ? _activeCheckinUserPhoto
-                                  : _activeCheckinFeaturedPhoto,
-                              onMyStoryStateChanged: (hasMine) {
-                                if (mounted &&
-                                    (hasMine != _hasMyStoryHere ||
-                                        !_storyStateKnown)) {
-                                  setState(() {
-                                    _hasMyStoryHere = hasMine;
-                                    _storyStateKnown = true;
-                                  });
-                                }
-                              },
-                              onStoriesEmptyChanged: (isEmpty) {
-                                if (mounted && isEmpty != _noStoriesHere) {
-                                  setState(() => _noStoriesHere = isEmpty);
-                                }
-                              },
-                            ),
-                          ],
-
-                          /// ABOUT
-                          if (_enrichedVenueData?['description'] != null &&
-                              (_enrichedVenueData!['description'] as String)
-                                  .isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            _buildDescriptionSection(
-                              _enrichedVenueData!['description'] as String,
-                            ),
-                          ],
-
-                          /// DEALS & DISCOUNTS (external partnerships) — About altında,
-                          /// tek satır kaydırılabilir chip'ler.
-                          if (_partnerships.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            _buildDealsSection(),
-                          ],
-
-                          /// PHOTOS & VIDEOS (galeri — boşsa başlıkla birlikte gizlenir)
-                          if (widget.venue.isInDb &&
-                              widget.venue.id.isNotEmpty) ...[
-                            if (_galleryCount > 0) ...[
-                              const SizedBox(height: 18),
-                              _sectionTitle(
-                                AppColors.teal,
-                                'Photos & Videos',
-                                trailing: Text(
-                                  '$_galleryCount',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.teal,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                            ],
-                            VenueGalleryStrip(
-                              venueId: widget.venue.id,
-                              refreshEpoch: _galleryRefreshEpoch,
-                              onCountChanged: (count) {
-                                if (mounted && count != _galleryCount) {
-                                  setState(() => _galleryCount = count);
-                                }
-                              },
-                            ),
-                          ],
-
-                          /// UPCOMING EVENTS — yalnızca bu haftanın (7 gün) event'leri.
-                          if (_enrichedVenueData?['upcomingEvents']
-                              is List) ...[
-                            Builder(
-                              builder: (context) {
-                                final weekly =
-                                    VenueUpcomingEventsSection.weeklyUpcoming(
-                                      (_enrichedVenueData!['upcomingEvents']
-                                              as List)
-                                          .whereType<Map>()
-                                          .map(
-                                            (e) => VenueUpcomingEvent.fromJson(
-                                              Map<String, dynamic>.from(e),
-                                            ),
-                                          )
-                                          .toList(),
-                                    );
-                                if (weekly.isEmpty) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const SizedBox(height: 18),
-                                    _buildUpcomingEventsSection(weekly),
-                                  ],
-                                );
-                              },
-                            ),
-                          ],
                         ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
-          // ── Floating back button — cover üzerinde her zaman görünür ──
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 6,
-            left: 12,
-            child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
-          ),
-          if (widget.venue.isInDb && widget.venue.id.trim().isNotEmpty)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 6,
-              right: 12,
-              child: Material(
-                color: Colors.black.withValues(alpha: 0.45),
-                shape: const CircleBorder(),
-                child: IconButton(
-                  tooltip: 'Report venue',
-                  onPressed: _reportVenue,
-                  icon: const Icon(
-                    Icons.flag_outlined,
-                    size: 20,
-                    color: Colors.white,
-                  ),
+                    /// COVER ALTI — cover'ı örtmek için 28px yukarı çekilir
+                    Transform.translate(
+                      offset: const Offset(0, -28),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            /// IDENTITY — avatar + isim + durum
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                _VenueDetailAvatarRing(
+                                  photoUrl: _venuePhotoUrl,
+                                  mediaReference: _venuePhotoReference,
+                                  hasStories: _headerStories.isNotEmpty,
+                                  allSeen:
+                                      _headerStories.isNotEmpty &&
+                                      _headerStories.every((s) => s.viewedByMe),
+                                  onTap: _headerStories.isNotEmpty
+                                      ? _openStoryViewer
+                                      : null,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          widget.venue.name,
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w800,
+                                            height: 1.1,
+                                            letterSpacing: -0.3,
+                                            color: _textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Row(
+                                          children: [
+                                            Container(
+                                              width: 7,
+                                              height: 7,
+                                              decoration: BoxDecoration(
+                                                color: statusDotColor,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Flexible(
+                                              child: Text(
+                                                widget.venue.status,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: _textMuted,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            /// CHECK-IN İSTATİSTİK SATIRI (varsa)
+                            if (_displayCheckinTotal != null) ...[
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  _headerCount(
+                                    Icons.people_rounded,
+                                    '$_displayCheckinTotal',
+                                  ),
+                                  ..._headerGenderPcts(),
+                                ],
+                              ),
+                            ],
+
+                            const SizedBox(height: 14),
+
+                            /// ADDRESS
+                            if (address.isNotEmpty) ...[
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.location_on_rounded,
+                                    size: 15,
+                                    color: AppColors.blue,
+                                  ),
+                                  const SizedBox(width: 7),
+                                  Expanded(
+                                    child: Text(
+                                      address,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _textMuted,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+
+                            /// OPEN / RATING / HOURS
+                            if (opening != null || rating != null)
+                              Wrap(
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 14,
+                                runSpacing: 6,
+                                children: [
+                                  if (opening != null)
+                                    Text(
+                                      isOpen ? 'Open now' : 'Closed',
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: isOpen
+                                            ? AppColors.teal
+                                            : AppColors.orange,
+                                      ),
+                                    ),
+                                  if (rating != null)
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star_rounded,
+                                          color: Color(0xFFFFC24B),
+                                          size: 15,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          (rating as num).toStringAsFixed(1),
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: _textMuted,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            if (weekdayText != null &&
+                                weekdayText.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                weekdayText[DateTime.now().weekday - 1],
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _textFaint,
+                                ),
+                              ),
+                            ],
+
+                            /// "İlk check-in ol" daveti
+                            if (_displayCheckinTotal == null &&
+                                !_loadingCheckinStats) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'Be the first to check in.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: _textMuted,
+                                ),
+                              ),
+                            ],
+
+                            const SizedBox(height: 14),
+
+                            /// ACTIONS — Follow · Directions · Share (satır), ardından
+                            /// Menu ve Check in tam genişlikte.
+                            Row(
+                              children: [
+                                Expanded(child: _buildFollowButton()),
+                                const SizedBox(width: 9),
+                                Expanded(child: _buildDirectionsButton()),
+                                const SizedBox(width: 9),
+                                Expanded(child: _buildShareButton()),
+                              ],
+                            ),
+                            if (VenueFeatureVisibility.menu) ...[
+                              const SizedBox(height: 9),
+                              SizedBox(
+                                width: double.infinity,
+                                child: _buildMenuButton(height: 48),
+                              ),
+                            ],
+                            const SizedBox(height: 9),
+                            _buildCheckinButton(hasActiveCheckinHere),
+
+                            /// CHECK OUT — sadece bu venue'da aktif check-in varken
+                            if (hasActiveCheckinHere) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: TextButton(
+                                  onPressed: _checkingOut
+                                      ? null
+                                      : () async {
+                                          final confirmed =
+                                              await showDestructiveConfirmationDialog(
+                                                context,
+                                                title: 'Check out?',
+                                                message:
+                                                    'You will leave this venue and your check-in will end.',
+                                                confirmLabel: 'Check out',
+                                                icon: Icons.logout_rounded,
+                                              );
+                                          if (confirmed == true) {
+                                            await _checkout();
+                                          }
+                                        },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.redAccent,
+                                  ),
+                                  child: _checkingOut
+                                      ? const SizedBox(
+                                          height: 16,
+                                          width: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Text('Check out'),
+                                ),
+                              ),
+                            ],
+
+                            /// STORY TRAY
+                            const SizedBox(height: 18),
+                            _sectionTitle(AppColors.magenta, 'Stories'),
+                            if (_resolvedVenueIdForCurrentDetail == null) ...[
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                height: 72,
+                                child: Center(
+                                  child: _storySectionLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : Text(
+                                          _storySectionUnavailable
+                                              ? 'Stories are unavailable right now.'
+                                              : 'No stories here yet.',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: _textMuted,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ] else ...[
+                              // Check-in'li ama henüz story paylaşmamış kullanıcıyı
+                              // teşvik et + baloncuğun ne olduğunu açıkla.
+                              if (hasActiveCheckinHere &&
+                                  _storyStateKnown &&
+                                  !_hasMyStoryHere &&
+                                  !_storyUploading &&
+                                  !_isAnonymous) ...[
+                                const SizedBox(height: 8),
+                                _buildShareStoryHint(),
+                              ],
+                              const SizedBox(height: 10),
+                              // Hiç story yok + kullanıcı burada check-in'li değil →
+                              // ilk story'yi paylaşmaya teşvik eden CTA.
+                              if (_noStoriesHere &&
+                                  !hasActiveCheckinHere &&
+                                  !_isAnonymous)
+                                _buildFirstStoryCta(),
+                              StoryTray(
+                                repository: widget.storyRepository,
+                                key: ValueKey(
+                                  '${_resolvedVenueIdForCurrentDetail!}_$_storyTrayRefreshCount',
+                                ),
+                                venueId: _resolvedVenueIdForCurrentDetail!,
+                                isUploading: _storyUploading,
+                                onAddStory: hasActiveCheckinHere
+                                    ? _openAddStory
+                                    : null,
+                                anonymousLocked: _isAnonymous,
+                                myPhotoUrl:
+                                    (_activeCheckinUserPhoto?.isNotEmpty ??
+                                        false)
+                                    ? _activeCheckinUserPhoto
+                                    : _activeCheckinFeaturedPhoto,
+                                onMyStoryStateChanged: (hasMine) {
+                                  if (mounted &&
+                                      (hasMine != _hasMyStoryHere ||
+                                          !_storyStateKnown)) {
+                                    setState(() {
+                                      _hasMyStoryHere = hasMine;
+                                      _storyStateKnown = true;
+                                    });
+                                  }
+                                },
+                                onStoriesEmptyChanged: (isEmpty) {
+                                  if (mounted && isEmpty != _noStoriesHere) {
+                                    setState(() => _noStoriesHere = isEmpty);
+                                  }
+                                },
+                              ),
+                            ],
+
+                            /// ABOUT
+                            if (description != null &&
+                                description.isNotEmpty) ...[
+                              const SizedBox(height: 18),
+                              _buildDescriptionSection(description),
+                            ],
+
+                            /// DEALS & DISCOUNTS (external partnerships) — About altında,
+                            /// tek satır kaydırılabilir chip'ler.
+                            if (_partnerships.isNotEmpty) ...[
+                              const SizedBox(height: 18),
+                              _buildDealsSection(),
+                            ],
+
+                            /// PHOTOS & VIDEOS (galeri — boşsa başlıkla birlikte gizlenir)
+                            if (widget.venue.isInDb &&
+                                widget.venue.id.isNotEmpty) ...[
+                              if (_galleryCount > 0) ...[
+                                const SizedBox(height: 18),
+                                _sectionTitle(
+                                  AppColors.teal,
+                                  'Gallery',
+                                  trailing: Text(
+                                    '$_galleryCount',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.teal,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                              ],
+                              VenueGalleryStrip(
+                                repository: widget.galleryRepository,
+                                venueId: widget.venue.id,
+                                refreshEpoch: _galleryRefreshEpoch,
+                                onCountChanged: (count) {
+                                  if (mounted && count != _galleryCount) {
+                                    setState(() => _galleryCount = count);
+                                  }
+                                },
+                              ),
+                            ],
+
+                            /// UPCOMING EVENTS — yalnızca bu haftanın (7 gün) event'leri.
+                            if (weeklyEvents.isNotEmpty) ...[
+                              const SizedBox(height: 18),
+                              _buildUpcomingEventsSection(weeklyEvents),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-        ], // Stack children
-      ), // Stack
+
+            // ── Floating back button — cover üzerinde her zaman görünür ──
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 6,
+              left: 12,
+              child: AppBackButton.onCover(onTap: () => Navigator.pop(context)),
+            ),
+            if ((widget.venue.isInDb && widget.venue.id.trim().isNotEmpty) ||
+                widget.venue.placeId?.trim().isNotEmpty == true ||
+                isGooglePlacePhotoProxyUrl(
+                  _safeDisplayPhotoUrl(_venuePhotoUrl),
+                ))
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 6,
+                right: 12,
+                child: Material(
+                  color: Colors.black.withValues(alpha: 0.45),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: 'Report',
+                    onPressed: _openingReport ? null : _openReportOptions,
+                    icon: _loadingReportLink
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.flag_outlined,
+                            size: 20,
+                            color: Colors.white,
+                          ),
+                  ),
+                ),
+              ),
+          ], // Stack children
+        ), // Stack
+      ), // Scaffold
     );
   }
 }

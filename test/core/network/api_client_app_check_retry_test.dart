@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +9,10 @@ import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(
+    () => FlutterSecureStorage.setMockInitialValues({'access_token': 'jwt'}),
+  );
   final originalRefresh = ApiClient.onRefreshToken;
   final originalExpired = ApiClient.onSessionExpired;
 
@@ -18,6 +24,9 @@ void main() {
   test(
     'App Check 401 refreshes App Check once without expiring the session',
     () async {
+      FlutterSecureStorage.setMockInitialValues({
+        'access_token': 'current-jwt',
+      });
       final requests = <http.Request>[];
       var forced = 0;
       var sessionExpired = 0;
@@ -140,13 +149,19 @@ void main() {
   test(
     'JWT refresh retry preserves App Check and can handle a later App Check 401',
     () async {
+      final oldToken =
+          'header.${base64Url.encode(utf8.encode(jsonEncode({'sub': 'owner', 'v': 1})))}.sig';
+      final newToken =
+          'header.${base64Url.encode(utf8.encode(jsonEncode({'sub': 'owner', 'v': 2})))}.sig';
+      FlutterSecureStorage.setMockInitialValues({'access_token': oldToken});
       final requests = <http.Request>[];
       var forced = 0;
       var jwtRefresh = 0;
       var sessionExpired = 0;
       ApiClient.onRefreshToken = () async {
         jwtRefresh++;
-        return 'new-jwt';
+        await SecureStorage.write('access_token', newToken);
+        return newToken;
       };
       ApiClient.onSessionExpired = () async => sessionExpired++;
       final api = ApiClient(
@@ -168,11 +183,14 @@ void main() {
       );
 
       expect(
-        await api.get('/auth/me', headers: {'Authorization': 'Bearer old-jwt'}),
+        await api.get(
+          '/auth/me',
+          headers: {'Authorization': 'Bearer $oldToken'},
+        ),
         {'ok': true},
       );
       expect(requests, hasLength(3));
-      expect(requests[1].headers['Authorization'], 'Bearer new-jwt');
+      expect(requests[1].headers['Authorization'], 'Bearer $newToken');
       expect(requests[1].headers['X-Firebase-AppCheck'], 'stale');
       expect(requests[2].headers['X-Firebase-AppCheck'], 'fresh');
       expect(jwtRefresh, 1);

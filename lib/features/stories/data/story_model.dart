@@ -56,16 +56,19 @@ class StoryItem {
     this.venueId,
     this.venueName,
     this.viewCount = 0,
+    this.canViewStats = false,
     this.viewedByMe = false,
     this.isUploadingPlaceholder = false,
     this.textOverlay,
     this.isVenueStory = false,
+    this.ownerUploadId,
   });
 
   final String? checkinFeaturedPhotoUrl;
   final String? venueId;
   final String? venueName;
   final int viewCount;
+  final bool canViewStats;
   final bool viewedByMe;
 
   /// true → bu bir venue hesabının kendi story'si (VenueStory). Viewer,
@@ -77,6 +80,10 @@ class StoryItem {
 
   /// Henüz yüklenmekte olan story için viewer'da "Loading…" gösteren placeholder.
   final bool isUploadingPlaceholder;
+
+  /// Local owner-only entry. Never sent to public story endpoints.
+  final String? ownerUploadId;
+  bool get isOwnerUpload => ownerUploadId != null;
 
   bool get isVideo => mediaType == 'video';
 

@@ -14,6 +14,9 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/avatar_upload_coordinator.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 
 /// Instagram tarzı "Edit Profile" ekranı — çalışır.
 /// - Foto: image_picker ile seçilip `POST /users/me/photo`'ya yüklenir.
@@ -68,6 +71,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
   @override
   void initState() {
     super.initState();
+    PendingPublicMediaService.instance.avatarPublicationChanges.addListener(
+      _refreshPhoto,
+    );
     _nameController = TextEditingController(
       text: (widget.user['fullName'] ?? widget.user['full_name'] ?? '')
           .toString(),
@@ -152,6 +158,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   @override
   void dispose() {
+    PendingPublicMediaService.instance.avatarPublicationChanges.removeListener(
+      _refreshPhoto,
+    );
     _usernameDebounce?.cancel();
     _nameController.dispose();
     _usernameController.dispose();
@@ -160,50 +169,72 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   // ── Fotoğraf ────────────────────────────────────────────────────────────
+  Future<void> _refreshPhoto() async {
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    try {
+      final me = await _auth.getMe(forceRefresh: true);
+      if (!mounted || !uploads.isCurrentSession(session)) return;
+      setState(() {
+        _photoUrl = (me['photo'] ?? '').toString();
+        _profilePhotoReference = MediaReference.profilePhoto(me);
+      });
+    } catch (_) {
+      /* Keep the current canonical photo on a temporary read failure. */
+    }
+  }
+
   Future<void> _changePhoto() async {
     // Devam eden bir yükleme/silme varken tekrar tetiklenmesini engelle
     // (çift dokunma → çift yükleme / yarış durumu).
     if (_uploadingPhoto || _removingPhoto) return;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    final coordinator = AvatarUploadCoordinator.instance;
+    if (!coordinator.canSelect(PendingPublicMediaKind.personalAvatar)) {
+      // The inline avatar status already explains the current transfer. Do not
+      // open the retired uploads sheet or start a second, ambiguous upload.
+      return;
+    }
+    setState(() => _uploadingPhoto = true);
     try {
       final picked = await _picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1080,
         imageQuality: 85,
       );
-      if (picked == null || !mounted) return;
+      if (picked == null || !mounted || !uploads.isCurrentSession(session)) {
+        return;
+      }
       // Seçilen foto'yu kare avatar olarak kırp; iptal edilirse yükleme yapma.
       final cropped = await cropSquareAvatar(context, File(picked.path));
-      if (cropped == null || !mounted) return;
-      setState(() {
-        _pickedPhoto = cropped;
-        _uploadingPhoto = true;
-      });
-      await _auth.uploadProfilePhoto(cropped);
-      if (mounted) {
-        setState(() {
-          _photoUrl = '';
-          _profilePhotoReference = null;
-          _checkinAvatarUrl = '';
-          _uploadingPhoto = false;
-          _photoChanged = true;
-        });
-        // Navbar'ı taze avatarla güncelle (/auth/me cache'ini geçersiz kıl + uyar).
-        AuthRepository.invalidateMeCache();
-        ActiveCheckinService().notifyMediaUpdated();
+      if (cropped == null || !mounted || !uploads.isCurrentSession(session)) {
+        return;
       }
+      final upload = coordinator.share(
+        file: cropped,
+        kind: PendingPublicMediaKind.personalAvatar,
+        expectedGeneration: session,
+      );
+      if (upload != null) setState(() => _photoChanged = true);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _uploadingPhoto = false;
-        _pickedPhoto = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not upload photo. Try again.')),
-      );
+      setState(() => _saveError = 'Could not select photo. Try again.');
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
     }
   }
 
   Future<void> _removeProfilePhoto() async {
+    if (_uploadingPhoto ||
+        _removingPhoto ||
+        !AvatarUploadCoordinator.instance.canSelect(
+          PendingPublicMediaKind.personalAvatar,
+        )) {
+      return;
+    }
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     if (_photoUrl.isEmpty && _pickedPhoto == null) return;
     final confirmed = await showDestructiveConfirmationDialog(
       context,
@@ -212,7 +243,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
       confirmLabel: 'Remove',
       icon: Icons.person_off_rounded,
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || !uploads.isCurrentSession(session)) {
+      return;
+    }
 
     setState(() {
       _removingPhoto = true;
@@ -220,7 +253,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
     });
     try {
       await _auth.removeProfilePhoto();
-      if (!mounted) return;
+      if (!mounted || !uploads.isCurrentSession(session)) return;
+      for (final item in PendingPublicMediaService.instance.forKind(
+        PendingPublicMediaKind.personalAvatar,
+      )) {
+        PendingPublicMediaService.instance.dismiss(item.id);
+      }
       setState(() {
         _photoUrl = '';
         _profilePhotoReference = null;
@@ -527,31 +565,19 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     height: 132,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(32),
-                      child: _buildAvatarImage(_isDark),
-                    ),
-                  ),
-                ),
-              ),
-              if (_uploadingPhoto)
-                Positioned.fill(
-                  child: Container(
-                    margin: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(32),
-                      color: Colors.black.withValues(alpha: 0.45),
-                    ),
-                    child: const Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
+                      child: OwnerPhotoPreview(
+                        kind: PendingPublicMediaKind.personalAvatar,
+                        checkinId: _shouldManageCheckinAvatar
+                            ? _checkinId
+                            : null,
+                        width: 132,
+                        height: 132,
+                        child: _buildAvatarImage(_isDark),
                       ),
                     ),
                   ),
                 ),
+              ),
               // Kamera rozeti
               Positioned(
                 right: -2,
@@ -577,6 +603,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
           ),
         ),
         const SizedBox(height: 10),
+        OwnerPhotoUploadStatus(
+          kind: PendingPublicMediaKind.personalAvatar,
+          hasPreviousPhoto: _photoUrl.isNotEmpty,
+          onRetry: _changePhoto,
+        ),
         // Foto aksiyonları
         Wrap(
           alignment: WrapAlignment.center,

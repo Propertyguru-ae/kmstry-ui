@@ -32,6 +32,8 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
   final List<PermissionStep> _steps = [];
   int _currentIndex = 0;
   bool _initialized = false;
+  bool _finishing = false;
+  String? _finishError;
 
   @override
   void initState() {
@@ -99,7 +101,8 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
     /* --------------------------------------------------
      * 🔔 NOTIFICATION — DEVICE ONBOARDING FLAG + SYSTEM STATUS
      * -------------------------------------------------- */
-    final notifOnboardingDone = await SecureStorage.isNotificationOnboardingDone();
+    final notifOnboardingDone =
+        await SecureStorage.isNotificationOnboardingDone();
     final notificationStatus = await Permission.notification.status;
     final systemNotificationGranted =
         notificationStatus.isGranted ||
@@ -128,13 +131,31 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
   }
 
   Future<void> _finishPermissions() async {
-    if (widget.markProfileCompleted) {
-      await AuthRepository().updateMe({'profile_completed': true});
+    if (_finishing) return;
+    if (mounted) {
+      setState(() {
+        _finishing = true;
+        _finishError = null;
+      });
     }
-    await SecureStorage.setDevicePermissionsOnboardingDone();
 
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, AuthRoutes.appShell);
+    try {
+      if (widget.markProfileCompleted) {
+        await AuthRepository().updateMe({'profile_completed': true});
+      }
+      await SecureStorage.setDevicePermissionsOnboardingDone();
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AuthRoutes.appShell);
+    } catch (error) {
+      debugPrint('Finish permissions failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _finishing = false;
+        _finishError =
+            'We could not finish setting up your account. Check your connection and try again.';
+      });
+    }
   }
 
   void _goNext() async {
@@ -166,10 +187,40 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
     }
 
     if (_steps.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _finishPermissions();
-      });
-      return const Scaffold();
+      if (_finishError != null) {
+        return Scaffold(
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.cloud_off_rounded, size: 44),
+                    const SizedBox(height: 16),
+                    Text(
+                      _finishError!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: _finishing ? null : _finishPermissions,
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      if (!_finishing) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _finishPermissions();
+        });
+      }
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final step = _steps[_currentIndex];

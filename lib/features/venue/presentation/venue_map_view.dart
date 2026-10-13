@@ -7,8 +7,11 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:kmstry_frontend/features/venue/presentation/map_style.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/core/media/google_photo_updates.dart';
 import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
@@ -912,6 +915,7 @@ class _VenueMapViewState extends State<VenueMapView> {
   @override
   void initState() {
     super.initState();
+    GooglePhotoUpdates.instance.addListener(_onGooglePhotoUpdated);
     _searchFocusNode.addListener(() {
       if (!mounted) return;
       if (_searchFocusNode.hasFocus) {
@@ -929,6 +933,28 @@ class _VenueMapViewState extends State<VenueMapView> {
     });
     _loadLocation();
     _loadActiveCheckin();
+  }
+
+  void _onGooglePhotoUpdated() {
+    if (!mounted) return;
+    final placeId = GooglePhotoUpdates.instance.affectedPlaceId;
+    final affected = <String>{
+      for (final venue in [
+        ...widget.venues,
+        ..._searchResults,
+        if (_selectedSearchVenue != null) _selectedSearchVenue!,
+      ])
+        if (isGooglePlacePhotoProxyUrl(venue.photoUrl) &&
+            (placeId == null ||
+                GooglePhotoUpdates.placeIdFor(venue.photoUrl) == placeId))
+          _venueIdentity(venue),
+    };
+    if (affected.isEmpty) return;
+    bool matches(String key) => affected.contains(key.split('|').first);
+    _photoMarkerIconCache.removeWhere((key, _) => matches(key));
+    _photoMarkerIconRetryCounts.removeWhere((key, _) => matches(key));
+    _lastMarkerKey = '';
+    unawaited(_recomputeClusters(force: true));
   }
 
   /// "You're checked in" turkuaz rozeti — marker popup ve hızlı check-in
@@ -1139,6 +1165,7 @@ class _VenueMapViewState extends State<VenueMapView> {
 
   @override
   void dispose() {
+    GooglePhotoUpdates.instance.removeListener(_onGooglePhotoUpdated);
     widget.onSearchActivityChanged?.call(false);
     _searchDebounce?.cancel();
     _photoIconRefreshDebounce?.cancel();
@@ -1456,7 +1483,7 @@ class _VenueMapViewState extends State<VenueMapView> {
           url: photoUrl,
         );
     final cacheKey =
-        '${_venueIdentity(venue)}|${mediaReference.mediaId}|$isSelected|$isPressed|$activeCount|$glowHex';
+        '${_venueIdentity(venue)}|${mediaReference.mediaId}|${GooglePhotoUpdates.instance.revisionFor(photoUrl)}|$isSelected|$isPressed|$activeCount|$glowHex';
     final cached = _photoMarkerIconCache[cacheKey];
     if (cached != null) {
       return cached;
@@ -1520,6 +1547,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     required Color glowColor,
     int? activeCount,
   }) async {
+    final photoRevision = GooglePhotoUpdates.instance.revisionFor(photoUrl);
     final icon = await _buildPhotoMarkerIcon(
       photoUrl: photoUrl,
       mediaReference: mediaReference,
@@ -1529,6 +1557,10 @@ class _VenueMapViewState extends State<VenueMapView> {
     );
     _photoMarkerIconLoadingKeys.remove(cacheKey);
     if (!mounted) return;
+    // An old download/render must not repopulate the pin after an admin decision.
+    if (photoRevision != GooglePhotoUpdates.instance.revisionFor(photoUrl)) {
+      return;
+    }
 
     if (icon != null) {
       _photoMarkerIconRetryCounts.remove(cacheKey);
@@ -1561,9 +1593,9 @@ class _VenueMapViewState extends State<VenueMapView> {
     });
   }
 
-  /// Marker fotoğraflarının ham byte'larını diskte cache'leyerek getirir.
-  /// `cached_network_image` ile aynı `flutter_cache_manager` altyapısını
-  /// kullanır; aynı foto URL'i bir daha indirilmez.
+  /// KMSTRY-owned marker photos use the normal disk cache. Google Places
+  /// photos are fetched without durable storage and remain only in this
+  /// screen's rendered marker cache.
   static final BaseCacheManager _markerPhotoCacheManager =
       DefaultCacheManager();
 
@@ -1578,8 +1610,23 @@ class _VenueMapViewState extends State<VenueMapView> {
         : current.mediaId;
 
     Future<Uint8List?> load(String url) async {
+      final resolvedUrl = GooglePhotoUpdates.instance.networkUrl(url);
+      final uri = Uri.tryParse(resolvedUrl);
+      if (uri == null) return null;
+      if (isGooglePlacePhotoProxyUrl(resolvedUrl)) {
+        final markerUri = uri.replace(
+          queryParameters: {...uri.queryParameters, 'maxWidth': '256'},
+        );
+        final response = await http
+            .get(markerUri)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return null;
+        }
+        return response.bodyBytes;
+      }
       final file = await _markerPhotoCacheManager.getSingleFile(
-        url,
+        resolvedUrl,
         key: stableCacheKey,
       );
       if (!await file.exists()) return null;
@@ -1612,9 +1659,8 @@ class _VenueMapViewState extends State<VenueMapView> {
     try {
       final uri = Uri.tryParse(photoUrl);
       if (uri == null) return null;
-      // Ham fotoğrafı diskten oku; ilk görülüşte bir kez indirilir, sonraki
-      // rebuild/uygulama açılışlarında ağdan tekrar çekilmez → Place Photo SKU
-      // maliyeti ve veri/pil tüketimi düşer.
+      // KMSTRY-owned media can come from disk. Google Places photos are fetched
+      // live and retained only in this screen's in-memory rendered-icon cache.
       final bytes = await _loadMarkerPhotoBytes(photoUrl, mediaReference);
       if (bytes == null || bytes.isEmpty) return null;
       // Yüksek çözünürlük (4x) → kenarlar ve glow keskin, "pixel pixel" görünüm

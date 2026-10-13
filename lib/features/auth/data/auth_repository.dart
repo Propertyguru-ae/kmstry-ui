@@ -3,46 +3,126 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../core/network/api_client.dart';
-import '../../../core/network/app_request_headers.dart';
-import '../../../core/network/multipart_upload.dart';
+import '../../../core/network/upload_session_identity.dart';
 import 'auth_api.dart';
 import '../presentation/auth_routes.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'dart:async';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import '../../../core/config/app_config.dart';
 import '../../venue/presentation/profile_preview_page.dart';
 import '../../venue_stories/data/venue_story_viewed_cache.dart';
 import '../../stories/data/story_viewed_cache.dart';
 import '../../../core/push/push_manager.dart';
+import '../../chat/data/chat_realtime_service.dart';
 import '../../../core/checkin/checkin_ping_manager.dart';
 import '../../checkin/services/active_checkin_service.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/avatar_upload_repository.dart';
 import 'apple_sign_in_cancellation.dart';
+import '../../../core/user/user_session.dart';
+import '../../../core/venue/venue_session.dart';
+
+/// The signed-in account or its local session changed while `/auth/me` was
+/// being read, so that response was dropped. An old screen must not retry this
+/// read against a different account or Personal/Venue context.
+class AccountSessionChangedError extends StateError {
+  AccountSessionChangedError() : super('Account session changed during read');
+}
+
+/// The owner/session is unchanged, but a mutation superseded this snapshot.
+/// Only this case is eligible for a bounded, read-only retry.
+class _MeCacheInvalidatedError extends StateError {
+  _MeCacheInvalidatedError() : super('Account data changed during read');
+}
+
+class _MeReadScope {
+  const _MeReadScope(
+    this.token,
+    this.cacheGeneration,
+    this.sessionGeneration,
+    this.authRevision,
+    this.contextGeneration,
+  );
+  final String token;
+  final int cacheGeneration;
+  final int sessionGeneration;
+  final int authRevision;
+  final int contextGeneration;
+
+  bool matches(_MeReadScope other) =>
+      token == other.token &&
+      cacheGeneration == other.cacheGeneration &&
+      sessionGeneration == other.sessionGeneration &&
+      authRevision == other.authRevision &&
+      contextGeneration == other.contextGeneration;
+}
+
+class _MeReadFlight {
+  const _MeReadFlight(this.scope, this.result);
+  final _MeReadScope scope;
+  final Future<Map<String, dynamic>> result;
+}
 
 class AuthRepository {
+  AuthRepository({AuthApi? api, Future<void> Function()? signOutProvider})
+    : _api = api ?? AuthApi(),
+      _signOutProvider = signOutProvider;
+  final Future<void> Function()? _signOutProvider;
+
   // ── One-time app bootstrap ────────────────────────────────────────────────
   /// Call this once from main() after navigatorKey is ready.
   /// Wires up the 401 silent-refresh interceptor in ApiClient.
   static void init({required GlobalKey<NavigatorState> navigatorKey}) {
+    PendingPublicMediaService.instance.avatarPublicationChanges
+      ..removeListener(_onAvatarPublished)
+      ..addListener(_onAvatarPublished);
     ApiClient.onRefreshToken = () async {
       return AuthRepository()._refreshTokenInternal();
     };
 
-    ApiClient.onSessionExpired = () async {
-      CheckinPingManager.I.stop();
-      ActiveCheckinService().clear();
-      PushManager.instance.onSessionEnded();
-      await SecureStorage.clearSession();
-      invalidateMeCache();
-      ProfilePreviewPage.clearActionStateCache();
-      VenueStoryViewedCache.instance.clear();
-      await StoryViewedCache.clearAll();
-      navigatorKey.currentState?.pushNamedAndRemoveUntil(
-        AuthRoutes.startupGate,
-        (route) => false,
-      );
-    };
+    // Several requests can fail together; end the session once.
+    ApiClient.onSessionExpired = () => _sessionExpiry ??= _expireSession(
+      navigatorKey,
+    ).whenComplete(() => _sessionExpiry = null);
+  }
+
+  static Future<void>? _sessionExpiry;
+  static bool _loggingOut = false;
+  static Future<void>? _logoutFlight;
+
+  static Future<void> _expireSession(
+    GlobalKey<NavigatorState> navigatorKey,
+  ) async {
+    // Requests that finish after logout (or after an earlier expiry) also get
+    // 401. That session has already ended and the user is already on the
+    // login flow; ending it again would clear state, wake open screens into
+    // new requests and reopen the login page in a loop.
+    if (_loggingOut) return;
+    final hasSession =
+        await SecureStorage.getAccessToken() != null ||
+        await SecureStorage.getRefreshToken() != null;
+    if (!hasSession) return;
+    PendingPublicMediaService.instance.clear();
+    CheckinPingManager.I.resetSession();
+    ActiveCheckinService().clear();
+    UserSession.instance.clear();
+    VenueSession.instance.clear();
+    PushManager.instance.onSessionEnded();
+    await SecureStorage.clearSession();
+    invalidateMeCache();
+    ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+    await StoryViewedCache.clearAll();
+    navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      AuthRoutes.startupGate,
+      (route) => false,
+    );
+  }
+
+  static void _onAvatarPublished() {
+    invalidateMeCache();
+    ActiveCheckinService().notifyMediaUpdated();
   }
 
   Future<String?> _refreshTokenInternal() async {
@@ -51,7 +131,7 @@ class AuthRepository {
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  final AuthApi _api = AuthApi();
+  final AuthApi _api;
   final ApiClient _http = ApiClient();
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
@@ -74,12 +154,21 @@ class AuthRepository {
   static Map<String, dynamic>? _getMeCache;
   static DateTime? _getMeCacheTime;
   static const _getMeCacheTtl = Duration(seconds: 6);
+  static int _meCacheGeneration = 0;
+  static int _meContextGeneration = 0;
+  static _MeReadScope? _getMeCacheScope;
+  static _MeReadFlight? _getMeFlight;
 
   /// Invalidate the cache — call after any operation that changes server-side
   /// user state (switchContext, logout, register, etc.).
   static void invalidateMeCache() {
+    _meCacheGeneration++;
     _getMeCache = null;
     _getMeCacheTime = null;
+    _getMeCacheScope = null;
+    // Do not cancel the HTTP request, but never let a post-mutation/new-session
+    // caller join the old read or let its completion replace the new cache.
+    _getMeFlight = null;
   }
 
   Future<void> register(
@@ -277,7 +366,9 @@ class AuthRepository {
     required String currentPassword,
     required String newPassword,
   }) async {
+    final revision = SecureStorage.sessionRevision;
     final token = await SecureStorage.getAccessToken();
+    final previousRefreshToken = await SecureStorage.getRefreshToken();
     if (token == null || token.isEmpty) {
       throw Exception('Not signed in');
     }
@@ -286,8 +377,43 @@ class AuthRepository {
       currentPassword: currentPassword,
       newPassword: newPassword,
     );
-    if (response['success'] == true) return;
-    throw Exception(response['message'] ?? 'Failed to change password');
+    if (response['success'] != true) {
+      throw Exception(response['message'] ?? 'Failed to change password');
+    }
+    await _continueAfterSessionRevocation(
+      response,
+      revision: revision,
+      previousRefreshToken: previousRefreshToken,
+    );
+  }
+
+  /// Password and email changes end every session on the backend, this one
+  /// included, and return a fresh pair for this device. Without storing it
+  /// the next request signs out.
+  Future<void> _continueAfterSessionRevocation(
+    Map<String, dynamic> response, {
+    required int revision,
+    required String? previousRefreshToken,
+  }) async {
+    final accessToken = response['accessToken'];
+    final refreshToken = response['refreshToken'];
+    if (accessToken is! String ||
+        refreshToken is! String ||
+        previousRefreshToken == null) {
+      return;
+    }
+    final saved = await SecureStorage.saveRefreshedTokens(
+      expectedRevision: revision,
+      previousRefreshToken: previousRefreshToken,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    );
+    if (!saved) return;
+    // The server also closed this device's socket and deactivated its push
+    // token; reconnect and re-register with the new session.
+    PushManager.instance.onSessionEnded();
+    unawaited(PushManager.instance.ensureRegisteredIfAllowed());
+    unawaited(ChatRealtimeService().connectWithToken(token: accessToken));
   }
 
   Future<Map<String, dynamic>> requestChangeEmail({
@@ -311,7 +437,9 @@ class AuthRepository {
     required String newEmail,
     required String otp,
   }) async {
+    final revision = SecureStorage.sessionRevision;
     final token = await SecureStorage.getAccessToken();
+    final previousRefreshToken = await SecureStorage.getRefreshToken();
     if (token == null || token.isEmpty) {
       throw Exception('Not signed in');
     }
@@ -320,24 +448,28 @@ class AuthRepository {
       newEmail: newEmail,
       otp: otp,
     );
-    if (response['success'] == true) return;
-    throw Exception(response['message'] ?? 'Failed to confirm email change');
+    if (response['success'] != true) {
+      throw Exception(response['message'] ?? 'Failed to confirm email change');
+    }
+    await _continueAfterSessionRevocation(
+      response,
+      revision: revision,
+      previousRefreshToken: previousRefreshToken,
+    );
   }
 
   Future<bool> login(String identifier, String password) async {
+    final revision = _beginLogin();
     _log('🔥 Password login started');
 
     final response = await _api.login(
       identifier: identifier,
       password: password,
     );
-    _log('📡 backend password response = $response');
+    _assertLoginCurrent(revision);
 
     if (response['success'] == true) {
-      await SecureStorage.saveTokens(
-        accessToken: response['accessToken'],
-        refreshToken: response['refreshToken'],
-      );
+      await _acceptLogin(response, revision);
       return true;
     }
 
@@ -345,12 +477,15 @@ class AuthRepository {
   }
 
   Future<String?> refreshAccessToken() async {
+    if (_loggingOut) return null;
+    final revision = SecureStorage.sessionRevision;
     final refreshToken = await SecureStorage.getRefreshToken();
     if (refreshToken == null) return null;
 
     try {
       final response = await _api.refresh(refreshToken: refreshToken);
 
+      if (_loggingOut || revision != SecureStorage.sessionRevision) return null;
       if (response['success'] == true) {
         // Backend refresh token'ı her refresh'te ROTATE ediyor (eskisini revoke
         // edip yenisini döndürüyor). Yeni token'ı saklamazsak eski (artık
@@ -359,11 +494,13 @@ class AuthRepository {
         // backend) eskisine düş.
         final rotatedRefreshToken =
             (response['refreshToken'] as String?) ?? refreshToken;
-        await SecureStorage.saveTokens(
+        final saved = await SecureStorage.saveRefreshedTokens(
+          expectedRevision: revision,
+          previousRefreshToken: refreshToken,
           accessToken: response['accessToken'],
           refreshToken: rotatedRefreshToken,
         );
-        return response['accessToken'];
+        return saved ? response['accessToken'] : null;
       }
 
       return null;
@@ -383,6 +520,7 @@ class AuthRepository {
     String? consentSource,
     bool reusePendingToken = false,
   }) async {
+    final revision = _beginLogin();
     _log('🔥 Google login started');
 
     String? idToken;
@@ -405,6 +543,7 @@ class AuthRepository {
       if (googleUser == null) return false;
 
       final googleAuth = await googleUser.authentication;
+      _assertLoginCurrent(revision);
       idToken = googleAuth.idToken;
       _pendingGoogleIdToken = idToken;
     }
@@ -429,14 +568,11 @@ class AuthRepository {
       }
       rethrow;
     }
-    _log('📡 backend google response = $response');
+    _assertLoginCurrent(revision);
 
     if (response['success'] == true) {
       _pendingGoogleIdToken = null;
-      await SecureStorage.saveTokens(
-        accessToken: response['accessToken'],
-        refreshToken: response['refreshToken'],
-      );
+      await _acceptLogin(response, revision);
       return true;
     }
 
@@ -463,6 +599,7 @@ class AuthRepository {
     String? consentSource,
     bool reusePendingCredential = false,
   }) async {
+    final revision = _beginLogin();
     _log('🍎 Apple login started');
 
     String? identityToken;
@@ -491,6 +628,7 @@ class AuthRepository {
         rethrow;
       }
 
+      _assertLoginCurrent(revision);
       identityToken = credential.identityToken;
       authorizationCode = credential.authorizationCode;
 
@@ -533,16 +671,13 @@ class AuthRepository {
       }
       rethrow;
     }
-    _log('📡 backend apple response = $response');
+    _assertLoginCurrent(revision);
 
     if (response['success'] == true) {
       _pendingAppleIdentityToken = null;
       _pendingAppleAuthorizationCode = null;
       _pendingAppleFullName = null;
-      await SecureStorage.saveTokens(
-        accessToken: response['accessToken'],
-        refreshToken: response['refreshToken'],
-      );
+      await _acceptLogin(response, revision);
       return true;
     }
 
@@ -552,32 +687,100 @@ class AuthRepository {
     throw Exception(response['message'] ?? 'Apple login failed');
   }
 
-  Future<void> logout() async {
-    CheckinPingManager.I.stop();
+  int _beginLogin() {
+    if (_loggingOut) throw AccountSessionChangedError();
+    return SecureStorage.sessionRevision;
+  }
+
+  void _assertLoginCurrent(int revision) {
+    if (_loggingOut || revision != SecureStorage.sessionRevision) {
+      throw AccountSessionChangedError();
+    }
+  }
+
+  Future<void> _acceptLogin(Map<String, dynamic> response, int revision) async {
+    _assertLoginCurrent(revision);
+    final saved = await SecureStorage.saveLoginTokens(
+      expectedRevision: revision,
+      accessToken: response['accessToken'],
+      refreshToken: response['refreshToken'],
+    );
+    if (!saved || _loggingOut) throw AccountSessionChangedError();
+    // The server's fresh /auth/me decides Personal vs Venue. Never inherit
+    // the previous account's selected venue, check-in or owner-only uploads.
+    PendingPublicMediaService.instance.clear();
+    CheckinPingManager.I.resetSession();
     ActiveCheckinService().clear();
+    UserSession.instance.clear();
+    VenueSession.instance.clear();
+    invalidateMeCache();
+    ProfilePreviewPage.clearActionStateCache();
+    VenueStoryViewedCache.instance.clear();
+  }
+
+  Future<void> logout() {
+    final current = _logoutFlight;
+    if (current != null) return current;
+    _loggingOut = true;
+    return _logoutFlight = _logout().whenComplete(() {
+      _loggingOut = false;
+      _logoutFlight = null;
+    });
+  }
+
+  Future<void> _logout() async {
+    PendingPublicMediaService.instance.clear();
+    CheckinPingManager.I.resetSession();
+    invalidateMeCache();
+    ActiveCheckinService().clear();
+    UserSession.instance.clear();
+    VenueSession.instance.clear();
+    _pendingGoogleIdToken = null;
+    _pendingAppleIdentityToken = null;
+    _pendingAppleAuthorizationCode = null;
+    _pendingAppleFullName = null;
     final refreshToken = await SecureStorage.getRefreshToken();
-    if (refreshToken != null) {
+    Future<void> revokeRemote() async {
+      if (refreshToken == null) return;
       try {
-        await _api.logout(refreshToken: refreshToken);
+        await _api
+            .logout(refreshToken: refreshToken)
+            .timeout(const Duration(seconds: 5));
       } catch (_) {
         // Backend logout başarısız olsa da lokal oturumu kapatmaya devam et.
       }
     }
-    await _googleSignIn.signOut();
 
-    // Backend logout tüm device token'ları pasifleştirir; guard'ı sıfırla ki
-    // sonraki login aynı cihaz token'ını yeniden aktif kaydetsin.
-    PushManager.instance.onSessionEnded();
+    Future<void> signOutProvider() async {
+      try {
+        await (_signOutProvider?.call() ?? _googleSignIn.signOut()).timeout(
+          const Duration(seconds: 3),
+        );
+      } catch (_) {
+        // Provider/network failure must never prevent local session cleanup.
+      }
+    }
 
-    await SecureStorage.clearSession();
-    invalidateMeCache();
-    ProfilePreviewPage.clearActionStateCache();
-    VenueStoryViewedCache.instance.clear();
-    await StoryViewedCache.clearAll();
+    Future<void> clearLocalSession() async {
+      PushManager.instance.onSessionEnded();
+      // Close sockets and invalidate refresh writes immediately, not after
+      // waiting for two independent network/provider operations.
+      await SecureStorage.clearSession();
+      PendingPublicMediaService.instance.clear();
+      invalidateMeCache();
+      ProfilePreviewPage.clearActionStateCache();
+      VenueStoryViewedCache.instance.clear();
+      await StoryViewedCache.clearAll();
+    }
+
+    // Keep logout single-flight until all cleanup settles. In particular a
+    // late remote revoke must not overlap the next interactive login.
+    await Future.wait([revokeRemote(), signOutProvider(), clearLocalSession()]);
   }
 
   /// Root/global hesap silme: kimlik + bağlı contextler tamamen silinir.
   Future<void> deleteRootAccount() async {
+    PendingPublicMediaService.instance.clear();
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
@@ -612,6 +815,7 @@ class AuthRepository {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
     await _api.deactivateAccount(accessToken: token);
+    PendingPublicMediaService.instance.clear();
     await _googleSignIn.signOut();
     CheckinPingManager.I.stop();
     ActiveCheckinService().clear();
@@ -621,29 +825,51 @@ class AuthRepository {
   }
 
   Future<bool> tryGetMe(String accessToken) async {
-    try {
-      await _api.me(accessToken: accessToken);
-      return true;
-    } catch (e) {
-      if (e is ApiException && e.statusCode == 401) {
-        return false;
+    for (var attempt = 1; ; attempt++) {
+      try {
+        if (accessToken != await SecureStorage.getAccessToken()) return false;
+        // Session validation must be fresh, but its successful response is
+        // also the account data needed by AuthGate/Home. Do not throw that
+        // read away.
+        await getMe(forceRefresh: true);
+        return true;
+      } on AccountSessionChangedError {
+        // Signing in swaps the previous account's local upload session over
+        // to this one during the first read, which drops that read. The
+        // session is settled now, so read once more instead of failing login.
+        if (attempt == 2) rethrow;
+      } catch (e) {
+        if (e is ApiException && e.statusCode == 401) {
+          return false;
+        }
+        rethrow; // network vs.
       }
-      rethrow; // network vs.
     }
   }
 
   Future<bool> restoreSession() async {
+    final revision = SecureStorage.sessionRevision;
+    void requireSameSession() {
+      if (_loggingOut || revision != SecureStorage.sessionRevision) {
+        throw AccountSessionChangedError();
+      }
+    }
+
+    requireSameSession();
     final accessToken = await SecureStorage.getAccessToken();
+    requireSameSession();
     if (accessToken == null) {
       return false;
     }
 
     // 1️⃣ Access token ile dene
     final ok = await tryGetMe(accessToken);
+    requireSameSession();
     if (ok) return true;
 
     // 2️⃣ Refresh dene
     final newAccessToken = await refreshAccessToken();
+    requireSameSession();
     if (newAccessToken == null) {
       await logout();
       return false;
@@ -651,6 +877,7 @@ class AuthRepository {
 
     // 3️⃣ Yeni token ile tekrar dene
     final okAfterRefresh = await tryGetMe(newAccessToken);
+    requireSameSession();
     if (!okAfterRefresh) {
       await logout();
       return false;
@@ -667,19 +894,173 @@ class AuthRepository {
   }
 
   Future<Map<String, dynamic>> getMe({bool forceRefresh = false}) async {
+    if (_loggingOut) throw AccountSessionChangedError();
+    final cacheGeneration = _meCacheGeneration;
+    final uploads = PendingPublicMediaService.instance;
+    final generation = uploads.sessionGeneration;
+    final authRevision = SecureStorage.sessionRevision;
+    final contextGeneration = _meContextGeneration;
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
+    var scope = _MeReadScope(
+      token,
+      cacheGeneration,
+      generation,
+      authRevision,
+      contextGeneration,
+    );
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _getMeForScope(
+          scope,
+          forceRefresh: attempt == 0 && forceRefresh,
+        );
+      } on _MeCacheInvalidatedError {
+        // A check-in/avatar update can invalidate a shared read while Home,
+        // notifications and Push are all waiting for it. Join the new read (or
+        // its fresh cache) once, never return the superseded response. Do not
+        // retry network/authorization errors or cross logout/context changes.
+        if (attempt == 1) rethrow;
+        final currentToken = await _requireCurrentMeOwner(
+          scope,
+          requireFreshCache: false,
+        );
+        scope = _MeReadScope(
+          currentToken,
+          _meCacheGeneration,
+          generation,
+          authRevision,
+          contextGeneration,
+        );
+      }
+    }
+  }
 
-    if (!forceRefresh && _getMeCache != null && _getMeCacheTime != null) {
-      final age = DateTime.now().difference(_getMeCacheTime!);
-      if (age < _getMeCacheTtl) return Map<String, dynamic>.from(_getMeCache!);
+  Future<Map<String, dynamic>> _getMeForScope(
+    _MeReadScope scope, {
+    required bool forceRefresh,
+  }) async {
+    _assertCurrentMeScope(scope);
+
+    // Sharing an in-flight fresh read also applies to forceRefresh. Mutations
+    // invalidate the generation before asking for a fresh response, so they
+    // cannot accidentally join work started before that mutation.
+    final flight = _getMeFlight;
+    if (flight != null && flight.scope.matches(scope)) {
+      final result = await flight.result;
+      _assertCurrentMeScope(scope);
+      return _copyMeResponse(result);
     }
 
-    final me = await _api.me(accessToken: token);
+    if (!forceRefresh &&
+        _getMeCacheScope?.matches(scope) == true &&
+        _getMeCache != null &&
+        _getMeCacheTime != null) {
+      final age = DateTime.now().difference(_getMeCacheTime!);
+      if (age < _getMeCacheTtl) {
+        final cached = _copyMeResponse(_getMeCache!);
+        await PendingPublicMediaService.instance.restoreAuthenticatedSession(
+          scope.token,
+          expectedGeneration: scope.sessionGeneration,
+        );
+        await _requireCurrentMeOwner(scope);
+        _assertCurrentMeScope(scope);
+        return cached;
+      }
+    }
+
+    final next = _MeReadFlight(scope, _readFreshMe(scope));
+    _getMeFlight = next;
+    try {
+      final result = await next.result;
+      _assertCurrentMeScope(scope);
+      return _copyMeResponse(result);
+    } finally {
+      if (identical(_getMeFlight, next)) _getMeFlight = null;
+    }
+  }
+
+  static bool _isCurrentMeSession(_MeReadScope scope) =>
+      !_loggingOut &&
+      scope.authRevision == SecureStorage.sessionRevision &&
+      scope.contextGeneration == _meContextGeneration &&
+      PendingPublicMediaService.instance.isCurrentSession(
+        scope.sessionGeneration,
+      );
+
+  static bool _isCurrentMeScope(_MeReadScope scope) =>
+      _isCurrentMeSession(scope) && scope.cacheGeneration == _meCacheGeneration;
+
+  static void _assertCurrentMeScope(_MeReadScope scope) {
+    if (!_isCurrentMeSession(scope)) {
+      throw AccountSessionChangedError();
+    }
+    if (scope.cacheGeneration != _meCacheGeneration) {
+      throw _MeCacheInvalidatedError();
+    }
+  }
+
+  static Future<String> _requireCurrentMeOwner(
+    _MeReadScope scope, {
+    bool requireFreshCache = true,
+  }) async {
+    final currentToken = await SecureStorage.getAccessToken();
+    // A normal silent JWT refresh for the same owner remains valid. The JWT is
+    // used only to partition reads; all authorization stays on the server.
+    if (!_isCurrentMeSession(scope) ||
+        currentToken == null ||
+        (scope.token != currentToken &&
+            !sameUploadOwner(scope.token, currentToken))) {
+      throw AccountSessionChangedError();
+    }
+    if (requireFreshCache) _assertCurrentMeScope(scope);
+    return currentToken;
+  }
+
+  Future<Map<String, dynamic>> _readFreshMe(_MeReadScope scope) async {
+    final uploads = PendingPublicMediaService.instance;
+    final Map<String, dynamic> me;
+    try {
+      me = await _api.me(accessToken: scope.token);
+    } on ApiException catch (error) {
+      if ((error.statusCode == 401 || error.statusCode == 403) &&
+          _isCurrentMeScope(scope)) {
+        // An explicitly denied fresh read must not leave an older successful
+        // account response available to the next screen.
+        invalidateMeCache();
+      }
+      rethrow;
+    }
+    final currentToken = await _requireCurrentMeOwner(scope);
+    await uploads.restoreAuthenticatedSession(
+      currentToken,
+      expectedGeneration: scope.sessionGeneration,
+    );
+    final readyToken = await _requireCurrentMeOwner(scope);
+    _assertCurrentMeScope(scope);
     final normalized = _normalizeMeResponse(me);
-    _getMeCache = normalized;
+    _getMeCache = _copyMeResponse(normalized);
     _getMeCacheTime = DateTime.now();
-    return Map<String, dynamic>.from(normalized);
+    _getMeCacheScope = _MeReadScope(
+      readyToken,
+      scope.cacheGeneration,
+      scope.sessionGeneration,
+      scope.authRevision,
+      scope.contextGeneration,
+    );
+    return normalized;
+  }
+
+  static Map<String, dynamic> _copyMeResponse(Map<String, dynamic> source) {
+    dynamic copy(dynamic value) {
+      if (value is Map) {
+        return value.map((key, item) => MapEntry(key.toString(), copy(item)));
+      }
+      if (value is List) return value.map(copy).toList();
+      return value;
+    }
+
+    return source.map((key, value) => MapEntry(key, copy(value)));
   }
 
   Map<String, dynamic> _normalizeMeResponse(Map<String, dynamic> source) {
@@ -768,14 +1149,35 @@ class AuthRepository {
     required String lastActiveContext,
     String? activeVenueId,
   }) async {
+    final revision = SecureStorage.sessionRevision;
+    void requireSameSession() {
+      if (_loggingOut || revision != SecureStorage.sessionRevision) {
+        throw AccountSessionChangedError();
+      }
+    }
+
+    requireSameSession();
     final token = await SecureStorage.getAccessToken();
+    requireSameSession();
     if (token == null) throw Exception('Not authenticated');
+    _meContextGeneration++;
     invalidateMeCache();
-    return _api.switchContext(
-      accessToken: token,
-      lastActiveContext: lastActiveContext,
-      activeVenueId: activeVenueId,
-    );
+    try {
+      final response = await _api.switchContext(
+        accessToken: token,
+        lastActiveContext: lastActiveContext,
+        activeVenueId: activeVenueId,
+      );
+      requireSameSession();
+      return response;
+    } finally {
+      // Reads started while the context mutation was in flight also belong
+      // to the previous context, whether that mutation succeeded or failed.
+      if (!_loggingOut && revision == SecureStorage.sessionRevision) {
+        _meContextGeneration++;
+        invalidateMeCache();
+      }
+    }
   }
 
   Future<void> updateMe(Map<String, dynamic> data) async {
@@ -828,49 +1230,23 @@ class AuthRepository {
     }
   }
 
-  Future<void> uploadProfilePhoto1(File file) async {
-    final token = await SecureStorage.getAccessToken();
-
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('${AppConfig.baseUrl}/users/me/photo'),
-    );
-
-    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
-
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
-
-    final response = await sendMultipartRequest(request);
-
-    if (response.statusCode >= 400) {
-      throw Exception('Upload failed');
-    }
-  }
+  Future<void> uploadProfilePhoto1(File file) => uploadProfilePhoto(file);
 
   Future<void> uploadProfilePhoto(File file) async {
-    final token = await SecureStorage.getAccessToken();
-
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('${AppConfig.baseUrl}/users/me/photo'),
-    );
-
-    request.headers.addAll(await AppRequestHeaders.build(accessToken: token));
-
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        file.path,
-        filename: 'profile.jpg', // iOS HEIC olsa bile backend için sorun olmaz
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    await AvatarUploadRepository().upload(
+      file: file,
+      session: session,
+      draft: PendingPublicMedia(
+        id: PendingPublicMediaService.newUploadId(),
+        kind: PendingPublicMediaKind.personalAvatar,
+        venueId: null,
+        localPath: file.path,
+        isVideo: false,
+        createdAt: DateTime.now(),
+        hasServerReceipt: false,
       ),
     );
-
-    final response = await sendMultipartRequest(request);
-
-    if (response.statusCode >= 400) {
-      final body = await response.stream.bytesToString();
-      throw Exception('Upload failed: ${response.statusCode} $body');
-    }
     invalidateMeCache();
   }
 

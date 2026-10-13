@@ -2,11 +2,14 @@ class PingResponse {
   final String status;
   final double? distance;
 
-  /// status == 'expired' iken: kullanıcı hâlâ mekanda mı (≤200m) ve mekan bilgisi.
+  /// status == 'expired' iken: kullanıcı hâlâ mekanda mı ve mekan bilgisi.
   /// "Hâlâ buradaysan yenile" popup'ı yalnızca [nearVenue] true ise gösterilir.
   final bool nearVenue;
   final String? venueId;
   final String? venueName;
+  final DateTime? expiresAt;
+  final double? renewalLatitude;
+  final double? renewalLongitude;
 
   PingResponse({
     required this.status,
@@ -14,6 +17,9 @@ class PingResponse {
     this.nearVenue = false,
     this.venueId,
     this.venueName,
+    this.expiresAt,
+    this.renewalLatitude,
+    this.renewalLongitude,
   });
 
   factory PingResponse.fromJson(Map<String, dynamic> json) {
@@ -25,6 +31,9 @@ class PingResponse {
       nearVenue: json['near_venue'] == true,
       venueId: json['venue_id']?.toString(),
       venueName: json['venue_name']?.toString(),
+      expiresAt: DateTime.tryParse((json['expires_at'] ?? '').toString()),
+      renewalLatitude: (json['renewal_latitude'] as num?)?.toDouble(),
+      renewalLongitude: (json['renewal_longitude'] as num?)?.toDouble(),
     );
   }
 }

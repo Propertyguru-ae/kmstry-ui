@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_follower_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
@@ -7,14 +12,25 @@ import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page
 /// Friends sayfasıyla aynı düzen: isimle arama + seçilebilir sıralama.
 class VenueFollowersPage extends StatefulWidget {
   final String venueId;
-  const VenueFollowersPage({super.key, required this.venueId});
+  const VenueFollowersPage({super.key, required this.venueId, this.repository});
+  final VenueOwnerRepository? repository;
 
   @override
   State<VenueFollowersPage> createState() => _VenueFollowersPageState();
 }
 
 class _VenueFollowersPageState extends State<VenueFollowersPage> {
-  final _repo = VenueOwnerRepository();
+  late final _repo = widget.repository ?? VenueOwnerRepository();
+  int _revision = 0;
+  bool _hasData = false;
+  late final _read = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.followers,
+      _readFollowers,
+      isMounted: () => mounted,
+    ),
+  );
   final _searchController = TextEditingController();
 
   List<VenueFollower> _all = [];
@@ -33,28 +49,61 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
 
   @override
   void dispose() {
+    _revision++;
+    _read.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant VenueFollowersPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.venueId != oldWidget.venueId) {
+      _revision++;
+      _hasData = false;
+      _all = [];
+      _read.reset();
+      _load();
+    }
+  }
+
+  Future<void> _load() => _read.invalidate();
+
+  Future<bool> _readFollowers() async {
+    final revision = ++_revision;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool current() =>
+        mounted &&
+        revision == _revision &&
+        venueId == widget.venueId &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
     setState(() {
-      _loading = true;
+      _loading = !_hasData;
       _error = null;
     });
     try {
-      final followers = await _repo.getFollowers(widget.venueId);
-      if (!mounted) return;
+      final followers = await _repo.getFollowers(venueId);
+      if (!current()) return false;
       setState(() {
         _all = followers;
+        _hasData = true;
         _loading = false;
       });
-    } catch (_) {
-      if (!mounted) return;
+      return true;
+    } catch (error) {
+      if (!current()) return false;
       setState(() {
-        _error = 'Could not load followers.';
+        final denied =
+            error is ApiException && [401, 403, 404].contains(error.statusCode);
+        if (denied) {
+          _all = [];
+          _hasData = false;
+        }
+        if (!_hasData) _error = 'Could not load followers.';
         _loading = false;
       });
+      return false;
     }
   }
 
@@ -178,6 +227,13 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
       appBar: AppBar(
         backgroundColor: theme.appBarTheme.backgroundColor,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        // Uygulama genelindeki geri butonu (Analytics vb. ile aynı).
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
+        ),
         title: Text(
           'Followers',
           style: TextStyle(

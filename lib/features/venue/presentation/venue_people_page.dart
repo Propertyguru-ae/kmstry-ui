@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
@@ -25,23 +28,57 @@ class VenuePeoplePage extends StatefulWidget {
   /// use [placeId] as [Venue.id]; pass the resolved id from active check-in / resolve.
   final String? listVenueId;
 
-  const VenuePeoplePage({super.key, required this.venue, this.listVenueId});
+  const VenuePeoplePage({
+    super.key,
+    required this.venue,
+    this.listVenueId,
+    this.repository,
+    this.contextRepository,
+  });
+  final VenueCheckinRepository? repository;
+  final VenueContextRepository? contextRepository;
 
   @override
   State<VenuePeoplePage> createState() => _VenuePeoplePageState();
 }
 
 class _VenuePeoplePageState extends State<VenuePeoplePage> {
-  final _repo = VenueCheckinRepository();
-  final _venueContextRepo = VenueContextRepository();
+  late final _repo = widget.repository ?? VenueCheckinRepository();
+  late final _venueContextRepo =
+      widget.contextRepository ?? VenueContextRepository();
   late Future<List<VenueCheckin>> _future;
   late Future<VenueCheckinStats> _statsFuture;
   AttendeeFilter _filter = AttendeeFilter.empty;
+  final _peopleReads = <String, Future<List<VenueCheckin>>>{};
+  Future<VenueCheckinStats>? _statsRead;
+  String? _selectedReadKey;
+  String? _visiblePeopleKey;
+  late int _checkinIdentity;
+  bool _roomClosed = false;
 
   @override
   void initState() {
     super.initState();
+    _checkinIdentity = ActiveCheckinService().identityRevision;
+    ActiveCheckinService.changes.addListener(_onCheckinChanged);
     _loadCheckins();
+  }
+
+  void _onCheckinChanged() {
+    final identity = ActiveCheckinService().identityRevision;
+    if (!mounted || identity == _checkinIdentity) return;
+    _checkinIdentity = identity;
+    _peopleReads.clear();
+    _statsRead = null;
+    // Remove already-painted people immediately on expiry/deletion/logout,
+    // without waiting for a refresh or allowing a late read to restore them.
+    setState(() => _roomClosed = true);
+  }
+
+  @override
+  void dispose() {
+    ActiveCheckinService.changes.removeListener(_onCheckinChanged);
+    super.dispose();
   }
 
   String get _effectiveVenueIdForList =>
@@ -49,16 +86,84 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       ? widget.listVenueId!
       : widget.venue.id;
 
-  Future<void> _loadCheckins() async {
-    final peopleFuture = _repo.getWhoIsHere(
-      _effectiveVenueIdForList,
-      filter: _filter.isEmpty ? null : _filter,
-    );
-    final statsFuture = _venueContextRepo.getVenueCheckinStats(
-      _effectiveVenueIdForList,
-    );
+  @override
+  void didUpdateWidget(VenuePeoplePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = oldWidget.listVenueId?.isNotEmpty == true
+        ? oldWidget.listVenueId!
+        : oldWidget.venue.id;
+    if (oldId != _effectiveVenueIdForList) {
+      _peopleReads.clear();
+      _statsRead = null;
+      _selectedReadKey = null;
+      _visiblePeopleKey = null;
+      _filter = AttendeeFilter.empty;
+      _loadCheckins();
+    }
+  }
+
+  Future<void> _loadCheckins({bool refreshStats = true}) =>
+      PerformanceDiagnostics.pageLoad(
+        PerformancePage.whoIsHere,
+        () => _loadCheckinsUnmeasured(refreshStats: refreshStats),
+        isMounted: () => mounted,
+      );
+
+  Future<void> _loadCheckinsUnmeasured({required bool refreshStats}) async {
+    if (_roomClosed) return;
+    final venueId = _effectiveVenueIdForList;
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    void requireCurrent() {
+      if (!mounted ||
+          _roomClosed ||
+          venueId != _effectiveVenueIdForList ||
+          !PendingPublicMediaService.instance.isCurrentSession(generation)) {
+        throw StateError('People page session changed during read');
+      }
+    }
+
+    final key =
+        '$generation:$venueId:${Uri(queryParameters: _filter.toQueryParameters()).query}';
+    var peopleFuture = _peopleReads[key];
+    if (peopleFuture == null) {
+      late final Future<List<VenueCheckin>> read;
+      read = _repo
+          .getWhoIsHere(venueId, filter: _filter.isEmpty ? null : _filter)
+          .then((people) {
+            requireCurrent();
+            if (_selectedReadKey == key) _visiblePeopleKey = key;
+            return people;
+          })
+          .whenComplete(() {
+            if (identical(_peopleReads[key], read)) _peopleReads.remove(key);
+          });
+      _peopleReads[key] = peopleFuture = read;
+    }
+    // Counts are not filter-specific. Changing an attendee filter does not
+    // issue the same stats request again; explicit refresh still refreshes it.
+    Future<VenueCheckinStats> statsFuture;
+    if (!refreshStats && _selectedReadKey != null) {
+      statsFuture = _statsFuture;
+    } else {
+      var statsRead = _statsRead;
+      if (statsRead == null) {
+        late final Future<VenueCheckinStats> read;
+        read = _venueContextRepo
+            .getVenueCheckinStats(venueId)
+            .then((stats) {
+              requireCurrent();
+              return stats;
+            })
+            .whenComplete(() {
+              if (identical(_statsRead, read)) _statsRead = null;
+            });
+        _statsRead = statsRead = read;
+      }
+      statsFuture = statsRead;
+    }
     setState(() {
-      _future = peopleFuture;
+      _selectedReadKey = key;
+      _future = peopleFuture!;
       _statsFuture = statsFuture;
     });
     try {
@@ -96,13 +201,13 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
     final result = await AttendeeFilterSheet.show(context, _filter);
     if (result == null || !mounted) return;
     setState(() => _filter = result);
-    _loadCheckins();
+    _loadCheckins(refreshStats: false);
   }
 
   void _clearFilters() {
     if (_filter.isEmpty) return;
     setState(() => _filter = AttendeeFilter.empty);
-    _loadCheckins();
+    _loadCheckins(refreshStats: false);
   }
 
   Future<void> _setGenderFilter(String? gender) async {
@@ -119,7 +224,7 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
       if (!allowed || !mounted) return;
     }
     setState(() => _filter = _filter.copyWith(gender: gender));
-    _loadCheckins();
+    _loadCheckins(refreshStats: false);
   }
 
   String? get _venueAvatarUrl {
@@ -134,6 +239,37 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_roomClosed) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Who is Here')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Your check-in has ended.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  child: const Text('Back'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return PerformancePageProbe(
+      page: PerformancePage.whoIsHere,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     final theme = Theme.of(context);
     final colors = Theme.of(context).colorScheme;
     final isDark = theme.brightness == Brightness.dark;
@@ -287,57 +423,61 @@ class _VenuePeoplePageState extends State<VenuePeoplePage> {
             child: FutureBuilder<List<VenueCheckin>>(
               future: _future,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    (!snapshot.hasData ||
+                        _visiblePeopleKey != _selectedReadKey)) {
                   return const _PeopleLoadingState();
                 }
 
                 if (snapshot.hasError) {
                   debugPrint('❌ VenuePeople error: ${snapshot.error}');
-                  return _refreshableFill(Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 48,
-                            color: colors.secondary,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Failed to load people',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: colors.onSurface,
+                  return _refreshableFill(
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              size: 48,
+                              color: colors.secondary,
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _getErrorMessage(snapshot.error),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: colors.onSurface.withValues(alpha: 0.8),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: _loadCheckins,
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Retry'),
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
+                            const SizedBox(height: 16),
+                            Text(
+                              'Failed to load people',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                color: colors.onSurface,
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            Text(
+                              _getErrorMessage(snapshot.error),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: colors.onSurface.withValues(alpha: 0.8),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: _loadCheckins,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry'),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ));
+                  );
                 }
 
                 final people = snapshot.data!;
@@ -782,14 +922,8 @@ class _VenueHeaderAvatar extends StatelessWidget {
       height: 40,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
+        // Gölge yok — app bar'da avatarın altında leke gibi duruyordu.
         border: Border.all(color: colors.onSurface.withValues(alpha: 0.10)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.16),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(9),

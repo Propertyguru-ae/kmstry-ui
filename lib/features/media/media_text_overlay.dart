@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/media/overlay_fonts.dart';
 
 /// Video (ve ileride foto) üzerine eklenen metin overlay'inin veri modeli.
 ///
@@ -15,7 +16,7 @@ class MediaTextOverlay {
   final String text;
   final int colorValue;
   final double fontSizeNorm;
-  final String fontStyle; // 'modern' | 'classic' | 'typewriter'
+  final String fontStyle; // OverlayFont.wireName — bkz. overlay_fonts.dart
   final String align; // 'left' | 'center' | 'right'
   final double xNorm;
   final double yNorm;
@@ -37,33 +38,19 @@ class MediaTextOverlay {
   Color get color => Color(colorValue);
 
   TextAlign get textAlign => switch (align) {
-        'left' => TextAlign.left,
-        'right' => TextAlign.right,
-        _ => TextAlign.center,
-      };
+    'left' => TextAlign.left,
+    'right' => TextAlign.right,
+    _ => TextAlign.center,
+  };
 
   /// Canvas genişliğine göre gerçek font boyutu.
   double fontSizeFor(double canvasWidth) =>
       (fontSizeNorm * canvasWidth).clamp(10.0, 120.0);
 
   TextStyle styleFor(double canvasWidth) {
-    final base = switch (fontStyle) {
-      'classic' => TextStyle(
-          color: color,
-          fontFamily: 'Georgia',
-          fontWeight: FontWeight.w600,
-        ),
-      'typewriter' => TextStyle(
-          color: color,
-          fontFamily: 'Courier',
-          fontWeight: FontWeight.w700,
-        ),
-      _ => TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.2,
-        ),
-    };
+    // Editörlerle aynı font seti (overlay_fonts.dart) — izleyen herkes,
+    // hangi platformda olursa olsun aynı fontu görür.
+    final base = overlayFontFromWire(fontStyle).base(color);
     return base.copyWith(
       fontSize: fontSizeFor(canvasWidth),
       shadows: const [Shadow(blurRadius: 8, color: Colors.black45)],
@@ -71,16 +58,16 @@ class MediaTextOverlay {
   }
 
   Map<String, dynamic> toJson() => {
-        'text': text,
-        'color': colorValue,
-        'fontSizeNorm': fontSizeNorm,
-        'fontStyle': fontStyle,
-        'align': align,
-        'xNorm': xNorm,
-        'yNorm': yNorm,
-        'scale': scale,
-        'rotation': rotation,
-      };
+    'text': text,
+    'color': colorValue,
+    'fontSizeNorm': fontSizeNorm,
+    'fontStyle': fontStyle,
+    'align': align,
+    'xNorm': xNorm,
+    'yNorm': yNorm,
+    'scale': scale,
+    'rotation': rotation,
+  };
 
   String toJsonString() => jsonEncode(toJson());
 
@@ -111,7 +98,9 @@ class MediaTextOverlay {
           ? (map['color'] as num).toInt()
           : 0xFFFFFFFF,
       fontSizeNorm: toD(map['fontSizeNorm'], 0.07).clamp(0.02, 0.3),
-      fontStyle: map['fontStyle'] is String ? map['fontStyle'] as String : 'modern',
+      fontStyle: map['fontStyle'] is String
+          ? map['fontStyle'] as String
+          : 'modern',
       align: map['align'] is String ? map['align'] as String : 'center',
       xNorm: toD(map['xNorm'], 0.5).clamp(0.0, 1.0),
       yNorm: toD(map['yNorm'], 0.5).clamp(0.0, 1.0),
@@ -163,4 +152,35 @@ class MediaTextOverlayView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Scale the editor's full-size text layout with the poster. Drawing the
+/// fixed 320px text box directly in a thumbnail would clip or misplace it.
+/// Full-screen playback and the persisted overlay coordinates are unchanged.
+class MediaTextOverlayThumbnail extends StatelessWidget {
+  const MediaTextOverlayThumbnail({super.key, required this.overlay});
+
+  final MediaTextOverlay overlay;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.biggest;
+        if (!size.isFinite || size.isEmpty) return const SizedBox.shrink();
+        final canvasWidth = MediaQuery.sizeOf(context).width;
+        if (canvasWidth <= 0) return const SizedBox.shrink();
+        return ClipRect(
+          child: FittedBox(
+            fit: BoxFit.fill,
+            child: SizedBox(
+              width: canvasWidth,
+              height: size.height * canvasWidth / size.width,
+              child: MediaTextOverlayView(overlay: overlay),
+            ),
+          ),
+        );
+      },
+    ),
+  );
 }

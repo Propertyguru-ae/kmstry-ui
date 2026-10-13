@@ -1,16 +1,10 @@
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
-import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
-import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
-import 'package:kmstry_frontend/features/media/media_compressor.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_gallery_upload_coordinator.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_gallery_picker.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
@@ -19,8 +13,9 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_sectio
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/presentation/add_venue_story_page.dart';
-
-const _maxGalleryVideoUploadBytes = 100 * 1024 * 1024;
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
 
 /// Venue home sayfasının en üstündeki iki karesel medya kartı:
 ///   • "Story"  — boşken `+`, story varsa son story'nin önizlemesi (sağ altta `+`).
@@ -31,7 +26,11 @@ class VenueHomeMediaCards extends StatefulWidget {
   final String venueName;
   final String? venuePhotoUrl;
   final bool canEditStory;
+  final bool canViewStoryStats;
   final bool canEditGallery;
+  final bool isActive;
+  final VenueStoryRepository? storyRepository;
+  final VenueGalleryRepository? galleryRepository;
 
   const VenueHomeMediaCards({
     super.key,
@@ -39,7 +38,11 @@ class VenueHomeMediaCards extends StatefulWidget {
     required this.venueName,
     this.venuePhotoUrl,
     required this.canEditStory,
+    this.canViewStoryStats = false,
     required this.canEditGallery,
+    this.isActive = true,
+    this.storyRepository,
+    this.galleryRepository,
   });
 
   @override
@@ -47,9 +50,18 @@ class VenueHomeMediaCards extends StatefulWidget {
 }
 
 class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
-    with AutomaticKeepAliveClientMixin {
-  final _storyRepo = VenueStoryRepository();
-  final _galleryRepo = VenueGalleryRepository();
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
+  late final _storyRepo = widget.storyRepository ?? VenueStoryRepository();
+  late final _galleryRepo =
+      widget.galleryRepository ?? VenueGalleryRepository();
+  late final _storiesRead = VisibleVenueRead(
+    read: _readStories,
+    isVisible: () => mounted && widget.isActive,
+  );
+  late final _galleryRead = VisibleVenueRead(
+    read: _readGallery,
+    isVisible: () => mounted && widget.isActive,
+  );
 
   // ListView aşağı kaydırılıp bu kart görüş alanından çıkınca dispose edilmesin;
   // geri gelince initState + ağ çağrısı tekrar çalışıp "geç yükleniyor" gibi
@@ -59,37 +71,103 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   List<VenueStoryItem> _stories = [];
   List<VenueGalleryItem> _gallery = [];
-  bool _uploadingStory = false;
+  final bool _uploadingStory = false;
+  int _galleryLoadRequest = 0;
+  int _storyLoadRequest = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadStories();
     _loadGallery();
     // Profil sayfası gibi başka yerlerden yapılan ekleme/silmelerde de tazele.
     VenueGalleryRepository.changes.addListener(_loadGallery);
     VenueStoryRepository.changes.addListener(_loadStories);
+    PendingPublicMediaService.instance.changes.addListener(_onPendingChanged);
   }
 
   @override
   void dispose() {
+    _storiesRead.dispose();
+    _galleryRead.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     VenueGalleryRepository.changes.removeListener(_loadGallery);
     VenueStoryRepository.changes.removeListener(_loadStories);
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onPendingChanged,
+    );
     super.dispose();
   }
 
-  Future<void> _loadStories() async {
+  Future<void> _loadStories() => _storiesRead.invalidate();
+
+  Future<bool> _readStories() async {
+    final request = ++_storyLoadRequest;
+    final venueId = widget.venueId;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     try {
-      final s = await _storyRepo.getVenueStories(widget.venueId);
-      if (mounted) setState(() => _stories = s);
+      final s = await _storyRepo.getVenueStories(venueId);
+      if (mounted &&
+          request == _storyLoadRequest &&
+          venueId == widget.venueId &&
+          uploads.isCurrentSession(session)) {
+        setState(() => _stories = s);
+        return true;
+      }
     } catch (_) {}
+    return false;
   }
 
-  Future<void> _loadGallery() async {
+  void _onPendingChanged() {
+    if (mounted && widget.isActive) setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _storiesRead.activate();
+      _galleryRead.activate();
+    }
+  }
+
+  Future<void> _loadGallery() => _galleryRead.invalidate();
+
+  Future<bool> _readGallery() async {
+    final request = ++_galleryLoadRequest;
+    final venueId = widget.venueId;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     try {
-      final g = await _galleryRepo.getGallery(widget.venueId);
-      if (mounted) setState(() => _gallery = g);
+      final g = await _galleryRepo.getGallery(venueId);
+      if (mounted &&
+          request == _galleryLoadRequest &&
+          venueId == widget.venueId &&
+          uploads.isCurrentSession(session)) {
+        setState(() => _gallery = g);
+        return true;
+      }
     } catch (_) {}
+    return false;
+  }
+
+  @override
+  void didUpdateWidget(covariant VenueHomeMediaCards oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.venueId != oldWidget.venueId) {
+      _gallery = [];
+      _stories = [];
+      _galleryLoadRequest++;
+      _storyLoadRequest++;
+      _storiesRead.reset();
+      _galleryRead.reset();
+      _loadGallery();
+      _loadStories();
+    } else if (widget.isActive && !oldWidget.isActive) {
+      _storiesRead.activate();
+      _galleryRead.activate();
+    }
   }
 
   // ── Story ──────────────────────────────────────────────────────────────────
@@ -105,7 +183,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
         icon: Icons.amp_stories_rounded,
         title: 'Share Stories with your guests',
         message:
-            'Post 24-hour photo & video moments that pull people in and drive '
+            'Post 24-hour photo moments that pull people in and drive '
             'foot traffic. Stories are part of the Social plan — upgrade to '
             'start engaging your audience.',
         onAllowed: () {},
@@ -113,19 +191,21 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
       return;
     }
 
-    final added = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       AddVenueStoryPage.route(widget.venueId),
     );
-    if (added == true) {
-      setState(() => _uploadingStory = true);
-      await _loadStories();
-      if (mounted) setState(() => _uploadingStory = false);
-    }
   }
 
   void _openStoryViewer() {
-    if (_stories.isEmpty) return;
+    if (_stories.isEmpty &&
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.venueStory,
+              venueId: widget.venueId,
+            ) ==
+            null) {
+      return;
+    }
     final startIndex = _stories.indexWhere((s) => !s.viewedByMe);
     final initialIndex = startIndex == -1 ? 0 : startIndex;
 
@@ -137,9 +217,11 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
             mediaType: s.mediaType,
             thumbnailUrl: s.thumbnailUrl,
             durationSecs: s.durationSecs,
+            textOverlay: s.textOverlay,
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            canViewStats: s.canViewStats,
             user: s.posterUserId == null
                 ? null
                 : StoryUser(id: s.posterUserId!),
@@ -166,9 +248,11 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
         builder: (_) => StoryViewerPage(
           groups: [group],
           venueId: widget.venueId,
+          ownerUploadKind: PendingPublicMediaKind.venueStory,
+          onCreateStory: widget.canEditStory ? _addStory : null,
           initialStoryIndex: initialIndex,
-          // Profildeki gibi "kimler gördü" sayacı/listesi görünsün.
-          showViewers: widget.canEditStory,
+          showViewers: widget.canViewStoryStats,
+          venueStoryRepository: _storyRepo,
           isManagedVenueContent: true,
           canDelete: widget.canEditStory,
           onStoryDeleted: (storyId) {
@@ -204,164 +288,51 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   // ── Gallery ────────────────────────────────────────────────────────────────
 
-  bool _uploadingGallery = false;
-
-  static const _videoExts = {
-    'mp4',
-    'mov',
-    'm4v',
-    '3gp',
-    'webm',
-    'mkv',
-    'avi',
-    'mpeg',
-    'mpg',
-  };
-  static const _imageExts = {
-    'jpg',
-    'jpeg',
-    'png',
-    'webp',
-    'heic',
-    'heif',
-    'gif',
-    'bmp',
-  };
-
-  bool _isVideoPath(String path) =>
-      _videoExts.contains(path.split('.').last.toLowerCase());
-  bool _isMediaPath(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return _videoExts.contains(ext) || _imageExts.contains(ext);
-  }
-
-  Future<File?> _generateThumbnail(String videoPath) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final path = await VideoThumbnail.thumbnailFile(
-        video: videoPath,
-        thumbnailPath: dir.path,
-        imageFormat: ImageFormat.JPEG,
-        maxWidth: 720,
-        quality: 80,
-      );
-      return path == null ? null : File(path);
-    } catch (_) {
-      return null;
-    }
-  }
+  bool _pickingMedia = false;
 
   Future<void> _addGalleryMedia() async {
-    if (_uploadingGallery) return;
-    FilePickerResult? result;
+    if (!widget.canEditGallery || _pickingMedia) return;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    _pickingMedia = true;
     try {
-      result = await FilePicker.platform.pickFiles(
-        type: FileType.media,
-        allowMultiple: true,
-      );
-    } catch (_) {}
-    final paths = (result?.files ?? [])
-        .map((f) => f.path)
-        .whereType<String>()
-        .where(_isMediaPath)
-        .toList();
-    if (paths.isEmpty || !mounted) return;
-
-    final singleVideo = paths.length == 1 && _isVideoPath(paths.first);
-    final uploadProgress = MediaUploadProgressController(
-      title: singleVideo ? 'Preparing video' : 'Preparing media',
-      message: singleVideo
-          ? 'Optimizing your video for a faster upload…'
-          : 'Preparing ${paths.length} items for upload…',
-    );
-    setState(() => _uploadingGallery = true);
-    await uploadProgress.show(context);
-    var hadError = false;
-    String? uploadErrorMessage;
-
-    // Her dosyayı yüklemeden önce sıkıştır (foto → JPEG ~1600px, video → 540p),
-    // sonra hepsini paralel yükle. Sıralamayı koru → optimistik listede doğru
-    // sırayla görünsün.
-    Future<VenueGalleryItem?> processAndUpload(String path) async {
-      try {
-        final isVideo = _isVideoPath(path);
-        final File fileToUpload;
-        File? thumb;
-        if (isVideo) {
-          fileToUpload = await MediaCompressor.compressGalleryVideo(File(path));
-          if (await fileToUpload.length() > _maxGalleryVideoUploadBytes) {
-            uploadErrorMessage =
-                'Video is too large. Please choose a smaller file.';
-            hadError = true;
-            return null;
-          }
-          thumb = await _generateThumbnail(path);
-        } else {
-          fileToUpload = await MediaCompressor.compressImage(File(path));
-        }
-        if (singleVideo) {
-          uploadProgress.update(
-            title: 'Uploading video',
-            message: 'Your optimized video is being uploaded…',
-            progress: 0,
-          );
-        }
-        return await _galleryRepo.uploadItem(
-          widget.venueId,
-          fileToUpload,
-          thumbnail: thumb,
-          onProgress: singleVideo
-              ? (sent, total) {
-                  if (total <= 0) return;
-                  uploadProgress.update(progress: sent / total);
-                }
-              : null,
-        );
-      } catch (error) {
-        hadError = true;
-        if (error.toString().contains('413')) {
-          uploadErrorMessage =
-              'Video is too large. Please choose a smaller file.';
-        }
-        return null;
+      final files = await pickVenueGalleryMedia();
+      if (!mounted ||
+          venueId != widget.venueId ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
       }
-    }
-
-    List<VenueGalleryItem> added = [];
-    try {
-      final results = await Future.wait(paths.map(processAndUpload));
-      added = results.whereType<VenueGalleryItem>().toList();
-    } finally {
-      await uploadProgress.close();
-      uploadProgress.dispose();
+      if (files.isEmpty) return;
+      VenueGalleryUploadCoordinator.instance.share(
+        venueId: venueId,
+        files: files,
+        expectedGeneration: session,
+      );
+    } catch (_) {
       if (mounted) {
-        setState(() {
-          if (added.isNotEmpty) _gallery = [...added.reversed, ..._gallery];
-          _uploadingGallery = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open your photos. Please try again.'),
+          ),
+        );
       }
-    }
-    if (!mounted) return;
-    if (added.isNotEmpty) {
-      showSuccessSnackBar(
-        context,
-        message: added.length == 1
-            ? 'Added to gallery!'
-            : '${added.length} added to gallery!',
-      );
-    }
-    if (hadError) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(uploadErrorMessage ?? 'Some uploads failed'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    } finally {
+      _pickingMedia = false;
     }
   }
 
+  /// Sahibine bekleyen yüklemeler de (en başta, durum kartıyla) gösterilir —
+  /// popup yerine venue profilindeki galeriyle aynı büyük gösterim.
   void _openGalleryViewer() {
-    if (_gallery.isEmpty) return;
+    final hasPending =
+        widget.canEditGallery &&
+        PendingPublicMediaService.instance
+            .forKind(
+              PendingPublicMediaKind.venueGallery,
+              venueId: widget.venueId,
+            )
+            .isNotEmpty;
+    if (_gallery.isEmpty && !hasPending) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -370,6 +341,10 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
           venueId: widget.venueId,
           items: List.of(_gallery),
           initialIndex: 0,
+          pendingUploads: widget.canEditGallery
+              ? PendingPublicMediaService.instance
+              : null,
+          onRetake: widget.canEditGallery ? _addGalleryMedia : null,
           onDelete: widget.canEditGallery
               ? (item) async {
                   await _galleryRepo.deleteItem(widget.venueId, item.id);
@@ -389,6 +364,8 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   // ── Build ──────────────────────────────────────────────────────────────────
 
+  static const double _cardsWidthFactor = 0.86;
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin gereği
@@ -404,20 +381,26 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      // Kartlar bir tık küçük: satır genişliğinin %86'sı, ortalı.
       child: bothShown
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildStoryCard()),
-                const SizedBox(width: 12),
-                Expanded(child: _buildGalleryCard()),
-              ],
+          ? Center(
+              child: FractionallySizedBox(
+                widthFactor: _cardsWidthFactor,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _buildStoryCard()),
+                    const SizedBox(width: 12),
+                    Expanded(child: _buildGalleryCard()),
+                  ],
+                ),
+              ),
             )
           // Tek kart: iki kart durumundaki genişliği koru (yarım) ve ortala.
           : Align(
               alignment: Alignment.center,
               child: FractionallySizedBox(
-                widthFactor: 0.5,
+                widthFactor: 0.5 * _cardsWidthFactor,
                 child: showStory ? _buildStoryCard() : _buildGalleryCard(),
               ),
             ),
@@ -426,6 +409,12 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   Widget _buildStoryCard() {
     final hasStory = _stories.isNotEmpty;
+    final pending = widget.canEditStory
+        ? PendingPublicMediaService.instance.latest(
+            PendingPublicMediaKind.venueStory,
+            venueId: widget.venueId,
+          )
+        : null;
     final allSeen = hasStory && _stories.every((s) => s.viewedByMe);
     final firstStory = hasStory ? _stories.first : null;
     final preview = firstStory == null
@@ -440,16 +429,19 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
       variant: _MediaVariant.story,
       accent: AppColors.magenta,
       title: 'Story',
-      subtitle: '${_stories.length} active',
+      subtitle: pending == null
+          ? '${_stories.length} active'
+          : pendingPublicMediaLabel(pending),
       emptyIcon: Icons.play_arrow_rounded,
       hasContent: hasStory,
       previewUrl: preview,
       showPlayOverlay: firstStory?.isVideo == true,
       unseen: hasStory && !allSeen,
       loading: _uploadingStory,
+      pending: pending,
       showAddBadge: widget.canEditStory,
       onAdd: widget.canEditStory ? _addStory : null,
-      onTap: hasStory
+      onTap: pending != null || hasStory
           ? _openStoryViewer
           : (widget.canEditStory ? _addStory : null),
       galleryItems: const [],
@@ -458,21 +450,32 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   Widget _buildGalleryCard() {
     final hasGallery = _gallery.isNotEmpty;
+    final pending = widget.canEditGallery
+        ? PendingPublicMediaService.instance.latest(
+            PendingPublicMediaKind.venueGallery,
+            venueId: widget.venueId,
+          )
+        : null;
     final n = _gallery.length;
     return _PremiumMediaCard(
       variant: _MediaVariant.gallery,
       accent: AppColors.teal,
       title: 'Gallery',
-      subtitle: '$n ${n == 1 ? 'item' : 'items'}',
+      subtitle: pending == null
+          ? '$n ${n == 1 ? 'item' : 'items'}'
+          : pendingPublicMediaLabel(pending),
       emptyIcon: Icons.photo_library_rounded,
       hasContent: hasGallery,
       previewUrl: null,
       showPlayOverlay: false,
       unseen: false,
-      loading: _uploadingGallery,
+      loading: false,
+      pending: pending,
       showAddBadge: widget.canEditGallery,
       onAdd: widget.canEditGallery ? _addGalleryMedia : null,
-      onTap: hasGallery
+      onTap: pending != null
+          ? _openGalleryViewer
+          : hasGallery
           ? _openGalleryViewer
           : (widget.canEditGallery ? _addGalleryMedia : null),
       galleryItems: _gallery,
@@ -496,6 +499,7 @@ class _PremiumMediaCard extends StatelessWidget {
   final List<VenueGalleryItem> galleryItems;
   final bool unseen;
   final bool loading;
+  final PendingPublicMedia? pending;
   final bool showAddBadge;
   final VoidCallback? onAdd;
   final VoidCallback? onTap;
@@ -512,6 +516,7 @@ class _PremiumMediaCard extends StatelessWidget {
     required this.galleryItems,
     required this.unseen,
     required this.loading,
+    this.pending,
     required this.showAddBadge,
     required this.onAdd,
     required this.onTap,
@@ -581,7 +586,9 @@ class _PremiumMediaCard extends StatelessWidget {
         variant == _MediaVariant.story && hasContent && previewUrl != null;
 
     Widget content;
-    if (isStoryPreview) {
+    if (pending != null) {
+      content = PendingPublicMediaPreview(item: pending!);
+    } else if (isStoryPreview) {
       content = CachedImage(
         previewUrl!,
         fit: BoxFit.cover,
@@ -594,7 +601,8 @@ class _PremiumMediaCard extends StatelessWidget {
     }
 
     // Gallery dolu → "+" overlay içinde; diğerlerinde sağ altta.
-    final showBottomRightAdd = showAddBadge && !isGalleryFilled;
+    final showBottomRightAdd =
+        showAddBadge && (!isGalleryFilled || pending != null);
 
     final frame = AspectRatio(
       aspectRatio: 0.92,
@@ -630,7 +638,7 @@ class _PremiumMediaCard extends StatelessWidget {
                     children: [
                       glow,
                       content,
-                      if (showPlayOverlay && isStoryPreview)
+                      if (showPlayOverlay && isStoryPreview && pending == null)
                         Center(
                           child: Container(
                             width: 46,
@@ -646,6 +654,18 @@ class _PremiumMediaCard extends StatelessWidget {
                               Icons.play_arrow_rounded,
                               color: Colors.white,
                               size: 28,
+                            ),
+                          ),
+                        ),
+                      if (pending != null)
+                        Positioned(
+                          bottom: 8,
+                          left: 8,
+                          right: 8,
+                          child: Center(
+                            child: PublicMediaUploadStatus(
+                              item: pending!,
+                              overlay: true,
                             ),
                           ),
                         ),
@@ -704,25 +724,24 @@ class _PremiumMediaCard extends StatelessWidget {
   }
 
   Widget _addCircle(Color borderColor) {
-    final iconColor = variant == _MediaVariant.gallery
-        ? const Color(0xFF06091A)
-        : Colors.white;
+    // Gallery "+" marka mavisi; Story "+" kendi aksan rengi (magenta).
+    final fill = variant == _MediaVariant.gallery ? AppColors.blue : accent;
     final circle = Container(
       width: 28,
       height: 28,
       decoration: BoxDecoration(
-        color: accent,
+        color: fill,
         shape: BoxShape.circle,
         border: Border.all(color: borderColor, width: 2.5),
         boxShadow: [
           BoxShadow(
-            color: accent.withValues(alpha: 0.5),
+            color: fill.withValues(alpha: 0.5),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Icon(Icons.add, color: iconColor, size: 17),
+      child: const Icon(Icons.add, color: Colors.white, size: 17),
     );
     if (onAdd == null) return circle;
     return GestureDetector(
@@ -806,30 +825,24 @@ class _PremiumMediaCard extends StatelessWidget {
           left: 0,
           right: 0,
           bottom: 0,
-          child: Container(
+          // Arka plan karartması yok: sayı + "+" doğrudan kart zemininde.
+          child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 14, 10, 9),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [
-                  (isDark ? const Color(0xFF06091A) : Colors.white).withValues(
-                    alpha: isDark ? 0.92 : 0.85,
-                  ),
-                  Colors.transparent,
-                ],
-              ),
-            ),
             child: Row(
               children: [
-                Icon(Icons.collections_rounded, size: 13, color: accent),
+                // Öğe sayısı marka mavisi.
+                const Icon(
+                  Icons.collections_rounded,
+                  size: 13,
+                  color: AppColors.blue,
+                ),
                 const SizedBox(width: 4),
                 Text(
                   subtitle,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
-                    color: accent,
+                    color: AppColors.blue,
                   ),
                 ),
                 const Spacer(),

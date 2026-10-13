@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/features/profile/data/settings_device_permissions.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -15,6 +21,7 @@ import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/change_email_page.dart';
 import 'package:kmstry_frontend/features/auth/presentation/change_password_page.dart';
 import 'package:kmstry_frontend/features/data_export/presentation/data_export_page.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/content_moderation_status_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_detail_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/privacy_choices_page.dart';
 
@@ -23,7 +30,9 @@ import 'package:kmstry_frontend/features/profile/presentation/privacy_choices_pa
 /// scope — account-level (shared across profiles), or context-aware (follows
 /// the active Personal / Venue profile).
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.authRepository, this.permissionsReader});
+  final AuthRepository? authRepository;
+  final Future<SettingsDevicePermissions> Function()? permissionsReader;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -35,6 +44,20 @@ class _SettingsPageState extends State<SettingsPage>
   static const bool _showAccountDeactivation = false;
   bool _loading = true;
   Map<String, dynamic> _me = const {};
+  late final _authRepo = widget.authRepository ?? AuthRepository();
+  int _accountLoads = 0;
+  late final _accountRead = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.settings,
+      _readAccount,
+      isMounted: () => mounted,
+    ),
+  );
+  late final _deviceRead = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: _readDevicePermissions,
+  );
 
   // Context
   bool _isVenue = false;
@@ -49,9 +72,9 @@ class _SettingsPageState extends State<SettingsPage>
   bool _updatingMarketing = false;
 
   // Device permissions
-  bool _cameraGranted = false;
-  bool _locationGranted = false;
-  bool _notificationGranted = false;
+  bool? _cameraGranted;
+  bool? _locationGranted;
+  bool? _notificationGranted;
 
   // Busy
   bool _loggingOut = false;
@@ -62,12 +85,20 @@ class _SettingsPageState extends State<SettingsPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PendingPublicMediaService.instance.avatarPublicationChanges.addListener(
+      _onPhotoPublished,
+    );
     _load();
   }
 
   @override
   void dispose() {
+    _accountRead.dispose();
+    _deviceRead.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    PendingPublicMediaService.instance.avatarPublicationChanges.removeListener(
+      _onPhotoPublished,
+    );
     super.dispose();
   }
 
@@ -77,17 +108,15 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _load({bool quietly = false}) async {
-    if (!quietly && mounted) setState(() => _loading = true);
-    try {
-      final me = await AuthRepository().getMe();
-      final ctx = MeContextModel.fromMe(me);
+    // Account/header data is independent of the platform permission channels.
+    await Future.wait([_accountRead.invalidate(), _deviceRead.invalidate()]);
+  }
 
-      final cameraStatus = await Permission.camera.status;
-      final locationStatus = await Permission.locationWhenInUse.status;
-      final fcm = await FirebaseMessaging.instance.getNotificationSettings();
-      final notifGranted =
-          fcm.authorizationStatus == AuthorizationStatus.authorized ||
-          fcm.authorizationStatus == AuthorizationStatus.provisional;
+  Future<bool> _readAccount() async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    try {
+      final me = await _authRepo.getMe(forceRefresh: _accountLoads++ > 0);
+      final ctx = MeContextModel.fromMe(me);
 
       final isVenue = ctx.lastActiveContext?.toUpperCase() == 'VENUE';
       final venueId =
@@ -112,7 +141,10 @@ class _SettingsPageState extends State<SettingsPage>
               ?.toString()
               .trim();
 
-      if (!mounted) return;
+      if (!mounted ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return false;
+      }
       setState(() {
         _me = me;
         _isVenue = isVenue;
@@ -124,19 +156,54 @@ class _SettingsPageState extends State<SettingsPage>
             ? selectedVenue?.photoUrl
             : null;
         _email = (emailRaw != null && emailRaw.isNotEmpty) ? emailRaw : null;
-        _hasPassword = AuthRepository().hasLocalPasswordProvider(me);
+        _hasPassword = _authRepo.hasLocalPasswordProvider(me);
         _marketingOptIn =
             me['marketingEmailOptIn'] == true ||
             me['marketing_email_opt_in'] == true;
-        _cameraGranted = cameraStatus.isGranted;
-        _locationGranted = locationStatus.isGranted;
-        _notificationGranted = notifGranted;
         _loading = false;
       });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      return true;
+    } catch (error) {
+      if (!mounted ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return false;
+      }
+      setState(() {
+        if (error is ApiException && [401, 403].contains(error.statusCode)) {
+          _me = const {};
+          _isVenue = false;
+          _activeVenueId = _venueName = _venuePhotoUrl = _email = null;
+          _hasPassword = _marketingOptIn = false;
+        }
+        _loading = false;
+      });
+      return false;
     }
   }
+
+  Future<bool> _readDevicePermissions() async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    try {
+      final permissions =
+          await (widget.permissionsReader ?? SettingsDevicePermissions.read)();
+      if (!mounted ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return false;
+      }
+      setState(() {
+        _cameraGranted = permissions.camera;
+        _locationGranted = permissions.location;
+        _notificationGranted = permissions.notifications;
+      });
+      return true;
+    } catch (_) {
+      // An unavailable platform channel must not block the account or report
+      // a permission as denied when its actual status is unknown.
+      return false;
+    }
+  }
+
+  void _onPhotoPublished() => _accountRead.invalidate();
 
   // ── actions ────────────────────────────────────────────────
   Future<void> _open(Widget page) async {
@@ -157,9 +224,7 @@ class _SettingsPageState extends State<SettingsPage>
       _updatingMarketing = true;
     });
     try {
-      await AuthRepository().updatePermissions({
-        'marketingEmailOptIn': enabled,
-      });
+      await _authRepo.updatePermissions({'marketingEmailOptIn': enabled});
     } catch (_) {
       if (!mounted) return;
       setState(() => _marketingOptIn = prev);
@@ -175,13 +240,8 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _logout() async {
     if (_loggingOut) return;
     setState(() => _loggingOut = true);
-    try {
-      await AuthRepository().logout();
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pushNamedAndRemoveUntil(AuthRoutes.login, (_) => false);
+    await LogoutFlow.run(context, logout: _authRepo.logout);
+    if (mounted) setState(() => _loggingOut = false);
   }
 
   Future<void> _deactivate() async {
@@ -207,7 +267,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (confirmed != true || !mounted) return;
     setState(() => _deactivating = true);
     try {
-      await AuthRepository().deactivateAccount();
+      await _authRepo.deactivateAccount();
       if (!mounted) return;
       Navigator.of(
         context,
@@ -235,7 +295,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (!confirmed || !mounted) return;
     setState(() => _deleting = true);
     try {
-      await AuthRepository().deleteRootAccount();
+      await _authRepo.deleteRootAccount();
       if (!mounted) return;
       Navigator.of(
         context,
@@ -259,203 +319,215 @@ class _SettingsPageState extends State<SettingsPage>
     final isDark = theme.brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF06091A) : const Color(0xFFF7FAFD);
 
-    return Scaffold(
-      backgroundColor: bg,
-      appBar: AppBar(
+    return LogoutGuard(
+      child: Scaffold(
         backgroundColor: bg,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        title: Text(
-          'Settings',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: theme.colorScheme.onSurface,
+        appBar: AppBar(
+          backgroundColor: bg,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          title: Text(
+            'Settings',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: theme.colorScheme.onSurface,
+            ),
           ),
         ),
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
-              children: [
-                _profileHeader(theme),
-                const SizedBox(height: 22),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
+                children: [
+                  _profileHeader(theme),
+                  const SizedBox(height: 22),
 
-                // ── THIS PROFILE (context-aware) ──
-                _label('This profile'),
-                _card([
-                  _tile(
-                    icon: _isVenue
-                        ? Icons.storefront_outlined
-                        : Icons.person_outline_rounded,
-                    color: AppColors.teal,
-                    title: _isVenue
-                        ? 'Manage this venue'
-                        : 'Manage this profile',
-                    subtitle: _isVenue
-                        ? 'Plan, notifications, offers & more'
-                        : 'Profile, notifications, blocked & more',
-                    onTap: () => _open(
-                      AccountDetailPage(
-                        accountName: _isVenue
-                            ? (_venueName ?? 'Venue')
-                            : (_me['fullName'] ??
-                                      _me['full_name'] ??
-                                      'Personal')
-                                  .toString(),
-                        isVenue: _isVenue,
-                        venueId: _isVenue ? _activeVenueId : null,
-                      ),
-                    ),
-                  ),
-                ]),
-
-                // The current email-change flow verifies the local password.
-                // Hide both password-backed actions for Apple/Google-only
-                // accounts until provider reauthentication is implemented.
-                if (_hasPassword) ...[
-                  _label('Account'),
+                  // ── THIS PROFILE (context-aware) ──
+                  _label('This profile'),
                   _card([
                     _tile(
-                      icon: Icons.alternate_email_rounded,
-                      color: AppColors.blue,
-                      title: 'Change email',
-                      subtitle: _email ?? 'Update the login email',
-                      onTap: () => _open(const ChangeEmailPage()),
-                    ),
-                    _tile(
-                      icon: Icons.lock_outline_rounded,
-                      color: AppColors.blue,
-                      title: 'Change password',
-                      subtitle: 'Update your password',
-                      onTap: () => _open(const ChangePasswordPage()),
+                      icon: _isVenue
+                          ? Icons.storefront_outlined
+                          : Icons.person_outline_rounded,
+                      color: AppColors.teal,
+                      title: _isVenue
+                          ? 'Manage this venue'
+                          : 'Manage this profile',
+                      subtitle: _isVenue
+                          ? 'Plan, notifications, offers & more'
+                          : 'Profile, notifications, blocked & more',
+                      onTap: () => _open(
+                        AccountDetailPage(
+                          accountName: _isVenue
+                              ? (_venueName ?? 'Venue')
+                              : (_me['fullName'] ??
+                                        _me['full_name'] ??
+                                        'Personal')
+                                    .toString(),
+                          isVenue: _isVenue,
+                          venueId: _isVenue ? _activeVenueId : null,
+                        ),
+                      ),
                     ),
                   ]),
-                ],
 
-                // ── PREFERENCES ──
-                _label('Preferences'),
-                _card([
-                  _themeTile(
-                    ThemeMode.light,
-                    'Light',
-                    Icons.light_mode_outlined,
-                  ),
-                  _themeTile(ThemeMode.dark, 'Dark', Icons.dark_mode_outlined),
-                ]),
+                  // The current email-change flow verifies the local password.
+                  // Hide both password-backed actions for Apple/Google-only
+                  // accounts until provider reauthentication is implemented.
+                  if (_hasPassword) ...[
+                    _label('Account'),
+                    _card([
+                      _tile(
+                        icon: Icons.alternate_email_rounded,
+                        color: AppColors.blue,
+                        title: 'Change email',
+                        subtitle: _email ?? 'Update the login email',
+                        onTap: () => _open(const ChangeEmailPage()),
+                      ),
+                      _tile(
+                        icon: Icons.lock_outline_rounded,
+                        color: AppColors.blue,
+                        title: 'Change password',
+                        subtitle: 'Update your password',
+                        onTap: () => _open(const ChangePasswordPage()),
+                      ),
+                    ]),
+                  ],
 
-                // ── PRIVACY & SAFETY ──
-                _label('Privacy & safety'),
-                _card([
-                  _tile(
-                    icon: Icons.shield_outlined,
-                    color: AppColors.teal,
-                    title: 'Privacy choices',
-                    subtitle: 'Control venue discovery analytics',
-                    onTap: () => _open(const PrivacyChoicesPage()),
-                  ),
-                  _permTile(
-                    Icons.camera_alt_outlined,
-                    'Camera',
-                    _cameraGranted,
-                  ),
-                  _permTile(
-                    Icons.location_on_outlined,
-                    'Location',
-                    _locationGranted,
-                  ),
-                  _permTile(
-                    Icons.notifications_active_outlined,
-                    'System notifications',
-                    _notificationGranted,
-                  ),
-                  _switchTile(
-                    icon: Icons.mark_email_read_outlined,
-                    title: 'Marketing emails',
-                    subtitle: 'Product news & offers',
-                    value: _marketingOptIn,
-                    onChanged: _updatingMarketing ? null : _setMarketing,
-                  ),
-                ]),
+                  // ── PREFERENCES ──
+                  _label('Preferences'),
+                  _card([
+                    _themeTile(
+                      ThemeMode.light,
+                      'Light',
+                      Icons.light_mode_outlined,
+                    ),
+                    _themeTile(
+                      ThemeMode.dark,
+                      'Dark',
+                      Icons.dark_mode_outlined,
+                    ),
+                  ]),
 
-                // ── YOUR DATA ──
-                _label('Your data'),
-                _card([
-                  _tile(
-                    icon: Icons.download_rounded,
-                    color: AppColors.blue,
-                    title: 'Download your data',
-                    subtitle: 'Create a private copy of your information',
-                    onTap: () => _open(const DataExportPage()),
-                  ),
-                ]),
-
-                // ── ABOUT & LEGAL ──
-                _label('About & legal'),
-                _card([
-                  _tile(
-                    icon: Icons.privacy_tip_outlined,
-                    color: AppColors.blue,
-                    title: 'Privacy Policy',
-                    onTap: () => _openPolicy('/privacy'),
-                    external: true,
-                  ),
-                  _tile(
-                    icon: Icons.description_outlined,
-                    color: AppColors.blue,
-                    title: 'Terms of Service',
-                    onTap: () => _openPolicy('/terms'),
-                    external: true,
-                  ),
-                  _tile(
-                    icon: Icons.help_outline_rounded,
-                    color: AppColors.blue,
-                    title: 'Support',
-                    onTap: () => _openPolicy('/support'),
-                    external: true,
-                  ),
-                ]),
-
-                // ── DANGER ZONE ──
-                const SizedBox(height: 22),
-                _card([
-                  _tile(
-                    icon: Icons.logout_rounded,
-                    color: theme.colorScheme.error,
-                    title: 'Log out',
-                    danger: true,
-                    trailing: _loggingOut
-                        ? _spinner(theme.colorScheme.error)
-                        : null,
-                    onTap: _loggingOut ? null : _logout,
-                  ),
-                  if (_showAccountDeactivation)
+                  // ── PRIVACY & SAFETY ──
+                  _label('Privacy & safety'),
+                  _card([
                     _tile(
-                      icon: Icons.pause_circle_outline_rounded,
+                      icon: Icons.shield_outlined,
+                      color: AppColors.teal,
+                      title: 'Privacy choices',
+                      subtitle: 'Control venue discovery analytics',
+                      onTap: () => _open(const PrivacyChoicesPage()),
+                    ),
+                    _tile(
+                      icon: Icons.fact_check_outlined,
+                      color: AppColors.orange,
+                      title: 'Content review',
+                      subtitle: 'See uploads being checked or not published',
+                      onTap: () => _open(const ContentModerationStatusPage()),
+                    ),
+                    _permTile(
+                      Icons.camera_alt_outlined,
+                      'Camera',
+                      _cameraGranted,
+                    ),
+                    _permTile(
+                      Icons.location_on_outlined,
+                      'Location',
+                      _locationGranted,
+                    ),
+                    _permTile(
+                      Icons.notifications_active_outlined,
+                      'System notifications',
+                      _notificationGranted,
+                    ),
+                    if (AppConfig.marketingEmailSettingsEnabled)
+                      _switchTile(
+                        icon: Icons.mark_email_read_outlined,
+                        title: 'Marketing emails',
+                        subtitle: 'Product news & offers',
+                        value: _marketingOptIn,
+                        onChanged: _updatingMarketing ? null : _setMarketing,
+                      ),
+                  ]),
+
+                  // ── YOUR DATA ──
+                  _label('Your data'),
+                  _card([
+                    _tile(
+                      icon: Icons.download_rounded,
+                      color: AppColors.blue,
+                      title: 'Download your data',
+                      subtitle: 'Create a private copy of your information',
+                      onTap: () => _open(const DataExportPage()),
+                    ),
+                  ]),
+
+                  // ── ABOUT & LEGAL ──
+                  _label('About & legal'),
+                  _card([
+                    _tile(
+                      icon: Icons.privacy_tip_outlined,
+                      color: AppColors.blue,
+                      title: 'Privacy Policy',
+                      onTap: () => _openPolicy('/privacy'),
+                      external: true,
+                    ),
+                    _tile(
+                      icon: Icons.description_outlined,
+                      color: AppColors.blue,
+                      title: 'Terms of Service',
+                      onTap: () => _openPolicy('/terms'),
+                      external: true,
+                    ),
+                    _tile(
+                      icon: Icons.help_outline_rounded,
+                      color: AppColors.blue,
+                      title: 'Support',
+                      onTap: () => _openPolicy('/support'),
+                      external: true,
+                    ),
+                  ]),
+
+                  // ── DANGER ZONE ──
+                  const SizedBox(height: 22),
+                  _card([
+                    _tile(
+                      icon: Icons.logout_rounded,
                       color: theme.colorScheme.error,
-                      title: 'Deactivate account',
-                      subtitle: 'Temporarily disable — reversible',
+                      title: 'Log out',
                       danger: true,
-                      trailing: _deactivating
+                      trailing: const LogoutProgress(),
+                      onTap: _loggingOut ? null : _logout,
+                    ),
+                    if (_showAccountDeactivation)
+                      _tile(
+                        icon: Icons.pause_circle_outline_rounded,
+                        color: theme.colorScheme.error,
+                        title: 'Deactivate account',
+                        subtitle: 'Temporarily disable — reversible',
+                        danger: true,
+                        trailing: _deactivating
+                            ? _spinner(theme.colorScheme.error)
+                            : null,
+                        onTap: _deactivating ? null : _deactivate,
+                      ),
+                    _tile(
+                      icon: Icons.delete_outline_rounded,
+                      color: theme.colorScheme.error,
+                      title: 'Delete KMSTRY account',
+                      subtitle: 'Identity + all contexts — permanent',
+                      danger: true,
+                      trailing: _deleting
                           ? _spinner(theme.colorScheme.error)
                           : null,
-                      onTap: _deactivating ? null : _deactivate,
+                      onTap: _deleting ? null : _deleteAccount,
                     ),
-                  _tile(
-                    icon: Icons.delete_outline_rounded,
-                    color: theme.colorScheme.error,
-                    title: 'Delete KMSTRY account',
-                    subtitle: 'Identity + all contexts — permanent',
-                    danger: true,
-                    trailing: _deleting
-                        ? _spinner(theme.colorScheme.error)
-                        : null,
-                    onTap: _deleting ? null : _deleteAccount,
-                  ),
-                ], danger: true),
-              ],
-            ),
+                  ], danger: true),
+                ],
+              ),
+      ),
     );
   }
 
@@ -498,22 +570,31 @@ class _SettingsPageState extends State<SettingsPage>
       ),
       child: Row(
         children: [
-          CircleAvatar(
+          OwnerPhotoPreview(
+            kind: _isVenue
+                ? PendingPublicMediaKind.venueAvatar
+                : PendingPublicMediaKind.personalAvatar,
+            venueId: _activeVenueId,
+            width: 52,
+            height: 52,
             radius: 26,
-            backgroundColor: colors.primary.withValues(alpha: 0.15),
-            backgroundImage: (avatar != null && avatar.isNotEmpty)
-                ? NetworkImage(avatar)
-                : null,
-            child: (avatar == null || avatar.isEmpty)
-                ? Text(
-                    initial,
-                    style: TextStyle(
-                      color: colors.primary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  )
-                : null,
+            child: CircleAvatar(
+              radius: 26,
+              backgroundColor: colors.primary.withValues(alpha: 0.15),
+              backgroundImage: (avatar != null && avatar.isNotEmpty)
+                  ? NetworkImage(avatar)
+                  : null,
+              child: (avatar == null || avatar.isEmpty)
+                  ? Text(
+                      initial,
+                      style: TextStyle(
+                        color: colors.primary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    )
+                  : null,
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -536,6 +617,13 @@ class _SettingsPageState extends State<SettingsPage>
                     color: colors.onSurface.withValues(alpha: 0.65),
                   ),
                   overflow: TextOverflow.ellipsis,
+                ),
+                OwnerPhotoUploadStatus(
+                  hasPreviousPhoto: avatar != null && avatar.isNotEmpty,
+                  kind: _isVenue
+                      ? PendingPublicMediaKind.venueAvatar
+                      : PendingPublicMediaKind.personalAvatar,
+                  venueId: _activeVenueId,
                 ),
               ],
             ),
@@ -705,13 +793,21 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  Widget _permTile(IconData icon, String title, bool granted) {
-    final color = granted ? AppColors.teal : AppColors.orange;
+  Widget _permTile(IconData icon, String title, bool? granted) {
+    final color = granted == null
+        ? AppColors.blue
+        : granted
+        ? AppColors.teal
+        : AppColors.orange;
     return _tile(
       icon: icon,
       color: color,
       title: title,
-      subtitle: granted ? 'Allowed' : 'Not allowed — tap to open settings',
+      subtitle: granted == null
+          ? 'Checking permission…'
+          : granted
+          ? 'Allowed'
+          : 'Not allowed — tap to open settings',
       onTap: () => openAppSettings(),
       trailing: Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
@@ -720,7 +816,11 @@ class _SettingsPageState extends State<SettingsPage>
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
-          granted ? 'On' : 'Off',
+          granted == null
+              ? '—'
+              : granted
+              ? 'On'
+              : 'Off',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,

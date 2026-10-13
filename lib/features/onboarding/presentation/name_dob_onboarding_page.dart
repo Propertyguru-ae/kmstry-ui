@@ -107,6 +107,8 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
       setState(() => _loading = false);
       await showPremiumErrorDialog(
         context,
+        title: publicTextErrorTitle(error),
+        icon: publicTextErrorIcon(error),
         message: publicTextErrorMessage(
           error,
           fallback: 'Could not save your profile. Please try again.',

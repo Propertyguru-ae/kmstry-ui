@@ -1,4 +1,5 @@
 import '../../../core/media/media_reference.dart';
+import '../../media/media_text_overlay.dart';
 
 class VenueStoryItem {
   final String id;
@@ -10,8 +11,10 @@ class VenueStoryItem {
   final DateTime createdAt;
   final bool viewedByMe;
   final int viewCount;
+  final bool canViewStats;
   final MediaReference? mediaReference;
   final String? posterUserId;
+  final MediaTextOverlay? textOverlay;
 
   const VenueStoryItem({
     required this.id,
@@ -23,8 +26,10 @@ class VenueStoryItem {
     required this.createdAt,
     this.viewedByMe = false,
     this.viewCount = 0,
+    this.canViewStats = false,
     this.mediaReference,
     this.posterUserId,
+    this.textOverlay,
   });
 
   factory VenueStoryItem.fromJson(Map<String, dynamic> json) {
@@ -45,7 +50,9 @@ class VenueStoryItem {
       createdAt: DateTime.parse(json['created_at'] as String),
       viewedByMe: (json['viewed_by_me'] as bool?) ?? false,
       viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
+      canViewStats: json['can_view_stats'] == true,
       posterUserId: (json['poster'] as Map?)?['id']?.toString(),
+      textOverlay: MediaTextOverlay.fromJson(json['text_overlay']),
     );
   }
 
@@ -59,8 +66,10 @@ class VenueStoryItem {
     createdAt: createdAt,
     viewedByMe: viewedByMe ?? this.viewedByMe,
     viewCount: viewCount,
+    canViewStats: canViewStats,
     mediaReference: mediaReference,
     posterUserId: posterUserId,
+    textOverlay: textOverlay,
   );
 
   bool get isVideo => mediaType == 'video';

@@ -15,7 +15,8 @@ import 'auth_routes.dart';
 import 'dart:io' show Platform;
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({super.key, this.authRepository});
+  final AuthRepository? authRepository;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -25,8 +26,10 @@ class _LoginPageState extends State<LoginPage> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  late final _authRepository = widget.authRepository ?? AuthRepository();
 
   bool _loading = false;
+  String? _loginMethod;
   bool _obscure = true;
   String? _error;
 
@@ -270,15 +273,13 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // ── Continue (gradient, sadece onaylıysa aktif)
+                      // ── Continue (standart mavi, sadece onaylıysa aktif)
                       Opacity(
                         opacity: consent ? 1 : 0.45,
                         child: DecoratedBox(
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(16),
-                            gradient: const LinearGradient(
-                              colors: [AppColors.blue, AppColors.magenta],
-                            ),
+                            color: AppColors.blue,
                             boxShadow: consent
                                 ? [
                                     BoxShadow(
@@ -326,7 +327,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<bool> _loginWithGoogleWithConsentFlow() async {
-    final authRepository = AuthRepository();
+    final authRepository = _authRepository;
     try {
       return await authRepository.loginWithGoogle();
     } on ApiException catch (e) {
@@ -346,7 +347,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<bool> _loginWithAppleWithConsentFlow() async {
-    final authRepository = AuthRepository();
+    final authRepository = _authRepository;
     try {
       return await authRepository.loginWithApple();
     } on ApiException catch (e) {
@@ -456,18 +457,8 @@ class _LoginPageState extends State<LoginPage> {
               if (providers.contains('google'))
                 ElevatedButton(
                   onPressed: () async {
-                    final navigator = Navigator.of(context);
-                    try {
-                      final success = await _loginWithGoogleWithConsentFlow();
-                      if (!context.mounted) return;
-                      if (success) {
-                        navigator.pop();
-                        navigator.pushReplacementNamed(AuthRoutes.authGate);
-                      }
-                    } catch (e) {
-                      if (!navigator.mounted) return;
-                      await _showLoginError(navigator.context, e);
-                    }
+                    Navigator.pop(context);
+                    await _loginSocial(apple: false);
                   },
                   child: const Text('Continue with Google'),
                 ),
@@ -475,18 +466,8 @@ class _LoginPageState extends State<LoginPage> {
               if (providers.contains('apple') && Platform.isIOS)
                 ElevatedButton(
                   onPressed: () async {
-                    final navigator = Navigator.of(context);
-                    try {
-                      final success = await _loginWithAppleWithConsentFlow();
-                      if (!context.mounted) return;
-                      if (success) {
-                        navigator.pop();
-                        navigator.pushReplacementNamed(AuthRoutes.authGate);
-                      }
-                    } catch (e) {
-                      if (!navigator.mounted) return;
-                      await _showLoginError(navigator.context, e);
-                    }
+                    Navigator.pop(context);
+                    await _loginSocial(apple: true);
                   },
                   child: const Text('Continue with Apple'),
                 ),
@@ -497,18 +478,41 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<void> _loginSocial({required bool apple}) async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _loginMethod = apple ? 'apple' : 'google';
+      _error = null;
+    });
+    try {
+      final success = apple
+          ? await _loginWithAppleWithConsentFlow()
+          : await _loginWithGoogleWithConsentFlow();
+      if (!mounted || !success) return;
+      Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+    } catch (e) {
+      if (!mounted) return;
+      await _showLoginError(context, e);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _login() async {
+    if (_loading) return;
     setState(() {
       _error = null;
       _loading = true;
+      _loginMethod = 'password';
     });
 
     try {
-      await AuthRepository().login(
+      final success = await _authRepository.login(
         _emailCtrl.text.trim().toLowerCase(),
         _passCtrl.text,
       );
-      if (!mounted) return;
+      if (!mounted || !success) return;
 
       final pendingInvite = await VenueInviteRepository().getPendingInvite();
       if (!mounted) return;
@@ -525,6 +529,7 @@ class _LoginPageState extends State<LoginPage> {
 
       Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
     } catch (e) {
+      if (!mounted) return;
       if (_isAppUpdateRequiredError(e)) return;
       if (e is ApiException) {
         final code = e.data['errorCode'];
@@ -543,283 +548,268 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-      body: Stack(
-        children: [
-          Positioned(
-            top: -120,
-            right: -90,
-            child: _glow(320, 320, _blue.withValues(alpha: 0.12)),
-          ),
-          Positioned(
-            bottom: -140,
-            left: -120,
-            child: _glow(360, 360, _brand.withValues(alpha: 0.10)),
-          ),
-          Positioned(
-            top: 250,
-            left: -100,
-            child: _glow(220, 220, _magenta.withValues(alpha: 0.055)),
-          ),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
-                  decoration: BoxDecoration(
-                    color: _surface.withValues(alpha: 0.78),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.08),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.30),
-                        blurRadius: 32,
-                        offset: const Offset(0, 18),
+    return PopScope(
+      canPop: !_loading,
+      child: AbsorbPointer(
+        absorbing: _loading,
+        child: Scaffold(
+          backgroundColor: _bg,
+          body: Stack(
+            children: [
+              Positioned(
+                top: -120,
+                right: -90,
+                child: _glow(320, 320, _blue.withValues(alpha: 0.12)),
+              ),
+              Positioned(
+                bottom: -140,
+                left: -120,
+                child: _glow(360, 360, _brand.withValues(alpha: 0.10)),
+              ),
+              Positioned(
+                top: 250,
+                left: -100,
+                child: _glow(220, 220, _magenta.withValues(alpha: 0.055)),
+              ),
+              SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
+                      decoration: BoxDecoration(
+                        color: _surface.withValues(alpha: 0.78),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.30),
+                            blurRadius: 32,
+                            offset: const Offset(0, 18),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Center(
-                          child: SizedBox(
-                            width: 58,
-                            height: 58,
-                            child: Image.asset(
-                              'assets/images/kmstrylogo.png',
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'Welcome',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 31,
-                            height: 1.05,
-                            letterSpacing: -0.5,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Sign in to catch the vibe around you.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            height: 1.35,
-                            fontWeight: FontWeight.w600,
-                            color: _muted,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        TextFormField(
-                          controller: _emailCtrl,
-                          keyboardType: TextInputType.text,
-                          autocorrect: false,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          decoration: _inputDecoration(
-                            icon: Icons.person_outline_rounded,
-                            hint: 'Email or username',
-                          ),
-                          validator: (v) {
-                            final x = (v ?? '').trim();
-                            if (x.isEmpty) {
-                              return 'Please enter your email or username.';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 13),
-                        TextFormField(
-                          controller: _passCtrl,
-                          obscureText: _obscure,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          decoration: _inputDecoration(
-                            icon: Icons.lock_outline_rounded,
-                            hint: 'Password',
-                            suffix: IconButton(
-                              onPressed: () =>
-                                  setState(() => _obscure = !_obscure),
-                              icon: Icon(
-                                _obscure
-                                    ? Icons.visibility_off_rounded
-                                    : Icons.visibility_rounded,
-                                color: _muted,
-                              ),
-                            ),
-                          ),
-                          validator: (v) {
-                            if ((v ?? '').isEmpty) {
-                              return 'Please enter your password.';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        if (_error != null)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent.withValues(alpha: 0.10),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: Colors.redAccent.withValues(alpha: 0.20),
-                              ),
-                            ),
-                            child: Text(
-                              _error!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFFFF8A8A),
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 14),
-                        _buildLoginButton(),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pushNamed(
-                              context,
-                              AuthRoutes.forgotPassword,
-                            );
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: _blueBright,
-                          ),
-                          child: const Text(
-                            'Forgot Password?',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Expanded(child: _divider()),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 12),
-                              child: Text(
-                                'Or sign in with',
-                                style: TextStyle(
-                                  color: _mutedDim,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w700,
+                            Center(
+                              child: SizedBox(
+                                width: 58,
+                                height: 58,
+                                child: Image.asset(
+                                  'assets/images/kmstrylogo.png',
+                                  fit: BoxFit.contain,
                                 ),
                               ),
                             ),
-                            Expanded(child: _divider()),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _SocialCircle(
-                              label: 'G',
-                              onTap: () async {
-                                final navigator = Navigator.of(context);
-                                try {
-                                  final success =
-                                      await _loginWithGoogleWithConsentFlow();
-                                  if (!mounted) return;
-
-                                  if (success) {
-                                    navigator.pushReplacementNamed(
-                                      AuthRoutes.authGate,
-                                    );
-                                  }
-                                } catch (e) {
-                                  if (!navigator.mounted) return;
-                                  await _showLoginError(navigator.context, e);
+                            const SizedBox(height: 20),
+                            const Text(
+                              'Welcome',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 31,
+                                height: 1.05,
+                                letterSpacing: -0.5,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Sign in to catch the vibe around you.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                height: 1.35,
+                                fontWeight: FontWeight.w600,
+                                color: _muted,
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            TextFormField(
+                              controller: _emailCtrl,
+                              keyboardType: TextInputType.text,
+                              autocorrect: false,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              decoration: _inputDecoration(
+                                icon: Icons.person_outline_rounded,
+                                hint: 'Email or username',
+                              ),
+                              validator: (v) {
+                                final x = (v ?? '').trim();
+                                if (x.isEmpty) {
+                                  return 'Please enter your email or username.';
                                 }
+                                return null;
                               },
                             ),
-                            if (Platform.isIOS) ...[
-                              const SizedBox(width: 14),
-                              _SocialCircle(
-                                label: '',
-                                onTap: () async {
-                                  final navigator = Navigator.of(context);
-                                  try {
-                                    final success =
-                                        await _loginWithAppleWithConsentFlow();
-                                    if (!mounted) return;
-                                    if (success) {
-                                      navigator.pushReplacementNamed(
-                                        AuthRoutes.authGate,
-                                      );
-                                    }
-                                  } catch (e) {
-                                    if (!navigator.mounted) return;
-                                    await _showLoginError(navigator.context, e);
-                                  }
-                                },
+                            const SizedBox(height: 13),
+                            TextFormField(
+                              controller: _passCtrl,
+                              obscureText: _obscure,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
                               ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 22),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            const Text(
-                              "Don’t have an account? ",
-                              style: TextStyle(
-                                color: _muted,
-                                fontWeight: FontWeight.w600,
+                              decoration: _inputDecoration(
+                                icon: Icons.lock_outline_rounded,
+                                hint: 'Password',
+                                suffix: IconButton(
+                                  onPressed: () =>
+                                      setState(() => _obscure = !_obscure),
+                                  icon: Icon(
+                                    _obscure
+                                        ? Icons.visibility_off_rounded
+                                        : Icons.visibility_rounded,
+                                    color: _muted,
+                                  ),
+                                ),
                               ),
+                              validator: (v) {
+                                if ((v ?? '').isEmpty) {
+                                  return 'Please enter your password.';
+                                }
+                                return null;
+                              },
                             ),
+                            const SizedBox(height: 14),
+                            if (_error != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.redAccent.withValues(
+                                    alpha: 0.10,
+                                  ),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: Colors.redAccent.withValues(
+                                      alpha: 0.20,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  _error!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFFFF8A8A),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 14),
+                            _buildLoginButton(),
+                            const SizedBox(height: 8),
                             TextButton(
                               onPressed: () {
                                 Navigator.pushNamed(
                                   context,
-                                  AuthRoutes.contextChoice,
+                                  AuthRoutes.forgotPassword,
                                 );
                               },
                               style: TextButton.styleFrom(
                                 foregroundColor: _blueBright,
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(0, 34),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
                               child: const Text(
-                                'Sign up →',
-                                style: TextStyle(fontWeight: FontWeight.w900),
+                                'Forgot Password?',
+                                style: TextStyle(fontWeight: FontWeight.w800),
                               ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(child: _divider()),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 12),
+                                  child: Text(
+                                    'Or sign in with',
+                                    style: TextStyle(
+                                      color: _mutedDim,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(child: _divider()),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _SocialCircle(
+                                  label: 'G',
+                                  loading: _loading && _loginMethod == 'google',
+                                  onTap: () => _loginSocial(apple: false),
+                                ),
+                                if (Platform.isIOS) ...[
+                                  const SizedBox(width: 14),
+                                  _SocialCircle(
+                                    label: '',
+                                    loading:
+                                        _loading && _loginMethod == 'apple',
+                                    onTap: () => _loginSocial(apple: true),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 22),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                const Text(
+                                  "Don’t have an account? ",
+                                  style: TextStyle(
+                                    color: _muted,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pushNamed(
+                                      context,
+                                      AuthRoutes.contextChoice,
+                                    );
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: _blueBright,
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: const Size(0, 34),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text(
+                                    'Sign up →',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -861,7 +851,7 @@ class _LoginPageState extends State<LoginPage> {
   Widget _buildLoginButton() {
     return PrimaryButton(
       label: 'Log in',
-      loading: _loading,
+      loading: _loading && _loginMethod == 'password',
       onPressed: () {
         if (_formKey.currentState!.validate()) {
           _login();
@@ -905,8 +895,13 @@ class _LoginPageState extends State<LoginPage> {
 class _SocialCircle extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
+  final bool loading;
 
-  const _SocialCircle({required this.label, required this.onTap});
+  const _SocialCircle({
+    required this.label,
+    required this.onTap,
+    this.loading = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -929,14 +924,23 @@ class _SocialCircle extends StatelessWidget {
           ],
         ),
         alignment: Alignment.center,
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
-            color: Colors.white,
-          ),
-        ),
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
       ),
     );
   }
