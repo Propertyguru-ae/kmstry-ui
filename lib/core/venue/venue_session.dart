@@ -7,9 +7,13 @@ import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart
 /// Venue context açıldığında [load] çağrılır, kapatıldığında [clear] çağrılır.
 class VenueSession extends ChangeNotifier {
   static final VenueSession instance = VenueSession._();
-  VenueSession._();
+  VenueSession._() : _repo = VenueMemberRepository();
 
-  final _repo = VenueMemberRepository();
+  @visibleForTesting
+  VenueSession.forTest({required VenueMemberRepository repository})
+    : _repo = repository;
+
+  final VenueMemberRepository _repo;
 
   String? _venueId;
   VenueMemberRole _role = VenueMemberRole.staff;
@@ -37,6 +41,13 @@ class VenueSession extends ChangeNotifier {
     if (isOwner) return true;
     return _permissions.contains(permission);
   }
+
+  /// Match the loaded venue's server permissions, never the posting role.
+  /// Owners receive all permissions from the same endpoint.
+  bool canViewStoryStats(String venueId) =>
+      _loaded &&
+      _venueId == venueId &&
+      _permissions.contains(VenuePermission.storyViewStats);
 
   /// Venue planı bu özelliği açıyor mu? (rol izninden bağımsız kademe kontrolü)
   bool hasFeature(VenueFeature feature) => _features.contains(feature);

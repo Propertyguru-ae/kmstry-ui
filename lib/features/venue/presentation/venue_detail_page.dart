@@ -480,6 +480,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
               expiresAt: s.expiresAt,
               createdAt: s.createdAt,
               viewCount: s.viewCount,
+              canViewStats: s.canViewStats,
               user: s.posterUserId == null
                   ? null
                   : StoryUser(id: s.posterUserId!),

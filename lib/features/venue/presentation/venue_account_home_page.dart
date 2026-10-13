@@ -331,18 +331,24 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage>
           // 0) Story + Gallery karesel kartlar — en üstte hızlı erişim.
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: VenueHomeMediaCards(
-              isActive: widget.isActive,
-              venueId: d.venue.id,
-              venueName: d.venue.name,
-              venuePhotoUrl: d.venue.photo,
-              canEditStory:
-                  VenueSession.instance.isOwner ||
-                  VenueSession.instance.can(VenuePermission.storyManage),
-              // Galeri ekleme POST_CREATE iznine bağlı (venueEdit değil).
-              canEditGallery:
-                  VenueSession.instance.isOwner ||
-                  VenueSession.instance.can(VenuePermission.postCreate),
+            child: ListenableBuilder(
+              listenable: VenueSession.instance,
+              builder: (context, child) => VenueHomeMediaCards(
+                isActive: widget.isActive,
+                venueId: d.venue.id,
+                venueName: d.venue.name,
+                venuePhotoUrl: d.venue.photo,
+                canEditStory:
+                    VenueSession.instance.isOwner ||
+                    VenueSession.instance.can(VenuePermission.storyManage),
+                canViewStoryStats: VenueSession.instance.canViewStoryStats(
+                  d.venue.id,
+                ),
+                // Galeri ekleme POST_CREATE iznine bağlı (venueEdit değil).
+                canEditGallery:
+                    VenueSession.instance.isOwner ||
+                    VenueSession.instance.can(VenuePermission.postCreate),
+              ),
             ),
           ),
 
