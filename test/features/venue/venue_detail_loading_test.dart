@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
@@ -669,4 +670,25 @@ void main() {
       await _close(tester);
     },
   );
+
+  testWidgets('a venue without a photo shows no stock cover or avatar', (
+    tester,
+  ) async {
+    final repo = _Context();
+    repo.identity = () async => _identity();
+    repo.events = () async => const [];
+    await _pump(tester, repo);
+
+    expect(find.text('Cafe Alpha'), findsOneWidget);
+    // Eskiden boş fotoğrafta Unsplash restoran görseli kapak ve avatar olurdu.
+    expect(find.byType(GooglePlacePhoto), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is CachedImage && w.url.contains('unsplash'),
+      ),
+      findsNothing,
+    );
+    expect(find.byIcon(Icons.storefront_rounded), findsNothing);
+    await _close(tester);
+  });
 }

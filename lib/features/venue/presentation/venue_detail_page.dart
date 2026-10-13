@@ -2193,13 +2193,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     return '${v.address} ${v.city}'.trim().isNotEmpty;
   }
 
-  String _safeDisplayPhotoUrl(String url) {
-    final trimmed = url.trim();
-    if (trimmed.isEmpty) {
-      return 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
-    }
-    return trimmed;
-  }
+  bool get _hasVenuePhoto => _venuePhotoUrl.trim().isNotEmpty;
 
   Future<void> _openDirections() async {
     final v = widget.venue;
@@ -2343,34 +2337,52 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir
+                    /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir.
+                    /// Fotoğrafı olmayan mekânda varsayılan görsel yerine
+                    /// sade bir zemin ve daha kısa bir alan gösterilir.
                     SizedBox(
-                      height: 210,
+                      height: _hasVenuePhoto ? 210 : 130,
                       width: double.infinity,
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          GooglePlacePhoto(
-                            _safeDisplayPhotoUrl(_venuePhotoUrl),
-                            mediaReference: _venuePhotoReference,
-                            fit: BoxFit.cover,
-                            sourceLoader:
-                                _venueContextRepo.getGooglePhotoSource,
-                            badgeBottom: 44,
-                            overlay: Align(
-                              alignment: Alignment.bottomCenter,
-                              child: Container(
-                                height: 120,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [Colors.transparent, _pageBg],
+                          if (!_hasVenuePhoto)
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    _isDark
+                                        ? AppColors.darkSurface
+                                        : const Color(0xFFEFF3F8),
+                                    _pageBg,
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            GooglePlacePhoto(
+                              _venuePhotoUrl.trim(),
+                              mediaReference: _venuePhotoReference,
+                              fit: BoxFit.cover,
+                              sourceLoader:
+                                  _venueContextRepo.getGooglePhotoSource,
+                              badgeBottom: 44,
+                              overlay: Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  height: 120,
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [Colors.transparent, _pageBg],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
                         ],
                       ),
                     ),
@@ -2387,18 +2399,25 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                _VenueDetailAvatarRing(
-                                  photoUrl: _venuePhotoUrl,
-                                  mediaReference: _venuePhotoReference,
-                                  hasStories: _headerStories.isNotEmpty,
-                                  allSeen:
-                                      _headerStories.isNotEmpty &&
-                                      _headerStories.every((s) => s.viewedByMe),
-                                  onTap: _headerStories.isNotEmpty
-                                      ? _openStoryViewer
-                                      : null,
-                                ),
-                                const SizedBox(width: 12),
+                                // Fotoğraf yoksa avatar gizlenir; story varsa
+                                // halka açılabilsin diye ikonla kalır.
+                                if (_hasVenuePhoto ||
+                                    _headerStories.isNotEmpty) ...[
+                                  _VenueDetailAvatarRing(
+                                    photoUrl: _venuePhotoUrl,
+                                    mediaReference: _venuePhotoReference,
+                                    hasStories: _headerStories.isNotEmpty,
+                                    allSeen:
+                                        _headerStories.isNotEmpty &&
+                                        _headerStories.every(
+                                          (s) => s.viewedByMe,
+                                        ),
+                                    onTap: _headerStories.isNotEmpty
+                                        ? _openStoryViewer
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 12),
+                                ],
                                 Expanded(
                                   child: Padding(
                                     padding: const EdgeInsets.only(bottom: 6),
@@ -2763,9 +2782,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
             ),
             if ((widget.venue.isInDb && widget.venue.id.trim().isNotEmpty) ||
                 widget.venue.placeId?.trim().isNotEmpty == true ||
-                isGooglePlacePhotoProxyUrl(
-                  _safeDisplayPhotoUrl(_venuePhotoUrl),
-                ))
+                isGooglePlacePhotoProxyUrl(_venuePhotoUrl.trim()))
               Positioned(
                 top: MediaQuery.of(context).padding.top + 6,
                 right: 12,
@@ -2831,17 +2848,29 @@ class _VenueDetailAvatarRing extends StatelessWidget {
     const gap = 2.5;
     const totalSize = avatarSize + (ringWidth + gap) * 2;
 
-    final photo = _safeVenueDetailPhotoUrl(photoUrl);
+    final photo = photoUrl.trim();
 
     final avatar = ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: CachedImage(
-        photo,
-        mediaReference: mediaReference,
-        width: avatarSize,
-        height: avatarSize,
-        fit: BoxFit.cover,
-      ),
+      child: photo.isEmpty
+          // Varsayılan görsel yok: story halkası için sade bir mekân ikonu.
+          ? Container(
+              width: avatarSize,
+              height: avatarSize,
+              color: AppColors.blue.withValues(alpha: 0.14),
+              child: const Icon(
+                Icons.storefront_rounded,
+                size: 20,
+                color: AppColors.blueDark,
+              ),
+            )
+          : CachedImage(
+              photo,
+              mediaReference: mediaReference,
+              width: avatarSize,
+              height: avatarSize,
+              fit: BoxFit.cover,
+            ),
     );
 
     if (!hasStories) return avatar;
@@ -2917,12 +2946,4 @@ class _DetailRingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _DetailRingPainter old) =>
       old.colors != colors || old.strokeWidth != strokeWidth;
-}
-
-String _safeVenueDetailPhotoUrl(String url) {
-  final trimmed = url.trim();
-  if (trimmed.isEmpty) {
-    return 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4';
-  }
-  return trimmed;
 }
