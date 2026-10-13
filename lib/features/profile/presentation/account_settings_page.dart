@@ -416,9 +416,11 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          sectionHeading('Security and communication'),
           // Email/password changes currently require a local password. Social
           // provider-only accounts must not be sent into that unusable flow.
+          if (_showChangePasswordTile ||
+              AppConfig.marketingEmailSettingsEnabled)
+            sectionHeading('Security and communication'),
           if (_showChangePasswordTile) ...[
             premiumTile(
               ListTile(
@@ -448,35 +450,37 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
               ),
             ),
           ],
-          if (_loadingAccountInfo)
-            premiumTile(
-              ListTile(
-                leading: Icon(Icons.campaign_outlined, color: colors.primary),
-                title: const Text('Marketing emails'),
-                subtitle: const Text('Loading your preference...'),
-                trailing: const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+          if (AppConfig.marketingEmailSettingsEnabled) ...[
+            if (_loadingAccountInfo)
+              premiumTile(
+                ListTile(
+                  leading: Icon(Icons.campaign_outlined, color: colors.primary),
+                  title: const Text('Marketing emails'),
+                  subtitle: const Text('Loading your preference...'),
+                  trailing: const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            else
+              premiumTile(
+                ListTile(
+                  leading: Icon(Icons.campaign_outlined, color: colors.primary),
+                  title: const Text('Marketing emails'),
+                  subtitle: const Text(
+                    'Receive occasional product updates and special offers',
+                  ),
+                  trailing: Switch(
+                    value: _marketingEmailOptIn,
+                    onChanged: _updatingMarketingOptIn
+                        ? null
+                        : _setMarketingEmailOptIn,
+                  ),
                 ),
               ),
-            )
-          else
-            premiumTile(
-              ListTile(
-                leading: Icon(Icons.campaign_outlined, color: colors.primary),
-                title: const Text('Marketing emails'),
-                subtitle: const Text(
-                  'Receive occasional product updates and special offers',
-                ),
-                trailing: Switch(
-                  value: _marketingEmailOptIn,
-                  onChanged: _updatingMarketingOptIn
-                      ? null
-                      : _setMarketingEmailOptIn,
-                ),
-              ),
-            ),
+          ],
           sectionHeading('Your information and privacy'),
           if (_showAccountDeactivation)
             premiumTile(

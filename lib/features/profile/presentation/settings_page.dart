@@ -442,13 +442,14 @@ class _SettingsPageState extends State<SettingsPage>
                       'System notifications',
                       _notificationGranted,
                     ),
-                    _switchTile(
-                      icon: Icons.mark_email_read_outlined,
-                      title: 'Marketing emails',
-                      subtitle: 'Product news & offers',
-                      value: _marketingOptIn,
-                      onChanged: _updatingMarketing ? null : _setMarketing,
-                    ),
+                    if (AppConfig.marketingEmailSettingsEnabled)
+                      _switchTile(
+                        icon: Icons.mark_email_read_outlined,
+                        title: 'Marketing emails',
+                        subtitle: 'Product news & offers',
+                        value: _marketingOptIn,
+                        onChanged: _updatingMarketing ? null : _setMarketing,
+                      ),
                   ]),
 
                   // ── YOUR DATA ──

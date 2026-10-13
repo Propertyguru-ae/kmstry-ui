@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
+  // Marketing emails are not currently used. Hide the settings control in
+  // every environment without modifying stored preferences or registration.
+  static const bool marketingEmailSettingsEnabled = false;
+
   static const String buildEnv = String.fromEnvironment('BUILD_ENV');
   static const String _definedApiUrl = String.fromEnvironment('API_URL');
   static const String _definedSiteUrl = String.fromEnvironment('SITE_URL');
