@@ -4,6 +4,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/core/venue/venue_plan.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_read_changes.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -29,11 +33,35 @@ class _Stories extends VenueStoryRepository {
   _Stories([this.read]);
   final Future<List<VenueStoryItem>> Function(String)? read;
   int calls = 0;
+  int viewerCalls = 0;
+  @override
+  Future<List<Map<String, dynamic>>> getViewers(String venueId) async {
+    viewerCalls++;
+    return [
+      {'story_id': 'story', 'view_count': 7, 'viewers': []},
+    ];
+  }
+
   @override
   Future<List<VenueStoryItem>> getVenueStories(String venueId) {
     calls++;
     return read?.call(venueId) ?? Future.value([]);
   }
+}
+
+class _StoryPermissions extends VenueMemberRepository {
+  _StoryPermissions(this.allowed);
+  final bool allowed;
+  @override
+  Future<MyVenueAccess> getMyPermissions(String id) async => MyVenueAccess(
+    permissions: [
+      VenuePermission.storyManage,
+      if (allowed) VenuePermission.storyViewStats,
+    ],
+    plan: VenuePlan.free,
+    planUntil: null,
+    features: {},
+  );
 }
 
 class _Partnerships extends ExternalPartnershipRepository {
@@ -164,6 +192,7 @@ Future<void> _pump(
   VenueStoryRepository? stories,
   ExternalPartnershipRepository? partnerships,
   bool active = true,
+  VenueSession? session,
 }) => tester.pumpWidget(
   MaterialApp(
     home: VenueProfilePage(
@@ -174,12 +203,71 @@ Future<void> _pump(
       galleryRepository: _Gallery(),
       storyRepository: stories ?? _Stories(),
       partnershipRepository: partnerships ?? _Partnerships(),
+      venueSession: session,
       isActive: active,
     ),
   ),
 );
 
 void main() {
+  for (final allowed in [false, true]) {
+    testWidgets(
+      'profile avatar tap and long press respect statistics permission: $allowed',
+      (tester) async {
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+        final session = VenueSession.forTest(
+          repository: _StoryPermissions(allowed),
+        );
+        final stories = _Stories(
+          (_) async => [
+            VenueStoryItem(
+              id: 'story',
+              mediaUrl: '',
+              mediaType: 'photo',
+              createdAt: DateTime(2026),
+              expiresAt: DateTime(2030),
+              viewCount: 7,
+              canViewStats: true,
+            ),
+          ],
+        );
+        await _pump(
+          tester,
+          _Auth(() async => _me()),
+          _Owner((id) async => _identity(id), (_) async => []),
+          stories: stories,
+          session: session,
+        );
+        await tester.pumpAndSettle();
+        final avatar = find.byKey(const ValueKey('venue-story-avatar'));
+        expect(avatar, findsOneWidget);
+        await tester.longPress(avatar);
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Story Viewers'),
+          allowed ? findsOneWidget : findsNothing,
+        );
+        expect(stories.viewerCalls, allowed ? 1 : 0);
+        if (allowed) {
+          tester.state<NavigatorState>(find.byType(Navigator)).pop();
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(avatar);
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+        expect(find.byType(StoryViewerPage), findsOneWidget);
+        expect(
+          find.byIcon(Icons.remove_red_eye_outlined),
+          allowed ? findsOneWidget : findsNothing,
+        );
+        expect(stories.viewerCalls, allowed ? 2 : 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   for (final width in [360.0, 430.0]) {
     for (final state in [
       PendingPublicMediaState.rejected,

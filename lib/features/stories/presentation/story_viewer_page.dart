@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../../core/network/api_exception.dart';
+import '../../../core/venue/venue_session.dart';
 import 'package:kmstry_frontend/core/ui/media_viewer_buttons.dart';
 import 'package:video_player/video_player.dart';
 import '../data/story_model.dart';
@@ -34,9 +36,11 @@ class StoryViewerPage extends StatefulWidget {
   final int initialGroupIndex;
   final int initialStoryIndex;
 
-  /// Set when viewing venue stories — enables Instagram-style viewer count overlay (owner only)
+  /// Set when viewing venue stories; statistics require STORY_VIEW_STATS access.
   final String? venueId;
   final bool showViewers;
+  final VenueStoryRepository? venueStoryRepository;
+  final VenueSession? venueSession;
 
   /// True when the viewer was opened from the account that manages this venue.
   /// A venue account must not be offered a report action for its own content,
@@ -61,6 +65,8 @@ class StoryViewerPage extends StatefulWidget {
     this.initialStoryIndex = 0,
     this.venueId,
     this.showViewers = false,
+    this.venueStoryRepository,
+    this.venueSession,
     this.isManagedVenueContent = false,
     this.canDelete = false,
     this.onClose,
@@ -78,6 +84,10 @@ class StoryViewerPage extends StatefulWidget {
 class _StoryViewerPageState extends State<StoryViewerPage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final _repo = StoryRepository();
+  late final _venueStoryRepo =
+      widget.venueStoryRepository ?? VenueStoryRepository();
+  late final _venueSession = widget.venueSession ?? VenueSession.instance;
+  bool _viewersAccessDenied = false;
   OwnerStorySequence? _ownerSequence;
   int? _ownerUploadSession;
   final Set<String> _viewedRejectedUploads = {};
@@ -121,6 +131,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _venueSession.addListener(_onVenueAccessChanged);
     _groups = List<StoryGroup>.from(widget.groups);
     _groupIndex = widget.initialGroupIndex;
     _storyIndex = widget.initialStoryIndex;
@@ -144,9 +155,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _storyIndex = _storyIndex.clamp(0, _currentGroup.stories.length - 1);
     _loadStory();
     if (_ownerSequence == null) _loadCurrentUserId();
-    if (widget.showViewers &&
-        widget.venueId != null &&
-        _currentGroup.stories.any((story) => !story.isOwnerUpload)) {
+    if (_currentGroup.stories.any(_canShowViewers)) {
       _prefetchViewCounts();
     }
   }
@@ -379,10 +388,40 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     if (mounted) _resumeProgress();
   }
 
+  bool _canShowViewers(StoryItem story) =>
+      widget.showViewers &&
+      widget.venueId != null &&
+      !_viewersAccessDenied &&
+      story.canViewStats &&
+      !story.isOwnerUpload &&
+      !story.isUploadingPlaceholder;
+
+  void _onVenueAccessChanged() {
+    if (!widget.showViewers || widget.venueId == null) return;
+    if (!_venueSession.canViewStoryStats(widget.venueId!)) {
+      _disableViewers();
+    }
+  }
+
+  void _disableViewers() {
+    if (!mounted) return;
+    setState(() {
+      _viewersAccessDenied = true;
+      _liveViewCounts.clear();
+    });
+  }
+
+  void _onViewersAccessRevoked() {
+    _disableViewers();
+    if (_venueSession.venueId == widget.venueId) {
+      unawaited(_venueSession.retry());
+    }
+  }
+
   Future<void> _prefetchViewCounts() async {
     try {
-      final all = await VenueStoryRepository().getViewers(widget.venueId!);
-      if (!mounted) return;
+      final all = await _venueStoryRepo.getViewers(widget.venueId!);
+      if (!mounted || _viewersAccessDenied) return;
       final stories = _currentGroup.stories;
       final countById = <String, int>{
         for (final s in all)
@@ -394,6 +433,8 @@ class _StoryViewerPageState extends State<StoryViewerPage>
           if (c != null) _liveViewCounts[i] = c;
         }
       });
+    } on ApiException catch (e) {
+      if (e.statusCode == 403) _onViewersAccessRevoked();
     } catch (_) {}
   }
 
@@ -402,6 +443,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
     _acknowledgeViewedRejections(deferred: true);
     _ownerSequence?.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    _venueSession.removeListener(_onVenueAccessChanged);
     _displayTimer?.dispose();
     _progressController?.dispose();
     _videoController?.dispose();
@@ -1024,10 +1066,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
             ),
 
             // ── VENUE STORY: viewers count bar (Instagram-style) ──────────
-            if (widget.venueId != null &&
-                widget.showViewers &&
-                !story.isOwnerUpload &&
-                !story.isUploadingPlaceholder)
+            if (_canShowViewers(story))
               Positioned(
                 left: 0,
                 right: 0,
@@ -1234,7 +1273,7 @@ class _StoryViewerPageState extends State<StoryViewerPage>
   bool _venueLoading = false;
 
   Future<void> _openViewersList(StoryItem story) async {
-    if (widget.venueId == null) return;
+    if (!_canShowViewers(story)) return;
     _pauseProgress();
     await showModalBottomSheet(
       context: context,
@@ -1243,8 +1282,13 @@ class _StoryViewerPageState extends State<StoryViewerPage>
       builder: (_) => _ViewersSheet(
         venueId: widget.venueId!,
         storyId: story.id,
+        repository: _venueStoryRepo,
+        session: _venueSession,
+        onAccessRevoked: _onViewersAccessRevoked,
         onFreshCount: (count) {
-          if (mounted) setState(() => _liveViewCounts[_storyIndex] = count);
+          if (mounted && !_viewersAccessDenied) {
+            setState(() => _liveViewCounts[_storyIndex] = count);
+          }
         },
       ),
     );
@@ -1347,10 +1391,16 @@ class _ViewersSheet extends StatefulWidget {
   final String venueId;
   final String storyId;
   final void Function(int count)? onFreshCount;
+  final VenueStoryRepository repository;
+  final VenueSession session;
+  final VoidCallback onAccessRevoked;
 
   const _ViewersSheet({
     required this.venueId,
     required this.storyId,
+    required this.repository,
+    required this.session,
+    required this.onAccessRevoked,
     this.onFreshCount,
   });
 
@@ -1359,33 +1409,49 @@ class _ViewersSheet extends StatefulWidget {
 }
 
 class _ViewersSheetState extends State<_ViewersSheet> {
-  final _repo = VenueStoryRepository();
   List<Map<String, dynamic>> _viewers = [];
   int _viewCount = 0;
   bool _loading = true;
+  bool _accessRevoked = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    widget.session.addListener(_onVenueAccessChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onVenueAccessChanged);
+    super.dispose();
+  }
+
+  void _onVenueAccessChanged() {
+    if (!widget.session.canViewStoryStats(widget.venueId)) {
+      _closeAfterRevocation();
+    }
+  }
+
+  void _closeAfterRevocation() {
+    if (!mounted || _accessRevoked) return;
+    _accessRevoked = true;
+    _viewers.clear();
+    widget.onAccessRevoked();
+    if (ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _load() async {
     try {
-      debugPrint(
-        '🔍 ViewersSheet: loading venueId=${widget.venueId} storyId=${widget.storyId}',
-      );
-      final all = await _repo.getViewers(widget.venueId);
-      debugPrint(
-        '🔍 ViewersSheet: got ${all.length} stories, ids=${all.map((s) => s['story_id']).toList()}',
-      );
+      final all = await widget.repository.getViewers(widget.venueId);
       final story = all.firstWhere(
         (s) => s['story_id'] == widget.storyId,
         orElse: () => <String, dynamic>{},
       );
-      debugPrint('🔍 ViewersSheet: matched story=$story');
-      if (mounted) {
+      if (mounted && !_accessRevoked) {
         final freshCount = (story['view_count'] as num?)?.toInt() ?? 0;
         widget.onFreshCount?.call(freshCount);
         setState(() {
@@ -1396,12 +1462,15 @@ class _ViewersSheetState extends State<_ViewersSheet> {
           _loading = false;
         });
       }
-    } catch (e, st) {
-      debugPrint('❌ ViewersSheet load error: $e\n$st');
-      if (mounted) {
+    } catch (e) {
+      if (e is ApiException && e.statusCode == 403) {
+        _closeAfterRevocation();
+        return;
+      }
+      if (mounted && !_accessRevoked) {
         setState(() {
           _loading = false;
-          _error = e.toString();
+          _error = 'Could not load viewers. Please try again.';
         });
       }
     }

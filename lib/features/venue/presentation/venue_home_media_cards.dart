@@ -26,6 +26,7 @@ class VenueHomeMediaCards extends StatefulWidget {
   final String venueName;
   final String? venuePhotoUrl;
   final bool canEditStory;
+  final bool canViewStoryStats;
   final bool canEditGallery;
   final bool isActive;
   final VenueStoryRepository? storyRepository;
@@ -37,6 +38,7 @@ class VenueHomeMediaCards extends StatefulWidget {
     required this.venueName,
     this.venuePhotoUrl,
     required this.canEditStory,
+    this.canViewStoryStats = false,
     required this.canEditGallery,
     this.isActive = true,
     this.storyRepository,
@@ -219,6 +221,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            canViewStats: s.canViewStats,
             user: s.posterUserId == null
                 ? null
                 : StoryUser(id: s.posterUserId!),
@@ -248,8 +251,8 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
           ownerUploadKind: PendingPublicMediaKind.venueStory,
           onCreateStory: widget.canEditStory ? _addStory : null,
           initialStoryIndex: initialIndex,
-          // Profildeki gibi "kimler gördü" sayacı/listesi görünsün.
-          showViewers: widget.canEditStory,
+          showViewers: widget.canViewStoryStats,
+          venueStoryRepository: _storyRepo,
           isManagedVenueContent: true,
           canDelete: widget.canEditStory,
           onStoryDeleted: (storyId) {

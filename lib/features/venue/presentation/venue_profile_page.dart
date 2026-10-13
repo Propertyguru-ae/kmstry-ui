@@ -65,6 +65,7 @@ class VenueProfilePage extends StatefulWidget {
     this.storyRepository,
     this.galleryRepository,
     this.partnershipRepository,
+    this.venueSession,
     this.isActive = true,
   });
   final VenueOwnerRepository? repository;
@@ -73,6 +74,7 @@ class VenueProfilePage extends StatefulWidget {
   final VenueGalleryRepository? galleryRepository;
   final ExternalPartnershipRepository? partnershipRepository;
   final bool isActive;
+  final VenueSession? venueSession;
 
   @override
   State<VenueProfilePage> createState() => _VenueProfilePageState();
@@ -80,6 +82,7 @@ class VenueProfilePage extends StatefulWidget {
 
 class _VenueProfilePageState extends State<VenueProfilePage>
     with WidgetsBindingObserver {
+  VenueSession get _session => widget.venueSession ?? VenueSession.instance;
   bool _loading = true;
   int _profileLoad = 0;
   int _eventsLoad = 0;
@@ -345,7 +348,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
       if (venue == null || ctx.isClaimLocked) return true;
       // Identity paints first. Permissions and independent sections must not
       // make first paint wait for event history or public-media processing.
-      unawaited(VenueSession.instance.load(venue.id, ctx.role));
+      unawaited(_session.load(venue.id, ctx.role));
       _activateSections();
       return true;
     } catch (e) {
@@ -443,7 +446,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final venueId = _venue?.id;
     if (venueId == null ||
         _uploadingPhoto ||
-        !VenueSession.instance.can(VenuePermission.venueEdit)) {
+        !_session.can(VenuePermission.venueEdit)) {
       return;
     }
     final uploads = PendingPublicMediaService.instance;
@@ -1262,7 +1265,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
 
   Widget _buildPage(BuildContext context) {
     return ListenableBuilder(
-      listenable: VenueSession.instance,
+      listenable: _session,
       builder: (context, _) => _build(context),
     );
   }
@@ -1282,7 +1285,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
 
     final venue = _venue;
     final colors = theme.colorScheme;
-    final session = VenueSession.instance;
+    final session = _session;
     final hasPhoto = venue?.photo != null && venue!.photo!.isNotEmpty;
     final activeMemberVenue = _meContext?.memberVenues
         .where((v) => v.id == (venue?.id ?? widget.venueId))
@@ -1477,6 +1480,9 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                               children: [
                                 if (venue != null) ...[
                                   _VenueSquareAvatar(
+                                    key: const ValueKey('venue-story-avatar'),
+                                    venueSession: session,
+                                    storyRepository: _venueStoryRepo,
                                     isActive: widget.isActive,
                                     venue: venue,
                                     isUploading: _uploadingStory,
@@ -1487,10 +1493,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                         ),
                                     canViewStats:
                                         !isClaimLocked &&
-                                        (session.isOwner ||
-                                            session.can(
-                                              VenuePermission.storyViewStats,
-                                            )),
+                                        session.canViewStoryStats(venue.id),
                                     canDeleteStory:
                                         !isClaimLocked &&
                                         (session.isOwner ||
@@ -1702,6 +1705,8 @@ class _VenueProfilePageState extends State<VenueProfilePage>
 // ─── Venue square avatar (with story ring) ────────────────────────────────────
 
 class _VenueSquareAvatar extends StatefulWidget {
+  final VenueSession venueSession;
+  final VenueStoryRepository storyRepository;
   final VenueOwnerStatsVenue venue;
   final bool isUploading;
   final bool isActive;
@@ -1714,6 +1719,9 @@ class _VenueSquareAvatar extends StatefulWidget {
   final void Function(String storyId)? onStoryDeleted;
 
   const _VenueSquareAvatar({
+    super.key,
+    required this.venueSession,
+    required this.storyRepository,
     required this.venue,
     required this.isUploading,
     required this.isActive,
@@ -1776,6 +1784,7 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
+            canViewStats: s.canViewStats,
             user: s.posterUserId == null
                 ? null
                 : StoryUser(id: s.posterUserId!),
@@ -1803,6 +1812,8 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
           ownerUploadKind: PendingPublicMediaKind.venueStory,
           onCreateStory: widget.canAddStory ? widget.onAddStory : null,
           showViewers: widget.canViewStats,
+          venueSession: widget.venueSession,
+          venueStoryRepository: widget.storyRepository,
           isManagedVenueContent: true,
           canDelete: widget.canDeleteStory,
           initialStoryIndex: initialIndex,
@@ -1814,11 +1825,19 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
   }
 
   Future<void> _showViewers() async {
+    if (!widget.canViewStats ||
+        !widget.stories.any((story) => story.canViewStats)) {
+      return;
+    }
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _StoryViewersSheet(venueId: widget.venue.id),
+      builder: (_) => _StoryViewersSheet(
+        venueId: widget.venue.id,
+        session: widget.venueSession,
+        repository: widget.storyRepository,
+      ),
     );
   }
 
@@ -1957,7 +1976,12 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
           : (widget.canAddStory && !widget.isUploading
                 ? widget.onAddStory
                 : null),
-      onLongPress: hasStories ? _showViewers : null,
+      onLongPress:
+          hasStories &&
+              widget.canViewStats &&
+              widget.stories.any((story) => story.canViewStats)
+          ? _showViewers
+          : null,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -3014,33 +3038,71 @@ class _ActionRow extends StatelessWidget {
 
 class _StoryViewersSheet extends StatefulWidget {
   final String venueId;
-  const _StoryViewersSheet({required this.venueId});
+  final VenueSession session;
+  final VenueStoryRepository repository;
+  const _StoryViewersSheet({
+    required this.venueId,
+    required this.session,
+    required this.repository,
+  });
 
   @override
   State<_StoryViewersSheet> createState() => _StoryViewersSheetState();
 }
 
 class _StoryViewersSheetState extends State<_StoryViewersSheet> {
-  final _repo = VenueStoryRepository();
   List<Map<String, dynamic>> _data = [];
   bool _loading = true;
+  bool _accessRevoked = false;
+  bool _loadFailed = false;
 
   @override
   void initState() {
     super.initState();
+    widget.session.addListener(_onVenueAccessChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onVenueAccessChanged);
+    super.dispose();
+  }
+
+  void _onVenueAccessChanged() {
+    if (!widget.session.canViewStoryStats(widget.venueId)) _close();
+  }
+
+  void _close() {
+    if (!mounted || _accessRevoked) return;
+    _accessRevoked = true;
+    _data.clear();
+    if (ModalRoute.of(context)?.isCurrent == true) Navigator.of(context).pop();
   }
 
   Future<void> _load() async {
     try {
-      final data = await _repo.getViewers(widget.venueId);
-      if (mounted)
+      final data = await widget.repository.getViewers(widget.venueId);
+      if (mounted && !_accessRevoked) {
         setState(() {
           _data = data;
           _loading = false;
         });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      }
+    } catch (e) {
+      if (e is ApiException && e.statusCode == 403) {
+        _close();
+        if (widget.session.venueId == widget.venueId) {
+          unawaited(widget.session.retry());
+        }
+        return;
+      }
+      if (mounted && !_accessRevoked) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -3107,7 +3169,7 @@ class _StoryViewersSheetState extends State<_StoryViewersSheet> {
                   ),
                 ),
                 const Spacer(),
-                if (!_loading)
+                if (!_loading && !_loadFailed)
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -3136,6 +3198,14 @@ class _StoryViewersSheetState extends State<_StoryViewersSheet> {
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 color: _Brand.turkuaz,
+              ),
+            )
+          else if (_loadFailed)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                'Could not load viewers. Please try again.',
+                style: TextStyle(color: kDim, fontSize: 14),
               ),
             )
           else if (viewers.isEmpty)

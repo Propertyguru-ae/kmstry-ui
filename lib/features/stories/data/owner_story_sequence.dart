@@ -131,6 +131,7 @@ class OwnerStorySequence extends ChangeNotifier {
             createdAt: s.createdAt,
             viewedByMe: s.viewedByMe,
             viewCount: s.viewCount,
+            canViewStats: s.canViewStats,
             isVenueStory: true,
             venueId: venueId,
             user: s.posterUserId == null

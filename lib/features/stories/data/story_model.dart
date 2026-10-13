@@ -56,6 +56,7 @@ class StoryItem {
     this.venueId,
     this.venueName,
     this.viewCount = 0,
+    this.canViewStats = false,
     this.viewedByMe = false,
     this.isUploadingPlaceholder = false,
     this.textOverlay,
@@ -67,6 +68,7 @@ class StoryItem {
   final String? venueId;
   final String? venueName;
   final int viewCount;
+  final bool canViewStats;
   final bool viewedByMe;
 
   /// true → bu bir venue hesabının kendi story'si (VenueStory). Viewer,

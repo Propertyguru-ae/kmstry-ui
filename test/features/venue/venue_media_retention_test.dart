@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
@@ -29,7 +32,71 @@ class _Stories extends VenueStoryRepository {
   }
 }
 
+class _StatisticsStories extends _Stories {
+  int viewerCalls = 0;
+  @override
+  Future<List<VenueStoryItem>> getVenueStories(String id) async => [
+    VenueStoryItem(
+      id: 'story',
+      mediaUrl: '',
+      mediaType: 'photo',
+      createdAt: DateTime(2026),
+      expiresAt: DateTime(2030),
+      viewCount: 7,
+      canViewStats: true,
+    ),
+  ];
+  @override
+  Future<List<Map<String, dynamic>>> getViewers(String id) async {
+    viewerCalls++;
+    return [
+      {'story_id': 'story', 'view_count': 7, 'viewers': []},
+    ];
+  }
+}
+
 void main() {
+  for (final canPost in [false, true]) {
+    for (final canView in [false, true]) {
+      testWidgets('home separates posting=$canPost from statistics=$canView', (
+        tester,
+      ) async {
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+        });
+        final stories = _StatisticsStories();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: VenueHomeMediaCards(
+                venueId: 'venue',
+                venueName: 'Cafe',
+                canEditStory: canPost,
+                canViewStoryStats: canView,
+                canEditGallery: false,
+                storyRepository: stories,
+                galleryRepository: _Gallery(),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Story').first);
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+        expect(find.byType(StoryViewerPage), findsOneWidget);
+        expect(
+          find.byIcon(Icons.remove_red_eye_outlined),
+          canView ? findsOneWidget : findsNothing,
+        );
+        expect(find.text('7'), canView ? findsOneWidget : findsNothing);
+        expect(stories.viewerCalls, canView ? 1 : 0);
+      });
+    }
+  }
   testWidgets(
     'Home media stays warm and hidden changes refresh each section once on return, never on upload progress',
     (tester) async {
