@@ -18,6 +18,7 @@ class RegisterSetPasswordPage extends StatefulWidget {
   final String otpProof;
   final bool isVenueSignup;
   final bool isInviteSignup;
+  final AuthRepository? authRepository;
 
   const RegisterSetPasswordPage({
     super.key,
@@ -25,6 +26,7 @@ class RegisterSetPasswordPage extends StatefulWidget {
     required this.otpProof,
     this.isVenueSignup = false,
     this.isInviteSignup = false,
+    this.authRepository,
   });
 
   @override
@@ -36,9 +38,14 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
   final _formKey = GlobalKey<FormState>();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
+  late final AuthRepository _auth = widget.authRepository ?? AuthRepository();
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool marketingEmailOptIn = false;
+
+  /// E-posta pazarlama izni şimdilik gizli. Gizliyken backend'e daima
+  /// `false` gönderilir; zorunlu belge kabulü bundan bağımsızdır.
+  static const _showMarketingOptIn = false;
   bool _legalConsent = false;
   bool _loadingLegalVersions = true;
   String? _termsVersionId;
@@ -128,7 +135,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       _legalVersionsError = null;
     });
     try {
-      final versions = await AuthRepository().getActiveLegalVersions();
+      final versions = await _auth.getActiveLegalVersions();
       if (!mounted) return;
       setState(() {
         _termsVersionId = versions.termsVersionId;
@@ -177,11 +184,11 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       _legalConsentError = null;
     });
     try {
-      await AuthRepository().registerAndAutoLogin(
+      await _auth.registerAndAutoLogin(
         widget.email,
         _passwordCtrl.text,
         widget.otpProof,
-        marketingEmailOptIn: marketingEmailOptIn,
+        marketingEmailOptIn: _showMarketingOptIn && marketingEmailOptIn,
         consentGiven: true,
         termsVersionId: _termsVersionId!,
         privacyVersionId: _privacyVersionId!,
@@ -216,7 +223,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
           MaterialPageRoute(builder: (_) => const VenueContextOnboardingPage()),
         );
       } else {
-        await AuthRepository().switchContext(lastActiveContext: 'PERSONAL');
+        await _auth.switchContext(lastActiveContext: 'PERSONAL');
         if (!mounted) return;
         // Hesap oluşturuldu ve giriş yapıldı; bayat email/OTP sayfalarına geri
         // dönülüp continue ile username'e tekrar düşülmesin diye tüm auth
@@ -231,7 +238,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
       if (e is ApiException) {
         final code = e.data['errorCode']?.toString();
         if (code == 'EMAIL_ALREADY_IN_USE' || code == 'AUTH_EMAIL_IN_USE') {
-          final isLoggedIn = await AuthRepository().restoreSession();
+          final isLoggedIn = await _auth.restoreSession();
           if (!mounted) return;
           if (isLoggedIn) {
             final pendingInvite = await VenueInviteRepository()
@@ -572,25 +579,27 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                               const SizedBox(height: 16),
 
                               // Checkboxes
-                              _CheckRow(
-                                checked: marketingEmailOptIn,
-                                isDark: isDark,
-                                onTap: () => setState(
-                                  () => marketingEmailOptIn =
-                                      !marketingEmailOptIn,
-                                ),
-                                child: Text(
-                                  'Send me occasional emails about my account and special offers',
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    height: 1.5,
-                                    color: isDark
-                                        ? _darkTextMuted
-                                        : Colors.black54,
+                              if (_showMarketingOptIn) ...[
+                                _CheckRow(
+                                  checked: marketingEmailOptIn,
+                                  isDark: isDark,
+                                  onTap: () => setState(
+                                    () => marketingEmailOptIn =
+                                        !marketingEmailOptIn,
+                                  ),
+                                  child: Text(
+                                    'Send me occasional emails about my account and special offers',
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      height: 1.5,
+                                      color: isDark
+                                          ? _darkTextMuted
+                                          : Colors.black54,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(height: 10),
+                                const SizedBox(height: 10),
+                              ],
                               _CheckRow(
                                 checked: _legalConsent,
                                 isDark: isDark,

@@ -19,6 +19,7 @@ class EventGalleryViewer extends StatefulWidget {
     required this.eventId,
     this.recurringRuleId,
     this.initialIndex = 0,
+    this.includePendingUploads = true,
     this.service,
   });
 
@@ -27,6 +28,10 @@ class EventGalleryViewer extends StatefulWidget {
   final String venueId, eventId;
   final String? recurringRuleId;
   final int initialIndex;
+
+  /// Personal/public event details must show published photos only, even if
+  /// the same user has a venue-management session available.
+  final bool includePendingUploads;
   final PendingPublicMediaService? service;
 
   @override
@@ -76,12 +81,14 @@ class _EventGalleryViewerState extends State<EventGalleryViewer> {
     return ListenableBuilder(
       listenable: Listenable.merge([_uploads.changes, VenueSession.instance]),
       builder: (context, _) {
-        final pending = ownerUnpublishedEventPhotos(
-          _uploads,
-          widget.venueId,
-          widget.eventId,
-          widget.recurringRuleId,
-        );
+        final pending = widget.includePendingUploads
+            ? ownerUnpublishedEventPhotos(
+                _uploads,
+                widget.venueId,
+                widget.eventId,
+                widget.recurringRuleId,
+              )
+            : const <PendingPublicMedia>[];
         final count = widget.photos.length + pending.length;
         _keepIndexInRange(count);
         final index = count == 0 ? 0 : _index.clamp(0, count - 1);

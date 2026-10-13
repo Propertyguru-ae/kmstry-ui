@@ -10,6 +10,9 @@ import 'package:kmstry_frontend/core/user/premium_gate.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/event_gallery_viewer.dart';
+import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart'
+    show EventGalleryGrid;
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const _kMagenta = Color(0xFFE020D8);
@@ -552,6 +555,37 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                                         ),
                                       ),
                                     ),
+                                  ),
+                                ],
+
+                                // GALLERY — kapak tek fotoğrafı gösterir;
+                                // etkinliğin tüm yayınlanmış fotoğrafları
+                                // venue tarafındaki gibi burada listelenir.
+                                if (photos.isNotEmpty) ...[
+                                  const SizedBox(height: 20),
+                                  _DotTitle(
+                                    color: _kMagenta,
+                                    label: 'Gallery',
+                                    kText: kText,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  EventGalleryGrid(
+                                    photos: photos,
+                                    onOpen: (index) =>
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            fullscreenDialog: true,
+                                            builder: (_) => EventGalleryViewer(
+                                              photos: photos,
+                                              venueId: widget.venueId,
+                                              eventId: event.id,
+                                              recurringRuleId:
+                                                  event.recurringRuleId,
+                                              initialIndex: index,
+                                              includePendingUploads: false,
+                                            ),
+                                          ),
+                                        ),
                                   ),
                                 ],
                               ],
