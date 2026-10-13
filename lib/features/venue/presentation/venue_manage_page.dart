@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
@@ -46,13 +48,26 @@ class _VenueManagePageState extends State<VenueManagePage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _load() async {
+  Future<void> _load() => PerformanceDiagnostics.pageLoad(
+    PerformancePage.venueManage,
+    _readIdentity,
+    isMounted: () => mounted,
+  );
+
+  Future<void> _readIdentity() async {
     final id = widget.venueId;
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
     if (id == null) return;
     try {
-      final stats = await _repo.getOwnerStats(id);
-      if (!mounted) return;
-      setState(() => _venue = stats.venue);
+      // Manage uses identity only; it must not load/sign complete event history
+      // before the menu can display the venue name.
+      final venue = await _repo.getOwnerProfileIdentity(id);
+      if (!mounted ||
+          widget.venueId != id ||
+          !PendingPublicMediaService.instance.isCurrentSession(generation)) {
+        return;
+      }
+      setState(() => _venue = venue);
     } catch (_) {}
   }
 
@@ -60,7 +75,11 @@ class _VenueManagePageState extends State<VenueManagePage> {
   /// bu da yetki gate'li satırları gizler. Burada oturumu garanti altına alıyoruz.
   Future<void> _ensureSession() async {
     final session = VenueSession.instance;
-    if ((session.loaded && session.venueId != null) || session.loading) return;
+    if ((session.loaded || session.loading) &&
+        session.venueId == widget.venueId) {
+      return;
+    }
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final me = await AuthRepository().getMe();
       final ctx = MeContextModel.fromMe(me);
@@ -74,6 +93,10 @@ class _VenueManagePageState extends State<VenueManagePage> {
       if (id == null || id.isEmpty) return;
       final memberVenue = ctx.memberVenues.where((v) => v.id == id).firstOrNull;
       final role = VenueMemberRoleExt.fromApi(memberVenue?.role ?? 'STAFF');
+      if (!mounted ||
+          !PendingPublicMediaService.instance.isCurrentSession(generation)) {
+        return;
+      }
       await session.load(id, role);
     } catch (_) {}
   }
@@ -98,7 +121,9 @@ class _VenueManagePageState extends State<VenueManagePage> {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final kBg = isDark ? const Color(0xFF06091A) : Colors.white;
-    final kBorder = isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFD9E1EA);
+    final kBorder = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : const Color(0xFFD9E1EA);
     final id = widget.venueId;
     final venueName = _venue?.name ?? '';
 
@@ -111,7 +136,11 @@ class _VenueManagePageState extends State<VenueManagePage> {
         leading: const AppLogo(),
         title: Text(
           'Manage',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.onSurface),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: colors.onSurface,
+          ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
@@ -132,92 +161,111 @@ class _VenueManagePageState extends State<VenueManagePage> {
             ] else if (!VenueSession.instance.loaded) ...[
               for (var i = 0; i < 5; i++) const _ManageTileSkeleton(),
             ] else ...[
+              _PlanCard(plan: VenueSession.instance.plan),
+              const SizedBox(height: 4),
 
-            _PlanCard(
-              plan: VenueSession.instance.plan,
-            ),
-            const SizedBox(height: 4),
-
-            if (_can(VenuePermission.viewAnalytics))
-              _ManageTile(
-                icon: Icons.insights_outlined,
-                color: const Color(0xFF1A9FE8),
-                title: 'Analytics',
-                subtitle: 'Check-in trends, demographics, reports',
-                trailingText: _locked(VenueFeature.advancedAnalytics) ? 'Locked' : null,
-                onTap: id == null
-                    ? null
-                    : () => _openOrPaywall(
+              if (_can(VenuePermission.viewAnalytics))
+                _ManageTile(
+                  icon: Icons.insights_outlined,
+                  color: const Color(0xFF1A9FE8),
+                  title: 'Analytics',
+                  subtitle: 'Check-in trends, demographics, reports',
+                  trailingText: _locked(VenueFeature.advancedAnalytics)
+                      ? 'Locked'
+                      : null,
+                  onTap: id == null
+                      ? null
+                      : () => _openOrPaywall(
                           VenueFeature.advancedAnalytics,
-                          () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => VenueAnalyticsScreen(venueId: id, venueName: venueName),
-                          )),
-                        ),
-              ),
-
-            if (_can(VenuePermission.eventManage))
-              _ManageTile(
-                icon: Icons.event_outlined,
-                color: const Color(0xFF1FD9A8),
-                title: 'Events',
-                subtitle: 'Create & manage events, RSVPs',
-                trailingText: _locked(VenueFeature.events) ? 'Locked' : null,
-                onTap: id == null
-                    ? null
-                    : () => _openOrPaywall(
-                          VenueFeature.events,
-                          () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => VenueEventsListPage(
-                              venueId: id,
-                              events: _venue?.upcomingEvents ?? const [],
-                              onRefresh: _load,
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VenueAnalyticsScreen(
+                                venueId: id,
+                                venueName: venueName,
+                              ),
                             ),
-                          )),
-                        ),
-              ),
-
-            if (_can(VenuePermission.partnershipManage))
-              _ManageTile(
-                icon: Icons.local_offer_outlined,
-                color: const Color(0xFFF08838),
-                title: 'Offers',
-                subtitle: 'Promotions & external partnerships',
-                trailingText: _locked(VenueFeature.offers) ? 'Locked' : null,
-                onTap: id == null
-                    ? null
-                    : () => _openOrPaywall(
-                          VenueFeature.offers,
-                          () => Navigator.push(context, MaterialPageRoute(
-                            builder: (_) => VenueOffersPage(venueId: id, venueName: venueName),
-                          )),
-                        ),
-              ),
-
-            if (_can(VenuePermission.memberManage) || _can(VenuePermission.roleManage))
-              _ManageTile(
-                icon: Icons.groups_outlined,
-                color: const Color(0xFF3D1F8C),
-                title: 'Team & Roles',
-                subtitle: 'Staff, invites, permissions',
-                onTap: id == null
-                    ? null
-                    : () => Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => VenueTeamPage(
-                            venueId: id,
-                            callerRole: VenueSession.instance.role,
                           ),
-                        )),
-              ),
+                        ),
+                ),
 
-            _ManageTile(
-              icon: Icons.settings_outlined,
-              color: colors.onSurface.withValues(alpha: 0.7),
-              title: 'Settings',
-              subtitle: 'Account & activity',
-              onTap: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const SettingsPage(),
-              )),
-            ),
+              if (_can(VenuePermission.eventManage))
+                _ManageTile(
+                  icon: Icons.event_outlined,
+                  color: const Color(0xFF1FD9A8),
+                  title: 'Events',
+                  subtitle: 'Create & manage events, RSVPs',
+                  trailingText: _locked(VenueFeature.events) ? 'Locked' : null,
+                  onTap: id == null
+                      ? null
+                      : () => _openOrPaywall(
+                          VenueFeature.events,
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VenueEventsListPage(
+                                venueId: id,
+                                events: _venue?.upcomingEvents ?? const [],
+                                onRefresh: _load,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+
+              if (_can(VenuePermission.partnershipManage))
+                _ManageTile(
+                  icon: Icons.local_offer_outlined,
+                  color: const Color(0xFFF08838),
+                  title: 'Deals & Discounts',
+                  subtitle: 'Promotions & external partnerships',
+                  trailingText: _locked(VenueFeature.offers) ? 'Locked' : null,
+                  onTap: id == null
+                      ? null
+                      : () => _openOrPaywall(
+                          VenueFeature.offers,
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VenueOffersPage(
+                                venueId: id,
+                                venueName: venueName,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+
+              if (_can(VenuePermission.memberManage) ||
+                  _can(VenuePermission.roleManage))
+                _ManageTile(
+                  icon: Icons.groups_outlined,
+                  color: const Color(0xFF3D1F8C),
+                  title: 'Team & Roles',
+                  subtitle: 'Staff, invites, permissions',
+                  onTap: id == null
+                      ? null
+                      : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => VenueTeamPage(
+                              venueId: id,
+                              callerRole: VenueSession.instance.role,
+                            ),
+                          ),
+                        ),
+                ),
+
+              _ManageTile(
+                icon: Icons.settings_outlined,
+                color: colors.onSurface.withValues(alpha: 0.7),
+                title: 'Settings',
+                subtitle: 'Account & activity',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsPage()),
+                ),
+              ),
             ],
           ],
         ),
@@ -242,49 +290,72 @@ class _PlanCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              gradient: LinearGradient(
-                colors: [plan.color.withValues(alpha: 0.18), plan.color.withValues(alpha: 0.04)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: plan.color.withValues(alpha: 0.45)),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              plan.color.withValues(alpha: 0.18),
+              plan.color.withValues(alpha: 0.04),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          border: Border.all(color: plan.color.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isFree
+                  ? Icons.workspace_premium_outlined
+                  : Icons.workspace_premium,
+              color: plan.color,
             ),
-            child: Row(
-              children: [
-                Icon(isFree ? Icons.workspace_premium_outlined : Icons.workspace_premium, color: plan.color),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          Text('${plan.label} plan',
-                              style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
                       Text(
-                        isFree
-                            ? 'Limited feature access for this beta account'
-                            : '${plan.label} access enabled for this beta account',
-                        style: TextStyle(color: kDim, fontSize: 12),
+                        '${plan.label} plan',
+                        style: TextStyle(
+                          color: kText,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
                       ),
                     ],
                   ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: plan.color, borderRadius: BorderRadius.circular(20)),
-                  child: const Text('Current',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  Text(
+                    isFree
+                        ? 'Limited feature access for this beta account'
+                        : '${plan.label} access enabled for this beta account',
+                    style: TextStyle(color: kDim, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: plan.color,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Current',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -302,23 +373,42 @@ class _ManageTileSkeleton extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.4)),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.4),
+          ),
         ),
         child: Row(
           children: [
             Container(
               width: 42,
               height: 42,
-              decoration: BoxDecoration(color: base, borderRadius: BorderRadius.circular(11)),
+              decoration: BoxDecoration(
+                color: base,
+                borderRadius: BorderRadius.circular(11),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(width: 110, height: 13, decoration: BoxDecoration(color: base, borderRadius: BorderRadius.circular(4))),
+                  Container(
+                    width: 110,
+                    height: 13,
+                    decoration: BoxDecoration(
+                      color: base,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
                   const SizedBox(height: 8),
-                  Container(width: 170, height: 11, decoration: BoxDecoration(color: base, borderRadius: BorderRadius.circular(4))),
+                  Container(
+                    width: 170,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: base,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -408,7 +498,9 @@ class _ManageTile extends StatelessWidget {
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: colors.outlineVariant.withValues(alpha: 0.4),
+                ),
               ),
               child: Row(
                 children: [
@@ -426,23 +518,48 @@ class _ManageTile extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                         const SizedBox(height: 2),
-                        Text(subtitle, style: TextStyle(fontSize: 12, color: colors.onSurface.withValues(alpha: 0.55))),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   if (trailingText != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: colors.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(trailingText!, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: colors.onSurface.withValues(alpha: 0.5))),
+                      child: Text(
+                        trailingText!,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: colors.onSurface.withValues(alpha: 0.5),
+                        ),
+                      ),
                     )
                   else
-                    Icon(Icons.chevron_right, color: colors.onSurface.withValues(alpha: 0.35)),
+                    Icon(
+                      Icons.chevron_right,
+                      color: colors.onSurface.withValues(alpha: 0.35),
+                    ),
                 ],
               ),
             ),

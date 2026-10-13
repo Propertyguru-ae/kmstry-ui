@@ -20,7 +20,14 @@ class _VenueAnalyticsScreenState extends State<VenueAnalyticsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Analytics'),
+        title: Text(
+          'Analytics',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leadingWidth: 60,

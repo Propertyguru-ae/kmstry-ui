@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/force_dark.dart';
@@ -24,7 +25,7 @@ enum _Step { search, contact, documents, review }
 /// Venue claim wizard — 4 adım:
 /// 1. Venue seç
 /// 2. İletişim bilgileri (ad soyad, telefon)
-/// 3. Belgeler (ticari lisans, sahiplik videosu)
+/// 3. Belgeler (ticari lisans; sahiplik videosu şimdilik kapalı)
 /// 4. Özet & Gönder
 ///
 /// Her adım tamamlanınca server-side draft kaydedilir.
@@ -159,7 +160,9 @@ class _VenueContextOnboardingPageState
     _nameCtrl.text = draft['owner_full_name']?.toString() ?? '';
     _phoneCtrl.text = draft['owner_phone']?.toString() ?? '';
     _tradeLicenceUrl = draft['trade_licence_url']?.toString();
-    _ownerVideoUrl = draft['owner_video_url']?.toString();
+    _ownerVideoUrl = ClaimDocumentPolicy.ownershipVideoEnabled
+        ? draft['owner_video_url']?.toString()
+        : null;
 
     _step = switch (step) {
       2 => _Step.contact,
@@ -318,6 +321,7 @@ class _VenueContextOnboardingPageState
   }
 
   Future<void> _pickOwnerVideo() async {
+    if (!ClaimDocumentPolicy.ownershipVideoEnabled) return;
     setState(() {
       _uploadingVideo = true;
       _error = null;
@@ -408,7 +412,7 @@ class _VenueContextOnboardingPageState
       setState(() => _error = 'Please upload your trade licence.');
       return;
     }
-    if (_ownerVideoUrl == null) {
+    if (ClaimDocumentPolicy.ownershipVideoEnabled && _ownerVideoUrl == null) {
       setState(() => _error = 'Please upload your ownership video.');
       return;
     }
@@ -439,7 +443,10 @@ class _VenueContextOnboardingPageState
       _error = null;
     });
 
-    final hasDocuments = _tradeLicenceUrl != null && _ownerVideoUrl != null;
+    final hasDocuments = ClaimDocumentPolicy.hasRequiredDocuments(
+      _tradeLicenceUrl,
+      _ownerVideoUrl,
+    );
 
     try {
       final dbVenueId =
@@ -1865,8 +1872,11 @@ class _VenueContextOnboardingPageState
 
   Widget _buildDocumentsStep(ColorScheme colors, bool isDark) {
     final uploadedCount =
-        (_tradeLicenceUrl != null ? 1 : 0) + (_ownerVideoUrl != null ? 1 : 0);
-    const requiredCount = 2;
+        (_tradeLicenceUrl != null ? 1 : 0) +
+        (ClaimDocumentPolicy.ownershipVideoEnabled && _ownerVideoUrl != null
+            ? 1
+            : 0);
+    const requiredCount = ClaimDocumentPolicy.requiredDocumentCount;
     final isBusy = _savingDraft || _uploadingLicence || _uploadingVideo;
 
     return Column(
@@ -2046,29 +2056,30 @@ class _VenueContextOnboardingPageState
                           }
                         : null,
                   ),
-                  const SizedBox(height: 10),
-
-                  // Ownership Video card
-                  _UploadCard(
-                    label: 'Ownership Video',
-                    description:
-                        'Short video confirming ownership of the venue.',
-                    formats: const ['MP4', 'MOV'],
-                    icon: Icons.videocam_outlined,
-                    isRequired: true,
-                    uploaded: _ownerVideoUrl != null,
-                    loading: _uploadingVideo,
-                    isDark: isDark,
-                    onTap: _ownerVideoUrl != null || _uploadingVideo
-                        ? null
-                        : _pickOwnerVideo,
-                    onRemove: _ownerVideoUrl != null
-                        ? () async {
-                            setState(() => _ownerVideoUrl = null);
-                            await _saveDraft(stepNumber: 3);
-                          }
-                        : null,
-                  ),
+                  if (ClaimDocumentPolicy.ownershipVideoEnabled) ...[
+                    const SizedBox(height: 10),
+                    // Retained for a future, explicit reopening of ownership video.
+                    _UploadCard(
+                      label: 'Ownership Video',
+                      description:
+                          'Short video confirming ownership of the venue.',
+                      formats: const ['MP4', 'MOV'],
+                      icon: Icons.videocam_outlined,
+                      isRequired: true,
+                      uploaded: _ownerVideoUrl != null,
+                      loading: _uploadingVideo,
+                      isDark: isDark,
+                      onTap: _ownerVideoUrl != null || _uploadingVideo
+                          ? null
+                          : _pickOwnerVideo,
+                      onRemove: _ownerVideoUrl != null
+                          ? () async {
+                              setState(() => _ownerVideoUrl = null);
+                              await _saveDraft(stepNumber: 3);
+                            }
+                          : null,
+                    ),
+                  ],
                   const SizedBox(height: 14),
 
                   // Info box
@@ -2235,7 +2246,10 @@ class _VenueContextOnboardingPageState
 
   Widget _buildReviewStep(ColorScheme colors, bool isDark) {
     final venue = _selectedVenue!;
-    final hasDocuments = _tradeLicenceUrl != null && _ownerVideoUrl != null;
+    final hasDocuments = ClaimDocumentPolicy.hasRequiredDocuments(
+      _tradeLicenceUrl,
+      _ownerVideoUrl,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2439,22 +2453,23 @@ class _VenueContextOnboardingPageState
                               ? 'Trade licence uploaded'
                               : 'Trade licence not uploaded',
                           sub: _tradeLicenceUrl != null
-                              ? 'Verified document'
+                              ? 'Awaiting team review'
                               : 'Required for faster approval',
                           uploaded: _tradeLicenceUrl != null,
                         ),
-                        _RevDocRow(
-                          icon: _ownerVideoUrl != null
-                              ? Icons.check_circle_outline_rounded
-                              : Icons.videocam_outlined,
-                          label: _ownerVideoUrl != null
-                              ? 'Ownership video uploaded'
-                              : 'Ownership video not uploaded',
-                          sub: _ownerVideoUrl != null
-                              ? 'Video confirmed'
-                              : 'Required for approval',
-                          uploaded: _ownerVideoUrl != null,
-                        ),
+                        if (ClaimDocumentPolicy.ownershipVideoEnabled)
+                          _RevDocRow(
+                            icon: _ownerVideoUrl != null
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.videocam_outlined,
+                            label: _ownerVideoUrl != null
+                                ? 'Ownership video uploaded'
+                                : 'Ownership video not uploaded',
+                            sub: _ownerVideoUrl != null
+                                ? 'Video confirmed'
+                                : 'Required for approval',
+                            uploaded: _ownerVideoUrl != null,
+                          ),
                       ],
                     ),
                   ),

@@ -222,6 +222,9 @@ enum VenueMemberStatus {
 
 class VenueMember {
   final String id;
+  /// Set by the server for the authenticated caller. Unknown must not enable
+  /// management actions while the app/backend versions differ.
+  final bool? isSelf;
   final VenueMemberRole role;
   final String? venueRoleId;
   final String? venueRoleName;
@@ -235,6 +238,7 @@ class VenueMember {
 
   const VenueMember({
     required this.id,
+    this.isSelf,
     required this.role,
     this.venueRoleId,
     this.venueRoleName,
@@ -256,6 +260,7 @@ class VenueMember {
   factory VenueMember.fromJson(Map<String, dynamic> json) {
     return VenueMember(
       id: json['id']?.toString() ?? '',
+      isSelf: json['isSelf'] is bool ? json['isSelf'] as bool : null,
       role: VenueMemberRoleExt.fromApi(json['role']?.toString() ?? 'STAFF'),
       venueRoleId: json['venueRoleId']?.toString(),
       venueRoleName: json['venueRoleName']?.toString(),

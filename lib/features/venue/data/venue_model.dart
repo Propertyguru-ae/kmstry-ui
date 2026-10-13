@@ -410,6 +410,53 @@ class RecurrenceInfo {
     this.maxOccurrences,
   });
 
+  String get _unit => switch (frequency.toLowerCase()) {
+    'daily' => 'day',
+    'monthly' => 'month',
+    'yearly' => 'year',
+    _ => 'week',
+  };
+
+  /// Kısa etiket: "Weekly", "Monthly", "Yearly" ya da "Every 2 weeks".
+  String get shortLabel {
+    if (interval > 1) return 'Every $interval ${_unit}s';
+    return switch (frequency.toLowerCase()) {
+      'daily' => 'Daily',
+      'monthly' => 'Monthly',
+      'yearly' => 'Yearly',
+      _ => 'Weekly',
+    };
+  }
+
+  /// Açıklama: "Repeats every week · until 31 Dec 2026" / "· 10 times".
+  String get summary {
+    final every = interval > 1 ? 'every $interval ${_unit}s' : 'every $_unit';
+    final end = endsOn != null
+        ? ' · until ${_shortDate(endsOn!.toLocal())}'
+        : (maxOccurrences != null && maxOccurrences! > 0)
+        ? ' · $maxOccurrences times'
+        : '';
+    return 'Repeats $every$end';
+  }
+
+  static String _shortDate(DateTime d) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
   factory RecurrenceInfo.fromJson(Map<String, dynamic> json) {
     final endsOnRaw = json['endsOn'] ?? json['ends_on'];
     return RecurrenceInfo(

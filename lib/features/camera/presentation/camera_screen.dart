@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kmstry_frontend/core/media/public_media_upload_policy.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:camera/camera.dart';
@@ -33,11 +34,21 @@ class CameraScreen extends StatefulWidget {
     super.key,
     this.useFrontCamera = false,
     this.optimizeForUpload = false,
-    this.allowVideo = true,
+    this.allowVideo = false,
     this.previewConfirmLabel = 'Use',
     this.previewConfirmIcon,
     this.cropToScreen = true,
   });
+
+  /// All public story/Moment/check-in entry points use this release policy.
+  const CameraScreen.publicMedia({
+    super.key,
+    this.useFrontCamera = false,
+    this.optimizeForUpload = false,
+    this.previewConfirmLabel = 'Use',
+    this.previewConfirmIcon,
+    this.cropToScreen = true,
+  }) : allowVideo = PublicMediaUploadPolicy.allowVideo;
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -57,6 +68,9 @@ class _CameraScreenState extends State<CameraScreen>
   bool _microphoneGranted = false;
   bool _isRecording = false;
   bool _processingVideo = false;
+  bool _isCameraTransitioning = false;
+  bool _isDisposing = false;
+  bool _hasCameraController = false;
 
   // ---- Instagram tarzı basılı-tut jest state'i ----
   /// Kayıt long-press ile mi başladı — parmak çekilince direkt durur.
@@ -82,9 +96,9 @@ class _CameraScreenState extends State<CameraScreen>
     return ResolutionPreset.high;
   }
 
-  Future<void> _forceFlashOff() async {
+  Future<void> _forceFlashOff(CameraController controller) async {
     try {
-      await _controller.setFlashMode(FlashMode.off);
+      await controller.setFlashMode(FlashMode.off);
     } catch (_) {
       // Some devices/cameras may not support flash mode control.
     }
@@ -98,7 +112,13 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _handleVolumeShutter() async {
-    if (!mounted || !_isReady || _processingVideo) return;
+    if (!mounted ||
+        _isDisposing ||
+        _isCameraTransitioning ||
+        !_isReady ||
+        _processingVideo) {
+      return;
+    }
     await _takePicture();
   }
 
@@ -113,61 +133,95 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _initCamera() async {
-    final status = await Permission.camera.request();
-    if (!status.isGranted) {
-      if (!mounted) return;
-      setState(() {
-        _cameraPermissionDenied = true;
-        _cameraPermissionPermanentlyDenied = status.isPermanentlyDenied;
-        _isReady = false;
-      });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _cameraPermissionDenied = false;
-      _cameraPermissionPermanentlyDenied = false;
-    });
-    _microphoneGranted = await Permission.microphone.isGranted;
-
-    _currentCamera = cameras.firstWhere(
-      (cam) =>
-          cam.lensDirection ==
-          (widget.useFrontCamera
-              ? CameraLensDirection.front
-              : CameraLensDirection.back),
-    );
-
-    _controller = CameraController(
-      _currentCamera,
-      _captureResolutionPreset(),
-      enableAudio: true,
-    );
-
+    if (_isDisposing || _isCameraTransitioning) return;
+    _isCameraTransitioning = true;
     try {
-      await _controller.initialize();
-      // Portre modunu kilitle — hem fotoğraf hem video her zaman dikey çekilsin.
-      await _controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
-      await _forceFlashOff();
-    } catch (_) {
-      if (!mounted) return;
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (!mounted || _isDisposing) return;
+        setState(() {
+          _cameraPermissionDenied = true;
+          _cameraPermissionPermanentlyDenied = status.isPermanentlyDenied;
+          _isReady = false;
+        });
+        return;
+      }
+
+      if (!mounted || _isDisposing) return;
       setState(() {
-        _cameraPermissionDenied = true;
-        _isReady = false;
+        _cameraPermissionDenied = false;
+        _cameraPermissionPermanentlyDenied = false;
       });
-      return;
+      _microphoneGranted =
+          widget.allowVideo && await Permission.microphone.isGranted;
+      if (!mounted || _isDisposing) return;
+
+      _currentCamera = cameras.firstWhere(
+        (cam) =>
+            cam.lensDirection ==
+            (widget.useFrontCamera
+                ? CameraLensDirection.front
+                : CameraLensDirection.back),
+      );
+
+      final controller = CameraController(
+        _currentCamera,
+        _captureResolutionPreset(),
+        enableAudio: widget.allowVideo,
+      );
+      _controller = controller;
+      _hasCameraController = true;
+
+      try {
+        await controller.initialize();
+        // Portre modunu kilitle — hem fotoğraf hem video her zaman dikey çekilsin.
+        await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+        await _forceFlashOff(controller);
+      } catch (error) {
+        await controller.dispose();
+        if (identical(_controller, controller)) {
+          _hasCameraController = false;
+        }
+        if (!mounted || _isDisposing) return;
+        debugPrint('Camera initialization failed: $error');
+        setState(() {
+          _cameraPermissionDenied = true;
+          _isReady = false;
+        });
+        return;
+      }
+
+      if (!mounted || _isDisposing) {
+        await controller.dispose();
+        if (identical(_controller, controller)) {
+          _hasCameraController = false;
+        }
+        return;
+      }
+
+      setState(() {
+        _isReady = true;
+      });
+      await _setVolumeShutterEnabled(true);
+    } finally {
+      _isCameraTransitioning = false;
     }
-
-    if (!mounted) return;
-
-    setState(() {
-      _isReady = true;
-    });
-    await _setVolumeShutterEnabled(true);
   }
 
   Future<void> _switchCamera() async {
+    if (_isDisposing ||
+        _isCameraTransitioning ||
+        !_isReady ||
+        !_hasCameraController ||
+        _isCapturingPhoto ||
+        _isRecording ||
+        _isStartingVideo ||
+        _isStoppingVideo) {
+      return;
+    }
+    _isCameraTransitioning = true;
+    setState(() => _isReady = false);
+
     final newLensDirection =
         _currentCamera.lensDirection == CameraLensDirection.front
         ? CameraLensDirection.back
@@ -176,45 +230,89 @@ class _CameraScreenState extends State<CameraScreen>
     final newCamera = cameras.firstWhere(
       (cam) => cam.lensDirection == newLensDirection,
     );
+    final previousController = _controller;
+    CameraController? replacementController;
+    var shouldReinitialize = false;
 
-    await _controller.dispose();
+    try {
+      await previousController.dispose();
+      _hasCameraController = false;
+      if (!mounted || _isDisposing) return;
 
-    _controller = CameraController(
-      newCamera,
-      _captureResolutionPreset(),
-      enableAudio: true,
-    );
+      replacementController = CameraController(
+        newCamera,
+        _captureResolutionPreset(),
+        enableAudio: widget.allowVideo,
+      );
+      _controller = replacementController;
+      _hasCameraController = true;
+      await replacementController.initialize();
+      await replacementController.lockCaptureOrientation(
+        DeviceOrientation.portraitUp,
+      );
+      await _forceFlashOff(replacementController);
 
-    await _controller.initialize();
-    await _controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
-    await _forceFlashOff();
+      if (!mounted || _isDisposing) {
+        await replacementController.dispose();
+        _hasCameraController = false;
+        return;
+      }
 
-    _currentCamera = newCamera;
+      _currentCamera = newCamera;
+      setState(() => _isReady = true);
+    } catch (error) {
+      debugPrint('Camera switch failed: $error');
+      try {
+        await replacementController?.dispose();
+      } catch (_) {}
+      _hasCameraController = false;
+      shouldReinitialize = mounted && !_isDisposing;
+    } finally {
+      _isCameraTransitioning = false;
+    }
 
-    if (!mounted) return;
-
-    setState(() {});
+    if (shouldReinitialize) {
+      await _initCamera();
+    }
   }
 
   Future<void> _takePicture() async {
-    if (!_controller.value.isInitialized) return;
-    if (_isCapturingPhoto || _isRecording) return;
+    if (!mounted ||
+        _isDisposing ||
+        _isCameraTransitioning ||
+        !_isReady ||
+        !_hasCameraController ||
+        _isCapturingPhoto ||
+        _isRecording) {
+      return;
+    }
+    final controller = _controller;
+    if (!controller.value.isInitialized) return;
+    final captureLensDirection = _currentCamera.lensDirection;
     _isCapturingPhoto = true;
     try {
-      await _takePictureInner();
+      await _takePictureInner(controller, captureLensDirection);
+    } on CameraException catch (error) {
+      // Route/camera transitions can dispose the native controller while a
+      // shutter event is already queued. Treat that stale event as cancelled
+      // instead of surfacing an unhandled exception.
+      debugPrint('Camera photo capture cancelled: $error');
     } finally {
       _isCapturingPhoto = false;
     }
   }
 
-  Future<void> _takePictureInner() async {
+  Future<void> _takePictureInner(
+    CameraController controller,
+    CameraLensDirection captureLensDirection,
+  ) async {
     // Ekranın gerçek oranını async'ten önce oku (context await sonrası geçersiz olabilir).
     // Bu oran = kullanıcının kamera önizlemesinde tam gördüğü alan.
     final screenSize = MediaQuery.of(context).size;
     final screenAr =
         screenSize.width / screenSize.height; // örn. 390/844 ≈ 0.462
 
-    final image = await _controller.takePicture();
+    final image = await controller.takePicture();
 
     final dir = await getTemporaryDirectory();
     final filePath = path.join(
@@ -238,7 +336,7 @@ class _CameraScreenState extends State<CameraScreen>
       // 2) Ön kamera aynalama: CameraX ön kamera STILL fotoğrafını aynalı
       // (selfie görünümü) kaydediyor; gerçeğe uygun olması (elin sağdaysa
       // sağda) için geri çeviriyoruz.
-      if (_currentCamera.lensDirection == CameraLensDirection.front) {
+      if (captureLensDirection == CameraLensDirection.front) {
         fixed = img.flipHorizontal(fixed);
       }
 
@@ -303,8 +401,7 @@ class _CameraScreenState extends State<CameraScreen>
       MaterialPageRoute(
         builder: (_) => PreviewScreen(
           file: savedImage,
-          isFrontCamera:
-              _currentCamera.lensDirection == CameraLensDirection.front,
+          isFrontCamera: captureLensDirection == CameraLensDirection.front,
           screenAr: screenAr,
           confirmLabel: widget.previewConfirmLabel,
           confirmIcon: widget.previewConfirmIcon,
@@ -326,12 +423,24 @@ class _CameraScreenState extends State<CameraScreen>
   /// izin akışı sırasında parmak kalktıysa kayıt hiç başlamaz ve parmak
   /// bırakılınca (kilitlenmediyse) otomatik durur.
   Future<void> _startVideo({bool fromGesture = false}) async {
-    if (_isStartingVideo || _isRecording || !_controller.value.isInitialized) {
+    if (!widget.allowVideo ||
+        !mounted ||
+        _isDisposing ||
+        _isCameraTransitioning ||
+        !_isReady ||
+        !_hasCameraController ||
+        _isStartingVideo ||
+        _isRecording ||
+        !_controller.value.isInitialized) {
       return;
     }
     _isStartingVideo = true;
     try {
       await _startVideoInner(fromGesture: fromGesture);
+    } on CameraException catch (error) {
+      // A route/camera transition can invalidate an already queued long-press.
+      // Cancel that stale recording request without crashing the camera flow.
+      debugPrint('Camera video capture cancelled: $error');
     } finally {
       _isStartingVideo = false;
     }
@@ -390,7 +499,13 @@ class _CameraScreenState extends State<CameraScreen>
 
     // İzin akışı (dialog) sırasında parmak kalktıysa jest kaydını başlatma.
     if (fromGesture && !_longPressActive) return;
-    if (!mounted) return;
+    if (!mounted ||
+        _isDisposing ||
+        _isCameraTransitioning ||
+        !_isReady ||
+        !_hasCameraController) {
+      return;
+    }
 
     await _controller.startVideoRecording();
     HapticFeedback.lightImpact();
@@ -426,7 +541,10 @@ class _CameraScreenState extends State<CameraScreen>
     if (_isStoppingVideo) return;
     // Controller'a da bak: state ile native kayıt durumu ayrışmış olabilir
     // (örn. önceki stop denemesi exception yediyse).
-    if (!_isRecording && !_controller.value.isRecordingVideo) return;
+    if (!_hasCameraController ||
+        (!_isRecording && !_controller.value.isRecordingVideo)) {
+      return;
+    }
     _isStoppingVideo = true;
     try {
       await _stopVideoInner();
@@ -486,7 +604,14 @@ class _CameraScreenState extends State<CameraScreen>
     if (!mounted) return;
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => PreviewVideoScreen(file: savedVideo)),
+      MaterialPageRoute(
+        builder: (_) => PreviewVideoScreen(
+          file: savedVideo,
+          // Foto önizlemesiyle aynı onay etiketi/ikonu.
+          confirmLabel: widget.previewConfirmLabel,
+          confirmIcon: widget.previewConfirmIcon,
+        ),
+      ),
     );
     if (!mounted) return;
     if (result != null) {
@@ -498,15 +623,20 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void dispose() {
+    _isDisposing = true;
+    _isReady = false;
     unawaited(_setVolumeShutterEnabled(false));
     VolumeShutter.stopListening();
     _recordTimer?.cancel();
     _ringController.dispose();
     // CameraX bazı geçiş durumlarında dispose'ta surface hatası atabiliyor;
     // exception'ın yukarı sızıp uygulamayı bozmasını engelle.
-    try {
-      _controller.dispose();
-    } catch (_) {}
+    if (_hasCameraController) {
+      _hasCameraController = false;
+      try {
+        unawaited(_controller.dispose().catchError((_) {}));
+      } catch (_) {}
+    }
     super.dispose();
   }
 
@@ -600,6 +730,7 @@ class _CameraScreenState extends State<CameraScreen>
                 // parmak çekilince direkt durur; buton etrafında logo-renkli
                 // şerit loading gibi ilerler.
                 GestureDetector(
+                  key: const ValueKey('camera-shutter'),
                   onTap: () async {
                     if (_isRecording) {
                       // Güvenlik ağı: state bir şekilde kayıtta takıldıysa

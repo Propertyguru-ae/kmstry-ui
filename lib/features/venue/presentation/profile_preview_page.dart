@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
@@ -19,6 +20,11 @@ import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_ui.dart';
+import 'package:kmstry_frontend/features/stories/data/story_model.dart';
+import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_ring_painter.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
@@ -33,6 +39,26 @@ enum ProfileActionState {
   proactivePass,
   reactivePass,
   matched,
+}
+
+/// Mekanın story grupları içinden [userId]'nin avatarında gösterilecek grubu
+/// döner: yalnızca yayınlanmış (yükleniyor placeholder'ı olmayan) story'ler;
+/// hiç yoksa null (halka çizilmez).
+@visibleForTesting
+StoryGroup? profileStoryGroupFor(List<StoryGroup> groups, String userId) {
+  for (final group in groups) {
+    if (group.user.id != userId) continue;
+    final stories = group.stories
+        .where((s) => !s.isUploadingPlaceholder)
+        .toList();
+    if (stories.isEmpty) return null;
+    return StoryGroup(
+      user: group.user,
+      stories: stories,
+      featuredPhotoUrl: group.featuredPhotoUrl,
+    );
+  }
+  return null;
 }
 
 class ProfilePreviewPage extends StatefulWidget {
@@ -62,6 +88,7 @@ class ProfilePreviewPage extends StatefulWidget {
   final String? hintVenueType;
   final String? hintVenuePhoto;
   final bool hideVenueInfo;
+  final CheckinRepository? checkinRepository;
 
   const ProfilePreviewPage({
     super.key,
@@ -80,6 +107,7 @@ class ProfilePreviewPage extends StatefulWidget {
     this.hintVenueType,
     this.hintVenuePhoto,
     this.hideVenueInfo = false,
+    this.checkinRepository,
   }) : assert(
          checkinId != null || userId != null,
          'Either checkinId or userId must be provided.',
@@ -90,7 +118,7 @@ class ProfilePreviewPage extends StatefulWidget {
 }
 
 class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
-  final _repo = CheckinRepository();
+  late final _repo = widget.checkinRepository ?? CheckinRepository();
   final _matchRepo = MatchRepository();
   final _venueRepo = VenueCheckinRepository();
   final _venueContextRepository = VenueContextRepository();
@@ -112,6 +140,12 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   // (`Profile unavailable`) ile reddeder — bunu yakalayıp mesaj butonunu iki
   // taraf için de inaktif yapmakta kullanıyoruz. (_isBlocked = ben blokladım.)
   bool _blockedByOther = false;
+  // Profil sunucuda yok (404): hesap askıya alınmış (ban) ya da silinmiş.
+  // Listeden gelen ad/foto ile sahte profil gösterilmez.
+  bool _profileUnavailable = false;
+  // Kullanıcının bu mekandaki aktif story'leri (varsa avatarda halka).
+  StoryGroup? _storyGroup;
+  final Set<String> _viewedStoryIds = {};
   bool _isBlocking = false;
   bool _isReporting = false;
   bool _isSendingAction = false;
@@ -313,6 +347,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             _showSuggestedForYou = false;
             _loading = false;
           });
+          unawaited(_loadUserStories());
           _rememberActionState(profile.user.id, _actionState!);
           await _syncPendingInterestedState(profile.user.id, _actionState!);
           return;
@@ -327,6 +362,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       if (!mounted) return;
       final targetUserId = widget.userId;
       PublicUserProfile? publicProfile;
+      var profileUnavailable = false;
       if (targetUserId != null && targetUserId.isNotEmpty) {
         try {
           publicProfile = await _repo.getPublicUserProfile(targetUserId);
@@ -336,6 +372,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           // 403 → iki yönlü blok: karşı taraf beni bloklamış (ben bloklasaydım
           // _isBlocked zaten yakalıyor). Mesaj butonunu inaktif yapmak için işaretle.
           if (e is ApiException && e.statusCode == 403) blockedByOther = true;
+          // 404 → hesap askıya alınmış ya da silinmiş.
+          if (e is ApiException && e.statusCode == 404) {
+            profileUnavailable = true;
+          }
           debugPrint('⚠️ public profile fallback unavailable: $e');
         }
       }
@@ -353,6 +393,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                   ProfileActionState.showActions);
         _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
         _blockedByOther = blockedByOther;
+        _profileUnavailable = profileUnavailable;
         _showPostsAndVibe = false;
         _showSuggestedForYou =
             _actionState != ProfileActionState.matched &&
@@ -360,11 +401,75 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             (resolvedVenueId == null || resolvedVenueId.isEmpty);
         _loading = false;
       });
+      unawaited(_loadUserStories());
     } catch (e) {
       debugPrint('❌ profile load error: $e');
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  /// Kullanıcının check-in yaptığı mekandaki aktif story'leri. Story'ler
+  /// mekan bazlı geldiği için mekan bağlamı (Who's here vb.) gerekir; yoksa ya
+  /// da engelleme varsa halka gösterilmez. Hata halka için sessizce yutulur.
+  Future<void> _loadUserStories() async {
+    final userId = (_profile?.user.id ?? widget.userId ?? '').trim();
+    final venueId =
+        (_resolvedVenueId ??
+                _profile?.checkin.venueId ??
+                widget.hintVenueId ??
+                '')
+            .trim();
+    if (userId.isEmpty || venueId.isEmpty || _isBlocked || _blockedByOther) {
+      if (_storyGroup != null && mounted) setState(() => _storyGroup = null);
+      return;
+    }
+    try {
+      final groups = await StoryRepository().getVenueStories(venueId);
+      if (!mounted) return;
+      final match = profileStoryGroupFor(groups, userId);
+      setState(() => _storyGroup = match);
+    } catch (e) {
+      debugPrint('⚠️ profile stories unavailable: $e');
+    }
+  }
+
+  bool _isStorySeen(StoryItem story) =>
+      story.viewedByMe || _viewedStoryIds.contains(story.id);
+
+  bool get _hasUnseenStory =>
+      _storyGroup?.stories.any((s) => !_isStorySeen(s)) ?? false;
+
+  Future<void> _openUserStories() async {
+    final group = _storyGroup;
+    if (group == null) return;
+    // İlk izlenmemiş story'den başla; hepsi izlendiyse baştan.
+    final firstUnseen = group.stories.indexWhere((s) => !_isStorySeen(s));
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerPage(
+          groups: [group],
+          initialStoryIndex: firstUnseen < 0 ? 0 : firstUnseen,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (result is StoryViewerResult && result.lastStoryIndex >= 0) {
+      final seen = result.allFinished
+          ? group.stories.map((s) => s.id)
+          : [
+              for (
+                var i = 0;
+                i <= result.lastStoryIndex && i < group.stories.length;
+                i++
+              )
+                group.stories[i].id,
+            ];
+      setState(() => _viewedStoryIds.addAll(seen));
+    }
+    // Süresi dolan / silinen / raporlanan story'ler halkadan düşsün.
+    unawaited(_loadUserStories());
   }
 
   ProfileActionState _determineActionState(CheckinProfile profile) {
@@ -850,7 +955,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     String selected = options.first.key;
     final otherCtrl = TextEditingController();
     bool submitting = false;
-    bool submitted = false;
+    var reportSucceeded = false;
     String? submitError;
 
     if (mounted) setState(() => _isReporting = true);
@@ -859,15 +964,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
-        barrierColor: Colors.black.withValues(alpha: 0.55),
+        barrierColor: AppSheetPalette.of(context).barrier,
         builder: (ctx) {
-          final isDark = Theme.of(ctx).brightness == Brightness.dark;
-          final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
-          final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
-          final bodyColor = isDark
-              ? const Color(0xFFB4C2D8)
-              : AppColors.lightTextSecondary;
-          const reportColors = [AppColors.orange, AppColors.magenta];
+          final palette = AppSheetPalette.of(ctx);
+          final isDark = palette.isDark;
 
           return StatefulBuilder(
             builder: (ctx, setModalState) {
@@ -880,415 +980,167 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                 ),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: surface,
+                    color: palette.surface,
                     borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(28),
+                      top: Radius.circular(26),
                     ),
-                    border: Border.all(
-                      color: isDark
-                          ? Colors.white.withValues(alpha: 0.06)
-                          : Colors.black.withValues(alpha: 0.04),
-                    ),
+                    border: Border.all(color: palette.border),
                   ),
                   child: SafeArea(
                     top: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(22, 10, 22, 18),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Center(
-                            child: Container(
-                              width: 42,
-                              height: 4,
-                              margin: const EdgeInsets.only(bottom: 18),
-                              decoration: BoxDecoration(
-                                color: bodyColor.withValues(alpha: 0.35),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
+                          const AppSheetHeader(),
+                          const ReportHeaderIcon(),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Report this user',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: palette.title,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3,
                             ),
                           ),
-                          if (!submitted) ...[
-                            Center(
-                              child: Container(
-                                width: 56,
-                                height: 56,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(17),
-                                  gradient: const LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: reportColors,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.orange.withValues(
-                                        alpha: 0.32,
-                                      ),
-                                      blurRadius: 18,
-                                      offset: const Offset(0, 6),
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(
-                                  Icons.flag_rounded,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Tell us what went wrong. Reporting also blocks this user.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 13,
+                              height: 1.35,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          for (final o in options)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: ReportReasonTile(
+                                label: o.label,
+                                selected: selected == o.key,
+                                onTap: submitting
+                                    ? null
+                                    : () =>
+                                          setModalState(() => selected = o.key),
                               ),
                             ),
-                            const SizedBox(height: 14),
-                            Text(
-                              'Report this user',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.3,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Tell us what went wrong. Reporting also blocks this user.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: bodyColor,
-                                fontSize: 13,
-                                height: 1.35,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            ...options.map((o) {
-                              final active = selected == o.key;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: InkWell(
+                          if (isOther) ...[
+                            const SizedBox(height: 4),
+                            TextField(
+                              controller: otherCtrl,
+                              enabled: !submitting,
+                              maxLines: 3,
+                              inputFormatters: [
+                                LengthLimitingTextInputFormatter(150),
+                              ],
+                              style: TextStyle(color: palette.title),
+                              decoration: InputDecoration(
+                                hintText: 'Help us understand what happened',
+                                hintStyle: TextStyle(color: palette.muted),
+                                filled: true,
+                                fillColor: isDark
+                                    ? Colors.white.withValues(alpha: 0.04)
+                                    : Colors.black.withValues(alpha: 0.03),
+                                border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(14),
-                                  onTap: submitting
-                                      ? null
-                                      : () => setModalState(
-                                          () => selected = o.key,
-                                        ),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 13,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isDark
-                                          ? Colors.white.withValues(alpha: 0.04)
-                                          : Colors.black.withValues(
-                                              alpha: 0.03,
-                                            ),
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: active
-                                            ? AppColors.magenta.withValues(
-                                                alpha: 0.6,
-                                              )
-                                            : (isDark
-                                                  ? Colors.white.withValues(
-                                                      alpha: 0.10,
-                                                    )
-                                                  : Colors.black.withValues(
-                                                      alpha: 0.08,
-                                                    )),
-                                        width: active ? 1.5 : 1,
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            o.label,
-                                            style: TextStyle(
-                                              color: titleColor,
-                                              fontSize: 14.5,
-                                              fontWeight: active
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        AnimatedContainer(
-                                          duration: const Duration(
-                                            milliseconds: 150,
-                                          ),
-                                          width: 22,
-                                          height: 22,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            gradient: active
-                                                ? const LinearGradient(
-                                                    colors: reportColors,
-                                                  )
-                                                : null,
-                                            border: active
-                                                ? null
-                                                : Border.all(
-                                                    color: bodyColor.withValues(
-                                                      alpha: 0.5,
-                                                    ),
-                                                    width: 1.5,
-                                                  ),
-                                          ),
-                                          child: active
-                                              ? const Icon(
-                                                  Icons.check_rounded,
-                                                  color: Colors.white,
-                                                  size: 15,
-                                                )
-                                              : null,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
-                            if (isOther) ...[
-                              const SizedBox(height: 4),
-                              TextField(
-                                controller: otherCtrl,
-                                enabled: !submitting,
-                                maxLines: 3,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(150),
-                                ],
-                                style: TextStyle(color: titleColor),
-                                decoration: InputDecoration(
-                                  hintText: 'Help us understand what happened',
-                                  hintStyle: TextStyle(color: bodyColor),
-                                  filled: true,
-                                  fillColor: isDark
-                                      ? Colors.white.withValues(alpha: 0.04)
-                                      : Colors.black.withValues(alpha: 0.03),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                ),
-                                onChanged: (_) => setModalState(() {}),
-                              ),
-                              const SizedBox(height: 6),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(
-                                  '${otherCtrl.text.characters.length}/150',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: bodyColor,
-                                  ),
+                                  borderSide: BorderSide.none,
                                 ),
                               ),
-                            ],
-                            if (submitError != null) ...[
-                              const SizedBox(height: 10),
-                              Text(
-                                submitError!,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFFF04438),
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 16),
-                            Opacity(
-                              opacity: canSubmit ? 1 : 0.5,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  gradient: const LinearGradient(
-                                    colors: reportColors,
-                                  ),
-                                  boxShadow: canSubmit
-                                      ? [
-                                          BoxShadow(
-                                            color: AppColors.orange.withValues(
-                                              alpha: 0.30,
-                                            ),
-                                            blurRadius: 18,
-                                            offset: const Offset(0, 8),
-                                          ),
-                                        ]
-                                      : null,
-                                ),
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(16),
-                                    onTap: canSubmit
-                                        ? () async {
-                                            setModalState(() {
-                                              submitting = true;
-                                              submitError = null;
-                                            });
-                                            var reportSucceeded = false;
-                                            try {
-                                              await _repo.reportUser(
-                                                targetUserId: targetUserId,
-                                                reason: selected,
-                                                details: selected == 'OTHER'
-                                                    ? otherCtrl.text.trim()
-                                                    : null,
-                                              );
-                                              reportSucceeded = true;
-                                            } catch (_) {
-                                              setModalState(() {
-                                                submitting = false;
-                                                submitError =
-                                                    'Could not submit report. Please try again.';
-                                              });
-                                            }
-                                            if (!reportSucceeded) return;
-
-                                            // Report başarılıysa block adımı
-                                            // best-effort: block hata verse bile
-                                            // kullanıcıya report hatası gösterme.
-                                            if (!_isBlocked) {
-                                              try {
-                                                await _repo.blockUser(
-                                                  targetUserId,
-                                                );
-                                              } catch (_) {}
-                                              if (mounted) {
-                                                setState(
-                                                  () => _isBlocked = true,
-                                                );
-                                              }
-                                            }
-                                            setModalState(() {
-                                              submitting = false;
-                                              submitted = true;
-                                            });
-                                          }
-                                        : null,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 15,
-                                      ),
-                                      child: Center(
-                                        child: submitting
-                                            ? const SizedBox(
-                                                width: 18,
-                                                height: 18,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      color: Colors.white,
-                                                    ),
-                                              )
-                                            : const Text(
-                                                'Report & block',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 15.5,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
+                              onChanged: (_) => setModalState(() {}),
                             ),
                             const SizedBox(height: 6),
-                            TextButton(
-                              onPressed: submitting
-                                  ? null
-                                  : () => Navigator.pop(ctx),
-                              style: TextButton.styleFrom(
-                                minimumSize: const Size.fromHeight(44),
-                                foregroundColor: bodyColor,
-                              ),
-                              child: const Text(
-                                'Cancel',
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '${otherCtrl.text.characters.length}/150',
                                 style: TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ] else ...[
-                            Center(
-                              child: Container(
-                                width: 60,
-                                height: 60,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(18),
-                                  gradient: const LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      Color(0xFF22C55E),
-                                      Color(0xFF15803D),
-                                    ],
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.verified_user_rounded,
-                                  color: Colors.white,
-                                  size: 30,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              'Report received',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.3,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Thanks for letting us know. This user has been blocked and messaging is now paused for your safety.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: bodyColor,
-                                fontSize: 14,
-                                height: 1.4,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                gradient: const LinearGradient(
-                                  colors: [AppColors.blue, AppColors.teal],
-                                ),
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(16),
-                                  onTap: () => Navigator.pop(ctx),
-                                  child: const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 15),
-                                    child: Center(
-                                      child: Text(
-                                        'Done',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15.5,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                                  fontSize: 12,
+                                  color: palette.muted,
                                 ),
                               ),
                             ),
                           ],
+                          if (submitError != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              submitError!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFFF04438),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          ReportSubmitButton(
+                            label: 'Report & block',
+                            loading: submitting,
+                            onPressed: canSubmit
+                                ? () async {
+                                    setModalState(() {
+                                      submitting = true;
+                                      submitError = null;
+                                    });
+                                    try {
+                                      await _repo.reportUser(
+                                        targetUserId: targetUserId,
+                                        reason: selected,
+                                        details: selected == 'OTHER'
+                                            ? otherCtrl.text.trim()
+                                            : null,
+                                      );
+                                      reportSucceeded = true;
+                                    } catch (_) {
+                                      setModalState(() {
+                                        submitting = false;
+                                        submitError =
+                                            'Could not submit report. Please try again.';
+                                      });
+                                    }
+                                    if (!reportSucceeded) return;
+
+                                    // Report başarılıysa block adımı
+                                    // best-effort: block hata verse bile
+                                    // kullanıcıya report hatası gösterme.
+                                    if (!_isBlocked) {
+                                      try {
+                                        await _repo.blockUser(targetUserId);
+                                      } catch (_) {}
+                                      if (mounted) {
+                                        setState(() => _isBlocked = true);
+                                      }
+                                    }
+                                    // Teşekkür mesajı uygulamanın standart
+                                    // bilgilendirme penceresinde gösterilir.
+                                    if (ctx.mounted) Navigator.of(ctx).pop();
+                                  }
+                                : null,
+                          ),
+                          const SizedBox(height: 6),
+                          TextButton(
+                            onPressed: submitting
+                                ? null
+                                : () => Navigator.pop(ctx),
+                            style: TextButton.styleFrom(
+                              minimumSize: const Size.fromHeight(44),
+                              foregroundColor: palette.muted,
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1299,6 +1151,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           );
         },
       );
+      if (reportSucceeded && mounted) {
+        await showReportThanksDialog(context, contentReport: false);
+      }
     } finally {
       otherCtrl.dispose();
       if (mounted) setState(() => _isReporting = false);
@@ -1307,68 +1162,49 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   Future<void> _openTopActionsSheet() async {
     if (_isReporting || _isBlocking) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        final colors = theme.colorScheme;
-        final isDark = theme.brightness == Brightness.dark;
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? _darkSurface.withValues(alpha: 0.90)
-                        : Colors.white.withValues(alpha: 0.92),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: isDark
-                          ? Colors.white.withValues(alpha: 0.10)
-                          : colors.onSurface.withValues(alpha: 0.08),
+    await showAppSheet<void>(
+      context,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const AppSheetHeader(),
+              AppSheetCard(
+                children: [
+                  AppSheetRow(
+                    leading: const AppSheetIconTile(
+                      icon: Icons.flag_outlined,
+                      color: AppColors.orange,
                     ),
+                    title: 'Report',
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      await _openReportSheet();
+                    },
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ListTile(
-                        leading: Icon(
-                          Icons.flag_outlined,
-                          color: colors.onSurface.withValues(alpha: 0.9),
-                        ),
-                        title: const Text('Report'),
-                        onTap: () async {
-                          Navigator.of(ctx).pop();
-                          await _openReportSheet();
-                        },
-                      ),
-                      ListTile(
-                        leading: Icon(
-                          Icons.block_rounded,
-                          color: _isBlocked
-                              ? colors.tertiary
-                              : colors.onSurface.withValues(alpha: 0.9),
-                        ),
-                        title: Text(_isBlocked ? 'Unblock' : 'Block'),
-                        onTap: () async {
-                          Navigator.of(ctx).pop();
-                          await _toggleBlock();
-                        },
-                      ),
-                    ],
+                  AppSheetRow(
+                    leading: AppSheetIconTile(
+                      icon: Icons.block_rounded,
+                      color: _isBlocked
+                          ? AppColors.teal
+                          : const Color(0xFFEF4444),
+                    ),
+                    title: _isBlocked ? 'Unblock' : 'Block',
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      await _toggleBlock();
+                    },
                   ),
-                ),
+                ],
               ),
-            ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -1399,7 +1235,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final mediaForViewer = _mediaForViewer();
     await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
+      momentsViewerRoute(
         builder: (_) => MomentsViewerPage(
           media: mediaForViewer,
           initialIndex: index,
@@ -1450,16 +1286,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     final hasFallbackProfile = widget.userId != null || widget.userName != null;
 
     /// ERROR / EMPTY STATE
-    if (_profile == null && !hasFallbackProfile) {
-      return Scaffold(
-        backgroundColor: theme.scaffoldBackgroundColor,
-        body: Center(
-          child: Text(
-            'Profile unavailable',
-            style: TextStyle(color: theme.colorScheme.onSurface),
-          ),
-        ),
-      );
+    if (_profile == null && (!hasFallbackProfile || _profileUnavailable)) {
+      return _buildUnavailableProfile(theme);
     }
 
     final displayName =
@@ -2214,6 +2042,52 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   /// Engellenen kullanıcının profil içeriği (moment'lar / gidilen mekanlar)
   /// yerine gösterilen bilgilendirme.
+  /// Askıya alınmış/silinmiş hesap: profil, fotoğraf ve aksiyonlar gösterilmez.
+  Widget _buildUnavailableProfile(ThemeData theme) {
+    final onSurface = theme.colorScheme.onSurface;
+    final subColor = onSurface.withValues(alpha: 0.6);
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leadingWidth: 60,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 14),
+          child: AppBackButton(),
+        ),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.person_off_outlined, size: 46, color: subColor),
+              const SizedBox(height: 12),
+              Text(
+                'Profile unavailable',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: onSurface,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'This account isn\'t available right now.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: subColor, fontSize: 13.5, height: 1.3),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBlockedProfileNotice(Color onSurface, Color subColor) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
@@ -2635,20 +2509,60 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     MediaReference? mediaReference,
   }) {
     const size = 128.0;
+    const radius = 32.0;
+    // Kendi profilindeki story halkasıyla aynı ölçüler.
+    const ringWidth = 3.0;
+    const ringGap = 2.5;
+    // Halkanın yeri her zaman ayrılır → story sonradan yüklenince avatar
+    // zıplamaz.
+    const totalSize = size + (ringWidth + ringGap) * 2;
+    final group = (_isBlocked || _blockedByOther) ? null : _storyGroup;
+
+    final avatar = ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: url != null
+            ? CachedImage(
+                url,
+                fit: BoxFit.cover,
+                mediaReference: mediaReference,
+                errorWidget: (_) => _previewAvatarFallback(isDark),
+              )
+            : _previewAvatarFallback(isDark),
+      ),
+    );
+
     return Center(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(32),
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: url != null
-              ? CachedImage(
-                  url,
-                  fit: BoxFit.cover,
-                  mediaReference: mediaReference,
-                  errorWidget: (_) => _previewAvatarFallback(isDark),
-                )
-              : _previewAvatarFallback(isDark),
+      child: Semantics(
+        button: group != null,
+        label: group != null ? 'View story' : null,
+        child: GestureDetector(
+          onTap: group == null ? null : _openUserStories,
+          child: SizedBox(
+            width: totalSize,
+            height: totalSize,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                avatar,
+                if (group != null)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      key: const ValueKey('profile-story-ring'),
+                      painter: RoundedStoryRingPainter(
+                        colors: _hasUnseenStory
+                            ? RoundedStoryRingPainter.logoColors
+                            : RoundedStoryRingPainter.seenColors,
+                        strokeWidth: ringWidth,
+                        radius: radius + ringGap,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2948,18 +2862,13 @@ class _BrandActionButton extends StatelessWidget {
           height: 54,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
+            // Gölge yok: Material içindeki Ink'te gölge yuvarlak köşeyi takip
+            // etmiyor, butonun altında dikdörtgen bir leke gibi görünüyordu.
             gradient: const LinearGradient(
               colors: [AppColors.magenta, AppColors.blue],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.magenta.withValues(alpha: 0.32),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ],
           ),
           child: Center(
             child: Row(

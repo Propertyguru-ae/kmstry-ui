@@ -40,8 +40,7 @@ class VenueOwnerStatsVenue {
           (json['verificationLevel'] ?? json['verification_level'])?.toString(),
       upcomingEvents: eventsRaw
           .whereType<Map>()
-          .map((e) =>
-              VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
+          .map((e) => VenueUpcomingEvent.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
     );
   }
@@ -94,22 +93,39 @@ class VenueOwnerStats {
     final trend = (json['weeklyTrend'] ?? json['weekly_trend']) as List? ?? [];
     return VenueOwnerStats(
       activeNow: (json['activeNow'] ?? json['active_now'] as num? ?? 0).toInt(),
-      anonymousNow: (json['anonymousNow'] ?? json['anonymous_now'] as num? ?? 0).toInt(),
+      anonymousNow: (json['anonymousNow'] ?? json['anonymous_now'] as num? ?? 0)
+          .toInt(),
       maleNow: (json['maleNow'] ?? json['male_now'] as num? ?? 0).toInt(),
       femaleNow: (json['femaleNow'] ?? json['female_now'] as num? ?? 0).toInt(),
-      todayTotal: (json['todayTotal'] ?? json['today_total'] as num? ?? 0).toInt(),
-      yesterdayTotal: (json['yesterdayTotal'] ?? json['yesterday_total'] as num? ?? 0).toInt(),
-      yesterdaySoFar: (json['yesterdaySoFar'] ?? json['yesterday_so_far'] as num? ?? 0).toInt(),
-      todayVsYesterdayPct: (json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct']) == null
+      todayTotal: (json['todayTotal'] ?? json['today_total'] as num? ?? 0)
+          .toInt(),
+      yesterdayTotal:
+          (json['yesterdayTotal'] ?? json['yesterday_total'] as num? ?? 0)
+              .toInt(),
+      yesterdaySoFar:
+          (json['yesterdaySoFar'] ?? json['yesterday_so_far'] as num? ?? 0)
+              .toInt(),
+      todayVsYesterdayPct:
+          (json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct']) ==
+              null
           ? null
-          : ((json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct']) as num).toInt(),
-      totalAllTime: (json['totalAllTime'] ?? json['total_all_time'] as num? ?? 0).toInt(),
+          : ((json['todayVsYesterdayPct'] ?? json['today_vs_yesterday_pct'])
+                    as num)
+                .toInt(),
+      totalAllTime:
+          (json['totalAllTime'] ?? json['total_all_time'] as num? ?? 0).toInt(),
       weeklyTrend: trend
           .whereType<Map>()
-          .map((e) => VenueWeeklyTrendPoint.fromJson(Map<String, dynamic>.from(e)))
+          .map(
+            (e) => VenueWeeklyTrendPoint.fromJson(Map<String, dynamic>.from(e)),
+          )
           .toList(),
-      followerCount: (json['followerCount'] ?? json['follower_count'] as num? ?? 0).toInt(),
-      storyViewsToday: (json['storyViewsToday'] ?? json['story_views_today'] as num? ?? 0).toInt(),
+      followerCount:
+          (json['followerCount'] ?? json['follower_count'] as num? ?? 0)
+              .toInt(),
+      storyViewsToday:
+          (json['storyViewsToday'] ?? json['story_views_today'] as num? ?? 0)
+              .toInt(),
     );
   }
 }
@@ -144,21 +160,34 @@ class VenueActiveGuest {
       username: json['username']?.toString(),
       fullName: (json['fullName'] ?? json['full_name'])?.toString(),
       photo: json['photo']?.toString(),
-      featuredPhoto: (json['featuredPhoto'] ?? json['featured_photo'])?.toString(),
+      featuredPhoto: (json['featuredPhoto'] ?? json['featured_photo'])
+          ?.toString(),
       gender: json['gender']?.toString(),
       checkinId: (json['checkinId'] ?? json['checkin_id'])?.toString() ?? '',
-      stories: storiesRaw.map((e) => StoryItem(
-        id: e['id']?.toString() ?? '',
-        mediaUrl: e['mediaUrl']?.toString() ?? '',
-        mediaType: e['mediaType']?.toString() ?? 'photo',
-        thumbnailUrl: e['thumbnailUrl']?.toString(),
-        durationSecs: (e['durationSecs'] as num?)?.toInt(),
-        textOverlay: MediaTextOverlay.fromJson(e['textOverlay'] ?? e['text_overlay']),
-        expiresAt: DateTime.tryParse(e['expiresAt']?.toString() ?? '') ?? DateTime.now().add(const Duration(hours: 24)),
-        createdAt: DateTime.tryParse(e['createdAt']?.toString() ?? '') ?? DateTime.now(),
-      )).toList(),
+      stories: storiesRaw
+          .map(
+            (e) => StoryItem(
+              id: e['id']?.toString() ?? '',
+              mediaUrl: e['mediaUrl']?.toString() ?? '',
+              mediaType: e['mediaType']?.toString() ?? 'photo',
+              thumbnailUrl: e['thumbnailUrl']?.toString(),
+              durationSecs: (e['durationSecs'] as num?)?.toInt(),
+              textOverlay: MediaTextOverlay.fromJson(
+                e['textOverlay'] ?? e['text_overlay'],
+              ),
+              expiresAt:
+                  DateTime.tryParse(e['expiresAt']?.toString() ?? '') ??
+                  DateTime.now().add(const Duration(hours: 24)),
+              createdAt:
+                  DateTime.tryParse(e['createdAt']?.toString() ?? '') ??
+                  DateTime.now(),
+            ),
+          )
+          .toList(),
       viewedStoryIds: Set<String>.from(
-        storiesRaw.where((e) => e['viewedByMe'] == true).map((e) => e['id']?.toString() ?? ''),
+        storiesRaw
+            .where((e) => e['viewedByMe'] == true)
+            .map((e) => e['id']?.toString() ?? ''),
       ),
     );
   }
@@ -167,6 +196,34 @@ class VenueActiveGuest {
     if (fullName != null && fullName!.isNotEmpty) return fullName!;
     if (username != null && username!.isNotEmpty) return '@$username';
     return 'Guest';
+  }
+}
+
+/// Guest tab read model: no unrelated event or dashboard payload is required.
+class VenueOwnerGuestsResponse {
+  final List<VenueActiveGuest> activeGuests;
+  final int maleNow;
+  final int femaleNow;
+  final int todayTotal;
+
+  const VenueOwnerGuestsResponse({
+    required this.activeGuests,
+    required this.maleNow,
+    required this.femaleNow,
+    required this.todayTotal,
+  });
+
+  factory VenueOwnerGuestsResponse.fromJson(Map<String, dynamic> json) {
+    final stats = Map<String, dynamic>.from(json['stats'] as Map);
+    return VenueOwnerGuestsResponse(
+      activeGuests: (json['activeGuests'] as List)
+          .whereType<Map>()
+          .map((e) => VenueActiveGuest.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      maleNow: (stats['maleNow'] as num).toInt(),
+      femaleNow: (stats['femaleNow'] as num).toInt(),
+      todayTotal: (stats['todayTotal'] as num).toInt(),
+    );
   }
 }
 
@@ -186,13 +243,11 @@ class VenueOwnerStatsResponse {
     final statsMap = json['stats'] as Map? ?? {};
     final guestsRaw = json['activeGuests'] ?? json['active_guests'] ?? [];
     return VenueOwnerStatsResponse(
-      venue: VenueOwnerStatsVenue.fromJson(
-          Map<String, dynamic>.from(venueMap)),
+      venue: VenueOwnerStatsVenue.fromJson(Map<String, dynamic>.from(venueMap)),
       stats: VenueOwnerStats.fromJson(Map<String, dynamic>.from(statsMap)),
       activeGuests: (guestsRaw as List)
           .whereType<Map>()
-          .map((e) =>
-              VenueActiveGuest.fromJson(Map<String, dynamic>.from(e)))
+          .map((e) => VenueActiveGuest.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
     );
   }

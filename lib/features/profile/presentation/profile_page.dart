@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
+import 'package:kmstry_frontend/features/checkin/presentation/moment_limit_dialogs.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'dart:async';
 import 'dart:ui'; // Glassmorphism efekti için
@@ -8,6 +11,7 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../checkin/data/checkin_repository.dart';
+import '../../checkin/data/moment_upload_coordinator.dart';
 import '../../checkin/services/active_checkin_service.dart';
 import '../../checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
@@ -16,36 +20,52 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/followed_venues_page.dart';
+import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
 import 'dart:io';
+import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 import '../../checkin/data/checkin_profile_model.dart';
+import '../../checkin/services/personal_avatar_selection.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_settings_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/edit_profile_page.dart';
-import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import '../data/profile_stats_repository.dart';
 import 'package:kmstry_frontend/features/people/presentation/friends_list_page.dart';
 import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/core/permissions/notification_permission_service.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
-import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
-import 'package:kmstry_frontend/core/user/user_session.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import 'package:kmstry_frontend/features/stories/presentation/story_ring_painter.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
-import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
-import 'package:kmstry_frontend/features/media/media_compressor.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/stories/data/story_viewed_cache.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import '../../media/media_text_overlay.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  const ProfilePage({
+    super.key,
+    this.isActive = true,
+    this.authRepository,
+    this.checkinRepository,
+    this.statsRepository,
+    this.storyRepository,
+  });
+
+  final bool isActive;
+  final AuthRepository? authRepository;
+  final CheckinRepository? checkinRepository;
+  final ProfileStatsRepository? statsRepository;
+  final StoryRepository? storyRepository;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -58,15 +78,44 @@ class _ProfilePageState extends State<ProfilePage>
   Map<String, dynamic>? _user;
   MeContextModel? _meContext;
   bool _loading = true;
+  int _profileLoadRequest = 0;
+  int _storiesLoadRequest = 0;
+  int _profileSession = PendingPublicMediaService.instance.sessionGeneration;
+  bool _syncingActiveCheckin = false;
+  bool _momentsLoading = false;
+  bool _historyLoading = false;
+  DateTime? _lastProfileRefresh;
   Map<String, dynamic>? _activeCheckin;
   List<CheckinProfileMedia> _media = [];
+  final Set<String> _deletedMomentIds = {};
   List<CheckinVisitedPlace> _visitedPlaces = [];
 
-  final CheckinRepository _checkinRepo = CheckinRepository();
+  late final CheckinRepository _checkinRepo =
+      widget.checkinRepository ?? CheckinRepository();
+  late final AuthRepository _authRepo =
+      widget.authRepository ?? AuthRepository();
+  List<PendingPublicMedia> get _pendingMoments {
+    final checkinId = _activeCheckinId();
+    if (checkinId == null) return const [];
+    return PendingPublicMediaService.instance
+        .forKind(PendingPublicMediaKind.checkinMoment)
+        .where(
+          (item) =>
+              item.checkinId == checkinId &&
+              !_deletedMomentIds.contains(item.id) &&
+              !_media.any((m) => m.id == item.id),
+        )
+        .toList();
+  }
+
   final VenueContextRepository _venueContextRepository =
       VenueContextRepository();
-  final MatchRepository _matchRepo = MatchRepository();
-  final StoryRepository _storyRepo = StoryRepository();
+  late final ProfileStatsRepository _statsRepo =
+      widget.statsRepository ?? ProfileStatsRepository();
+  int _statsRequest = 0;
+  bool _statsFailed = false;
+  late final StoryRepository _storyRepo =
+      widget.storyRepository ?? StoryRepository();
 
   /// Friends (match) sayısı — null iken "—" gösterilir.
   int? _friendCount;
@@ -91,8 +140,9 @@ class _ProfilePageState extends State<ProfilePage>
   int _selectedProfileTab = 0;
 
   bool _uploadingMoment = false;
-  bool _uploadingStory = false;
+  final bool _uploadingStory = false;
   bool _openingStory = false; // kamera açılışı sırasında çift-tıklama guard'ı
+  int _storyRefreshGeneration = 0;
   bool _isAnonymous = false; // profil yüklemesinden cache'lenir → anında kamera
   bool _openingVenueDetail = false;
   final Set<String> _updatingProfileVisibilityIds = {};
@@ -102,7 +152,7 @@ class _ProfilePageState extends State<ProfilePage>
   final TextEditingController _vibeController = TextEditingController();
   bool _savingVibe = false;
   String? _profileErrorMessage;
-  final NotificationPermissionService _notificationPermissionService =
+  late final NotificationPermissionService _notificationPermissionService =
       NotificationPermissionService();
   bool _showNotificationWarning = false;
   final Map<String, String?> _videoPosterPathByUrl = {};
@@ -208,6 +258,8 @@ class _ProfilePageState extends State<ProfilePage>
           fit: StackFit.expand,
           children: [
             _buildVideoPosterLayer(media, fit: BoxFit.cover),
+            if (media.textOverlay != null)
+              MediaTextOverlayThumbnail(overlay: media.textOverlay!),
 
             /// Play icon
             const Center(
@@ -288,22 +340,141 @@ class _ProfilePageState extends State<ProfilePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Quick check-in can finish several routes above this page (capture →
+    // moderation → Who's Here). Listen to the shared source of truth so the
+    // profile updates as soon as the check-in is approved, without requiring
+    // a pull-to-refresh after the user returns.
+    ActiveCheckinService.changes.addListener(_onActiveCheckinChanged);
+    ActiveCheckinService.avatarChanges.addListener(_onFeaturedAvatarChanged);
+    // Story uploads can finish from Home, Profile, or a dedicated add-story
+    // route. The backend exposes them only after moderation, so a single
+    // immediate refresh is not enough; the handler below follows approval.
+    StoryRepository.changes.addListener(_onStoryChanged);
+    PendingPublicMediaService.instance.changes.addListener(
+      _onPendingStoryChanged,
+    );
+    PendingPublicMediaService.instance.publicationChanges.addListener(
+      _onMomentPublished,
+    );
     _storySpin = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
     );
-    // AuthGate/AppShell may have just fetched /me during login/account switch.
-    // Profile should still render from the latest account snapshot on first open.
-    _loadProfile(forceRefresh: true);
+    // Reuse the short-lived authenticated snapshot from AppShell when fresh.
+    _loadProfile();
     _refreshNotificationWarningState();
   }
 
   @override
+  void didUpdateWidget(covariant ProfilePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive &&
+        !oldWidget.isActive &&
+        (_lastProfileRefresh == null ||
+            DateTime.now().difference(_lastProfileRefresh!) >
+                const Duration(seconds: 10))) {
+      unawaited(_loadProfile(forceRefresh: true, showLoading: false));
+    }
+  }
+
+  @override
   void dispose() {
+    ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
+    ActiveCheckinService.avatarChanges.removeListener(_onFeaturedAvatarChanged);
+    StoryRepository.changes.removeListener(_onStoryChanged);
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onPendingStoryChanged,
+    );
+    PendingPublicMediaService.instance.publicationChanges.removeListener(
+      _onMomentPublished,
+    );
+    _storyRefreshGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     _storySpin.dispose();
     _vibeController.dispose();
     super.dispose();
+  }
+
+  void _onActiveCheckinChanged() {
+    if (!mounted || _syncingActiveCheckin || LogoutFlow.busy.value) return;
+    unawaited(_loadProfile(forceRefresh: true, showLoading: false));
+  }
+
+  void _onFeaturedAvatarChanged() {
+    if (!mounted ||
+        _activeCheckin?['id'] != ActiveCheckinService().activeCheckinId ||
+        !ActiveCheckinService().belongsToUser(_user?['id']?.toString())) {
+      return;
+    }
+    setState(() {
+      final id = ActiveCheckinService().featuredMediaId;
+      _media = _media.map((m) => m.copyWith(isFeatured: m.id == id)).toList();
+    });
+  }
+
+  void _onStoryChanged() {
+    if (!mounted) return;
+    final generation = ++_storyRefreshGeneration;
+    unawaited(_refreshStoriesAfterChange(generation));
+  }
+
+  void _onPendingStoryChanged() {
+    if (!mounted || LogoutFlow.busy.value) return;
+    setState(() {
+      final session = PendingPublicMediaService.instance.sessionGeneration;
+      if (session != _profileSession) {
+        // Retaining a tab must never retain the previous account's data.
+        _profileSession = session;
+        _profileLoadRequest++;
+        _storiesLoadRequest++;
+        _storyRefreshGeneration++;
+        _user = null;
+        _meContext = null;
+        _activeCheckin = null;
+        _activeVenue = null;
+        _activeCheckinVenueIdFromProfile = null;
+        _checkinVibe = null;
+        _profileBio = null;
+        _checkinWhatBrings = [];
+        _media = [];
+        _deletedMomentIds.clear();
+        _visitedPlaces = [];
+        _myStories = [];
+        _viewedStoryIds = {};
+        _friendCount = null;
+        _followedVenueCount = null;
+        _statsFailed = false;
+        _statsRequest++;
+        _profileErrorMessage = null;
+        _momentsLoading = false;
+        _historyLoading = false;
+        _isAnonymous = false;
+        _loading = true;
+        _lastProfileRefresh = null;
+      }
+    });
+  }
+
+  void _onMomentPublished() {
+    if (mounted) {
+      unawaited(_loadProfile(forceRefresh: true, showLoading: false));
+    }
+  }
+
+  Future<void> _refreshStoriesAfterChange(int generation) async {
+    final previousIds = _myStories.map((story) => story.id).toSet();
+    for (var attempt = 0; attempt < 15; attempt += 1) {
+      await _loadMyStories();
+      if (!mounted || generation != _storyRefreshGeneration) return;
+
+      final currentIds = _myStories.map((story) => story.id).toSet();
+      final changed =
+          currentIds.length != previousIds.length ||
+          currentIds.any((id) => !previousIds.contains(id));
+      if (changed) return;
+
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
   }
 
   @override
@@ -324,16 +495,6 @@ class _ProfilePageState extends State<ProfilePage>
       }
     }
     return null;
-  }
-
-  String? get _activeCheckinAvatarPhotoUrl {
-    final raw =
-        (_activeCheckin?['avatarPhoto'] ?? _activeCheckin?['avatar_photo'])
-            ?.toString()
-            .trim();
-    return raw != null && raw.isNotEmpty && raw.toLowerCase() != 'null'
-        ? raw
-        : null;
   }
 
   List<String> _extractWhatBrings(Map<String, dynamic>? activeCheckin) {
@@ -423,8 +584,16 @@ class _ProfilePageState extends State<ProfilePage>
     final checkinId = _activeCheckinId();
     if (checkinId == null) return null;
 
+    final request = _profileLoadRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final profile = await _checkinRepo.getCheckinProfile(checkinId);
+      if (!mounted ||
+          request != _profileLoadRequest ||
+          checkinId != _activeCheckinId() ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return null;
+      }
       final venueId = profile.checkin.venueId?.trim();
       if (venueId == null || venueId.isEmpty) return null;
       if (mounted) {
@@ -465,8 +634,17 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> _loadActiveVenueForHeader() async {
+    final request = _profileLoadRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    final checkinId = _activeCheckinId();
     final venue = await _loadActiveCheckinVenue();
-    if (!mounted || venue == null) return;
+    if (!mounted ||
+        venue == null ||
+        request != _profileLoadRequest ||
+        checkinId != _activeCheckinId() ||
+        !PendingPublicMediaService.instance.isCurrentSession(session)) {
+      return;
+    }
     setState(() => _activeVenue = venue);
   }
 
@@ -561,33 +739,56 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> _loadFriendCount() async {
-    try {
-      final matches = await _matchRepo.getMatches();
-      if (!mounted) return;
-      setState(() => _friendCount = matches.length);
-    } catch (_) {
-      // Sessiz geç — istatistik "—" kalır.
-    }
+    await _loadSocialStats();
   }
 
   Future<void> _loadFollowedVenueCount() async {
+    await _loadSocialStats();
+  }
+
+  Future<void> _loadSocialStats() async {
+    final timer = Stopwatch()..start();
+    final request = ++_statsRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
-      final venues = await _venueContextRepository.getFollowedVenues();
-      if (!mounted) return;
-      setState(() => _followedVenueCount = venues.length);
+      final stats = await _statsRepo.load();
+      if (!mounted ||
+          request != _statsRequest ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
+      setState(() {
+        _friendCount = stats.friends;
+        _followedVenueCount = stats.venues;
+        _statsFailed = false;
+      });
     } catch (_) {
-      // Sessiz geç — istatistik "—" kalır.
+      if (mounted &&
+          request == _statsRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
+        setState(() => _statsFailed = true);
+      }
+    } finally {
+      if (kDebugMode) {
+        debugPrint('[Perf] profile_stats ${timer.elapsedMilliseconds}ms');
+      }
     }
   }
 
   Future<void> _loadMyStories() async {
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    final request = ++_storiesLoadRequest;
     try {
       final stories = await _storyRepo.getMyStories();
       // İzlenme durumu KALICI cache'ten yüklenir — aksi halde başka sayfaya
       // geçip profile dönünce _viewedStoryIds sıfırlanıp halka tekrar renkli
       // görünüyordu (izlenmiş olmasına rağmen).
       final persistedViewed = await StoryViewedCache.loadAll();
-      if (!mounted) return;
+      if (!mounted ||
+          request != _storiesLoadRequest ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       setState(() {
         _myStories = stories;
         final activeIds = stories.map((s) => s.id).toSet();
@@ -616,7 +817,13 @@ class _ProfilePageState extends State<ProfilePage>
     final realStories = _myStories
         .where((story) => !story.isUploadingPlaceholder)
         .toList();
-    if (realStories.isEmpty) return;
+    if (realStories.isEmpty &&
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.personalStory,
+            ) ==
+            null) {
+      return;
+    }
 
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'Me', photo: photo),
@@ -631,6 +838,8 @@ class _ProfilePageState extends State<ProfilePage>
         builder: (_) => StoryViewerPage(
           groups: [meGroup],
           initialStoryIndex: _firstUnseenStoryIndex(),
+          ownerUploadKind: PendingPublicMediaKind.personalStory,
+          onCreateStory: _openAddStoryFromProfile,
         ),
       ),
     );
@@ -668,7 +877,9 @@ class _ProfilePageState extends State<ProfilePage>
     try {
       captureResult = await Navigator.push(
         context,
-        cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
+        cameraRoute(
+          builder: (_) => const CameraScreen.publicMedia(useFrontCamera: true),
+        ),
       );
     } finally {
       _openingStory = false;
@@ -682,173 +893,157 @@ class _ProfilePageState extends State<ProfilePage>
         : null;
     if (file == null || !mounted) return;
 
-    final isVideo = _isVideoFile(file.path);
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    final uploadProgress = MediaUploadProgressController(
-      title: isVideo ? 'Preparing video' : 'Uploading story',
-      message: isVideo
-          ? 'Optimizing your video for a faster upload…'
-          : 'Your photo is being uploaded…',
+    StoryUploadCoordinator.instance.sharePersonal(
+      file: file,
+      checkinId: checkinId,
+      venueId: _activeVenue?.id,
+      textOverlayJson: storyOverlay?.toJsonString(),
     );
-
-    setState(() => _uploadingStory = true);
-    _storySpin.repeat();
-    await uploadProgress.show(context);
-    Object? uploadError;
-    StackTrace? uploadStack;
-    try {
-      final uploadFile = isVideo
-          ? await MediaCompressor.compressVenueVideo(file)
-          : file;
-      if (isVideo) {
-        uploadProgress.update(
-          title: 'Uploading video',
-          message: 'Your optimized story is being uploaded…',
-          progress: 0,
-        );
-      }
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: uploadFile,
-        mediaType: isVideo ? 'video' : 'photo',
-        textOverlayJson: storyOverlay?.toJsonString(),
-        onProgress: (sent, total) {
-          if (total <= 0) return;
-          uploadProgress.update(progress: sent / total);
-        },
-      );
-    } catch (e, st) {
-      uploadError = e;
-      uploadStack = st;
-    } finally {
-      await uploadProgress.close();
-      uploadProgress.dispose();
-      _storySpin.stop();
-      _storySpin.value = 0;
-      if (mounted) setState(() => _uploadingStory = false);
-    }
-
-    if (!mounted) return;
-    if (uploadError != null) {
-      debugPrint('❌ Profile story upload error: $uploadError\n$uploadStack');
-      await showPremiumErrorDialog(
-        context,
-        message: 'Story could not be uploaded. Please try again.',
-      );
-      return;
-    }
-
-    await _loadMyStories();
-    final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
-        ? _activeVenue!.name
-        : 'your venue';
-    if (overlay != null) {
-      showStorySharedCard(
-        overlay,
-        mediaFile: file,
-        venueName: venueName,
-        isVideo: isVideo,
-      );
-    }
   }
 
-  Future<void> _loadProfile({bool forceRefresh = false}) async {
+  Future<void> _loadProfile({
+    bool forceRefresh = false,
+    bool showLoading = true,
+  }) async {
+    if (!mounted || LogoutFlow.busy.value) return;
+    final request = ++_profileLoadRequest;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    bool isCurrent() =>
+        mounted &&
+        !LogoutFlow.busy.value &&
+        request == _profileLoadRequest &&
+        uploads.isCurrentSession(session);
     setState(() {
-      _loading = true;
+      if (showLoading && _user == null) _loading = true;
       _profileErrorMessage = null;
     });
     // İstatistikleri arka planda çek — profil yüklemesini bloklamasın.
-    unawaited(_loadFriendCount());
-    unawaited(_loadFollowedVenueCount());
+    unawaited(_loadSocialStats());
     unawaited(_loadMyStories());
 
     try {
-      final me = await AuthRepository().getMe(forceRefresh: forceRefresh);
-      _isAnonymous = me['isAnonymous'] == true;
-
-      List<CheckinProfileMedia> media = [];
-      List<CheckinVisitedPlace> visitedPlaces = [];
-
-      String? checkinVibe;
-      String? activeCheckinVenueId;
-      // 1) Aktif check-in varsa getProfile(checkinId) ile o check-in'in fotoğraflarını al (backend getProfile)
+      final identityTimer = Stopwatch()..start();
+      final me = await _authRepo.getMe(forceRefresh: forceRefresh);
+      if (kDebugMode) {
+        debugPrint(
+          '[Perf] profile_identity ${identityTimer.elapsedMilliseconds}ms',
+        );
+      }
+      if (!isCurrent()) return;
       final activeCheckin = _extractActiveCheckin(me);
-      activeCheckinVenueId = _extractActiveCheckinVenueId(activeCheckin);
+      final activeCheckinVenueId = _extractActiveCheckinVenueId(activeCheckin);
       final checkinId = activeCheckin?['id']?.toString();
-      if (checkinId != null && checkinId.isNotEmpty) {
-        try {
-          final profile = await _checkinRepo.getCheckinProfile(checkinId);
-          checkinVibe = profile.checkin.vibe ?? '';
-          final profileVenueId = profile.checkin.venueId?.trim();
-          if (profileVenueId != null && profileVenueId.isNotEmpty) {
-            activeCheckinVenueId = profileVenueId;
-          }
-          if (profile.media.isNotEmpty) {
-            media = profile.media;
-          }
-          visitedPlaces = profile.visitedPlaces;
-        } catch (e) {
-          debugPrint('Profile checkin fetch failed: $e');
-          _profileErrorMessage =
-              'Moments could not be loaded. Pull to refresh or try again.';
-        }
-      }
-
       final currentUserId = me['id']?.toString();
-      if (currentUserId != null && currentUserId.isNotEmpty) {
-        try {
-          final myHistory = await _checkinRepo.getMyProfileHistory();
-          if (myHistory.isNotEmpty || visitedPlaces.isEmpty) {
-            visitedPlaces = myHistory;
-          }
-        } catch (e) {
-          debugPrint('Profile visited places fetch failed: $e');
-        }
-      }
-
-      if (!mounted) return;
+      final sameUser = _user?['id']?.toString() == currentUserId;
+      final sameCheckin = sameUser && _activeCheckinId() == checkinId;
+      final hasCheckin = checkinId != null && checkinId.isNotEmpty;
       final bioRaw = (me['bio'] ?? me['bio_text'])?.toString().trim();
+      // Render identity immediately. A slow history or media request must not
+      // hold the entire profile behind a spinner, nor erase it on refresh.
       setState(() {
         _user = me;
+        _isAnonymous = me['isAnonymous'] == true;
         _meContext = MeContextModel.fromMe(me);
         _profileBio = (bioRaw != null && bioRaw.isNotEmpty) ? bioRaw : null;
         _activeCheckin = activeCheckin;
         _activeCheckinVenueIdFromProfile = activeCheckinVenueId;
         _checkinWhatBrings = _extractWhatBrings(activeCheckin);
-        _checkinVibe = checkinVibe;
-        _media = media;
-        _visitedPlaces = visitedPlaces;
-        _activeVenue = _venueFromActiveCheckin(activeCheckin);
+        if (!sameCheckin) {
+          _media = [];
+          _checkinVibe = null;
+        }
+        if (!sameUser) _visitedPlaces = [];
+        _activeVenue =
+            _venueFromActiveCheckin(activeCheckin) ??
+            (sameCheckin ? _activeVenue : null);
+        _momentsLoading = hasCheckin;
+        _historyLoading = currentUserId != null && currentUserId.isNotEmpty;
         _loading = false;
+        _lastProfileRefresh = DateTime.now();
       });
-      // Uygulama geneline aktif check-in'i senkronla — venue detay sayfası
-      // ("Who's here?" vs "Check in") ve ping yöneticisi bunu okur. Taze
-      // login/uygulama açılışında ActiveCheckinService boş olabiliyor.
-      final activeCheckinId = activeCheckin?['id']?.toString();
-      if (activeCheckin != null &&
-          activeCheckinId != null &&
-          activeCheckinId.isNotEmpty) {
-        ActiveCheckinService().setActiveCheckin(
-          activeCheckinId,
-          venueId: activeCheckinVenueId,
-          userId: currentUserId,
-        );
-      } else {
-        ActiveCheckinService().clear();
+      _syncActiveCheckin(currentUserId);
+
+      var historySucceeded = false;
+      Future<void> loadMoments() async {
+        if (!hasCheckin) return;
+        final timer = Stopwatch()..start();
+        try {
+          final profile = await _checkinRepo.getCheckinProfile(checkinId);
+          if (!isCurrent()) return;
+          setState(() {
+            _media = profile.media
+                .where((m) => !_deletedMomentIds.contains(m.id))
+                .toList();
+            _friendCount ??= profile.user.friendCount;
+            _followedVenueCount ??= profile.user.followedVenueCount;
+            _checkinVibe = profile.checkin.vibe ?? '';
+            final venueId = profile.checkin.venueId?.trim();
+            if (venueId != null && venueId.isNotEmpty) {
+              _activeCheckinVenueIdFromProfile = venueId;
+            }
+            // History has its own endpoint. Its successful (even empty)
+            // response is authoritative regardless of completion order.
+            if (!historySucceeded && _visitedPlaces.isEmpty) {
+              _visitedPlaces = profile.visitedPlaces;
+            }
+          });
+          _syncActiveCheckin(currentUserId);
+          if (_activeVenue == null) unawaited(_loadActiveVenueForHeader());
+        } catch (e) {
+          debugPrint('Profile checkin fetch failed: $e');
+          if (!isCurrent()) return;
+          setState(
+            () => _profileErrorMessage =
+                'Moments could not be loaded. Pull to refresh or try again.',
+          );
+        } finally {
+          if (kDebugMode) {
+            debugPrint('[Perf] profile_moments ${timer.elapsedMilliseconds}ms');
+          }
+          if (isCurrent()) setState(() => _momentsLoading = false);
+        }
       }
 
-      // Payload'da venue yoksa arka planda id ile çekip header'ı güncelle.
-      if (activeCheckin != null && _activeVenue == null) {
-        unawaited(_loadActiveVenueForHeader());
+      Future<void> loadHistory() async {
+        if (currentUserId == null || currentUserId.isEmpty) return;
+        try {
+          final history = await _checkinRepo.getMyProfileHistory();
+          if (!isCurrent()) return;
+          historySucceeded = true;
+          setState(() => _visitedPlaces = history);
+        } catch (e) {
+          debugPrint('Profile visited places fetch failed: $e');
+        } finally {
+          if (isCurrent()) setState(() => _historyLoading = false);
+        }
       }
+
+      await Future.wait([loadMoments(), loadHistory()]);
     } catch (e) {
       debugPrint('Profile load failed: $e');
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() {
         _loading = false;
+        _momentsLoading = false;
+        _historyLoading = false;
         _profileErrorMessage =
             'Profile data could not be loaded. Please retry.';
       });
+    }
+  }
+
+  void _syncActiveCheckin(String? userId) {
+    // Publishing our snapshot must not recursively start another full load.
+    _syncingActiveCheckin = true;
+    try {
+      ActiveCheckinService().syncForUser(
+        userId: userId,
+        checkinId: _activeCheckinId(),
+        venueId: _activeCheckinVenueIdFromProfile,
+      );
+    } finally {
+      _syncingActiveCheckin = false;
     }
   }
 
@@ -863,6 +1058,7 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> _addMomentPhoto() async {
+    if (_uploadingMoment) return;
     if (_activeCheckin == null) {
       if (!mounted) return;
       await showPremiumErrorDialog(
@@ -881,6 +1077,9 @@ class _ProfilePageState extends State<ProfilePage>
       return;
     }
 
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    setState(() => _uploadingMoment = true);
     try {
       final hasPermission = await _ensureCameraPermission();
       if (!hasPermission) {
@@ -893,19 +1092,23 @@ class _ProfilePageState extends State<ProfilePage>
       }
 
       if (!mounted) return;
-      final navigator = Navigator.of(this.context);
+      final navigator = Navigator.of(context);
       // 🔥 Kendi kamera ekranımızı açıyoruz
       // Video akışı CapturedMedia (dosya + text overlay) dönebilir.
       final dynamic captureResult = await navigator.push(
         cameraRoute(
-          builder: (_) => const CameraScreen(
+          builder: (_) => const CameraScreen.publicMedia(
             useFrontCamera: true, // selfie
             optimizeForUpload: true,
           ),
         ),
       );
 
-      if (!mounted) return;
+      if (!mounted ||
+          !uploads.isCurrentSession(session) ||
+          _activeCheckinId() != checkinId) {
+        return;
+      }
       final File? capturedMedia = captureResult is CapturedMedia
           ? captureResult.file
           : captureResult as File?;
@@ -914,50 +1117,50 @@ class _ProfilePageState extends State<ProfilePage>
           : null;
       if (capturedMedia == null) return;
 
+      final occupied =
+          _media.length +
+          _pendingMoments
+              .where(
+                (m) =>
+                    m.state != PendingPublicMediaState.rejected &&
+                    m.state != PendingPublicMediaState.failed &&
+                    m.state != PendingPublicMediaState.cancelled,
+              )
+              .length;
+      if (occupied >= 6) {
+        await showMomentsFullDialog(context);
+        return;
+      }
+
       // Check-in aninda tek video kurali profile'a da uygulaniyor.
       if (_isVideoFile(capturedMedia.path) &&
-          _media.any((m) => m.mediaType == MediaType.video)) {
+          (_media.any((m) => m.mediaType == MediaType.video) ||
+              _pendingMoments.any(
+                (m) =>
+                    m.isVideo &&
+                    m.state != PendingPublicMediaState.rejected &&
+                    m.state != PendingPublicMediaState.failed &&
+                    m.state != PendingPublicMediaState.cancelled,
+              ))) {
         if (!mounted) return;
-        await showPremiumErrorDialog(
-          this.context,
-          message: 'You can upload only 1 video.',
-        );
+        await showOneVideoLimitDialog(context);
         return;
       }
 
-      setState(() => _uploadingMoment = true);
-
-      await _checkinRepo.uploadCheckinMedia(
-        checkinId: checkinId,
+      MomentUploadCoordinator.instance.share(
         file: capturedMedia,
+        checkinId: checkinId,
+        venueId: _activeVenue?.id,
         textOverlayJson: capturedOverlay?.toJsonString(),
-        isFeatured: false,
+        expectedGeneration: session,
       );
-
-      await _loadProfile();
-    } catch (e) {
-      final raw = e.toString();
-      if (raw.contains('Media upload failed (413)') ||
-          raw.contains('413 Request Entity Too Large')) {
-        if (!mounted) return;
+    } catch (_) {
+      if (mounted && uploads.isCurrentSession(session)) {
         await showPremiumErrorDialog(
-          this.context,
-          message:
-              'Video boyutu sunucu limitini asiyor. Lutfen daha kisa bir video cekin.',
+          context,
+          message: 'Could not open the camera. Please try again.',
         );
-        return;
       }
-      final clean = raw
-          .replaceAll(RegExp(r'^Exception:\s*'), '')
-          .replaceAll(RegExp(r'^Media upload failed \(\d+\):\s*'), '')
-          .trim();
-      if (!mounted) return;
-      await showPremiumErrorDialog(
-        this.context,
-        message: clean.isEmpty
-            ? 'Video could not be uploaded. Please try again.'
-            : clean,
-      );
     } finally {
       if (mounted) {
         setState(() => _uploadingMoment = false);
@@ -1112,7 +1315,8 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   /// Profilden "What brings you to Kmstry" seçimlerini düzenleme sheet'i.
-  /// Aktif check-in'in tag'lerini yeniden seçip kaydeder (max 3).
+  /// Aktif check-in'in tag'lerini yeniden seçip kaydeder. En az bir seçim
+  /// zorunludur.
   Future<void> _openEditWhatBrings() async {
     final checkinId = _activeCheckinId();
     if (checkinId == null) return;
@@ -1164,8 +1368,16 @@ class _ProfilePageState extends State<ProfilePage>
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    "What brings you to Kmstry?",
+                    "What brings you to KMSTRY?",
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Select at least one option',
+                    style: TextStyle(
+                      color: colors.onSurface.withValues(alpha: 0.65),
+                      fontSize: 12,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Flexible(
@@ -1230,10 +1442,13 @@ class _ProfilePageState extends State<ProfilePage>
                     ),
                   ),
                   const SizedBox(height: 10),
+                  // Uygulama geneli mavi CTA (light/dark aynı marka mavisi).
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _savingWhatBrings
+                    child: PrimaryButton(
+                      label: 'Save',
+                      loading: _savingWhatBrings,
+                      onPressed: selected.isEmpty
                           ? null
                           : () async {
                               await _saveWhatBrings(
@@ -1242,13 +1457,6 @@ class _ProfilePageState extends State<ProfilePage>
                                 sheetContext,
                               );
                             },
-                      child: _savingWhatBrings
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Save'),
                     ),
                   ),
                 ],
@@ -1347,209 +1555,215 @@ class _ProfilePageState extends State<ProfilePage>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(top: 16, bottom: 8),
-              decoration: BoxDecoration(
-                color: colors.onSurface.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Hesap listesi — 3'ten fazlası scroll edilebilir
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(sheetCtx).size.height * 0.35,
-              ),
-              child: ListView(
-                shrinkWrap: true,
-                padding: EdgeInsets.zero,
-                children: [
-                  // Personal account
-                  if (meCtx.hasPersonalProfile)
-                    ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: colors.primary.withValues(alpha: 0.12),
-                        child: Icon(
-                          Icons.person_outline,
-                          color: colors.primary,
-                        ),
-                      ),
-                      title: Text(
-                        _usernameLabel,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: colors.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Personal',
-                        style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.55),
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: isPersonalActive
-                          ? Icon(Icons.check_circle, color: colors.primary)
-                          : null,
-                      onTap: isPersonalActive
-                          ? null
-                          : () async {
-                              Navigator.pop(sheetCtx);
-                              try {
-                                await AuthRepository().switchContext(
-                                  lastActiveContext: 'PERSONAL',
-                                );
-                                if (!context.mounted) return;
-                                Navigator.of(context).pushAndRemoveUntil(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const AppShell(openProfileTab: true),
-                                  ),
-                                  (r) => false,
-                                );
-                              } catch (_) {}
-                            },
-                    ),
-                  // Venue accounts
-                  ...accountVenues.map((venue) {
-                    final isActive =
-                        !isPersonalActive && (meCtx.activeVenueId == venue.id);
-                    final isPending = venue.isPendingOwnerClaim;
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: isPending
-                            ? colors.onSurface.withValues(alpha: 0.08)
-                            : colors.primary.withValues(alpha: 0.12),
-                        child: Icon(
-                          isPending
-                              ? Icons.hourglass_top_rounded
-                              : Icons.storefront,
-                          color: isPending
-                              ? colors.onSurface.withValues(alpha: 0.45)
-                              : colors.primary,
-                        ),
-                      ),
-                      title: Text(
-                        venue.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: colors.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        isPending ? 'Pending review' : (venue.role ?? 'Venue'),
-                        style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.55),
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: isPending
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Text(
-                                'Pending',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.orange,
-                                ),
-                              ),
-                            )
-                          : isActive
-                          ? Icon(Icons.check_circle, color: colors.primary)
-                          : null,
-                      onTap: isActive
-                          ? null
-                          : () {
-                              // Smooth in-place switch → lands on the venue's
-                              // Profile tab (no full shell rebuild).
-                              Navigator.pop(sheetCtx);
-                              AppShellNav.of(
-                                context,
-                              )?.switchToVenueProfile(venue);
-                            },
-                    );
-                  }),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // Add Venue Account
-            ListTile(
-              leading: Container(
+      builder: (sheetCtx) => LogoutGuard(
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
                 width: 40,
-                height: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 16, bottom: 8),
                 decoration: BoxDecoration(
-                  color: colors.primary.withValues(alpha: 0.10),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.add, color: colors.primary, size: 22),
-              ),
-              title: Text(
-                'Add Venue Account',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: colors.primary,
+                  color: colors.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        const VenueContextOnboardingPage(fromAppShell: true),
+              // Hesap listesi — 3'ten fazlası scroll edilebilir
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.35,
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: [
+                    // Personal account
+                    if (meCtx.hasPersonalProfile)
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: colors.primary.withValues(
+                            alpha: 0.12,
+                          ),
+                          child: Icon(
+                            Icons.person_outline,
+                            color: colors.primary,
+                          ),
+                        ),
+                        title: Text(
+                          _usernameLabel,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: colors.onSurface,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Personal',
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: isPersonalActive
+                            ? Icon(Icons.check_circle, color: colors.primary)
+                            : null,
+                        onTap: isPersonalActive
+                            ? null
+                            : () async {
+                                Navigator.pop(sheetCtx);
+                                try {
+                                  await AuthRepository().switchContext(
+                                    lastActiveContext: 'PERSONAL',
+                                  );
+                                  if (!context.mounted) return;
+                                  Navigator.of(context).pushAndRemoveUntil(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const AppShell(openProfileTab: true),
+                                    ),
+                                    (r) => false,
+                                  );
+                                } catch (_) {}
+                              },
+                      ),
+                    // Venue accounts
+                    ...accountVenues.map((venue) {
+                      final isActive =
+                          !isPersonalActive &&
+                          (meCtx.activeVenueId == venue.id);
+                      final isPending = venue.isPendingOwnerClaim;
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isPending
+                              ? colors.onSurface.withValues(alpha: 0.08)
+                              : colors.primary.withValues(alpha: 0.12),
+                          child: Icon(
+                            isPending
+                                ? Icons.hourglass_top_rounded
+                                : Icons.storefront,
+                            color: isPending
+                                ? colors.onSurface.withValues(alpha: 0.45)
+                                : colors.primary,
+                          ),
+                        ),
+                        title: Text(
+                          venue.name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: colors.onSurface,
+                          ),
+                        ),
+                        subtitle: Text(
+                          isPending
+                              ? 'Pending review'
+                              : (venue.role ?? 'Venue'),
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: isPending
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Text(
+                                  'Pending',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.orange,
+                                  ),
+                                ),
+                              )
+                            : isActive
+                            ? Icon(Icons.check_circle, color: colors.primary)
+                            : null,
+                        onTap: isActive
+                            ? null
+                            : () {
+                                // Smooth in-place switch → lands on the venue's
+                                // Profile tab (no full shell rebuild).
+                                Navigator.pop(sheetCtx);
+                                AppShellNav.of(
+                                  context,
+                                )?.switchToVenueProfile(venue);
+                              },
+                      );
+                    }),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              // Add Venue Account
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colors.primary.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
                   ),
-                );
-              },
-            ),
-            // Go to Accounts Center
-            ListTile(
-              leading: Icon(
-                Icons.manage_accounts_outlined,
-                color: colors.onSurface,
-              ),
-              title: Text(
-                'Go to Settings',
-                style: TextStyle(color: colors.onSurface),
-              ),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.logout, color: colors.error),
-              title: Text(
-                'Log out',
-                style: TextStyle(
-                  color: colors.error,
-                  fontWeight: FontWeight.w600,
+                  child: Icon(Icons.add, color: colors.primary, size: 22),
                 ),
+                title: Text(
+                  'Add Venue Account',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colors.primary,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const VenueContextOnboardingPage(fromAppShell: true),
+                    ),
+                  );
+                },
               ),
-              onTap: () async {
-                final rootContext = context;
-                Navigator.pop(sheetCtx);
-                await _logout(rootContext);
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+              // Go to Accounts Center
+              ListTile(
+                leading: Icon(
+                  Icons.manage_accounts_outlined,
+                  color: colors.onSurface,
+                ),
+                title: Text(
+                  'Go to Settings',
+                  style: TextStyle(color: colors.onSurface),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsPage()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.logout, color: colors.error),
+                trailing: const LogoutProgress(),
+                title: Text(
+                  'Log out',
+                  style: TextStyle(
+                    color: colors.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () async {
+                  await _logout(context);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -1564,17 +1778,7 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> _logout(BuildContext context) async {
-    try {
-      CheckinPingManager.I.stop();
-      ActiveCheckinService().clear();
-      UserSession.instance.clear();
-      await AuthRepository().logout();
-      if (!context.mounted) return;
-
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
-    } catch (_) {}
+    await LogoutFlow.run(context, logout: _authRepo.logout);
   }
 
   @override
@@ -1599,21 +1803,32 @@ class _ProfilePageState extends State<ProfilePage>
     // check-in temsili profil fotoğrafını kalıcı olarak ezmez.
     // Profil fotoğrafı olan kullanıcıda o kalıcı kalır; featured/check-in
     // avatarı yalnızca profil fotoğrafı olmayan kullanıcıda avatara düşer.
-    final userPhoto = (_user?['photo'] ?? '').toString().trim();
-    final activeAvatar =
-        _activeCheckinAvatarPhotoUrl ?? _featuredCheckinPhotoUrl;
-    final photo = (userPhoto.isNotEmpty ? userPhoto : (activeAvatar ?? ''))
-        .toString();
-    final profilePhotoReference = userPhoto.isNotEmpty && _user != null
-        ? MediaReference.profilePhoto(_user!)
-        : null;
+    final selection = PersonalAvatarSelection.fromMe(
+      _user ?? {},
+      activeCheckin: _activeCheckin,
+      featuredFallback: _featuredCheckinPhotoUrl,
+    );
+    final photo = selection.url ?? '';
+    final profilePhotoReference = selection.reference;
     final fullName = (_user?['fullName'] ?? _user?['full_name'] ?? '')
         .toString()
         .trim();
     final bio = (_user?['bio'] ?? '').toString().trim();
     final onSurface = isDark ? Colors.white : Colors.black;
     final subColor = isDark ? Colors.white60 : Colors.black54;
-    final canAddMore = _activeCheckin != null && _media.length < 6;
+    final canAddMore =
+        _activeCheckin != null &&
+        !(_momentsLoading && _media.isEmpty) &&
+        _media.length +
+                _pendingMoments
+                    .where(
+                      (m) =>
+                          m.state != PendingPublicMediaState.rejected &&
+                          m.state != PendingPublicMediaState.failed &&
+                          m.state != PendingPublicMediaState.cancelled,
+                    )
+                    .length <
+            6;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -1645,6 +1860,11 @@ class _ProfilePageState extends State<ProfilePage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_profileErrorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(_profileErrorMessage!),
+                ),
               // ── Ortalanmış avatar + altında istatistikler ───────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -1667,12 +1887,17 @@ class _ProfilePageState extends State<ProfilePage>
                           isDark,
                           mediaReference: profilePhotoReference,
                         ),
+                        OwnerPhotoUploadStatus(
+                          kind: PendingPublicMediaKind.personalAvatar,
+                          hasPreviousPhoto: selection.hasProfilePhoto,
+                          onRetry: _openEditProfile,
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _buildStat(
-                              _friendCount?.toString() ?? '—',
+                              _friendCount?.toString(),
                               'Friends',
                               onSurface,
                               subColor,
@@ -1689,7 +1914,7 @@ class _ProfilePageState extends State<ProfilePage>
                             ),
                             const SizedBox(width: 56),
                             _buildStat(
-                              _followedVenueCount?.toString() ?? '—',
+                              _followedVenueCount?.toString(),
                               'Venues',
                               onSurface,
                               subColor,
@@ -1885,6 +2110,12 @@ class _ProfilePageState extends State<ProfilePage>
               const SizedBox(height: 16),
               if (_selectedProfileTab == 0)
                 _buildMomentsGrid(canAddMore, isDark, subColor)
+              else if (_historyLoading && _visitedPlaces.isEmpty)
+                const Padding(
+                  key: ValueKey('profile-history-loading'),
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: SizedBox(height: 56),
+                )
               else
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1913,14 +2144,17 @@ class _ProfilePageState extends State<ProfilePage>
     const gap = 2.5;
     const radius = 32.0;
     final hasStories = _myStories.isNotEmpty;
+    final pending = PendingPublicMediaService.instance.latest(
+      PendingPublicMediaKind.personalStory,
+    );
     // Yükleme sırasında da halka görünür (döner).
-    final showRing = hasStories || _uploadingStory;
+    final showRing = hasStories || _uploadingStory || pending != null;
     final totalSize = showRing
         ? avatarSize + ((ringWidth + gap) * 2)
         : avatarSize;
     final ringColors = (_uploadingStory || _hasUnseenProfileStories)
-        ? _ProfileStoryRingPainter.logoColors
-        : [Colors.grey.shade400, Colors.grey.shade500];
+        ? RoundedStoryRingPainter.logoColors
+        : RoundedStoryRingPainter.seenColors;
 
     final avatar = Container(
       width: avatarSize,
@@ -1938,14 +2172,28 @@ class _ProfilePageState extends State<ProfilePage>
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: photo.isNotEmpty
-            ? CachedImage(
-                photo,
-                fit: BoxFit.cover,
-                mediaReference: mediaReference,
-                errorWidget: (_) => _avatarFallback(isDark),
-              )
-            : _avatarFallback(isDark),
+        child: OwnerPhotoPreview(
+          kind: PendingPublicMediaKind.personalAvatar,
+          checkinId:
+              PersonalAvatarSelection.fromMe(
+                _user ?? {},
+                activeCheckin: _activeCheckin,
+              ).hasProfilePhoto
+              ? null
+              : _activeCheckin?['id']?.toString(),
+          width: avatarSize,
+          height: avatarSize,
+          child: pending != null
+              ? PendingPublicMediaPreview(item: pending)
+              : photo.isNotEmpty
+              ? CachedImage(
+                  photo,
+                  fit: BoxFit.cover,
+                  mediaReference: mediaReference,
+                  errorWidget: (_) => _avatarFallback(isDark),
+                )
+              : _avatarFallback(isDark),
+        ),
       ),
     );
 
@@ -1953,7 +2201,7 @@ class _ProfilePageState extends State<ProfilePage>
       clipBehavior: Clip.none,
       children: [
         GestureDetector(
-          onTap: (hasStories && !_uploadingStory)
+          onTap: pending != null || hasStories
               ? () => _openMyStoryViewer(photo)
               : null,
           child: SizedBox(
@@ -1963,6 +2211,11 @@ class _ProfilePageState extends State<ProfilePage>
               alignment: Alignment.center,
               children: [
                 avatar,
+                if (pending != null)
+                  Positioned(
+                    bottom: 13,
+                    child: StoryUploadStatus(item: pending, overlay: true),
+                  ),
                 if (showRing)
                   Positioned.fill(
                     child: _uploadingStory
@@ -1970,7 +2223,7 @@ class _ProfilePageState extends State<ProfilePage>
                         ? RotationTransition(
                             turns: _storySpin,
                             child: CustomPaint(
-                              painter: _ProfileStoryRingPainter(
+                              painter: RoundedStoryRingPainter(
                                 colors: ringColors,
                                 strokeWidth: ringWidth,
                                 radius: radius + gap,
@@ -1978,7 +2231,7 @@ class _ProfilePageState extends State<ProfilePage>
                             ),
                           )
                         : CustomPaint(
-                            painter: _ProfileStoryRingPainter(
+                            painter: RoundedStoryRingPainter(
                               colors: ringColors,
                               strokeWidth: ringWidth,
                               radius: radius + gap,
@@ -2099,7 +2352,7 @@ class _ProfilePageState extends State<ProfilePage>
 
   /// Instagram tarzı istatistik sütunu. [inactive] ise gri gösterilir.
   Widget _buildStat(
-    String value,
+    String? value,
     String label,
     Color color,
     Color sub, {
@@ -2111,14 +2364,29 @@ class _ProfilePageState extends State<ProfilePage>
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: valueColor,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
+        if (value != null)
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          )
+        else if (_statsFailed)
+          Tooltip(
+            message: 'Could not refresh. Pull down to retry.',
+            child: Icon(Icons.refresh_rounded, size: 22, color: sub),
+          )
+        else
+          Container(
+            width: 28,
+            height: 22,
+            decoration: BoxDecoration(
+              color: sub.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
           ),
-        ),
         const SizedBox(height: 3),
         Text(
           label,
@@ -2663,7 +2931,12 @@ class _ProfilePageState extends State<ProfilePage>
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () => QuickCheckinLauncher().launch(context),
+                onTap: () async {
+                  await QuickCheckinLauncher().launch(context);
+                  if (mounted) {
+                    await _loadProfile(forceRefresh: true, showLoading: false);
+                  }
+                },
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 14),
                   child: Row(
@@ -2748,7 +3021,30 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Widget _buildMomentsGrid(bool canAddMore, bool isDark, Color sub) {
-    final hasAny = _media.isNotEmpty || canAddMore;
+    final pendingMoments = _pendingMoments;
+    if (_momentsLoading && _media.isEmpty && pendingMoments.isEmpty) {
+      return Padding(
+        key: ValueKey('profile-moments-loading'),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: SizedBox(
+          height: 176,
+          child: Row(
+            children: List.generate(
+              2,
+              (index) => Container(
+                width: 132,
+                margin: const EdgeInsets.only(right: 10),
+                decoration: BoxDecoration(
+                  color: sub.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final hasAny = _media.isNotEmpty || pendingMoments.isNotEmpty || canAddMore;
     if (!hasAny) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
@@ -2783,7 +3079,8 @@ class _ProfilePageState extends State<ProfilePage>
     // Eski tasarım: yatay kaydırmalı dikdörtgen moment kartları + "+".
     const cardWidth = 132.0;
     const cardHeight = 176.0;
-    final itemCount = _media.length + (canAddMore ? 1 : 0);
+    final itemCount =
+        pendingMoments.length + _media.length + (canAddMore ? 1 : 0);
     return SizedBox(
       height: cardHeight,
       child: ListView.separated(
@@ -2792,24 +3089,41 @@ class _ProfilePageState extends State<ProfilePage>
         itemCount: itemCount,
         separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
-          if (canAddMore && index == _media.length) {
+          if (index < pendingMoments.length) {
+            return SizedBox(
+              width: cardWidth,
+              height: cardHeight,
+              child: _buildPendingMomentCard(pendingMoments[index]),
+            );
+          }
+          final publishedIndex = index - pendingMoments.length;
+          if (canAddMore && publishedIndex == _media.length) {
             return _buildAddMomentCard(isDark, cardWidth, cardHeight);
           }
-          final media = _media[index];
+          final media = _media[publishedIndex];
           return GestureDetector(
+            key: ValueKey('profile-moment-${media.id}'),
             onTap: () async {
+              final session =
+                  PendingPublicMediaService.instance.sessionGeneration;
               final reload = await Navigator.push(
                 context,
-                MaterialPageRoute(
+                momentsViewerRoute(
                   builder: (_) => MomentsViewerPage(
                     media: _media,
-                    initialIndex: index,
+                    initialIndex: publishedIndex,
                     allowFeature: true,
                     checkinId: _activeCheckinId(),
+                    repository: _checkinRepo,
+                    onCreateMoment: _addMomentPhoto,
+                    onDeleted: (mediaId, inactivated) =>
+                        _onMomentDeleted(mediaId, inactivated, session),
                   ),
                 ),
               );
-              if (reload == true) await _loadProfile();
+              if (reload == true) {
+                await _loadProfile(forceRefresh: true, showLoading: false);
+              }
             },
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
@@ -2821,6 +3135,77 @@ class _ProfilePageState extends State<ProfilePage>
             ),
           );
         },
+      ),
+    );
+  }
+
+  void _onMomentDeleted(String mediaId, bool inactivated, int session) {
+    if (!mounted ||
+        !PendingPublicMediaService.instance.isCurrentSession(session))
+      return;
+    setState(() {
+      _deletedMomentIds.add(mediaId);
+      _media.removeWhere((item) => item.id == mediaId);
+      if (inactivated) {
+        _activeCheckin = null;
+        _activeVenue = null;
+        _activeCheckinVenueIdFromProfile = null;
+        _checkinVibe = null;
+        _checkinWhatBrings = [];
+        _momentsLoading = false;
+      }
+    });
+    PendingPublicMediaService.instance.dismiss(mediaId);
+  }
+
+  Future<void> _openPendingMoment(PendingPublicMedia pending) async {
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    final reload = await Navigator.push<bool>(
+      context,
+      momentsViewerRoute(
+        builder: (_) => MomentsViewerPage(
+          media: _media,
+          initialIndex: 0,
+          allowFeature: true,
+          checkinId: pending.checkinId,
+          pendingUploadId: pending.uploadId ?? pending.id,
+          repository: _checkinRepo,
+          onCreateMoment: _addMomentPhoto,
+          onDeleted: (id, inactivated) =>
+              _onMomentDeleted(id, inactivated, session),
+        ),
+      ),
+    );
+    if (reload == true && mounted && uploads.isCurrentSession(session)) {
+      await _loadProfile(forceRefresh: true, showLoading: false);
+    }
+  }
+
+  Widget _buildPendingMomentCard(PendingPublicMedia pending) {
+    return GestureDetector(
+      key: ValueKey('profile-pending-moment-${pending.uploadId ?? pending.id}'),
+      onTap: () => _openPendingMoment(pending),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            PendingPublicMediaPreview(item: pending),
+            if (pending.isVideo &&
+                pending.textOverlay != null &&
+                pending.state != PendingPublicMediaState.rejected &&
+                pending.state != PendingPublicMediaState.failed &&
+                pending.state != PendingPublicMediaState.cancelled)
+              MediaTextOverlayThumbnail(overlay: pending.textOverlay!),
+            Positioned(
+              left: 6,
+              right: 6,
+              bottom: 6,
+              child: PublicMediaUploadStatus(item: pending, overlay: true),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2861,6 +3246,8 @@ class _ProfilePageState extends State<ProfilePage>
         fit: StackFit.expand,
         children: [
           _buildVideoPosterLayer(media, fit: BoxFit.cover),
+          if (media.textOverlay != null)
+            MediaTextOverlayThumbnail(overlay: media.textOverlay!),
           const Center(
             child: Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
           ),
@@ -3009,46 +3396,4 @@ class _GlassEditButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ProfileStoryRingPainter extends CustomPainter {
-  final List<Color> colors;
-  final double strokeWidth;
-  final double radius;
-
-  static const logoColors = [
-    AppColors.magenta,
-    AppColors.teal,
-    AppColors.blue,
-    AppColors.orange,
-    AppColors.brand,
-  ];
-
-  const _ProfileStoryRingPainter({
-    required this.colors,
-    required this.strokeWidth,
-    required this.radius,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(
-      rect.deflate(strokeWidth / 2),
-      Radius.circular(radius),
-    );
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..shader = SweepGradient(
-        colors: [...colors, colors.first],
-      ).createShader(rect);
-    canvas.drawRRect(rrect, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ProfileStoryRingPainter oldDelegate) =>
-      oldDelegate.colors != colors ||
-      oldDelegate.strokeWidth != strokeWidth ||
-      oldDelegate.radius != radius;
 }

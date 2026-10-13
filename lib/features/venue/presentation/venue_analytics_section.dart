@@ -1,11 +1,14 @@
 import 'dart:math' as math;
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_analytics_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/weekly_report_downloader.dart';
 
 // ── Brand colors ────────────────────────────────────────────────────────────
 const _kMagenta = Color(0xFFE020D8);
@@ -19,19 +22,39 @@ const _kPurple = Color(0xFF3D1F8C);
 class VenueAnalyticsSection extends StatefulWidget {
   final String venueId;
 
-  const VenueAnalyticsSection({super.key, required this.venueId});
+  const VenueAnalyticsSection({
+    super.key,
+    required this.venueId,
+    this.repository,
+  });
+  final VenueOwnerRepository? repository;
 
   @override
   State<VenueAnalyticsSection> createState() => VenueAnalyticsSectionState();
 }
 
 class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
-  final _repo = VenueOwnerRepository();
+  late final _repo = widget.repository ?? VenueOwnerRepository();
+  int _analyticsRevision = 0;
+  int _reportsRevision = 0;
+  late final _analyticsRead = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.analytics,
+      _readAnalytics,
+      isMounted: () => mounted,
+    ),
+  );
+  late final _reportsRead = VisibleVenueRead(
+    isVisible: () => mounted,
+    read: _readReports,
+  );
   String _range = '7d';
   bool _loading = true;
   String? _error;
   VenueAnalytics? _data;
   List<WeeklyReport> _reports = [];
+  bool _reportsLoading = true;
   DateTime? _customFrom;
   DateTime? _customTo;
 
@@ -51,35 +74,106 @@ class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant VenueAnalyticsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.venueId != oldWidget.venueId) {
+      _reportCancel?.cancel();
+      _reportCancel = null;
+      _downloadingId = null;
+      _analyticsRevision++;
+      _reportsRevision++;
+      _data = null;
+      _reports = [];
+      _reportsLoading = true;
+      _analyticsRead.reset();
+      _reportsRead.reset();
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _reportCancel?.cancel();
+    _analyticsRevision++;
+    _reportsRevision++;
+    _analyticsRead.dispose();
+    _reportsRead.dispose();
+    super.dispose();
+  }
+
+  // Reports do not depend on the chart's date range. Fetch both in parallel,
+  // paint the chart as soon as it is ready, and refresh reports only on entry
+  // or explicit pull-to-refresh (not every 7d/30d/90d selection).
   Future<void> _load() async {
+    await Future.wait([_analyticsRead.invalidate(), _reportsRead.invalidate()]);
+  }
+
+  Future<bool> _readAnalytics() async {
+    final revision = ++_analyticsRevision;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool current() =>
+        mounted &&
+        revision == _analyticsRevision &&
+        venueId == widget.venueId &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
+    final from = _customFrom;
+    final to = _customTo;
+    final range = _range;
     setState(() {
-      _loading = true;
+      _loading = _data == null;
       _error = null;
     });
     try {
-      final data = _isCustom
-          ? await _repo.getAnalytics(
-              widget.venueId,
-              from: _ymd(_customFrom!),
-              to: _ymd(_customTo!),
-            )
-          : await _repo.getAnalytics(widget.venueId, range: _range);
-      List<WeeklyReport> reports = _reports;
-      try {
-        reports = await _repo.getWeeklyReports(widget.venueId);
-      } catch (_) {}
-      if (!mounted) return;
+      final data = from != null && to != null
+          ? await _repo.getAnalytics(venueId, from: _ymd(from), to: _ymd(to))
+          : await _repo.getAnalytics(venueId, range: range);
+      if (!current()) return false;
       setState(() {
         _data = data;
-        _reports = reports;
         _loading = false;
       });
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!current()) return false;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
+      return false;
+    }
+  }
+
+  Future<bool> _readReports() async {
+    final revision = ++_reportsRevision;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    bool current() =>
+        mounted &&
+        revision == _reportsRevision &&
+        venueId == widget.venueId &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
+    setState(() => _reportsLoading = true);
+    try {
+      final reports = await _repo.getWeeklyReports(venueId);
+      if (!current()) return false;
+      setState(() {
+        _reports = reports;
+        _reportsLoading = false;
+      });
+      return true;
+    } catch (error) {
+      if (!current()) return false;
+      setState(() {
+        if (error is ApiException &&
+            [401, 403, 404].contains(error.statusCode)) {
+          _reports = [];
+        }
+        _reportsLoading = false;
+      });
+      // Reports remain an optional independent section, as before.
+      return false;
     }
   }
 
@@ -91,8 +185,11 @@ class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
       _range = r;
       _customFrom = null;
       _customTo = null;
+      _data = null;
     });
-    _load();
+    _analyticsRevision++;
+    _analyticsRead.reset();
+    _analyticsRead.activate();
   }
 
   Future<void> _pickCustomRange() async {
@@ -128,53 +225,58 @@ class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
         );
       },
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     setState(() {
       _customFrom = picked.start;
       _customTo = picked.end;
+      _data = null;
     });
-    _load();
+    _analyticsRevision++;
+    _analyticsRead.reset();
+    _analyticsRead.activate();
   }
 
   String? _downloadingId;
+  CancelToken? _reportCancel;
+  final _reportDownloader = WeeklyReportDownloader();
 
   Future<void> _openReport(WeeklyReport r) async {
-    final url = r.pdfUrl;
-    if (url == null || url.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('PDF not ready yet')));
-      return;
-    }
     if (_downloadingId != null) return;
+    final venueId = widget.venueId;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    final cancelToken = CancelToken();
+    _reportCancel = cancelToken;
+    bool current() => mounted &&
+        widget.venueId == venueId &&
+        identical(_reportCancel, cancelToken) &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
     setState(() => _downloadingId = r.id);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final dir = await getTemporaryDirectory();
-      String d(DateTime x) =>
-          '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
-      final fileName =
-          'KMSTRY Weekly Report (${d(r.periodStart)} - ${d(r.periodEnd)}).pdf';
-      final path = '${dir.path}/$fileName';
-      await Dio().download(url, path);
-      final res = await OpenFilex.open(path);
-      if (res.type != ResultType.done && mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('Open failed: ${res.message}')),
-        );
-      }
+      await _reportDownloader.downloadAndOpen(
+        venueId: venueId,
+        report: r,
+        freshUrl: () => _repo.getWeeklyReportDownloadUrl(venueId, r.id),
+        isCurrent: current,
+        cancelToken: cancelToken,
+      );
     } catch (e) {
-      debugPrint('[report] download error: $e');
-      if (mounted) {
+      if (current() && !cancelToken.isCancelled &&
+          e is! WeeklyReportDownloadCancelled) {
         messenger.showSnackBar(
           SnackBar(
-            content: Text('Download failed: $e', maxLines: 3),
+            content: Text(weeklyReportDownloadMessage(e), maxLines: 3),
             duration: const Duration(seconds: 6),
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _downloadingId = null);
+      if (mounted && identical(_reportCancel, cancelToken)) {
+        setState(() {
+          _downloadingId = null;
+          _reportCancel = null;
+        });
+      }
     }
   }
 
@@ -432,7 +534,9 @@ class VenueAnalyticsSectionState extends State<VenueAnalyticsSection> {
         subtitle: _reports.isEmpty
             ? 'Auto-generated every Monday'
             : 'Auto-generated every Monday · ${_reports.length} total',
-        child: _reports.isEmpty
+        child: _reportsLoading && _reports.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : _reports.isEmpty
             ? const _EmptyChart()
             : SizedBox(
                 height: _reports.length > 5 ? 280 : null,

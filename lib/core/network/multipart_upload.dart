@@ -10,6 +10,41 @@ const Duration defaultMultipartUploadTimeout = Duration(minutes: 2);
 
 typedef MultipartUploadProgress = void Function(int sentBytes, int totalBytes);
 
+/// A route-independent signal. Cancel only after the server has durably
+/// cancelled the story, so an accepted request cannot become an orphan post.
+class MultipartUploadCancellation {
+  final Set<void Function()> _listeners = {};
+  bool _cancelled = false;
+  bool get isCancelled => _cancelled;
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final listener in List<void Function()>.of(_listeners)) {
+      listener();
+    }
+    _listeners.clear();
+  }
+
+  /// Each HTTP attempt detaches its own listener. Finishing a rejected attempt
+  /// must not disable cancellation of the authenticated retry.
+  void Function() listen(void Function() listener) {
+    if (_cancelled) {
+      listener();
+      return () {};
+    }
+    _listeners.add(listener);
+    return () => _listeners.remove(listener);
+  }
+
+  void throwIfCancelled() {
+    if (isCancelled) throw const PublicMediaUploadCancelled();
+  }
+}
+
+class PublicMediaUploadCancelled implements Exception {
+  const PublicMediaUploadCancelled();
+}
+
 /// Builds a multipart file whose byte stream reports upload progress.
 ///
 /// The callback tracks the primary file payload (not the small multipart
@@ -54,8 +89,12 @@ Future<http.MultipartFile> multipartFileWithProgress({
 Future<http.StreamedResponse> sendMultipartRequest(
   http.MultipartRequest request, {
   Duration timeout = defaultMultipartUploadTimeout,
+  MultipartUploadCancellation? cancellation,
+  http.Client Function()? clientFactory,
 }) async {
-  final client = http.Client();
+  cancellation?.throwIfCancelled();
+  final client = (clientFactory ?? http.Client.new)();
+  final detach = cancellation?.listen(client.close);
   try {
     final streamed = await client.send(request).timeout(timeout);
     final bytes = await streamed.stream
@@ -65,6 +104,7 @@ Future<http.StreamedResponse> sendMultipartRequest(
         })
         .timeout(timeout);
     final body = bytes.takeBytes();
+    cancellation?.throwIfCancelled();
     return http.StreamedResponse(
       Stream<List<int>>.value(body),
       streamed.statusCode,
@@ -76,6 +116,7 @@ Future<http.StreamedResponse> sendMultipartRequest(
       reasonPhrase: streamed.reasonPhrase,
     );
   } finally {
+    detach?.call();
     client.close();
   }
 }

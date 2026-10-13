@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/media/media_text_overlay.dart';
+import 'package:kmstry_frontend/features/media/overlay_font_chip.dart';
+import 'package:kmstry_frontend/features/media/overlay_fonts.dart';
+import 'package:kmstry_frontend/features/media/placed_overlay_text.dart';
 
 /// Kamera akışında yakalanan medya + (varsa) metin overlay'i sonucu.
 /// PreviewVideoScreen "Use Video" ile bunu pop'lar; check-in ve story
@@ -39,40 +42,6 @@ class TextOverlayComposer extends StatefulWidget {
   State<TextOverlayComposer> createState() => TextOverlayComposerState();
 }
 
-enum _OverlayFontStyle { modern, classic, typewriter }
-
-extension _OverlayFontStyleX on _OverlayFontStyle {
-  String get label => switch (this) {
-        _OverlayFontStyle.modern => 'Modern',
-        _OverlayFontStyle.classic => 'Classic',
-        _OverlayFontStyle.typewriter => 'Typewriter',
-      };
-
-  String get wireName => switch (this) {
-        _OverlayFontStyle.modern => 'modern',
-        _OverlayFontStyle.classic => 'classic',
-        _OverlayFontStyle.typewriter => 'typewriter',
-      };
-
-  TextStyle base(Color color) => switch (this) {
-        _OverlayFontStyle.modern => TextStyle(
-            color: color,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.2,
-          ),
-        _OverlayFontStyle.classic => TextStyle(
-            color: color,
-            fontFamily: 'Georgia',
-            fontWeight: FontWeight.w600,
-          ),
-        _OverlayFontStyle.typewriter => TextStyle(
-            color: color,
-            fontFamily: 'Courier',
-            fontWeight: FontWeight.w700,
-          ),
-      };
-}
-
 class TextOverlayComposerState extends State<TextOverlayComposer> {
   final TextEditingController _textController = TextEditingController();
 
@@ -83,12 +52,9 @@ class TextOverlayComposerState extends State<TextOverlayComposer> {
   double _rotation = 0.0;
   double _fontSize = 28;
   TextAlign _align = TextAlign.center;
-  _OverlayFontStyle _fontStyle = _OverlayFontStyle.modern;
+  OverlayFont _fontStyle = OverlayFont.modern;
 
   bool _editing = false;
-
-  double _gestureStartScale = 1.0;
-  double _gestureStartRotation = 0.0;
 
   static const List<Color> _palette = [
     Colors.white,
@@ -161,12 +127,14 @@ class TextOverlayComposerState extends State<TextOverlayComposer> {
   }
 
   IconData get _alignIcon => switch (_align) {
-        TextAlign.left => Icons.format_align_left,
-        TextAlign.right => Icons.format_align_right,
-        _ => Icons.format_align_center,
-      };
+    TextAlign.left => Icons.format_align_left,
+    TextAlign.right => Icons.format_align_right,
+    _ => Icons.format_align_center,
+  };
 
-  TextStyle get _overlayStyle => _fontStyle.base(_color).copyWith(
+  TextStyle get _overlayStyle => _fontStyle
+      .base(_color)
+      .copyWith(
         fontSize: _fontSize,
         shadows: const [Shadow(blurRadius: 8, color: Colors.black45)],
       );
@@ -184,46 +152,22 @@ class TextOverlayComposerState extends State<TextOverlayComposer> {
   }
 
   Widget _buildPlacedText(Size screen) {
-    final center = _offset ?? Offset(screen.width / 2, screen.height / 2);
+    // Sürükle (tek parmak, yazının üstünden) + iki parmakla her yerden
+    // büyüt/küçült/döndür — bkz. PlacedOverlayText.
     return Positioned.fill(
-      child: GestureDetector(
-        behavior: HitTestBehavior.deferToChild,
+      child: PlacedOverlayText(
+        text: _text,
+        style: _overlayStyle,
+        textAlign: _align,
+        center: _offset,
+        scale: _scale,
+        rotation: _rotation,
         onTap: openEditor,
-        onScaleStart: (details) {
-          _gestureStartScale = _scale;
-          _gestureStartRotation = _rotation;
-        },
-        onScaleUpdate: (details) {
-          setState(() {
-            _offset = (_offset ??
-                    Offset(screen.width / 2, screen.height / 2)) +
-                details.focalPointDelta;
-            _scale = (_gestureStartScale * details.scale).clamp(0.4, 4.0);
-            _rotation = _gestureStartRotation + details.rotation;
-          });
-        },
-        child: Stack(
-          children: [
-            Positioned(
-              left: center.dx - 160,
-              top: center.dy - 60,
-              child: Transform.rotate(
-                angle: _rotation,
-                child: Transform.scale(
-                  scale: _scale,
-                  child: SizedBox(
-                    width: 320,
-                    child: Text(
-                      _text,
-                      textAlign: _align,
-                      style: _overlayStyle,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+        onTransform: (center, scale, rotation) => setState(() {
+          _offset = center;
+          _scale = scale;
+          _rotation = rotation;
+        }),
       ),
     );
   }
@@ -328,35 +272,18 @@ class TextOverlayComposerState extends State<TextOverlayComposer> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    height: 44,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      children: _OverlayFontStyle.values.map((style) {
-                        final selected = style == _fontStyle;
-                        return GestureDetector(
+                  // Font stili seçici — foto önizlemesiyle aynı bileşen.
+                  OverlayFontChipRow(
+                    chips: [
+                      for (final style in OverlayFont.values)
+                        OverlayFontChip(
+                          label: style.label,
+                          fontStyle: style.base(Colors.white),
+                          fontSize: style.chipFontSize,
+                          selected: style == _fontStyle,
                           onTap: () => setState(() => _fontStyle = style),
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: selected ? Colors.white : Colors.white24,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              style.label,
-                              style: style
-                                  .base(selected ? Colors.black : Colors.white)
-                                  .copyWith(fontSize: 15),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   SizedBox(

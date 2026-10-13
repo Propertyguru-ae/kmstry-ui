@@ -13,6 +13,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'dart:convert';
 
 enum VenuePendingMode {
@@ -252,6 +253,7 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
   }
 
   Future<void> _pickOwnerVideo() async {
+    if (!ClaimDocumentPolicy.ownershipVideoEnabled) return;
     setState(() {
       _uploadingVideo = true;
       _docsError = null;
@@ -554,19 +556,21 @@ class _VenuePendingPageState extends State<VenuePendingPage> {
                         : _pickTradeLicence,
                     colors: colors,
                   ),
-                  const SizedBox(height: 12),
-                  _DocUploadTile(
-                    label: 'Ownership Video',
-                    subtitle: 'Short video confirming ownership (optional)',
-                    icon: Icons.videocam_outlined,
-                    isRequired: false,
-                    uploaded: _ownerVideoUrl != null,
-                    loading: _uploadingVideo,
-                    onTap: _uploadingVideo || _submittingDocs
-                        ? null
-                        : _pickOwnerVideo,
-                    colors: colors,
-                  ),
+                  if (ClaimDocumentPolicy.ownershipVideoEnabled) ...[
+                    const SizedBox(height: 12),
+                    _DocUploadTile(
+                      label: 'Ownership Video',
+                      subtitle: 'Short video confirming ownership (optional)',
+                      icon: Icons.videocam_outlined,
+                      isRequired: false,
+                      uploaded: _ownerVideoUrl != null,
+                      loading: _uploadingVideo,
+                      onTap: _uploadingVideo || _submittingDocs
+                          ? null
+                          : _pickOwnerVideo,
+                      colors: colors,
+                    ),
+                  ],
                   if (_docsError != null) ...[
                     const SizedBox(height: 10),
                     Text(

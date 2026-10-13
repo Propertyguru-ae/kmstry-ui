@@ -1,6 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../storage/secure_storage.dart';
 
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/messageDetail/presentation/message_detail.dart';
@@ -25,7 +26,12 @@ import '../../features/notifications/presentation/moderation_warning_page.dart';
 /// - `liked_you` → Notifications sayfası
 /// - `report_update` → Moderation warning details sayfası
 class PushDeepLinkHandler {
-  PushDeepLinkHandler._();
+  PushDeepLinkHandler._() {
+    SecureStorage.sessionEnded.listen((_) {
+      _sessionGeneration++;
+      _pendingColdStart = null;
+    });
+  }
   static final PushDeepLinkHandler instance = PushDeepLinkHandler._();
 
   final VenueRepository _venueRepo = VenueRepository();
@@ -39,6 +45,7 @@ class PushDeepLinkHandler {
   /// Bunun yerine data'yı saklarız; AppShell mount olduktan sonra
   /// [consumePendingColdStart] ile güvenle route ederiz.
   Map<String, dynamic>? _pendingColdStart;
+  int _sessionGeneration = 0;
 
   /// [main] içinde çağırılır. NavigatorKey ile ekran kontrolünü paylaşır.
   void init(GlobalKey<NavigatorState> navigatorKey) {
@@ -52,8 +59,9 @@ class PushDeepLinkHandler {
 
     // 2) Uygulama tamamen kapalıyken bildirime dokunuldu — hemen route etme,
     //    AuthGate akışı bitip AppShell ayağa kalkınca tüket.
+    final session = _sessionGeneration;
     FirebaseMessaging.instance.getInitialMessage().then((message) {
-      if (message != null) {
+      if (message != null && session == _sessionGeneration) {
         _pendingColdStart = message.data;
       }
     });
@@ -66,8 +74,10 @@ class PushDeepLinkHandler {
     final navigatorKey = _navigatorKey;
     if (data == null || navigatorKey == null) return;
     _pendingColdStart = null;
+    final session = _sessionGeneration;
     // AppShell'in ilk frame'i çizildikten sonra push et.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (session != _sessionGeneration) return;
       _route(navigatorKey, data);
     });
   }
@@ -247,8 +257,10 @@ class PushDeepLinkHandler {
   /// Kullanıcının o venue'da aktif check-in'i varsa → VenuePeoplePage
   /// (who's here listesi). Yoksa → VenueDetailPage.
   Future<void> _openTestVenue(NavigatorState nav, String venueId) async {
+    final session = _sessionGeneration;
     try {
       final venue = await _venueRepo.getVenueById(venueId);
+      if (!nav.mounted || session != _sessionGeneration) return;
       final isCheckedInHere = ActiveCheckinService().isCheckedInAt(venueId);
 
       if (isCheckedInHere) {
@@ -263,6 +275,7 @@ class PushDeepLinkHandler {
         );
       }
     } catch (e) {
+      if (!nav.mounted || session != _sessionGeneration) return;
       if (kDebugMode) {
         debugPrint('PushDeepLinkHandler: could not open venue $venueId — $e');
       }

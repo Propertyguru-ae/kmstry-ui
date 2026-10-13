@@ -1024,6 +1024,8 @@ class _VenueMenuItemEditPageState extends State<VenueMenuItemEditPage> {
         setState(() => _saving = false);
         await showPremiumErrorDialog(
           context,
+          title: publicTextErrorTitle(error),
+          icon: publicTextErrorIcon(error),
           message: publicTextErrorMessage(
             error,
             fallback: 'Could not save the item. Please try again.',

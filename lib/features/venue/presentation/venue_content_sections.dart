@@ -65,10 +65,14 @@ class VenueDealsChipRow extends StatelessWidget {
   final List<ExternalPartnershipModel> partnerships;
   final String venueName;
 
+  /// Deal detayında rapor ikonu (yalnızca ziyaretçi görünümünde).
+  final bool allowReport;
+
   const VenueDealsChipRow({
     super.key,
     required this.partnerships,
     required this.venueName,
+    this.allowReport = false,
   });
 
   @override
@@ -101,7 +105,11 @@ class VenueDealsChipRow extends StatelessWidget {
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => VenueDealDetailPage(deal: p, venueName: venueName),
+            builder: (_) => VenueDealDetailPage(
+              deal: p,
+              venueName: venueName,
+              allowReport: allowReport,
+            ),
           ),
         ),
         child: Container(

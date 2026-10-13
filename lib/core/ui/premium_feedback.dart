@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 
 /// Ekranın ortasında beliren fade-in/out toast — light/dark mode uyumlu.
@@ -173,45 +175,34 @@ Future<void> showPremiumErrorDialog(
   required String message,
   String title = 'Something went wrong',
   String buttonText = 'OK',
+  IconData icon = Icons.error_outline_rounded,
 }) async {
   if (!context.mounted) return;
-  final colors = Theme.of(context).colorScheme;
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) {
-      return AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Icon(Icons.error_outline_rounded, color: colors.error),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          message,
-          style: TextStyle(
-            color: colors.onSurface.withValues(alpha: 0.86),
-            height: 1.35,
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(buttonText),
-          ),
-        ],
-      );
-    },
+  // Uygulamanın standart popup'ı (bilgilendirme, check-in süresi doldu,
+  // moment limiti ile aynı tasarım).
+  await showPremiumPromptDialog(
+    context,
+    icon: icon,
+    title: title,
+    message: message,
+    confirmLabel: buttonText,
+    showCancel: false,
   );
+}
+
+/// Metin kontrolü sonucuna uygun ikon: düzenlenmesi gereken metin, kontrol
+/// edilemeyen metin ya da çok uzun metin.
+IconData publicTextErrorIcon(Object error) {
+  final code = error is ApiException
+      ? error.data['errorCode']?.toString() ?? ''
+      : error.toString();
+  if (code.contains('PUBLIC_TEXT_CHECK_UNAVAILABLE')) {
+    return Icons.cloud_off_rounded;
+  }
+  if (code.contains('PUBLIC_TEXT_TOO_LONG')) return Icons.short_text_rounded;
+  return isPublicTextRejection(error)
+      ? Icons.edit_note_rounded
+      : Icons.error_outline_rounded;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,12 +214,25 @@ Future<void> showPremiumErrorDialog(
 Future<bool> showCheckinExpiredDialog(
   BuildContext context, {
   required String venueLabel,
+  bool Function()? canRenew,
+  Listenable? eligibilityChanges,
+  DateTime? validUntil,
 }) async {
-  if (!context.mounted) return false;
+  if (!context.mounted || canRenew?.call() == false) return false;
   final isDark = Theme.of(context).brightness == Brightness.dark;
+  final navigator = Navigator.of(context, rootNavigator: true);
+  late final DialogRoute<bool> route;
+  void checkEligibility() {
+    if (canRenew?.call() == false ||
+        (validUntil != null && DateTime.now().isAfter(validUntil))) {
+      // Remove only this dialog, never a newer page or another account's modal.
+      if (route.isActive) navigator.removeRoute(route, false);
+    }
+  }
 
-  final result = await showDialog<bool>(
+  route = DialogRoute<bool>(
     context: context,
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
     barrierColor: Colors.black.withValues(alpha: 0.55),
     builder: (ctx) {
       final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
@@ -330,15 +334,21 @@ Future<bool> showCheckinExpiredDialog(
                 ),
                 const SizedBox(height: 22),
 
-                // ── Yenile (gradient)
+                // ── Yenile
                 SizedBox(
                   width: double.infinity,
                   child: DecoratedBox(
+                    // Uygulamanın standart birincil buton rengi (düz mavi).
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(16),
-                      gradient: const LinearGradient(
-                        colors: [AppColors.blue, AppColors.magenta],
-                      ),
+                      color: AppColors.blue,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.blue.withValues(alpha: 0.30),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
                     child: Material(
                       color: Colors.transparent,
@@ -395,7 +405,39 @@ Future<bool> showCheckinExpiredDialog(
       );
     },
   );
-  return result == true;
+  eligibilityChanges?.addListener(checkEligibility);
+  final timer = validUntil == null
+      ? null
+      : Timer(
+          validUntil.difference(DateTime.now()) +
+              const Duration(milliseconds: 1),
+          checkEligibility,
+        );
+  try {
+    return await navigator.push(route) == true;
+  } finally {
+    eligibilityChanges?.removeListener(checkEligibility);
+    timer?.cancel();
+  }
+}
+
+/// Check-in yenileme sonucu — uygulamanın standart ortadaki bildirimi.
+void showCheckinRenewalResult(
+  BuildContext context, {
+  required bool renewed,
+  required String venueLabel,
+}) {
+  if (renewed) {
+    showSuccessSnackBar(
+      context,
+      message: 'You\'re checked in at $venueLabel for 3 more hours.',
+    );
+  } else {
+    showErrorToast(
+      context,
+      message: 'Couldn\'t renew your check-in. Make sure you\'re at the venue.',
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +445,8 @@ Future<bool> showCheckinExpiredDialog(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Uygulama geneli premium bilgilendirme/CTA dialog'u — gradient ikon tile'ı,
-/// kalın başlık, açıklama, gradient birincil buton + hafif "not now" butonu.
+/// kalın başlık, açıklama, düz mavi birincil buton + hafif "not now" butonu.
+/// [content] verilirse açıklama ile buton arasına eklenir (ör. davet linki).
 /// Birincil butona basılırsa `true`, iptal/dismiss'te `false` döner.
 Future<bool> showPremiumPromptDialog(
   BuildContext context, {
@@ -413,6 +456,10 @@ Future<bool> showPremiumPromptDialog(
   required String confirmLabel,
   String cancelLabel = 'Not now',
   IconData? confirmIcon,
+  // Tek butonlu (yalnızca onay) kullanım için: doğrulama/bilgilendirme
+  // uyarılarında "Not now" iptal butonu gizlenir.
+  bool showCancel = true,
+  Widget? content,
 }) async {
   if (!context.mounted) return false;
   final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -494,15 +541,25 @@ Future<bool> showPremiumPromptDialog(
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+                if (content != null) ...[
+                  const SizedBox(height: 16),
+                  content,
+                ],
                 const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
                   child: DecoratedBox(
+                    // Uygulamanın standart birincil buton rengi (düz mavi).
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(16),
-                      gradient: const LinearGradient(
-                        colors: [AppColors.blue, AppColors.magenta],
-                      ),
+                      color: AppColors.blue,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.blue.withValues(alpha: 0.30),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
                     child: Material(
                       color: Colors.transparent,
@@ -537,21 +594,23 @@ Future<bool> showPremiumPromptDialog(
                     ),
                   ),
                 ),
-                const SizedBox(height: 6),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size.fromHeight(44),
-                    foregroundColor: bodyColor,
-                  ),
-                  child: Text(
-                    cancelLabel,
-                    style: const TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
+                if (showCancel) ...[
+                  const SizedBox(height: 6),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                      foregroundColor: bodyColor,
+                    ),
+                    child: Text(
+                      cancelLabel,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -674,9 +733,7 @@ class _StorySharedCardState extends State<_StorySharedCard>
         ? Colors.white.withValues(alpha: 0.10)
         : Colors.black.withValues(alpha: 0.06);
     final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
-    final venueColor = isDark
-        ? Colors.white70
-        : AppColors.lightTextSecondary;
+    final venueColor = isDark ? Colors.white70 : AppColors.lightTextSecondary;
     final locationIconColor = isDark
         ? Colors.white54
         : AppColors.lightTextSecondary.withValues(alpha: 0.7);
@@ -733,7 +790,10 @@ class _StorySharedCardState extends State<_StorySharedCard>
                               // ── Başlık
                               Row(
                                 children: [
-                                  const Text('🎉', style: TextStyle(fontSize: 20)),
+                                  const Text(
+                                    '🎉',
+                                    style: TextStyle(fontSize: 20),
+                                  ),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Story shared!',

@@ -1,19 +1,19 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
+import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:kmstry_frontend/core/checkin/checkin_ping_manager.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
-import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
-import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
-import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_profile_read.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
@@ -25,6 +25,9 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.da
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_viewed_cache.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -32,6 +35,8 @@ import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/avatar_upload_coordinator.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
@@ -42,6 +47,8 @@ import 'package:kmstry_frontend/features/venue_events/presentation/add_venue_eve
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_events_list_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
+import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
+import 'package:kmstry_frontend/core/venue/venue_read_changes.dart';
 
 class VenueProfilePage extends StatefulWidget {
   final String? activeVenueName;
@@ -53,39 +60,198 @@ class VenueProfilePage extends StatefulWidget {
     this.activeVenueName,
     this.venueNames,
     this.venueId,
+    this.repository,
+    this.authRepository,
+    this.storyRepository,
+    this.galleryRepository,
+    this.partnershipRepository,
+    this.isActive = true,
   });
+  final VenueOwnerRepository? repository;
+  final AuthRepository? authRepository;
+  final VenueStoryRepository? storyRepository;
+  final VenueGalleryRepository? galleryRepository;
+  final ExternalPartnershipRepository? partnershipRepository;
+  final bool isActive;
 
   @override
   State<VenueProfilePage> createState() => _VenueProfilePageState();
 }
 
-class _VenueProfilePageState extends State<VenueProfilePage> {
+class _VenueProfilePageState extends State<VenueProfilePage>
+    with WidgetsBindingObserver {
   bool _loading = true;
+  int _profileLoad = 0;
+  int _eventsLoad = 0;
+  int _storiesLoad = 0;
+  int _partnershipsLoad = 0;
+  List<VenueUpcomingEvent> _upcomingEvents = const [];
+  int _galleryRefresh = 0;
+  late final _identityRead = VisibleVenueRead(
+    isVisible: () => mounted && widget.isActive,
+    read: () => PerformanceDiagnostics.pageLoad(
+      PerformancePage.venueProfile,
+      _loadVenueProfileUnmeasured,
+      isMounted: () => mounted,
+    ),
+  );
+  late final _eventsRead = VisibleVenueRead(
+    isVisible: () => _canReadSections,
+    read: _loadUpcomingEvents,
+  );
+  late final _storiesRead = VisibleVenueRead(
+    isVisible: () => _canReadSections,
+    read: () => _loadAvatarStories(_venue!.id),
+  );
+  late final _partnershipsRead = VisibleVenueRead(
+    isVisible: () => _canReadSections,
+    read: () => _loadPartnerships(_venue!.id),
+  );
+  late final _ownerRepo = widget.repository ?? VenueOwnerRepository();
+  late final _authRepo = widget.authRepository ?? AuthRepository();
+  late final _profileRead = VenueProfileRead(
+    readMe: (force) => _authRepo.getMe(forceRefresh: force),
+    readIdentity: _ownerRepo.getOwnerProfileIdentity,
+  );
   VenueOwnerStatsVenue? _venue;
   VenueMemberRole _venueRole = VenueMemberRole.staff;
   MeContextModel? _meContext;
   String _personalLabel = 'Personal';
   bool _uploadingPhoto = false;
   bool _updatingType = false;
-  bool _uploadingStory = false;
+  final bool _uploadingStory = false;
   bool _openingStory = false;
   List<VenueStoryItem> _avatarStories = [];
-  final _venueStoryRepo = VenueStoryRepository();
+  late final _venueStoryRepo = widget.storyRepository ?? VenueStoryRepository();
 
   // Deals & discounts (salt-görüntü) — venue detay sayfasıyla aynı.
-  final _partnershipRepo = ExternalPartnershipRepository();
+  late final _partnershipRepo =
+      widget.partnershipRepository ?? ExternalPartnershipRepository();
   List<ExternalPartnershipModel> _partnerships = const [];
+
+  bool get _canReadSections {
+    if (!mounted || !widget.isActive || _venue == null) return false;
+    final member = _meContext?.memberVenues
+        .where((v) => v.id == _venue!.id)
+        .firstOrNull;
+    return member?.isPendingOwnerClaim != true &&
+        member?.isRejectedOwnerClaim != true;
+  }
+
+  void _activateSections() {
+    unawaited(_eventsRead.activate());
+    unawaited(_storiesRead.activate());
+    unawaited(_partnershipsRead.activate());
+  }
+
+  Future<void> _activateProfile() async {
+    await _identityRead.activate();
+    if (mounted) _activateSections();
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    VenueReadChanges.changes.addListener(_onVenueChanged);
+    VenueStoryRepository.changes.addListener(_onVenueStoryChanged);
+    PendingPublicMediaService.instance.avatarPublicationChanges.addListener(
+      _onPhotoPublished,
+    );
+    PendingPublicMediaService.instance.eventPublicationChanges.addListener(
+      _onEventMediaPublished,
+    );
     _loadVenueProfile();
   }
 
-  Future<void> _loadAvatarStories(String venueId) async {
+  @override
+  void didUpdateWidget(VenueProfilePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.venueId != widget.venueId) {
+      _venue = null;
+      _meContext = null;
+      _upcomingEvents = const [];
+      _avatarStories = const [];
+      _partnerships = const [];
+      _eventsLoad++;
+      _storiesLoad++;
+      _partnershipsLoad++;
+      _profileLoad++;
+      _identityRead.reset();
+      _eventsRead.reset();
+      _storiesRead.reset();
+      _partnershipsRead.reset();
+      _loadVenueProfile();
+    } else if (widget.isActive && !oldWidget.isActive) {
+      unawaited(_activateProfile());
+    }
+  }
+
+  @override
+  void dispose() {
+    _identityRead.dispose();
+    _eventsRead.dispose();
+    _storiesRead.dispose();
+    _partnershipsRead.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    VenueReadChanges.changes.removeListener(_onVenueChanged);
+    VenueStoryRepository.changes.removeListener(_onVenueStoryChanged);
+    PendingPublicMediaService.instance.avatarPublicationChanges.removeListener(
+      _onPhotoPublished,
+    );
+    PendingPublicMediaService.instance.eventPublicationChanges.removeListener(
+      _onEventMediaPublished,
+    );
+    super.dispose();
+  }
+
+  void _onVenueStoryChanged() {
+    unawaited(_storiesRead.invalidate());
+  }
+
+  void _onPhotoPublished() => unawaited(_identityRead.invalidate());
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_activateProfile());
+  }
+
+  void _onVenueChanged() {
+    final change = VenueReadChanges.changes.value;
+    if (change == null ||
+        change.venueId != (_venue?.id ?? widget.venueId) ||
+        !PendingPublicMediaService.instance.isCurrentSession(change.session)) {
+      return;
+    }
+    if (change.sections.contains(VenueReadSection.identity)) {
+      _onPhotoPublished();
+    }
+    if (change.sections.contains(VenueReadSection.events)) {
+      _onEventMediaPublished();
+    }
+    if (change.sections.contains(VenueReadSection.partnerships)) {
+      unawaited(_partnershipsRead.invalidate());
+    }
+  }
+
+  void _onEventMediaPublished() {
+    // A photo approval/removal only refreshes its event section, not identity,
+    // gallery, permission or story requests and not the whole-page spinner.
+    unawaited(_eventsRead.invalidate());
+  }
+
+  Future<bool> _loadAvatarStories(String venueId) async {
+    final load = ++_storiesLoad;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     try {
       final stories = await _venueStoryRepo.getVenueStories(venueId);
-      if (!mounted) return;
+      if (!mounted ||
+          load != _storiesLoad ||
+          _venue?.id != venueId ||
+          !uploads.isCurrentSession(session)) {
+        return false;
+      }
       // Backend "viewed_by_me" bu oturumda henüz güncellenmemiş olabilir; oturum-içi
       // izlenme cache'ini overlay ediyoruz ki sayfaya geri dönünce halka gri kalsın.
       final cache = VenueStoryViewedCache.instance;
@@ -97,7 +263,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                 : s,
         ];
       });
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _onStoryViewerClose(int lastIndex, bool allFinished) {
@@ -129,138 +298,193 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     });
   }
 
-  Future<void> _loadVenueProfile({bool showLoading = true}) async {
+  Future<void> _loadVenueProfile() => _identityRead.invalidate();
+
+  Future<bool> _loadVenueProfileUnmeasured() async {
+    if (!mounted || LogoutFlow.busy.value) return false;
+    final showLoading = _meContext == null;
+    final load = ++_profileLoad;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    final requestedId = widget.venueId;
+    bool isCurrent() =>
+        mounted &&
+        !LogoutFlow.busy.value &&
+        load == _profileLoad &&
+        requestedId == widget.venueId &&
+        PendingPublicMediaService.instance.isCurrentSession(session);
     if (showLoading) setState(() => _loading = true);
     try {
-      final me = await AuthRepository().getMe(forceRefresh: !showLoading);
-      final ctx = MeContextModel.fromMe(me);
-      final username = me['username']?.toString();
-      final fullName = (me['fullName'] ?? me['full_name'])?.toString();
-      final personalLabel = (username != null && username.isNotEmpty)
-          ? '@$username'
-          : (fullName != null && fullName.isNotEmpty ? fullName : 'Personal');
-
-      String? venueId = widget.venueId;
-      if (venueId == null || venueId.isEmpty) {
-        venueId = ctx.activeVenueId;
-        if ((venueId == null || venueId.isEmpty) &&
-            ctx.memberVenues.isNotEmpty) {
-          venueId = ctx.memberVenues.first.id;
+      final result = await _profileRead.load(
+        venueId: requestedId,
+        venueName: widget.activeVenueName,
+        forceRefresh: !showLoading,
+        isCurrent: isCurrent,
+      );
+      if (!isCurrent() || result == null) return false;
+      final ctx = result.context;
+      final venue = result.venue;
+      final changedVenue = _venue?.id != venue?.id;
+      setState(() {
+        if (changedVenue || ctx.isClaimLocked) {
+          _eventsLoad++;
+          _storiesLoad++;
+          _partnershipsLoad++;
+          _eventsRead.reset();
+          _storiesRead.reset();
+          _partnershipsRead.reset();
+          _upcomingEvents = const [];
+          _avatarStories = const [];
+          _partnerships = const [];
         }
-      }
-
-      if (venueId != null && venueId.isNotEmpty) {
-        final memberVenue = ctx.memberVenues
-            .where((v) => v.id == venueId)
-            .firstOrNull;
-        final resolvedRole = VenueMemberRoleExt.fromApi(
-          memberVenue?.role ?? 'STAFF',
-        );
-
-        if (memberVenue?.isPendingOwnerClaim == true ||
-            memberVenue?.isRejectedOwnerClaim == true) {
-          if (!mounted) return;
-          setState(() {
-            _meContext = ctx;
-            _venue = VenueOwnerStatsVenue(
-              id: venueId!,
-              name: memberVenue?.name ?? widget.activeVenueName ?? 'Venue',
-              photo: memberVenue?.photoUrl,
-              address: memberVenue?.address,
-            );
-            _venueRole = resolvedRole;
-            _personalLabel = personalLabel;
-            _loading = false;
-          });
-          return;
+        _meContext = ctx.me;
+        _venue = venue;
+        _venueRole = ctx.role;
+        _personalLabel = ctx.personalLabel;
+        _loading = false;
+      });
+      if (venue == null || ctx.isClaimLocked) return true;
+      // Identity paints first. Permissions and independent sections must not
+      // make first paint wait for event history or public-media processing.
+      unawaited(VenueSession.instance.load(venue.id, ctx.role));
+      _activateSections();
+      return true;
+    } catch (e) {
+      if (!isCurrent()) return false;
+      setState(() {
+        _loading = false;
+        if (e is ApiException && [401, 403, 404].contains(e.statusCode)) {
+          _venue = null;
+          _eventsLoad++;
+          _storiesLoad++;
+          _partnershipsLoad++;
+          _upcomingEvents = const [];
+          _avatarStories = const [];
+          _partnerships = const [];
         }
-
-        final response = await VenueOwnerRepository().getOwnerStats(venueId);
-        if (!mounted) return;
-        setState(() {
-          _meContext = ctx;
-          _venue = response.venue;
-          _venueRole = resolvedRole;
-          _personalLabel = personalLabel;
-          _loading = false;
-        });
-        // Permission'ları yükle (async, UI'ı bloklamaz)
-        VenueSession.instance.load(venueId, resolvedRole);
-        // Story state'i sadece boşsa yükle — viewer kapanınca optimistic update korunur
-        if (showLoading) {
-          if (_avatarStories.isEmpty) _loadAvatarStories(venueId);
-          // Deals & discounts (best-effort, UI'ı bloklamaz).
-          _loadPartnerships(venueId);
-        }
-      } else {
-        if (!mounted) return;
-        setState(() {
-          _meContext = ctx;
-          _personalLabel = personalLabel;
-          _loading = false;
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      });
+      return false;
     }
   }
 
   Future<void> _refreshVenueProfile() async {
-    await _loadVenueProfile(showLoading: false);
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    final requestedId = widget.venueId;
+    _eventsRead.markDirty();
+    _storiesRead.markDirty();
+    _partnershipsRead.markDirty();
+    await _loadVenueProfile();
+    if (!mounted ||
+        requestedId != widget.venueId ||
+        !PendingPublicMediaService.instance.isCurrentSession(generation)) {
+      return;
+    }
     final venueId = _venue?.id;
     if (venueId == null || venueId.isEmpty) return;
+    final member = _meContext?.memberVenues
+        .where((v) => v.id == venueId)
+        .firstOrNull;
+    if (member?.isPendingOwnerClaim == true ||
+        member?.isRejectedOwnerClaim == true) {
+      return;
+    }
     await Future.wait<void>([
-      _loadAvatarStories(venueId),
-      _loadPartnerships(venueId),
+      _eventsRead.activate(),
+      _storiesRead.activate(),
+      _partnershipsRead.activate(),
     ]);
+    if (mounted) setState(() => _galleryRefresh++);
   }
 
-  Future<void> _loadPartnerships(String venueId) async {
+  Future<bool> _loadUpcomingEvents() async {
+    final venueId = _venue!.id;
+    final load = ++_eventsLoad;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    try {
+      final events = await _ownerRepo.getOwnerProfileUpcomingEvents(venueId);
+      if (!mounted ||
+          load != _eventsLoad ||
+          _venue?.id != venueId ||
+          !uploads.isCurrentSession(session)) {
+        return false;
+      }
+      setState(() => _upcomingEvents = events);
+      return true;
+    } catch (_) {
+      // Preserve the last complete list for this venue on a transient failure;
+      // a slower optional section must never turn the whole profile into error.
+      return false;
+    }
+  }
+
+  Future<bool> _loadPartnerships(String venueId) async {
+    final load = ++_partnershipsLoad;
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
     try {
       final partnerships = await _partnershipRepo.getActivePartnerships(
         venueId,
       );
-      if (mounted) setState(() => _partnerships = partnerships);
+      if (!mounted ||
+          load != _partnershipsLoad ||
+          _venue?.id != venueId ||
+          !uploads.isCurrentSession(session)) {
+        return false;
+      }
+      setState(() => _partnerships = partnerships);
+      return true;
     } catch (_) {
       /* best-effort — sessiz geç */
+      return false;
     }
   }
 
   Future<void> _pickAndUploadPhoto() async {
     final venueId = _venue?.id;
-    if (venueId == null || _uploadingPhoto) return;
-
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1920,
-    );
-    if (picked == null || !mounted) return;
-
-    // Venue tek foto tutar; hem kare avatar hem cover hero (BoxFit.cover) bundan
-    // beslenir. Bu yüzden KARE kırpılır → avatar düzgün, cover hero geniş dolar
-    // (venue detay sayfasıyla aynı davranış). İptal edilirse yükleme yapma.
-    final cropped = await cropSquareAvatar(context, File(picked.path));
-    if (cropped == null || !mounted) return;
-
+    if (venueId == null ||
+        _uploadingPhoto ||
+        !VenueSession.instance.can(VenuePermission.venueEdit)) {
+      return;
+    }
+    final uploads = PendingPublicMediaService.instance;
+    final session = uploads.sessionGeneration;
+    final coordinator = AvatarUploadCoordinator.instance;
+    if (!coordinator.canSelect(
+      PendingPublicMediaKind.venueAvatar,
+      venueId: venueId,
+    )) {
+      // Keep the current transfer's inline feedback; never reopen the retired
+      // uploads sheet or replay a photo whose receipt is still uncertain.
+      return;
+    }
     setState(() => _uploadingPhoto = true);
     try {
-      final updated = await VenueOwnerRepository().uploadVenuePhoto(
-        venueId,
-        cropped,
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1920,
       );
-      if (mounted) setState(() => _venue = updated);
-      // Foto aynı zamanda venue avatarı → navbar'daki avatarı da tazele
-      // (/auth/me cache'ini geçersiz kıl + dinleyicileri uyar).
-      AuthRepository.invalidateMeCache();
-      ActiveCheckinService().notifyMediaUpdated();
-    } catch (e) {
+      if (picked == null || !mounted || !uploads.isCurrentSession(session)) {
+        return;
+      }
+      final cropped = await cropSquareAvatar(context, File(picked.path));
+      if (cropped == null ||
+          !mounted ||
+          !uploads.isCurrentSession(session) ||
+          _venue?.id != venueId) {
+        return;
+      }
+      coordinator.share(
+        file: cropped,
+        kind: PendingPublicMediaKind.venueAvatar,
+        venueId: venueId,
+        expectedGeneration: session,
+      );
+    } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Photo upload failed: $e'),
+          content: const Text('Could not select photo. Please try again.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -499,7 +723,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     );
     if (saved == null || !mounted) return;
     try {
-      final updated = await VenueOwnerRepository().updateVenue(
+      final updated = await _ownerRepo.updateVenue(
         venue.id,
         description: saved,
       );
@@ -508,6 +732,8 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       if (!mounted) return;
       await showPremiumErrorDialog(
         context,
+        title: publicTextErrorTitle(e, fallback: 'Description not saved'),
+        icon: publicTextErrorIcon(e),
         message: publicTextErrorMessage(
           e,
           fallback: 'Could not save the venue description. Please try again.',
@@ -668,7 +894,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       MaterialPageRoute(
         builder: (_) => VenueEventsListPage(
           venueId: venueId,
-          events: _venue?.upcomingEvents ?? const [],
+          events: _upcomingEvents,
           onRefresh: _loadVenueProfile,
         ),
       ),
@@ -699,7 +925,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
         icon: Icons.amp_stories_rounded,
         title: 'Share Stories with your guests',
         message:
-            'Post 24-hour photo & video moments that pull people in and drive foot traffic. '
+            'Post 24-hour photo moments that pull people in and drive foot traffic. '
             'Stories are part of the Social plan — upgrade to start engaging your audience.',
         onAllowed: () {},
       );
@@ -711,22 +937,9 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
     // animate the profile away; the dashboard only shows it after capture.
     _openingStory = true;
     try {
-      final added = await Navigator.push<bool>(
-        context,
-        AddVenueStoryPage.route(venueId),
-      );
-      if (added == true && mounted) {
-        setState(() => _uploadingStory = true);
-      }
+      await Navigator.push<bool>(context, AddVenueStoryPage.route(venueId));
     } finally {
       _openingStory = false;
-      if (mounted) {
-        final venueId = _venue?.id;
-        if (venueId != null) await _loadAvatarStories(venueId);
-        if (mounted && _uploadingStory) {
-          setState(() => _uploadingStory = false);
-        }
-      }
     }
   }
 
@@ -783,17 +996,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
   }
 
   Future<void> _logout(BuildContext context) async {
-    try {
-      CheckinPingManager.I.stop();
-      ActiveCheckinService().clear();
-      UserSession.instance.clear();
-      await AuthRepository().logout();
-      if (!context.mounted) return;
-
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
-    } catch (_) {}
+    await LogoutFlow.run(context, logout: _authRepo.logout);
   }
 
   void _showAccountPicker(BuildContext context) {
@@ -817,162 +1020,139 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (sheetCtx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(top: 16, bottom: 8),
-              decoration: BoxDecoration(
-                color: colors.onSurface.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(sheetCtx).size.height * 0.35,
-              ),
-              child: ListView(
-                shrinkWrap: true,
-                padding: EdgeInsets.zero,
-                children: [
-                  if (meCtx.hasPersonalProfile)
-                    ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: colors.primary.withValues(alpha: 0.12),
-                        child: Icon(
-                          Icons.person_outline,
-                          color: colors.primary,
-                        ),
-                      ),
-                      title: Text(
-                        _personalLabel,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: colors.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Personal',
-                        style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.55),
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: isPersonalActive
-                          ? Icon(Icons.check_circle, color: colors.primary)
-                          : null,
-                      onTap: isPersonalActive
-                          ? null
-                          : () {
-                              // Smooth in-place switch → lands on personal Profile.
-                              Navigator.pop(sheetCtx);
-                              AppShellNav.of(
-                                context,
-                              )?.switchToPersonalProfile();
-                            },
-                    ),
-                  ...accountVenues.map((venue) {
-                    final isActive =
-                        !isPersonalActive && (meCtx.activeVenueId == venue.id);
-                    final isPending = venue.isPendingOwnerClaim;
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: isPending
-                            ? colors.onSurface.withValues(alpha: 0.08)
-                            : colors.primary.withValues(alpha: 0.12),
-                        child: Icon(
-                          isPending
-                              ? Icons.hourglass_top_rounded
-                              : Icons.storefront,
-                          color: isPending
-                              ? colors.onSurface.withValues(alpha: 0.45)
-                              : colors.primary,
-                        ),
-                      ),
-                      title: Text(
-                        venue.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: colors.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        isPending ? 'Pending review' : (venue.role ?? 'Venue'),
-                        style: TextStyle(
-                          color: colors.onSurface.withValues(alpha: 0.55),
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: isPending
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Text(
-                                'Pending',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.orange,
-                                ),
-                              ),
-                            )
-                          : isActive
-                          ? Icon(Icons.check_circle, color: colors.primary)
-                          : null,
-                      onTap: isActive
-                          ? null
-                          : () {
-                              // Smooth in-place switch → lands on the venue's
-                              // Profile tab (no full shell rebuild → no dashboard).
-                              Navigator.pop(sheetCtx);
-                              AppShellNav.of(
-                                context,
-                              )?.switchToVenueProfile(venue);
-                            },
-                    );
-                  }),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: Container(
+      builder: (sheetCtx) => LogoutGuard(
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
                 width: 40,
-                height: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 16, bottom: 8),
                 decoration: BoxDecoration(
-                  color: colors.primary.withValues(alpha: 0.10),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.add, color: colors.primary, size: 22),
-              ),
-              title: Text(
-                'Add Venue Account',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: colors.primary,
+                  color: colors.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        const VenueContextOnboardingPage(fromAppShell: true),
-                  ),
-                );
-              },
-            ),
-            if (!meCtx.hasPersonalProfile)
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetCtx).size.height * 0.35,
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: [
+                    if (meCtx.hasPersonalProfile)
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: colors.primary.withValues(
+                            alpha: 0.12,
+                          ),
+                          child: Icon(
+                            Icons.person_outline,
+                            color: colors.primary,
+                          ),
+                        ),
+                        title: Text(
+                          _personalLabel,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: colors.onSurface,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Personal',
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: isPersonalActive
+                            ? Icon(Icons.check_circle, color: colors.primary)
+                            : null,
+                        onTap: isPersonalActive
+                            ? null
+                            : () {
+                                // Smooth in-place switch → lands on personal Profile.
+                                Navigator.pop(sheetCtx);
+                                AppShellNav.of(
+                                  context,
+                                )?.switchToPersonalProfile();
+                              },
+                      ),
+                    ...accountVenues.map((venue) {
+                      final isActive =
+                          !isPersonalActive &&
+                          (meCtx.activeVenueId == venue.id);
+                      final isPending = venue.isPendingOwnerClaim;
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isPending
+                              ? colors.onSurface.withValues(alpha: 0.08)
+                              : colors.primary.withValues(alpha: 0.12),
+                          child: Icon(
+                            isPending
+                                ? Icons.hourglass_top_rounded
+                                : Icons.storefront,
+                            color: isPending
+                                ? colors.onSurface.withValues(alpha: 0.45)
+                                : colors.primary,
+                          ),
+                        ),
+                        title: Text(
+                          venue.name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: colors.onSurface,
+                          ),
+                        ),
+                        subtitle: Text(
+                          isPending
+                              ? 'Pending review'
+                              : (venue.role ?? 'Venue'),
+                          style: TextStyle(
+                            color: colors.onSurface.withValues(alpha: 0.55),
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: isPending
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Text(
+                                  'Pending',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.orange,
+                                  ),
+                                ),
+                              )
+                            : isActive
+                            ? Icon(Icons.check_circle, color: colors.primary)
+                            : null,
+                        onTap: isActive
+                            ? null
+                            : () {
+                                // Smooth in-place switch → lands on the venue's
+                                // Profile tab (no full shell rebuild → no dashboard).
+                                Navigator.pop(sheetCtx);
+                                AppShellNav.of(
+                                  context,
+                                )?.switchToVenueProfile(venue);
+                              },
+                      );
+                    }),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
               ListTile(
                 leading: Container(
                   width: 40,
@@ -981,14 +1161,10 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                     color: colors.primary.withValues(alpha: 0.10),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    Icons.person_add_outlined,
-                    color: colors.primary,
-                    size: 22,
-                  ),
+                  child: Icon(Icons.add, color: colors.primary, size: 22),
                 ),
                 title: Text(
-                  'Add Personal Account',
+                  'Add Venue Account',
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: colors.primary,
@@ -999,45 +1175,78 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const NameDobOnboardingPage(),
+                      builder: (_) =>
+                          const VenueContextOnboardingPage(fromAppShell: true),
                     ),
                   );
                 },
               ),
-            ListTile(
-              leading: Icon(
-                Icons.manage_accounts_outlined,
-                color: colors.onSurface,
-              ),
-              title: Text(
-                'Go to Settings',
-                style: TextStyle(color: colors.onSurface),
-              ),
-              onTap: () {
-                Navigator.pop(sheetCtx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.logout, color: colors.error),
-              title: Text(
-                'Log out',
-                style: TextStyle(
-                  color: colors.error,
-                  fontWeight: FontWeight.w600,
+              if (!meCtx.hasPersonalProfile)
+                ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.10),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.person_add_outlined,
+                      color: colors.primary,
+                      size: 22,
+                    ),
+                  ),
+                  title: Text(
+                    'Add Personal Account',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: colors.primary,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const NameDobOnboardingPage(),
+                      ),
+                    );
+                  },
                 ),
+              ListTile(
+                leading: Icon(
+                  Icons.manage_accounts_outlined,
+                  color: colors.onSurface,
+                ),
+                title: Text(
+                  'Go to Settings',
+                  style: TextStyle(color: colors.onSurface),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsPage()),
+                  );
+                },
               ),
-              onTap: () async {
-                final rootContext = context;
-                Navigator.pop(sheetCtx);
-                await _logout(rootContext);
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+              ListTile(
+                leading: Icon(Icons.logout, color: colors.error),
+                trailing: const LogoutProgress(),
+                title: Text(
+                  'Log out',
+                  style: TextStyle(
+                    color: colors.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () async {
+                  await _logout(context);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -1045,6 +1254,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    return PerformancePageProbe(
+      page: PerformancePage.venueProfile,
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     return ListenableBuilder(
       listenable: VenueSession.instance,
       builder: (context, _) => _build(context),
@@ -1126,6 +1342,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                             ? _pickAndUploadPhoto
                             : null,
                         child: SizedBox(
+                          key: const ValueKey('venue-profile-cover'),
                           height: 180,
                           width: double.infinity,
                           child: Stack(
@@ -1138,15 +1355,22 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                                   message:
                                       'You can add a photo after your venue is approved.',
                                 )
-                              else if (hasPhoto)
-                                Image.network(
-                                  venue!.photo!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) =>
-                                      _PhotoPlaceholder(colors: colors),
-                                )
                               else
-                                _PhotoPlaceholder(colors: colors),
+                                OwnerPhotoPreview(
+                                  isActive: widget.isActive,
+                                  kind: PendingPublicMediaKind.venueAvatar,
+                                  venueId: venue?.id,
+                                  width: double.infinity,
+                                  height: 180,
+                                  child: hasPhoto
+                                      ? Image.network(
+                                          venue!.photo!,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              _PhotoPlaceholder(colors: colors),
+                                        )
+                                      : _PhotoPlaceholder(colors: colors),
+                                ),
                               // Alt gradient — cover sayfa zeminine erir.
                               Positioned(
                                 left: 0,
@@ -1168,7 +1392,40 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                                   ),
                                 ),
                               ),
-                              // Kalem — cover'ın sağ üstünde (VENUE_EDIT). Basınca
+                              // Keep the complete status/reason/actions centred
+                              // on the cover, including narrow/large-text layouts.
+                              if (!isClaimLocked)
+                                Positioned.fill(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
+                                    child: Center(
+                                      child: SingleChildScrollView(
+                                        key: const ValueKey(
+                                          'venue-cover-upload-status',
+                                        ),
+                                        primary: false,
+                                        child: OwnerPhotoUploadStatus(
+                                          isActive: widget.isActive,
+                                          kind: PendingPublicMediaKind
+                                              .venueAvatar,
+                                          hasPreviousPhoto: hasPhoto,
+                                          venueId: venue?.id,
+                                          overlay: true,
+                                          onRetry:
+                                              session.can(
+                                                VenuePermission.venueEdit,
+                                              )
+                                              ? _pickAndUploadPhoto
+                                              : null,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              // Kalem — cover'ın sağ üstünde (VENUE_EDIT).
                               // foto ekleme + KARE (avatar) kırpma akışını açar.
                               if (!isClaimLocked &&
                                   session.can(VenuePermission.venueEdit))
@@ -1220,6 +1477,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                               children: [
                                 if (venue != null) ...[
                                   _VenueSquareAvatar(
+                                    isActive: widget.isActive,
                                     venue: venue,
                                     isUploading: _uploadingStory,
                                     canAddStory:
@@ -1381,7 +1639,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                       if (isClaimLocked) ...[
                         const SizedBox(height: 18),
                         _buildLockedProfileSection(
-                          title: 'Photos & Videos',
+                          title: 'Gallery',
                           icon: Icons.photo_library_outlined,
                           dotColor: AppColors.teal,
                           message: isPendingClaim
@@ -1392,6 +1650,9 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                         const SizedBox(height: 18),
                         VenueGallerySection(
                           venueId: venue.id,
+                          repository: widget.galleryRepository,
+                          isActive: widget.isActive,
+                          refreshRevision: _galleryRefresh,
                           // Galeri ekleme/silme POST_CREATE iznine bağlı.
                           canEdit:
                               session.isOwner ||
@@ -1404,13 +1665,13 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
                       if (!isClaimLocked &&
                           venue != null &&
                           VenueUpcomingEventsSection.hasUpcoming(
-                            venue.upcomingEvents,
+                            _upcomingEvents,
                           )) ...[
                         const SizedBox(height: 18),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: VenueUpcomingEventsSection(
-                            events: venue.upcomingEvents,
+                            events: _upcomingEvents,
                             venueId: venue.id,
                             venueName: venue.name,
                             venueAddress: venue.address,
@@ -1443,6 +1704,7 @@ class _VenueProfilePageState extends State<VenueProfilePage> {
 class _VenueSquareAvatar extends StatefulWidget {
   final VenueOwnerStatsVenue venue;
   final bool isUploading;
+  final bool isActive;
   final bool canAddStory;
   final bool canViewStats;
   final bool canDeleteStory;
@@ -1454,6 +1716,7 @@ class _VenueSquareAvatar extends StatefulWidget {
   const _VenueSquareAvatar({
     required this.venue,
     required this.isUploading,
+    required this.isActive,
     required this.canAddStory,
     required this.canViewStats,
     required this.canDeleteStory,
@@ -1468,9 +1731,34 @@ class _VenueSquareAvatar extends StatefulWidget {
 }
 
 class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
+  @override
+  void initState() {
+    super.initState();
+    PendingPublicMediaService.instance.changes.addListener(_onPendingChanged);
+  }
+
+  @override
+  void dispose() {
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onPendingChanged,
+    );
+    super.dispose();
+  }
+
+  void _onPendingChanged() {
+    if (mounted && widget.isActive) setState(() {});
+  }
+
   void _openViewer() {
     final stories = widget.stories;
-    if (stories.isEmpty && !widget.isUploading) return;
+    if (stories.isEmpty &&
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.venueStory,
+              venueId: widget.venue.id,
+            ) ==
+            null) {
+      return;
+    }
     final venueId = widget.venue.id;
 
     final startIndex = stories.indexWhere((s) => !s.viewedByMe);
@@ -1484,6 +1772,7 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
             mediaType: s.mediaType,
             thumbnailUrl: s.thumbnailUrl,
             durationSecs: s.durationSecs,
+            textOverlay: s.textOverlay,
             expiresAt: s.expiresAt,
             createdAt: s.createdAt,
             viewCount: s.viewCount,
@@ -1496,7 +1785,6 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
           ),
         )
         .toList();
-    if (widget.isUploading) storyItems.add(StoryItem.uploadingPlaceholder());
     final group = StoryGroup(
       user: StoryUser(
         id: 'venue_$venueId',
@@ -1512,6 +1800,8 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
         builder: (_) => StoryViewerPage(
           groups: [group],
           venueId: venueId,
+          ownerUploadKind: PendingPublicMediaKind.venueStory,
+          onCreateStory: widget.canAddStory ? widget.onAddStory : null,
           showViewers: widget.canViewStats,
           isManagedVenueContent: true,
           canDelete: widget.canDeleteStory,
@@ -1541,7 +1831,14 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
         : 'V';
     final hasPhoto =
         widget.venue.photo != null && widget.venue.photo!.isNotEmpty;
-    final hasStories = widget.stories.isNotEmpty || widget.isUploading;
+    final pending = widget.canAddStory
+        ? PendingPublicMediaService.instance.latest(
+            PendingPublicMediaKind.venueStory,
+            venueId: widget.venue.id,
+          )
+        : null;
+    final hasStories =
+        widget.stories.isNotEmpty || widget.isUploading || pending != null;
     final allSeen =
         widget.stories.isNotEmpty && widget.stories.every((s) => s.viewedByMe);
 
@@ -1555,21 +1852,38 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
 
     const ringWidth = 3.0;
     const gap = 2.5;
-    const avatarSize = 58.0;
+    // Altındaki "Sharing…" / "Not shared" etiketi sığsın diye biraz büyük.
+    const avatarSize = 80.0;
     const totalSize = avatarSize + (ringWidth + gap) * 2;
 
     Widget avatar = ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: hasPhoto
-          ? Image.network(
-              widget.venue.photo!,
-              width: avatarSize,
-              height: avatarSize,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
-                  _InitialBox(initial: initial, colors: colors, isDark: isDark),
-            )
-          : _InitialBox(initial: initial, colors: colors, isDark: isDark),
+      borderRadius: BorderRadius.circular(18),
+      child: OwnerPhotoPreview(
+        isActive: widget.isActive,
+        kind: PendingPublicMediaKind.venueAvatar,
+        venueId: widget.venue.id,
+        width: avatarSize,
+        height: avatarSize,
+        child: pending != null
+            ? SizedBox(
+                width: avatarSize,
+                height: avatarSize,
+                child: PendingPublicMediaPreview(item: pending),
+              )
+            : hasPhoto
+            ? Image.network(
+                widget.venue.photo!,
+                width: avatarSize,
+                height: avatarSize,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _InitialBox(
+                  initial: initial,
+                  colors: colors,
+                  isDark: isDark,
+                ),
+              )
+            : _InitialBox(initial: initial, colors: colors, isDark: isDark),
+      ),
     );
 
     Widget ring;
@@ -1591,7 +1905,7 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
                   painter: _SquareRingPainter(
                     colors: logoColors,
                     strokeWidth: ringWidth,
-                    radius: 16,
+                    radius: 20,
                     allSeen: false,
                     loading: true,
                   ),
@@ -1619,7 +1933,7 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
                         ? [Colors.grey.shade400, Colors.grey.shade500]
                         : logoColors,
                     strokeWidth: ringWidth,
-                    radius: 16,
+                    radius: 20,
                     allSeen: allSeen,
                     loading: false,
                   ),
@@ -1648,6 +1962,20 @@ class _VenueSquareAvatarState extends State<_VenueSquareAvatar> {
         clipBehavior: Clip.none,
         children: [
           ring,
+          if (pending != null)
+            Positioned(
+              left: 4,
+              right: 4,
+              bottom: 8,
+              // Uzun durumlar ("Check connection") kesilmesin: gerekirse
+              // etiket biraz küçülür, metin hep tam okunur.
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: StoryUploadStatus(item: pending, overlay: true),
+                ),
+              ),
+            ),
           if (widget.canAddStory)
             Positioned(
               right: 0,

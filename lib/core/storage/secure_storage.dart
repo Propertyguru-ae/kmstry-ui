@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:async';
 import '../../features/chat/data/chat_memory_cache.dart';
 import '../config/app_config.dart';
 
@@ -16,6 +17,22 @@ class StoredSessionEnvironment {
 
 class SecureStorage {
   static const _storage = FlutterSecureStorage();
+  static final _sessionEnded = StreamController<void>.broadcast(sync: true);
+  static Stream<void> get sessionEnded => _sessionEnded.stream;
+  static int _sessionRevision = 0;
+  static int get sessionRevision => _sessionRevision;
+  static Future<void> _sessionWrites = Future.value();
+
+  // Serialize token rotation and deletion so a refresh finishing during logout
+  // cannot recreate half an old session after its keys were removed.
+  static Future<T> _writeSession<T>(Future<T> Function() action) {
+    final next = _sessionWrites.then((_) => action());
+    _sessionWrites = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return next;
+  }
 
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
@@ -101,21 +118,67 @@ class SecureStorage {
     );
   }
 
-  static Future<void> clearSession() async {
+  static Future<void> clearSession() {
+    _sessionRevision++;
+    _sessionEnded.add(null);
     ChatMemoryCache.shared.clear();
-    await _storage.delete(key: _accessTokenKey);
-    await _storage.delete(key: _refreshTokenKey);
-    await _storage.delete(key: _sessionApiOriginKey);
-    await _storage.delete(key: _sessionBuildEnvKey);
-    await _storage.delete(key: _registeredDeviceTokenKey);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_pendingInterestedUserIdsKey);
+    return _writeSession(() async {
+      await Future.wait([
+        for (final key in [
+          _accessTokenKey,
+          _refreshTokenKey,
+          _sessionApiOriginKey,
+          _sessionBuildEnvKey,
+          _registeredDeviceTokenKey,
+        ])
+          _storage.delete(key: key),
+        SharedPreferences.getInstance().then((prefs) async {
+          await prefs.remove(_pendingInterestedUserIdsKey);
+        }),
+      ]);
+    });
   }
 
   static Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
-  }) async {
+  }) {
+    _sessionRevision++;
+    return _writeSession(() => _saveTokens(accessToken, refreshToken));
+  }
+
+  /// A delayed sign-in may not reopen a session ended by logout, or replace
+  /// another login that has already won. Check inside the serialized writer.
+  static Future<bool> saveLoginTokens({
+    required int expectedRevision,
+    required String accessToken,
+    required String refreshToken,
+  }) => _writeSession(() async {
+    if (expectedRevision != _sessionRevision) return false;
+    final revision = ++_sessionRevision;
+    await _saveTokens(accessToken, refreshToken);
+    return revision == _sessionRevision;
+  });
+
+  static Future<bool> saveRefreshedTokens({
+    required int expectedRevision,
+    required String previousRefreshToken,
+    required String accessToken,
+    required String refreshToken,
+  }) => _writeSession(() async {
+    if (expectedRevision != _sessionRevision ||
+        previousRefreshToken != await getRefreshToken()) {
+      return false;
+    }
+    if (expectedRevision != _sessionRevision) return false;
+    await _saveTokens(accessToken, refreshToken);
+    return expectedRevision == _sessionRevision;
+  });
+
+  static Future<void> _saveTokens(
+    String accessToken,
+    String refreshToken,
+  ) async {
     await _storage.write(key: _accessTokenKey, value: accessToken);
     await _storage.write(key: _refreshTokenKey, value: refreshToken);
     await _storage.write(key: _sessionApiOriginKey, value: AppConfig.baseUrl);
@@ -159,6 +222,7 @@ class SecureStorage {
   }
 
   static Future<void> clear() async {
+    _sessionEnded.add(null);
     ChatMemoryCache.shared.clear();
     await _storage.deleteAll();
   }

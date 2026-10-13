@@ -8,6 +8,8 @@ import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
 import 'package:kmstry_frontend/core/user/premium_gate.dart';
 import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const _kMagenta = Color(0xFFE020D8);
@@ -27,6 +29,7 @@ class PersonalEventDetailPage extends StatefulWidget {
   final String? venueName;
   final String? venueAddress;
   final String? venuePhotoUrl;
+  final ApiClient? apiClient;
 
   const PersonalEventDetailPage({
     super.key,
@@ -35,6 +38,7 @@ class PersonalEventDetailPage extends StatefulWidget {
     this.venueName,
     this.venueAddress,
     this.venuePhotoUrl,
+    this.apiClient,
   });
 
   @override
@@ -43,7 +47,9 @@ class PersonalEventDetailPage extends StatefulWidget {
 }
 
 class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
-  final _api = ApiClient();
+  late final _api = widget.apiClient ?? ApiClient();
+  late final _events = VenueEventRepository(apiClient: _api);
+  int _detailRequest = 0;
 
   bool _loading = true;
   bool _rsvping = false;
@@ -88,9 +94,9 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     await PremiumGate.ensure(
       context,
       PremiumFeature.priorityEventAccess,
-      title: 'RSVP opens 24h early with KMSTRY+',
+      title: 'Add events 24h early with KMSTRY+',
       message:
-          'KMSTRY+ members can RSVP to events 24 hours before everyone else.',
+          'KMSTRY+ members can add events to their calendar 24 hours before everyone else.',
       icon: Icons.event_available_rounded,
     );
   }
@@ -123,6 +129,8 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
   }
 
   Future<void> _loadDetail() async {
+    final request = ++_detailRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final token = await SecureStorage.getAccessToken();
       final data = await _api.get(
@@ -130,7 +138,9 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
         headers: {'Authorization': 'Bearer $token'},
       );
       final map = Map<String, dynamic>.from(data as Map);
-      if (mounted) {
+      if (mounted &&
+          request == _detailRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
         setState(() {
           _event = VenueUpcomingEvent.fromJson(map);
           _rsvpCount = map['rsvpCount'] is num
@@ -147,44 +157,59 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
         });
       }
     } catch (e) {
-      if (mounted)
+      if (mounted &&
+          request == _detailRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
         setState(() {
           _error = e.toString();
           _loading = false;
         });
+      }
     }
   }
 
   Future<void> _toggleRsvp() async {
+    if (_rsvping) return;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     setState(() => _rsvping = true);
     try {
-      final token = await SecureStorage.getAccessToken();
       if (_userHasRsvp) {
-        await _api.delete(
-          '/venues/${widget.venueId}/events/${widget.event.id}/rsvp',
-          headers: {'Authorization': 'Bearer $token'},
+        await _events.cancelRsvp(
+          venueId: widget.venueId,
+          eventId: widget.event.id,
         );
-        if (mounted)
+        if (mounted &&
+            PendingPublicMediaService.instance.isCurrentSession(session)) {
+          _detailRequest++;
           setState(() {
             _userHasRsvp = false;
             _rsvpCount = (_rsvpCount - 1).clamp(0, 999999);
           });
+        }
       } else {
-        await _api.post(
-          '/venues/${widget.venueId}/events/${widget.event.id}/rsvp',
-          headers: {'Authorization': 'Bearer $token'},
-          body: {},
+        await _events.rsvpEvent(
+          venueId: widget.venueId,
+          eventId: widget.event.id,
+          calendarEntry: TodayEvent(
+            event: _event,
+            venueId: widget.venueId,
+            venueName: widget.venueName ?? '',
+            venuePhoto: widget.venuePhotoUrl,
+          ),
         );
-        if (mounted) {
+        if (mounted &&
+            PendingPublicMediaService.instance.isCurrentSession(session)) {
+          _detailRequest++;
           setState(() {
             _userHasRsvp = true;
             _rsvpCount++;
           });
-          _showRsvpSuccess();
+          _showCalendarAdded();
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
         // T46: server rejected because general RSVP hasn't opened yet.
         if (e.toString().contains('EARLY_ACCESS_LOCKED')) {
           _openEarlyAccessUpsell();
@@ -199,7 +224,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
     }
   }
 
-  void _showRsvpSuccess() {
+  void _showCalendarAdded() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final kBg = isDark ? const Color(0xFF0D1525) : Colors.white;
     final kText = isDark ? const Color(0xFFEEF2FF) : const Color(0xFF111827);
@@ -209,7 +234,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => _RsvpSuccessSheet(
+      builder: (_) => _CalendarAddedSheet(
         eventTitle: _event.title,
         isDark: isDark,
         kBg: kBg,
@@ -635,7 +660,7 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
         ? Icons.check_circle_outline_rounded
         : isFull
         ? Icons.block_rounded
-        : Icons.person_add_alt_1_rounded;
+        : Icons.event_available_rounded;
     final fg = showGradient ? Colors.white : kDim;
 
     return SizedBox(
@@ -686,12 +711,15 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
                       children: [
                         Icon(icon, size: 18, color: fg),
                         const SizedBox(width: 9),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: fg,
+                        Flexible(
+                          child: Text(
+                            label,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: fg,
+                            ),
                           ),
                         ),
                       ],
@@ -980,45 +1008,64 @@ class _AttendeesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shown = count.clamp(0, 3);
+    const avatarSize = 28.0;
+    const avatarStep = 21.0;
     return Row(
       children: [
-        for (int i = 0; i < shown; i++)
-          Container(
-            width: 28,
-            height: 28,
-            margin: EdgeInsets.only(left: i == 0 ? 0 : -7),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: _avatarGradients[i % _avatarGradients.length],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: const Color(0xFF06091A), width: 2),
-            ),
-            child: const Icon(
-              Icons.person_rounded,
-              size: 14,
-              color: Colors.white,
-            ),
-          ),
-        const SizedBox(width: 10),
-        Text.rich(
-          TextSpan(
+        // Stack reserves the actual overlapped width. Container margins must
+        // be non-negative, including when a calendar save adds person #2.
+        SizedBox(
+          width: shown == 0 ? 0 : avatarSize + (shown - 1) * avatarStep,
+          height: avatarSize,
+          child: Stack(
             children: [
-              TextSpan(
-                text: '$count ${count == 1 ? 'person' : 'people'}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF5B8CFF),
+              for (int i = 0; i < shown; i++)
+                PositionedDirectional(
+                  start: i * avatarStep,
+                  width: avatarSize,
+                  height: avatarSize,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: _avatarGradients[i % _avatarGradients.length],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      border: Border.all(
+                        color: const Color(0xFF06091A),
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.person_rounded,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
-              ),
-              TextSpan(
-                text: ' interested',
-                style: TextStyle(fontSize: 12, color: kFaint),
-              ),
             ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$count ${count == 1 ? 'person' : 'people'}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF5B8CFF),
+                  ),
+                ),
+                TextSpan(
+                  text: ' interested',
+                  style: TextStyle(fontSize: 12, color: kFaint),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -1246,14 +1293,14 @@ class _OfferCard extends StatelessWidget {
   }
 }
 
-// ─── RSVP success sheet ───────────────────────────────────────────────────────
+// ─── KMSTRY calendar confirmation (not a reservation) ─────────────────────────
 
-class _RsvpSuccessSheet extends StatelessWidget {
+class _CalendarAddedSheet extends StatelessWidget {
   final String eventTitle;
   final bool isDark;
   final Color kBg, kText, kDim;
 
-  const _RsvpSuccessSheet({
+  const _CalendarAddedSheet({
     required this.eventTitle,
     required this.isDark,
     required this.kBg,
@@ -1276,7 +1323,7 @@ class _RsvpSuccessSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              "You're In! 🎉",
+              'Added to your calendar',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w800,
@@ -1287,8 +1334,7 @@ class _RsvpSuccessSheet extends StatelessWidget {
             const SizedBox(height: 10),
 
             Text(
-              'Your spot is confirmed for "$eventTitle". '
-              "We can't wait to see you there. Get ready for a night to remember! ✨",
+              '"$eventTitle" is now saved in your KMSTRY calendar.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
@@ -1298,12 +1344,12 @@ class _RsvpSuccessSheet extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Good vibes only. Make it count. ✨',
+              'This does not reserve a place or confirm a booking.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: _kTurkuaz,
+                color: kDim,
               ),
             ),
             const SizedBox(height: 28),
@@ -1322,7 +1368,7 @@ class _RsvpSuccessSheet extends StatelessWidget {
                   ),
                 ),
                 child: const Text(
-                  "Let's go! 🚀",
+                  'Got it',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
               ),

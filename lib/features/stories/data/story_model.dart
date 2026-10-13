@@ -60,6 +60,7 @@ class StoryItem {
     this.isUploadingPlaceholder = false,
     this.textOverlay,
     this.isVenueStory = false,
+    this.ownerUploadId,
   });
 
   final String? checkinFeaturedPhotoUrl;
@@ -77,6 +78,10 @@ class StoryItem {
 
   /// Henüz yüklenmekte olan story için viewer'da "Loading…" gösteren placeholder.
   final bool isUploadingPlaceholder;
+
+  /// Local owner-only entry. Never sent to public story endpoints.
+  final String? ownerUploadId;
+  bool get isOwnerUpload => ownerUploadId != null;
 
   bool get isVideo => mediaType == 'video';
 

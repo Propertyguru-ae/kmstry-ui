@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_compress/video_compress.dart';
+import 'video_work_queue.dart';
 
 /// Yükleme öncesi medyayı sıkıştıran yardımcı.
 ///
@@ -15,13 +16,25 @@ import 'package:video_compress/video_compress.dart';
 /// ayarlanıyor — ek sıkıştırma gerekmez.
 class MediaCompressor {
   MediaCompressor._();
+  static final _videoWork = VideoWorkQueue(
+    cleanup: VideoCompress.deleteAllCache,
+  );
+
+  /// Call before preparing a video and release after its transfer completes.
+  static void Function() retainVideoFiles() => _videoWork.retainFiles();
 
   /// Videoyu sıkıştırır ve sıkıştırılmış dosyayı döndürür. Sıkıştırma
-  /// başarısız olursa (veya sonuç orijinalden büyükse) orijinali döndürür —
-  /// yani bu çağrı yüklemeyi asla bozmaz.
+  /// başarısız olursa orijinali döndürür. Geçerli dönüşüm daha büyük olsa bile
+  /// korunur: küçük bir HEVC orijinale geri dönmek AWS uyumluluğunu bozabilir.
+  /// Backend yine her public videonun gerçek codec'ini doğrular.
   static Future<File> compressVideo(
     File input, {
     VideoQuality quality = VideoQuality.MediumQuality,
+  }) => _videoWork.run(() => _compressVideo(input, quality: quality));
+
+  static Future<File> _compressVideo(
+    File input, {
+    required VideoQuality quality,
   }) async {
     try {
       final originalSize = await input.length();
@@ -32,30 +45,40 @@ class MediaCompressor {
         includeAudio: true,
       );
 
-      final compressedPath = info?.path;
-      if (compressedPath == null) return input;
-
-      final compressed = File(compressedPath);
-      if (!await compressed.exists()) return input;
+      final compressed = await selectPreparedVideo(input, info?.path);
+      if (compressed.path == input.path) return input;
 
       final compressedSize = await compressed.length();
-      // Sıkıştırma ters teperse (nadiren küçük dosyalarda olur) orijinali kullan.
-      if (compressedSize >= originalSize) return input;
 
       if (kDebugMode) {
         final pct = (100 * (1 - compressedSize / originalSize)).toStringAsFixed(
           0,
         );
         debugPrint(
-          '🎬 Video compressed: ${_mb(originalSize)} → ${_mb(compressedSize)} ($pct% smaller)',
+          '🎬 Video prepared: ${_mb(originalSize)} → ${_mb(compressedSize)} (size change: $pct%)',
         );
       }
       return compressed;
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('⚠️ Video compression failed, using original: $e');
+      }
       return input;
     }
+  }
+
+  /// Keep a valid encoder result even when codec conversion increases size.
+  /// Invalid/missing output may fall back; the backend compatibility boundary
+  /// will normalize that original before AWS can approve publication.
+  @visibleForTesting
+  static Future<File> selectPreparedVideo(
+    File input,
+    String? outputPath,
+  ) async {
+    if (outputPath == null || outputPath.isEmpty) return input;
+    final output = File(outputPath);
+    if (!await output.exists() || await output.length() == 0) return input;
+    return output;
   }
 
   /// Venue story/gallery videoları için 720p sıkıştırma. 60 saniyelik medya
@@ -142,11 +165,7 @@ class MediaCompressor {
 
   /// İşi biten sıkıştırma geçici dosyalarını temizler. Uygulama arka plana
   /// alındığında veya check-in tamamlandığında çağrılabilir.
-  static Future<void> cleanup() async {
-    try {
-      await VideoCompress.deleteAllCache();
-    } catch (_) {}
-  }
+  static Future<void> cleanup() => _videoWork.cleanup();
 
   static String _mb(int bytes) =>
       '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';

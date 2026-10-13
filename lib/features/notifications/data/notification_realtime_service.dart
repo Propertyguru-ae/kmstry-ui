@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/chat/data/chat_realtime_service.dart';
@@ -14,13 +15,29 @@ class NotificationRealtimeEnvelope {
 }
 
 class NotificationRealtimeService {
-  NotificationRealtimeService._internal() {
+  NotificationRealtimeService._internal()
+    : _testEvents = null,
+      _testStates = null {
     _socket.events.listen(_onSocketEvent);
+    SecureStorage.sessionEnded.listen((_) {
+      _seenEventIds.clear();
+      _seenEventOrder.clear();
+    });
   }
 
   static final NotificationRealtimeService _instance =
       NotificationRealtimeService._internal();
   factory NotificationRealtimeService() => _instance;
+
+  @visibleForTesting
+  NotificationRealtimeService.forTest({
+    required Stream<NotificationRealtimeEnvelope> events,
+    required Stream<ChatRealtimeConnectionState> connectionState,
+  }) : _testEvents = events,
+       _testStates = connectionState;
+
+  final Stream<NotificationRealtimeEnvelope>? _testEvents;
+  final Stream<ChatRealtimeConnectionState>? _testStates;
 
   final ChatRealtimeService _socket = ChatRealtimeService();
   final StreamController<NotificationRealtimeEnvelope> _eventsController =
@@ -29,11 +46,13 @@ class NotificationRealtimeService {
   final List<String> _seenEventOrder = <String>[];
   static const int _maxSeenEvents = 800;
 
-  Stream<NotificationRealtimeEnvelope> get events => _eventsController.stream;
+  Stream<NotificationRealtimeEnvelope> get events =>
+      _testEvents ?? _eventsController.stream;
   Stream<ChatRealtimeConnectionState> get connectionState =>
-      _socket.connectionState;
+      _testStates ?? _socket.connectionState;
 
   Future<void> ensureConnected() async {
+    if (_testEvents != null) return;
     final token = await SecureStorage.getAccessToken();
     if (token == null || token.trim().isEmpty) return;
     await _socket.connectWithToken(token: token);

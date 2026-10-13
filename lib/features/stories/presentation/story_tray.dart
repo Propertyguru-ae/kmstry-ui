@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
 import '../data/story_model.dart';
 import '../data/story_repository.dart';
 import '../data/story_viewed_cache.dart';
@@ -10,6 +12,8 @@ import 'story_viewer_page.dart';
 
 class StoryTray extends StatefulWidget {
   final String venueId;
+  final StoryRepository? repository;
+  final PendingPublicMediaService? uploads;
 
   /// Aktif checkin varsa Add Story butonu gösterilir.
   final VoidCallback? onAddStory;
@@ -35,6 +39,8 @@ class StoryTray extends StatefulWidget {
   const StoryTray({
     super.key,
     required this.venueId,
+    this.repository,
+    this.uploads,
     this.onAddStory,
     this.isUploading = false,
     this.anonymousLocked = false,
@@ -48,7 +54,8 @@ class StoryTray extends StatefulWidget {
 }
 
 class _StoryTrayState extends State<StoryTray> {
-  final _repo = StoryRepository();
+  late final _repo = widget.repository ?? StoryRepository();
+  late final _uploads = widget.uploads ?? PendingPublicMediaService.instance;
 
   List<StoryItem> _myStories = [];
   List<StoryGroup> _groups = [];
@@ -63,12 +70,16 @@ class _StoryTrayState extends State<StoryTray> {
   void initState() {
     super.initState();
     StoryVisibility.changes.addListener(_onVisibilityChanged);
+    StoryRepository.changes.addListener(_onPublishedStoryChanged);
+    _uploads.changes.addListener(_onPendingMediaChanged);
     _load();
   }
 
   @override
   void dispose() {
     StoryVisibility.changes.removeListener(_onVisibilityChanged);
+    StoryRepository.changes.removeListener(_onPublishedStoryChanged);
+    _uploads.changes.removeListener(_onPendingMediaChanged);
     super.dispose();
   }
 
@@ -78,6 +89,14 @@ class _StoryTrayState extends State<StoryTray> {
     if (change == null) return;
     setState(() => _groups = change.apply(_groups));
     _load();
+  }
+
+  void _onPublishedStoryChanged() {
+    if (mounted) _load();
+  }
+
+  void _onPendingMediaChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -158,13 +177,16 @@ class _StoryTrayState extends State<StoryTray> {
   }
 
   void _openMyStories() {
-    if (_myStories.isEmpty) return;
+    if (_myStories.isEmpty &&
+        _uploads.latest(PendingPublicMediaKind.personalStory) == null) {
+      return;
+    }
     final realStories = _myStories
         .where((s) => !s.isUploadingPlaceholder)
         .toList();
     final meGroup = StoryGroup(
       user: StoryUser(id: 'me', fullName: 'Me'),
-      stories: _myStories,
+      stories: realStories,
       isCurrentUserOwner: true,
     );
     final startIndex = _firstUnseenIndex(realStories);
@@ -173,7 +195,11 @@ class _StoryTrayState extends State<StoryTray> {
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => StoryViewerPage(
-          groups: [meGroup, ..._groups],
+          groups: [meGroup],
+          ownerUploadKind: PendingPublicMediaKind.personalStory,
+          ownerUploads: _uploads,
+          loadOwnerStories: _repo.getMyStories,
+          onCreateStory: widget.onAddStory,
           initialGroupIndex: 0,
           initialStoryIndex: startIndex,
         ),
@@ -251,13 +277,26 @@ class _StoryTrayState extends State<StoryTray> {
 
   @override
   Widget build(BuildContext context) {
+    final trayHeight =
+        (_kAvatarSize +
+                (_kRingPad + _kRingStroke) * 2 +
+                5 +
+                PublicMediaUploadStatus.preferredHeight(context))
+            .clamp(90.0, double.infinity)
+            .ceilToDouble();
     final hasAdd = widget.onAddStory != null;
     final hasMe = _myStories.isNotEmpty;
+    final pending = hasAdd
+        ? _uploads.latest(
+            PendingPublicMediaKind.personalStory,
+            venueId: widget.venueId,
+          )
+        : null;
 
-    if (_loading && !hasAdd && !hasMe) {
-      return const SizedBox(
-        height: 90,
-        child: Center(
+    if (_loading && !hasAdd && !hasMe && pending == null) {
+      return SizedBox(
+        height: trayHeight,
+        child: const Center(
           child: SizedBox(
             width: 20,
             height: 20,
@@ -268,10 +307,12 @@ class _StoryTrayState extends State<StoryTray> {
     }
 
     // Hiç içerik yoksa tray'i gösterme
-    if (!hasAdd && !hasMe && _groups.isEmpty) return const SizedBox.shrink();
+    if (!hasAdd && !hasMe && pending == null && _groups.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return SizedBox(
-      height: 90,
+      height: trayHeight,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -290,9 +331,10 @@ class _StoryTrayState extends State<StoryTray> {
               isUploading: widget.isUploading,
               allSeen: meSeen,
               onAddStory: hasAdd ? widget.onAddStory! : null,
-              onViewStories: hasMe ? _openMyStories : null,
+              onViewStories: hasMe || pending != null ? _openMyStories : null,
               anonymousLocked: widget.anonymousLocked,
               fallbackImageUrl: widget.myPhotoUrl,
+              pending: pending,
             );
           }
 
@@ -461,6 +503,7 @@ class _MeBubble extends StatefulWidget {
   final VoidCallback? onViewStories;
   final bool anonymousLocked;
   final String? fallbackImageUrl;
+  final PendingPublicMedia? pending;
 
   const _MeBubble({
     required this.myStories,
@@ -470,6 +513,7 @@ class _MeBubble extends StatefulWidget {
     this.onViewStories,
     this.anonymousLocked = false,
     this.fallbackImageUrl,
+    this.pending,
   });
 
   @override
@@ -523,22 +567,6 @@ class _MeBubbleState extends State<_MeBubble>
     return null;
   }
 
-  void _openUploadingViewer() {
-    final stories = [...widget.myStories, StoryItem.uploadingPlaceholder()];
-    final meGroup = StoryGroup(
-      user: StoryUser(id: 'me', fullName: 'Me'),
-      stories: stories,
-      isCurrentUserOwner: true,
-    );
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => StoryViewerPage(groups: [meGroup]),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final hasStories = widget.myStories.isNotEmpty;
@@ -547,21 +575,39 @@ class _MeBubbleState extends State<_MeBubble>
     final color = Theme.of(context).colorScheme.primary;
     final bubbleImg = _bubbleImage(widget.myStories) ?? widget.fallbackImageUrl;
 
-    if (!hasStories && !canAdd) return const SizedBox.shrink();
+    if (!hasStories && !canAdd && widget.pending == null) {
+      return const SizedBox.shrink();
+    }
 
-    final avatar = _squareAvatar(
-      context: context,
-      imageUrl: bubbleImg,
-      placeholder: Center(
-        child: Icon(
-          hasStories ? Icons.videocam : Icons.person,
-          color: color,
-          size: 24,
-        ),
-      ),
-    );
+    final avatar = widget.pending != null
+        ? SizedBox(
+            width: _kAvatarSize,
+            height: _kAvatarSize,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(_kAvatarRadius),
+              child: PendingPublicMediaPreview(item: widget.pending!),
+            ),
+          )
+        : _squareAvatar(
+            context: context,
+            imageUrl: bubbleImg,
+            placeholder: Center(
+              child: Icon(
+                hasStories ? Icons.videocam : Icons.person,
+                color: color,
+                size: 24,
+              ),
+            ),
+          );
 
-    final ringColors = hasStories && !widget.allSeen
+    final ringColors = widget.pending != null
+        ? [
+            (widget.pending!.state == PendingPublicMediaState.rejected ||
+                    widget.pending!.state == PendingPublicMediaState.failed)
+                ? Colors.redAccent
+                : Colors.grey.shade500,
+          ]
+        : hasStories && !widget.allSeen
         ? _kBrandRingColors
         : [Colors.grey.shade400, Colors.grey.shade400];
 
@@ -592,7 +638,7 @@ class _MeBubbleState extends State<_MeBubble>
           ],
         ),
       );
-    } else if (hasStories) {
+    } else if (hasStories || widget.pending != null) {
       content = CustomPaint(
         painter: _SquareRingPainter(
           colors: ringColors,
@@ -626,9 +672,9 @@ class _MeBubbleState extends State<_MeBubble>
     }
 
     return GestureDetector(
-      onTap: uploading
-          ? _openUploadingViewer
-          : (hasStories ? widget.onViewStories : widget.onAddStory),
+      onTap: hasStories || widget.pending != null
+          ? widget.onViewStories
+          : (uploading ? null : widget.onAddStory),
       child: Padding(
         padding: const EdgeInsets.only(right: 12),
         child: Column(
@@ -674,18 +720,20 @@ class _MeBubbleState extends State<_MeBubble>
             const SizedBox(height: 5),
             SizedBox(
               width: _kAvatarSize + (_kRingPad + _kRingStroke) * 2,
-              child: Text(
-                uploading
-                    ? 'Uploading…'
-                    : (!hasStories && canAdd ? 'Your story' : 'Me'),
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-              ),
+              child: widget.pending != null
+                  ? StoryUploadStatus(item: widget.pending!)
+                  : Text(
+                      uploading
+                          ? 'Uploading…'
+                          : (!hasStories && canAdd ? 'Your story' : 'Me'),
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
             ),
           ],
         ),

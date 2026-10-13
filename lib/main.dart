@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:provider/provider.dart';
 import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
@@ -21,6 +22,7 @@ import 'core/config/app_config.dart';
 import 'core/config/session_environment_coordinator.dart';
 import 'core/network/api_client.dart';
 import 'core/update/app_update_coordinator.dart';
+import 'features/media/overlay_fonts.dart';
 
 late List<CameraDescription> cameras;
 
@@ -30,6 +32,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  registerOverlayFontLicenses();
 
   // Fail immediately if a release build was produced without explicit,
   // production-safe API and public-site origins.
@@ -122,6 +125,7 @@ class MyApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       child: MaterialApp(
         navigatorKey: navigatorKey,
+        builder: (_, child) => LogoutGuard(child: child ?? const SizedBox()),
         debugShowCheckedModeBanner: false,
         title: 'KMSTRY',
         theme: AppTheme.lightTheme,

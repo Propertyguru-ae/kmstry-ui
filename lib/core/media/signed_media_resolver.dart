@@ -1,6 +1,7 @@
 import '../network/api_client.dart';
 import '../storage/secure_storage.dart';
 import 'media_reference.dart';
+import 'media_cache_identity.dart';
 
 typedef MediaRefreshTransport =
     Future<Map<String, dynamic>> Function(String path);
@@ -15,12 +16,21 @@ class SignedMediaResolver {
   final MediaRefreshTransport _transport;
   final Map<String, Future<MediaReference?>> _inFlight = {};
   final Map<String, MediaReference> _cache = {};
+  final Map<String, String> _sourceIdentity = {};
 
   MediaReference current(MediaReference reference) {
     final cached = _cache[reference.mediaId];
     if (cached == null) return reference;
+    if (reference.url.isNotEmpty &&
+        cached.url.isNotEmpty &&
+        mediaObjectIdentity(reference.url) !=
+            _sourceIdentity[reference.mediaId] &&
+        mediaObjectIdentity(reference.url) != mediaObjectIdentity(cached.url)) {
+      evict(reference.mediaId);
+      return reference;
+    }
     if (cached.expiresAt?.isBefore(DateTime.now()) == true) {
-      _cache.remove(reference.mediaId);
+      evict(reference.mediaId);
       return reference;
     }
     return cached;
@@ -40,6 +50,7 @@ class SignedMediaResolver {
         );
         if (refreshed.url.isEmpty) return null;
         _cache[reference.mediaId] = refreshed;
+        _sourceIdentity[reference.mediaId] = mediaObjectIdentity(reference.url);
         return refreshed;
       } catch (_) {
         return null;
@@ -49,7 +60,10 @@ class SignedMediaResolver {
     });
   }
 
-  void evict(String mediaId) => _cache.remove(mediaId);
+  void evict(String mediaId) {
+    _cache.remove(mediaId);
+    _sourceIdentity.remove(mediaId);
+  }
 
   static Future<Map<String, dynamic>> _defaultTransport(String path) async {
     final token = await SecureStorage.getAccessToken();

@@ -1,16 +1,25 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart';
 
+/// Bir davet için süren işlem; yalnızca o butonda yükleniyor göstergesi çıkar.
+enum _InviteAction { accept, decline }
+
 class VenueMemberInvitePage extends StatefulWidget {
   final List<MemberVenue> pendingInvites;
+  final VenueMemberRepository? repository;
 
-  const VenueMemberInvitePage({super.key, required this.pendingInvites});
+  const VenueMemberInvitePage({
+    super.key,
+    required this.pendingInvites,
+    this.repository,
+  });
 
   @override
   State<VenueMemberInvitePage> createState() => _VenueMemberInvitePageState();
@@ -18,8 +27,9 @@ class VenueMemberInvitePage extends StatefulWidget {
 
 class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
     with TickerProviderStateMixin {
-  final _repo = VenueMemberRepository();
-  final Set<String> _loading = {};
+  late final VenueMemberRepository _repo =
+      widget.repository ?? VenueMemberRepository();
+  final Map<String, _InviteAction> _busy = {};
   bool _accepted = false;
   MemberVenue? _acceptedInvite;
 
@@ -83,20 +93,20 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
   Future<void> _accept(MemberVenue invite) async {
     final membershipId = invite.membershipId;
     if (membershipId == null) return;
-    setState(() => _loading.add(membershipId));
+    setState(() => _busy[membershipId] = _InviteAction.accept);
     try {
       await _repo.acceptMemberInvite(invite.id, membershipId);
       if (!mounted) return;
       AuthRepository.invalidateMeCache();
       setState(() {
-        _loading.remove(membershipId);
+        _busy.remove(membershipId);
         _accepted = true;
         _acceptedInvite = invite;
       });
       _successCtrl.forward();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _loading.remove(membershipId));
+      setState(() => _busy.remove(membershipId));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.toString().replaceAll('Exception: ', '')),
@@ -109,7 +119,7 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
   Future<void> _decline(MemberVenue invite) async {
     final membershipId = invite.membershipId;
     if (membershipId == null) return;
-    setState(() => _loading.add(membershipId));
+    setState(() => _busy[membershipId] = _InviteAction.decline);
     try {
       await _repo.declineMemberInvite(invite.id, membershipId);
       if (!mounted) return;
@@ -117,7 +127,7 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
       _goToNotifications();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _loading.remove(membershipId));
+      setState(() => _busy.remove(membershipId));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.toString().replaceAll('Exception: ', '')),
@@ -180,8 +190,9 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
       );
     }
 
+    final palette = _InvitePalette.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFF06091A),
+      backgroundColor: palette.background,
       body: AnimatedBuilder(
         animation: _floatCtrl,
         builder: (_, __) => Stack(
@@ -215,12 +226,12 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                       padding: const EdgeInsets.only(top: 18, right: 22),
                       child: GestureDetector(
                         onTap: () => Navigator.of(context).pop(),
-                        child: const Text(
+                        child: Text(
                           'Later',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF1FD9A8),
+                            color: palette.teal,
                           ),
                         ),
                       ),
@@ -262,13 +273,13 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                                   width: 76,
                                   height: 76,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF0D1525),
+                                    color: palette.ringCenter,
                                     borderRadius: BorderRadius.circular(24),
                                   ),
-                                  child: const Icon(
+                                  child: Icon(
                                     Icons.storefront_rounded,
                                     size: 34,
-                                    color: Color(0xFFE020D8),
+                                    color: palette.magenta,
                                   ),
                                 ),
                               ],
@@ -285,18 +296,18 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                               width: 18,
                               height: 2,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFE020D8),
+                                color: palette.magenta,
                                 borderRadius: BorderRadius.circular(1),
                               ),
                             ),
                             const SizedBox(width: 7),
-                            const Text(
+                            Text(
                               'NEW INVITATION',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 2,
-                                color: Color(0xFFE020D8),
+                                color: palette.magenta,
                               ),
                             ),
                           ],
@@ -307,10 +318,10 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                         RichText(
                           textAlign: TextAlign.center,
                           text: TextSpan(
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.w800,
-                              color: Colors.white,
+                              color: palette.textPrimary,
                               height: 1.18,
                               letterSpacing: -0.6,
                             ),
@@ -333,12 +344,12 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
+                        Text(
                           'Someone added you to their team.\nReview the details below.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 13,
-                            color: Color(0xFF4A6280),
+                            color: palette.textSecondary,
                             height: 1.6,
                           ),
                         ),
@@ -349,12 +360,12 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                   // Bottom sheet
                   Expanded(
                     child: Container(
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF0B1322),
-                        borderRadius:
-                            BorderRadius.vertical(top: Radius.circular(26)),
+                      decoration: BoxDecoration(
+                        color: palette.sheet,
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(26)),
                         border: Border(
-                          top: BorderSide(color: Color(0xFF162040)),
+                          top: BorderSide(color: palette.sheetBorder),
                         ),
                       ),
                       child: SingleChildScrollView(
@@ -367,7 +378,7 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                               height: 4,
                               margin: const EdgeInsets.only(bottom: 20),
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.08),
+                                color: palette.handle,
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),
@@ -377,42 +388,41 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                                 invite: invite,
                                 roleName: _roleName(invite.role),
                                 roleIcon: _roleIcon(invite.role),
-                                isLoading: _loading
-                                    .contains(invite.membershipId ?? ''),
-                                onAccept:
-                                    _loading.contains(invite.membershipId ?? '')
-                                        ? null
-                                        : () => _accept(invite),
-                                onDecline:
-                                    _loading.contains(invite.membershipId ?? '')
-                                        ? null
-                                        : () => _decline(invite),
+                                busyAction: _busy[invite.membershipId ?? ''],
+                                // İşlem sürerken iki buton da kilitli; gösterge
+                                // yalnızca basılan butonda.
+                                onAccept: _busy.containsKey(
+                                        invite.membershipId ?? '')
+                                    ? null
+                                    : () => _accept(invite),
+                                onDecline: _busy.containsKey(
+                                        invite.membershipId ?? '')
+                                    ? null
+                                    : () => _decline(invite),
                               ),
 
                             // Info box
                             Container(
                               padding: const EdgeInsets.all(13),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF1A9FE8)
-                                    .withValues(alpha: 0.07),
+                                color: palette.blue.withValues(alpha: 0.08),
                                 border: Border.all(
-                                  color: const Color(0xFF1A9FE8)
-                                      .withValues(alpha: 0.15),
+                                  color: palette.blue.withValues(alpha: 0.25),
                                 ),
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Icon(Icons.info_outline_rounded,
-                                      size: 14, color: Color(0xFF1A9FE8)),
+                                  Icon(Icons.info_outline_rounded,
+                                      size: 15, color: palette.blue),
                                   const SizedBox(width: 9),
                                   Expanded(
                                     child: Text.rich(
                                       TextSpan(
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Color(0xFF4A6E90),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: palette.textSecondary,
                                           height: 1.5,
                                         ),
                                         children: [
@@ -423,15 +433,8 @@ class _VenueMemberInvitePageState extends State<VenueMemberInvitePage>
                                           TextSpan(
                                             text: 'leave anytime',
                                             style: TextStyle(
-                                              color: const Color(0xFF1A9FE8),
-                                              fontWeight: FontWeight.w600,
-                                              shadows: [
-                                                Shadow(
-                                                  color: const Color(0xFF1A9FE8)
-                                                      .withValues(alpha: 0.3),
-                                                  blurRadius: 4,
-                                                ),
-                                              ],
+                                              color: palette.blue,
+                                              fontWeight: FontWeight.w700,
                                             ),
                                           ),
                                           const TextSpan(
@@ -464,7 +467,7 @@ class _InviteCard extends StatelessWidget {
   final MemberVenue invite;
   final String roleName;
   final IconData roleIcon;
-  final bool isLoading;
+  final _InviteAction? busyAction;
   final VoidCallback? onAccept;
   final VoidCallback? onDecline;
 
@@ -472,7 +475,7 @@ class _InviteCard extends StatelessWidget {
     required this.invite,
     required this.roleName,
     required this.roleIcon,
-    required this.isLoading,
+    required this.busyAction,
     this.onAccept,
     this.onDecline,
   });
@@ -484,11 +487,12 @@ class _InviteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _InvitePalette.of(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1A30),
-        border: Border.all(color: const Color(0xFF1E3060), width: 1.5),
+        color: palette.card,
+        border: Border.all(color: palette.cardBorder, width: 1.5),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(
@@ -508,32 +512,32 @@ class _InviteCard extends StatelessWidget {
                     children: [
                       Text(
                         invite.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFEEF2FF),
+                          color: palette.textPrimary,
                           letterSpacing: -0.2,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Row(
-                        children: const [
+                        children: [
                           Icon(Icons.storefront_outlined,
-                              size: 12, color: Color(0xFF3A5070)),
-                          SizedBox(width: 4),
+                              size: 13, color: palette.textMuted),
+                          const SizedBox(width: 4),
                           Text(
                             'Venue',
                             style: TextStyle(
-                                fontSize: 11, color: Color(0xFF3A5070)),
+                                fontSize: 12, color: palette.textMuted),
                           ),
                         ],
                       ),
                     ],
                   ),
                 ),
-                const Text(
+                Text(
                   'Just now',
-                  style: TextStyle(fontSize: 10.5, color: Color(0xFF2E4560)),
+                  style: TextStyle(fontSize: 11, color: palette.textMuted),
                 ),
               ],
             ),
@@ -544,9 +548,9 @@ class _InviteCard extends StatelessWidget {
             margin: const EdgeInsets.fromLTRB(18, 0, 18, 14),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFE020D8).withValues(alpha: 0.08),
+              color: palette.magenta.withValues(alpha: 0.08),
               border: Border.all(
-                  color: const Color(0xFFE020D8).withValues(alpha: 0.20)),
+                  color: palette.magenta.withValues(alpha: 0.25)),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(
@@ -555,32 +559,32 @@ class _InviteCard extends StatelessWidget {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE020D8).withValues(alpha: 0.18),
+                    color: palette.magenta.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  child: Icon(roleIcon, size: 17, color: const Color(0xFFE020D8)),
+                  child: Icon(roleIcon, size: 17, color: palette.magenta),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'YOUR ROLE',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.8,
-                          color: Color(0xFF7A3060),
+                          color: palette.roleLabel,
                         ),
                       ),
                       const SizedBox(height: 3),
                       Text(
                         roleName,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFF020D0),
+                          color: palette.magenta,
                         ),
                       ),
                     ],
@@ -615,20 +619,23 @@ class _InviteCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text.rich(
-                  TextSpan(
-                    style: const TextStyle(fontSize: 11.5, color: Color(0xFF3A5070)),
-                    children: [
-                      const TextSpan(text: 'Invited by '),
-                      TextSpan(
-                        text: invite.inviterName ?? 'Venue Owner',
-                        style: const TextStyle(
-                          color: Color(0xFF7AA8D0),
-                          fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      style: TextStyle(
+                          fontSize: 12.5, color: palette.textSecondary),
+                      children: [
+                        const TextSpan(text: 'Invited by '),
+                        TextSpan(
+                          text: invite.inviterName ?? 'Venue Owner',
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const TextSpan(text: ' · Owner'),
-                    ],
+                        const TextSpan(text: ' · Owner'),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -640,9 +647,20 @@ class _InviteCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
             child: Row(
               children: [
-                Expanded(child: _DeclineButton(onPressed: onDecline, isLoading: isLoading)),
+                Expanded(
+                  child: _DeclineButton(
+                    onPressed: onDecline,
+                    isLoading: busyAction == _InviteAction.decline,
+                  ),
+                ),
                 const SizedBox(width: 10),
-                Expanded(flex: 2, child: _AcceptButton(onPressed: onAccept, isLoading: isLoading)),
+                Expanded(
+                  flex: 2,
+                  child: _AcceptButton(
+                    onPressed: onAccept,
+                    isLoading: busyAction == _InviteAction.accept,
+                  ),
+                ),
               ],
             ),
           ),
@@ -662,38 +680,48 @@ class _DeclineButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _InvitePalette.of(context);
     return GestureDetector(
       onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 13),
-        decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFF1E3060)),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: isLoading
-            ? const Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Color(0xFF5A7090)),
-                ),
-              )
-            : const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.close, size: 15, color: Color(0xFF5A7090)),
-                  SizedBox(width: 6),
-                  Text(
-                    'Decline',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF5A7090),
-                    ),
+      child: Opacity(
+        // Diğer işlem sürerken kilitli olduğu belli olsun.
+        opacity: onPressed == null && !isLoading ? 0.45 : 1,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          decoration: BoxDecoration(
+            border: Border.all(color: palette.cardBorder, width: 1.2),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: isLoading
+              ? Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: palette.textSecondary),
                   ),
-                ],
-              ),
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.close, size: 15, color: palette.textSecondary),
+                    const SizedBox(width: 6),
+                    // Büyük yazı boyutunda butondan taşmasın.
+                    Flexible(
+                      child: Text(
+                        'Decline',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: palette.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -709,37 +737,51 @@ class _AcceptButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 13),
-        decoration: BoxDecoration(
-          color: const Color(0xFF111827),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF1E3060)),
-        ),
-        child: isLoading
-            ? const Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
-                ),
-              )
-            : const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.check, size: 15, color: Colors.white),
-                  SizedBox(width: 7),
-                  Text(
-                    'Accept invitation',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
+      child: Opacity(
+        opacity: onPressed == null && !isLoading ? 0.45 : 1,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          // Uygulamanın standart birincil butonu (düz mavi).
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: AppColors.blue,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.blue.withValues(alpha: 0.30),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
               ),
+            ],
+          ),
+          child: isLoading
+              ? const Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  ),
+                )
+              : const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.check, size: 15, color: Colors.white),
+                    SizedBox(width: 7),
+                    Flexible(
+                      child: Text(
+                        'Accept invitation',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -858,8 +900,9 @@ class _SuccessView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _InvitePalette.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFF06091A),
+      backgroundColor: palette.background,
       body: Stack(
         children: [
           // Teal orb top-left
@@ -909,28 +952,28 @@ class _SuccessView extends StatelessWidget {
                         width: 88,
                         height: 88,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1FD9A8).withValues(alpha: 0.12),
+                          color: palette.teal.withValues(alpha: 0.12),
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: const Color(0xFF1FD9A8).withValues(alpha: 0.35),
+                            color: palette.teal.withValues(alpha: 0.35),
                             width: 1.5,
                           ),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.check_rounded,
                           size: 44,
-                          color: Color(0xFF1FD9A8),
+                          color: palette.teal,
                         ),
                       ),
                     ),
                     const SizedBox(height: 28),
 
-                    const Text(
+                    Text(
                       "You're in!",
                       style: TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                        color: palette.textPrimary,
                         letterSpacing: -0.6,
                       ),
                     ),
@@ -941,9 +984,9 @@ class _SuccessView extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 20, vertical: 16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0B1322),
+                        color: palette.sheet,
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFF162040)),
+                        border: Border.all(color: palette.cardBorder),
                       ),
                       child: Row(
                         children: [
@@ -951,14 +994,14 @@ class _SuccessView extends StatelessWidget {
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1FD9A8).withValues(alpha: 0.12),
+                              color: palette.teal.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
-                                color: const Color(0xFF1FD9A8).withValues(alpha: 0.25),
+                                color: palette.teal.withValues(alpha: 0.25),
                               ),
                             ),
                             child: Icon(roleIcon,
-                                size: 20, color: const Color(0xFF1FD9A8)),
+                                size: 20, color: palette.teal),
                           ),
                           const SizedBox(width: 14),
                           Expanded(
@@ -968,23 +1011,22 @@ class _SuccessView extends StatelessWidget {
                                 Text(
                                   'You are now',
                                   style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.white.withValues(alpha: 0.4),
+                                    fontSize: 12,
+                                    color: palette.textMuted,
                                   ),
                                 ),
                                 const SizedBox(height: 2),
                                 RichText(
                                   text: TextSpan(
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w700,
-                                      color: Colors.white,
+                                      color: palette.textPrimary,
                                     ),
                                     children: [
                                       TextSpan(
                                         text: roleName,
-                                        style: const TextStyle(
-                                            color: Color(0xFF1FD9A8)),
+                                        style: TextStyle(color: palette.teal),
                                       ),
                                       const TextSpan(text: ' at '),
                                       TextSpan(text: invite.name),
@@ -1004,7 +1046,7 @@ class _SuccessView extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
-                        color: Colors.white.withValues(alpha: 0.35),
+                        color: palette.textSecondary,
                         height: 1.5,
                       ),
                     ),
@@ -1050,16 +1092,16 @@ class _SuccessView extends StatelessWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 15),
                           decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFF1E3060)),
+                            border: Border.all(color: palette.cardBorder),
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Close',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
-                              color: Color(0xFF4A6280),
+                              color: palette.textSecondary,
                             ),
                           ),
                         ),
@@ -1074,4 +1116,41 @@ class _SuccessView extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+
+/// Davet sayfasının açık / koyu tema renkleri. Eski sabit koyu tonların çoğu
+/// (#2E4560, #3A5070, #4A6280 …) zemine çok yakındı ve okunmuyordu.
+class _InvitePalette {
+  const _InvitePalette._(this.isDark);
+  final bool isDark;
+
+  static _InvitePalette of(BuildContext context) =>
+      _InvitePalette._(Theme.of(context).brightness == Brightness.dark);
+
+  Color get background => isDark ? AppColors.darkBg : const Color(0xFFF5F7FB);
+  Color get sheet => isDark ? AppColors.darkSurface : Colors.white;
+  Color get sheetBorder =>
+      isDark ? const Color(0xFF1E2A48) : const Color(0xFFE3E8F0);
+  Color get card => isDark ? const Color(0xFF0D1A30) : const Color(0xFFF8FAFD);
+  Color get cardBorder =>
+      isDark ? const Color(0xFF26386A) : const Color(0xFFDCE3EE);
+  Color get handle => isDark
+      ? Colors.white.withValues(alpha: 0.16)
+      : Colors.black.withValues(alpha: 0.12);
+  Color get ringCenter => isDark ? const Color(0xFF0D1525) : Colors.white;
+
+  Color get textPrimary =>
+      isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
+  Color get textSecondary =>
+      isDark ? const Color(0xFFB4C2D8) : AppColors.lightTextSecondary;
+  Color get textMuted =>
+      isDark ? const Color(0xFF8A9BB4) : const Color(0xFF6B7889);
+
+  Color get magenta => isDark ? AppColors.magentaDark : const Color(0xFFB0129F);
+  Color get roleLabel =>
+      isDark ? const Color(0xFFE79BE3) : const Color(0xFF9A1489);
+  Color get blue => isDark ? AppColors.blueDark : AppColors.blueLight;
+  Color get teal => isDark ? AppColors.teal : const Color(0xFF087D61);
 }

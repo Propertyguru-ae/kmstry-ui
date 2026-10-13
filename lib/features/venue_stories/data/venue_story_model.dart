@@ -1,4 +1,5 @@
 import '../../../core/media/media_reference.dart';
+import '../../media/media_text_overlay.dart';
 
 class VenueStoryItem {
   final String id;
@@ -12,6 +13,7 @@ class VenueStoryItem {
   final int viewCount;
   final MediaReference? mediaReference;
   final String? posterUserId;
+  final MediaTextOverlay? textOverlay;
 
   const VenueStoryItem({
     required this.id,
@@ -25,6 +27,7 @@ class VenueStoryItem {
     this.viewCount = 0,
     this.mediaReference,
     this.posterUserId,
+    this.textOverlay,
   });
 
   factory VenueStoryItem.fromJson(Map<String, dynamic> json) {
@@ -46,6 +49,7 @@ class VenueStoryItem {
       viewedByMe: (json['viewed_by_me'] as bool?) ?? false,
       viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
       posterUserId: (json['poster'] as Map?)?['id']?.toString(),
+      textOverlay: MediaTextOverlay.fromJson(json['text_overlay']),
     );
   }
 
@@ -61,6 +65,7 @@ class VenueStoryItem {
     viewCount: viewCount,
     mediaReference: mediaReference,
     posterUserId: posterUserId,
+    textOverlay: textOverlay,
   );
 
   bool get isVideo => mediaType == 'video';

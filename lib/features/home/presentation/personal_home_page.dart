@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
 import 'dart:io';
 import 'package:kmstry_frontend/features/stories/data/story_visibility.dart';
 
@@ -12,8 +14,8 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
-import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
-import 'package:kmstry_frontend/features/media/media_compressor.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/pending_public_media_preview.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/checkin/services/quick_checkin_launcher.dart';
 import 'package:kmstry_frontend/features/notifications/presentation/notification_bell.dart';
@@ -31,18 +33,29 @@ import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
 import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/discover_events_page.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/my_events_page.dart';
-import 'package:kmstry_frontend/features/venue_events/presentation/venue_event_detail_page.dart';
 
 /// Personal account landing tab — a lively feed: active check-in status, the
 /// stories of followed venues & matched people, and today's events the user is
 /// attending. Sections only render when they have content.
 class PersonalHomePage extends StatefulWidget {
-  const PersonalHomePage({super.key, this.checkinRepository});
+  const PersonalHomePage({
+    super.key,
+    this.checkinRepository,
+    this.storyRepository,
+    this.eventRepository,
+    this.venueContextRepository,
+    this.isActive = true,
+  });
 
   final VenueCheckinRepository? checkinRepository;
+  final StoryRepository? storyRepository;
+  final VenueEventRepository? eventRepository;
+  final VenueContextRepository? venueContextRepository;
+  final bool isActive;
 
   @override
   State<PersonalHomePage> createState() => _PersonalHomePageState();
@@ -52,22 +65,29 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   late final VenueCheckinRepository _checkinRepo =
       widget.checkinRepository ?? VenueCheckinRepository();
   final VenueRepository _venueRepo = VenueRepository();
-  final StoryRepository _storyRepo = StoryRepository();
-  final VenueEventRepository _eventRepo = VenueEventRepository();
-  final VenueContextRepository _venueContextRepo = VenueContextRepository();
+  late final StoryRepository _storyRepo =
+      widget.storyRepository ?? StoryRepository();
+  late final VenueEventRepository _eventRepo =
+      widget.eventRepository ?? VenueEventRepository();
+  late final VenueContextRepository _venueContextRepo =
+      widget.venueContextRepository ?? VenueContextRepository();
   final LocationPermissionService _locationPermissionService =
       LocationPermissionService();
 
   ActiveCheckin? _activeCheckin;
   Venue? _activeVenue;
   // Story yüklenirken balon çemberi döner (venue detay ile aynı davranış).
-  bool _storyUploading = false;
+  final bool _storyUploading = false;
   List<TodayEvent> _followedEvents = const [];
   // Boş-durum mesajını ayırt etmek için: kullanıcı hiç mekan takip ediyor mu?
   bool _followsAnyVenue = false;
+  Set<String>? _knownFollowedVenueIds;
   List<StoryGroup> _stories = const [];
   int _storyLoadRequest = 0;
   int _homeLoadRequest = 0;
+  int _todayEventRequest = 0;
+  int _followedEventRequest = 0;
+  int _discoverEventRequest = 0;
   int _checkinLoadRequest = 0;
   List<TodayEvent> _events = const [];
   List<Venue> _trendingVenues = const [];
@@ -76,6 +96,8 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   final Set<String> _viewedGroupIds = {};
 
   bool _loading = true;
+  bool _eventsLoaded = false;
+  DateTime? _lastHomeRefresh;
 
   /// Home feed'i sahte stories/events ile önizleme. Env ile kontrol edilir:
   ///   flutter run --dart-define=USE_DUMMY_HOME=true   → mock data görünür
@@ -93,8 +115,26 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     // kendi story listesini + home story'lerini tazele. Böylece "paylaştım ama
     // home'da bazen gelmiyor" durumu olmaz.
     StoryRepository.changes.addListener(_onStoryChanged);
+    PendingPublicMediaService.instance.changes.addListener(
+      _onPendingMediaChanged,
+    );
     StoryVisibility.changes.addListener(_onStoryVisibilityChanged);
     ActiveCheckinService.changes.addListener(_onActiveCheckinChanged);
+    VenueEventRepository.calendarChanges.addListener(_onCalendarChanged);
+    VenueContextRepository.followChanges.addListener(_onVenueFollowChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant PersonalHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive &&
+        !oldWidget.isActive &&
+        (_lastHomeRefresh == null ||
+            DateTime.now().difference(_lastHomeRefresh!) >
+                const Duration(seconds: 10))) {
+      // Existing sections remain visible while refreshing on a return visit.
+      unawaited(_loadAll());
+    }
   }
 
   void _onActiveCheckinChanged() {
@@ -109,6 +149,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       if (!mounted || request != _checkinLoadRequest) return;
       final previousVenueId = _activeCheckin?.venueId;
       setState(() {
+        _loading = false;
         _activeCheckin = active;
         if (active == null || active.venueId != previousVenueId) {
           _activeVenue = null;
@@ -120,6 +161,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       _loadDiscoverEvents();
     } catch (_) {
       // Transient network errors must not incorrectly lock an active story.
+      if (mounted && request == _checkinLoadRequest) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -148,17 +192,112 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
     _loadHomeStories();
   }
 
+  void _onPendingMediaChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onCalendarChanged() {
+    final change = VenueEventRepository.calendarChanges.value;
+    if (!mounted ||
+        change == null ||
+        !PendingPublicMediaService.instance.isCurrentSession(change.session)) {
+      return;
+    }
+    // The write already succeeded: update this section without waiting for a
+    // new network read, including while Home is retained behind another tab.
+    setState(() {
+      _events = change.applyToday(_events);
+      if (_events.isNotEmpty) _eventsLoaded = true;
+    });
+    unawaited(_loadTodayEvents());
+  }
+
+  void _onVenueFollowChanged() {
+    final change = VenueContextRepository.followChanges.value;
+    if (!mounted ||
+        change == null ||
+        !PendingPublicMediaService.instance.isCurrentSession(change.session)) {
+      return;
+    }
+    setState(() {
+      final followedIds = _knownFollowedVenueIds;
+      if (followedIds != null) {
+        if (change.following) {
+          followedIds.add(change.venueId);
+        } else {
+          followedIds.remove(change.venueId);
+        }
+        _followsAnyVenue = followedIds.isNotEmpty;
+      }
+      if (change.following) {
+        _followsAnyVenue = true;
+        // Already-public nearby entries can move immediately to followed
+        // events. Unknown stories/events still come from authenticated reads.
+        final now = DateTime.now();
+        final knownEvents = _discoverEvents.where(
+          (item) =>
+              item.venueId == change.venueId &&
+              !item.event.startAt.isBefore(now) &&
+              !_followedEvents.any(
+                (existing) =>
+                    existing.venueId == item.venueId &&
+                    existing.event.id == item.event.id,
+              ),
+        );
+        final followed = [..._followedEvents, ...knownEvents]
+          ..sort((a, b) => a.event.startAt.compareTo(b.event.startAt));
+        _followedEvents = followed.take(12).toList();
+        _discoverEvents = _discoverEvents
+            .where((item) => item.venueId != change.venueId)
+            .toList();
+      } else {
+        _followedEvents = _followedEvents
+            .where((item) => item.venueId != change.venueId)
+            .toList();
+        // Personal friends' stories at this venue are not venue-follow data.
+        _stories = _stories
+            .where(
+              (group) =>
+                  group.venueLabel == null || group.user.id != change.venueId,
+            )
+            .toList();
+      }
+    });
+    // Only the three follow-dependent sections refresh, not check-in,
+    // personal stories, saved calendar entries or the whole Home page.
+    unawaited(_loadHomeStories());
+    unawaited(_loadFollowedEvents());
+    unawaited(_loadDiscoverEvents());
+  }
+
   @override
   void dispose() {
     StoryRepository.changes.removeListener(_onStoryChanged);
+    PendingPublicMediaService.instance.changes.removeListener(
+      _onPendingMediaChanged,
+    );
     StoryVisibility.changes.removeListener(_onStoryVisibilityChanged);
     ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
+    VenueEventRepository.calendarChanges.removeListener(_onCalendarChanged);
+    VenueContextRepository.followChanges.removeListener(_onVenueFollowChanged);
     super.dispose();
   }
 
   Future<void> _loadAll() async {
+    _lastHomeRefresh = DateTime.now();
     final homeRequest = ++_homeLoadRequest;
-    final storyRequest = ++_storyLoadRequest;
+    if (!_useDummyData) {
+      // Each section updates when ready. A slow events/story request must not
+      // hold back the active check-in or other completed Home sections.
+      await Future.wait([
+        _refreshActiveCheckin(),
+        _loadHomeStories(),
+        _loadTodayEvents(),
+        _loadMyStories(),
+        _loadFollowedEvents(),
+      ]);
+      return;
+    }
     final checkinRequest = ++_checkinLoadRequest;
     // Kendi story bubble'ı bağımsız — checkin/homeStories/venue lookup'ı
     // beklemeden hemen yükle ki geç görünmesin. (Kendi setState'ini yapıyor.)
@@ -195,36 +334,27 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       ]);
       return;
     }
+  }
 
-    final results = await Future.wait([
-      _checkinRepo.getActiveCheckin().catchError((_) => null),
-      _storyRepo.getHomeStories().catchError((_) => <StoryGroup>[]),
-      _eventRepo.getMyTodayEvents().catchError((_) => <TodayEvent>[]),
-    ]);
-    if (!mounted || homeRequest != _homeLoadRequest) return;
-    final active = results[0] as ActiveCheckin?;
-    setState(() {
-      if (checkinRequest == _checkinLoadRequest) {
-        final previousVenueId = _activeCheckin?.venueId;
-        _activeCheckin = active;
-        if (active == null || active.venueId != previousVenueId) {
-          _activeVenue = null;
-        }
+  Future<void> _loadTodayEvents() async {
+    final request = ++_todayEventRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    try {
+      final events = await _eventRepo.getMyTodayEvents();
+      if (mounted &&
+          request == _todayEventRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
+        setState(() => _events = events);
       }
-      if (storyRequest == _storyLoadRequest) {
-        _stories = results[1] as List<StoryGroup>;
+    } catch (_) {
+      // Preserve the last good section on a transient refresh failure.
+    } finally {
+      if (mounted &&
+          request == _todayEventRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
+        setState(() => _eventsLoaded = true);
       }
-      _events = results[2] as List<TodayEvent>;
-      _loading = false;
-    });
-    if (active != null && checkinRequest == _checkinLoadRequest) {
-      await _loadActiveVenue(active, checkinRequest);
     }
-    await Future.wait([
-      _loadFollowedEvents(),
-      _loadTrendingVenues(),
-      _loadDiscoverEvents(),
-    ]);
   }
 
   Future<void> _loadTrendingVenues() async {
@@ -248,29 +378,46 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
 
   // "Happening Nearby" → takip edilmeyen mekanların yakın event'leri (ilk 5).
   Future<void> _loadDiscoverEvents() async {
+    final request = ++_discoverEventRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final anchor = _activeVenue;
       Position? position;
       if (anchor == null && await _locationPermissionService.isGranted()) {
         position = await Geolocator.getLastKnownPosition();
       }
+      if (!mounted ||
+          request != _discoverEventRequest ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       final events = await _eventRepo.getDiscoverEvents(
         latitude: anchor?.latitude ?? position?.latitude,
         longitude: anchor?.longitude ?? position?.longitude,
         limit: 5,
       );
-      if (!mounted) return;
+      if (!mounted ||
+          request != _discoverEventRequest ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       setState(() => _discoverEvents = events);
     } catch (_) {
-      if (mounted) setState(() => _discoverEvents = const []);
+      // Keep the last good section on a transient refresh failure.
     }
   }
 
   // "Places you might like" → takip edilen venue'lerin yaklaşan event'leri.
   Future<void> _loadFollowedEvents() async {
+    final request = ++_followedEventRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     try {
       final events = await _eventRepo.getFollowedVenuesEvents(limit: 12);
-      if (!mounted) return;
+      if (!mounted ||
+          request != _followedEventRequest ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       setState(() {
         _followedEvents = events;
         // Event varsa zaten mekan takip ediliyor demektir.
@@ -280,13 +427,18 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
       if (events.isEmpty) {
         try {
           final follows = await _venueContextRepo.getFollowedVenues();
-          if (mounted) {
-            setState(() => _followsAnyVenue = follows.isNotEmpty);
+          if (mounted &&
+              request == _followedEventRequest &&
+              PendingPublicMediaService.instance.isCurrentSession(session)) {
+            setState(() {
+              _knownFollowedVenueIds = follows.map((venue) => venue.id).toSet();
+              _followsAnyVenue = follows.isNotEmpty;
+            });
           }
         } catch (_) {}
       }
     } catch (_) {
-      if (mounted) setState(() => _followedEvents = const []);
+      // Keep other venues' events if a refresh fails after follow/unfollow.
     }
   }
 
@@ -476,10 +628,13 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
 
   Future<void> _loadHomeStories() async {
     final request = ++_storyLoadRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
     if (_useDummyData) return; // keep the dummy list intact
     try {
       final stories = await _storyRepo.getHomeStories();
-      if (mounted && request == _storyLoadRequest) {
+      if (mounted &&
+          request == _storyLoadRequest &&
+          PendingPublicMediaService.instance.isCurrentSession(session)) {
         setState(() => _stories = stories);
       }
     } catch (_) {}
@@ -499,7 +654,11 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   // Balona basınca: story varsa direkt izle; yoksa (check-in varsa) ekle;
   // check-in yoksa bilgilendirme dialog'u. (Popup/seçenek menüsü yok.)
   void _onMeStoryTap() {
-    if (_myRealStories.isNotEmpty) {
+    if (_myRealStories.isNotEmpty ||
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.personalStory,
+            ) !=
+            null) {
       _viewMyStory();
       return;
     }
@@ -522,7 +681,13 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
   /// Kendi mevcut story'sini izle (venue detaydaki mantıkla aynı).
   Future<void> _viewMyStory() async {
     final realStories = _myRealStories;
-    if (realStories.isEmpty) return;
+    if (realStories.isEmpty &&
+        PendingPublicMediaService.instance.latest(
+              PendingPublicMediaKind.personalStory,
+            ) ==
+            null) {
+      return;
+    }
     // Tek kaynak: StoryViewerPage her izlenen story'i StoryViewedCache'e
     // (kalıcı) yazıyor. Profil ve home aynı cache'ten okuduğu için "kaldığın
     // yerden devam" her iki ekranda tutarlı. (viewedByMe kendi story'lerinde
@@ -543,6 +708,8 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
         fullscreenDialog: true,
         builder: (_) => StoryViewerPage(
           groups: [meGroup],
+          ownerUploadKind: PendingPublicMediaKind.personalStory,
+          onCreateStory: _onMeAddStoryTap,
           initialGroupIndex: 0,
           initialStoryIndex: firstUnseen == -1 ? 0 : firstUnseen,
         ),
@@ -578,7 +745,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
 
     final dynamic captureResult = await Navigator.push(
       context,
-      cameraRoute(builder: (_) => const CameraScreen(useFrontCamera: true)),
+      cameraRoute(
+        builder: (_) => const CameraScreen.publicMedia(useFrontCamera: true),
+      ),
     );
     if (!mounted) return;
 
@@ -590,87 +759,24 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
         : null;
     if (file == null) return;
 
-    final path = file.path.toLowerCase();
-    final isVideo =
-        path.endsWith('.mp4') ||
-        path.endsWith('.mov') ||
-        path.endsWith('.avi') ||
-        path.endsWith('.m4v');
-
-    // Kutlama kartı için overlay'i async gap'ten önce yakala.
-    final rootOverlay = Overlay.maybeOf(context, rootOverlay: true);
-
-    final uploadProgress = MediaUploadProgressController(
-      title: isVideo ? 'Preparing video' : 'Uploading story',
-      message: isVideo
-          ? 'Optimizing your video for a faster upload…'
-          : 'Your photo is being uploaded…',
+    StoryUploadCoordinator.instance.sharePersonal(
+      file: file,
+      checkinId: checkinId,
+      venueId: _activeVenue?.id,
+      textOverlayJson: overlay?.toJsonString(),
     );
-    setState(() => _storyUploading = true);
-    await uploadProgress.show(context);
-    Object? uploadError;
-    try {
-      final uploadFile = isVideo
-          ? await MediaCompressor.compressVenueVideo(file)
-          : file;
-      if (isVideo) {
-        uploadProgress.update(
-          title: 'Uploading video',
-          message: 'Your optimized story is being uploaded…',
-          progress: 0,
-        );
-      }
-      await _storyRepo.createStory(
-        checkinId: checkinId,
-        file: uploadFile,
-        mediaType: isVideo ? 'video' : 'photo',
-        textOverlayJson: overlay?.toJsonString(),
-        onProgress: (sent, total) {
-          if (total <= 0) return;
-          uploadProgress.update(progress: sent / total);
-        },
-      );
-    } catch (error) {
-      uploadError = error;
-    } finally {
-      await uploadProgress.close();
-      uploadProgress.dispose();
-      if (mounted) setState(() => _storyUploading = false);
-    }
-
-    if (!mounted) return;
-    if (uploadError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Story could not be uploaded. Please try again.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
-    _loadHomeStories();
-    _loadMyStories();
-    // "Story shared" kutlama kartı — venue detay ile aynı bileşen.
-    if (rootOverlay != null) {
-      final venueName = (_activeVenue?.name.trim().isNotEmpty ?? false)
-          ? _activeVenue!.name
-          : (_activeCheckin?.venueName ?? 'your venue');
-      showStorySharedCard(
-        rootOverlay,
-        mediaFile: file,
-        venueName: venueName,
-        isVideo: isVideo,
-      );
-    }
   }
 
   void _openEvent(TodayEvent item) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            VenueEventDetailPage(event: item.event, venueId: item.venueId),
+        builder: (_) => PersonalEventDetailPage(
+          event: item.event,
+          venueId: item.venueId,
+          venueName: item.venueName,
+          venuePhotoUrl: item.venuePhoto,
+        ),
       ),
     );
   }
@@ -849,6 +955,9 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                 onMeTap: _onMeStoryTap,
                 onMeAddTap: _onMeAddStoryTap,
                 isUploading: _storyUploading,
+                pending: PendingPublicMediaService.instance.latest(
+                  PendingPublicMediaKind.personalStory,
+                ),
               ),
             ],
 
@@ -878,7 +987,7 @@ class _PersonalHomePageState extends State<PersonalHomePage> {
                   child: _EventCard(item: e, onTap: () => _openEvent(e)),
                 ),
               ),
-            ] else if (!_loading) ...[
+            ] else if (!_loading && (_eventsLoaded || _useDummyData)) ...[
               const SizedBox(height: 20),
               _SectionTitle(
                 title: "Today's events",
@@ -1001,6 +1110,7 @@ class _StoriesRow extends StatelessWidget {
     required this.onMeAddTap,
     this.myBubbleImageUrl,
     this.isUploading = false,
+    this.pending,
   });
 
   final List<StoryGroup> stories;
@@ -1015,6 +1125,7 @@ class _StoriesRow extends StatelessWidget {
   final VoidCallback onMeAddTap;
   final String? myBubbleImageUrl;
   final bool isUploading;
+  final PendingPublicMedia? pending;
 
   @override
   Widget build(BuildContext context) {
@@ -1035,6 +1146,7 @@ class _StoriesRow extends StatelessWidget {
               onTap: onMeTap,
               onAddTap: onMeAddTap,
               uploading: isUploading,
+              pending: pending,
             );
           }
           final s = stories[i - 1];
@@ -1059,6 +1171,7 @@ class _MeStoryBubble extends StatefulWidget {
     required this.onAddTap,
     this.imageUrl,
     this.uploading = false,
+    this.pending,
   });
 
   final bool active;
@@ -1067,6 +1180,7 @@ class _MeStoryBubble extends StatefulWidget {
   final VoidCallback onAddTap;
   final String? imageUrl;
   final bool uploading;
+  final PendingPublicMedia? pending;
 
   @override
   State<_MeStoryBubble> createState() => _MeStoryBubbleState();
@@ -1124,7 +1238,14 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
       AppColors.orange,
       AppColors.brand,
     ];
-    final List<Color> ringColors = (widget.hasStory || uploading)
+    final List<Color> ringColors = widget.pending != null
+        ? [
+            (widget.pending!.state == PendingPublicMediaState.rejected ||
+                    widget.pending!.state == PendingPublicMediaState.failed)
+                ? colors.error
+                : colors.onSurface.withValues(alpha: 0.45),
+          ]
+        : (widget.hasStory || uploading)
         ? brandColors
         : (widget.active
               ? [colors.primary, colors.primary]
@@ -1135,7 +1256,13 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
 
     Widget base = ClipRRect(
       borderRadius: BorderRadius.circular(avatarRadius),
-      child: (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
+      child: widget.pending != null
+          ? SizedBox(
+              width: avatarSize,
+              height: avatarSize,
+              child: PendingPublicMediaPreview(item: widget.pending!),
+            )
+          : (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
           ? CachedImage(
               widget.imageUrl!,
               width: avatarSize,
@@ -1153,7 +1280,7 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
               ),
             ),
     );
-    if (!widget.active && !uploading) {
+    if (!widget.active && !uploading && widget.pending == null) {
       base = Opacity(opacity: 0.55, child: base);
     }
 
@@ -1167,7 +1294,9 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
     );
 
     return GestureDetector(
-      onTap: uploading ? null : widget.onTap,
+      onTap: uploading && widget.pending == null && !widget.hasStory
+          ? null
+          : widget.onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1221,16 +1350,19 @@ class _MeStoryBubbleState extends State<_MeStoryBubble>
             ],
           ),
           const SizedBox(height: 5),
-          Text(
-            'Your story',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w400,
-              color: colors.onSurface.withValues(alpha: 0.8),
+          if (widget.pending != null)
+            StoryUploadStatus(item: widget.pending!)
+          else
+            Text(
+              'Your story',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w400,
+                color: colors.onSurface.withValues(alpha: 0.8),
+              ),
             ),
-          ),
         ],
       ),
     );

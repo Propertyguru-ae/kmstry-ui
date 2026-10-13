@@ -11,6 +11,10 @@ import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
+import 'package:kmstry_frontend/features/checkin/data/moment_upload_coordinator.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
+import 'package:kmstry_frontend/features/checkin/presentation/checkin_moderation_page.dart';
+import 'package:kmstry_frontend/features/checkin/presentation/moment_limit_dialogs.dart';
 import 'package:kmstry_frontend/features/checkin/services/active_checkin_service.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -62,6 +66,7 @@ class _CheckInPageState extends State<CheckInPage> {
   List<String> _whatBringsOptions = [];
   bool _isLoadingOptions = true;
   final Set<String> _selectedWhatBrings = <String>{};
+  bool _showWhatBringsRequiredError = false;
 
   // Birden fazla fotoğrafı tutmak için liste yapısı
   final List<LocalMedia> _media = [];
@@ -80,9 +85,6 @@ class _CheckInPageState extends State<CheckInPage> {
   // kalır; backend limiti 80MB, bu yüzden güvenli bir tampon bırakıyoruz.
   static const int _maxVideoUploadBytes = 50 * 1024 * 1024;
   static const int _vibeMaxLength = 150;
-  // Aynı anda en fazla kaç medya yüklensin (paralel upload). Cihazı/bağlantıyı
-  // boğmadan hız kazandıran denge değeri.
-  static const int _maxConcurrentUploads = 3;
 
   // Upload progress state
   int _uploadCurrent = 0;
@@ -224,7 +226,7 @@ class _CheckInPageState extends State<CheckInPage> {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    "What brings you to Kmstry?",
+                    "What brings you to KMSTRY?",
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 20),
@@ -243,7 +245,11 @@ class _CheckInPageState extends State<CheckInPage> {
                                 _selectedWhatBrings.add(option);
                               }
                             });
-                            setState(() {});
+                            setState(() {
+                              if (_selectedWhatBrings.isNotEmpty) {
+                                _showWhatBringsRequiredError = false;
+                              }
+                            });
                           },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 180),
@@ -297,7 +303,9 @@ class _CheckInPageState extends State<CheckInPage> {
                     width: double.infinity,
                     child: PrimaryButton(
                       label: 'Done',
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: _selectedWhatBrings.isEmpty
+                          ? null
+                          : () => Navigator.pop(context),
                     ),
                   ),
                 ],
@@ -322,7 +330,7 @@ class _CheckInPageState extends State<CheckInPage> {
         builder: (_) => AlertDialog(
           title: const Text('Camera access required'),
           content: const Text(
-            'Please enable camera access from Settings to take photos and record videos.',
+            'Please enable camera access from Settings to take photos.',
           ),
           actions: [
             TextButton(
@@ -444,8 +452,10 @@ class _CheckInPageState extends State<CheckInPage> {
     final dynamic result = await Navigator.push(
       context,
       cameraRoute(
-        builder: (_) =>
-            const CameraScreen(useFrontCamera: true, optimizeForUpload: true),
+        builder: (_) => const CameraScreen.publicMedia(
+          useFrontCamera: true,
+          optimizeForUpload: true,
+        ),
       ),
     );
 
@@ -461,10 +471,7 @@ class _CheckInPageState extends State<CheckInPage> {
     final hasExistingVideo = _media.any((m) => m.type == MediaType.video);
     if (selectedType == MediaType.video && hasExistingVideo) {
       if (!mounted) return;
-      await showPremiumErrorDialog(
-        context,
-        message: 'You can upload only 1 video.',
-      );
+      await showOneVideoLimitDialog(context);
       return;
     }
 
@@ -654,6 +661,21 @@ class _CheckInPageState extends State<CheckInPage> {
       await _showPhotoRequiredDialog();
       return;
     }
+    if (_selectedWhatBrings.isEmpty) {
+      setState(() => _showWhatBringsRequiredError = true);
+      // Bu bir hata değil, küçük bir hatırlatma → "Something went wrong" yerine
+      // uygulama diline uygun, dostane tek butonlu bir bilgilendirme göster.
+      await showPremiumPromptDialog(
+        context,
+        icon: Icons.interests_rounded,
+        title: 'One quick thing',
+        message:
+            'Let others know what brings you here — pick at least one option under “What brings you to KMSTRY?” to check in.',
+        confirmLabel: 'Got it',
+        showCancel: false,
+      );
+      return;
+    }
     if (_vibeController.text.trim().characters.length > _vibeMaxLength) {
       await showPremiumErrorDialog(context, message: 'Vibe is too long.');
       return;
@@ -663,6 +685,10 @@ class _CheckInPageState extends State<CheckInPage> {
     // check ile set arasında await yok, yani ikinci dokunuş garanti bloklanır.
     if (_submitLock) return;
     _submitLock = true;
+    final uploads = PendingPublicMediaService.instance;
+    final uploadSession = uploads.sessionGeneration;
+    final featuredPhotoIndex = _featuredPhotoIndex;
+    final selectedMedia = List<LocalMedia>.of(_media);
     // Butona basılır basılmaz ANINDA feedback: buton inactive olur ve overlay
     // "Getting your location..." ile açılır. (GPS high-accuracy 1-3 sn sürebilir;
     // eskiden bu süre boyunca buton boş duruyordu.)
@@ -670,7 +696,7 @@ class _CheckInPageState extends State<CheckInPage> {
       setState(() {
         _isSubmitting = true;
         _uploadCurrent = 0;
-        _uploadTotal = 1 + _media.length;
+        _uploadTotal = 2; // create check-in + upload the required main photo
         _uploadStepLabel = 'Getting your location...';
       });
     }
@@ -717,12 +743,16 @@ class _CheckInPageState extends State<CheckInPage> {
     if (mounted) {
       setState(() => _uploadStepLabel = 'Creating check-in...');
     }
+    if (!mounted || !uploads.isCurrentSession(uploadSession)) {
+      _submitLock = false;
+      return;
+    }
 
     String? createdCheckinId;
     try {
       // 1️⃣ Check-in oluştur
       final vibeText = _vibeController.text.trim();
-      final checkinId = await _repo.createCheckin(
+      final checkinId = await _repo.createPendingCheckin(
         venueId: widget.venueId,
         latitude: latitude,
         longitude: longitude,
@@ -733,10 +763,7 @@ class _CheckInPageState extends State<CheckInPage> {
         showOnProfile: _showOnProfile,
       );
       createdCheckinId = checkinId;
-      ActiveCheckinService().setActiveCheckin(
-        checkinId,
-        venueId: widget.venueId,
-      );
+      if (!mounted || !uploads.isCurrentSession(uploadSession)) return;
 
       if (mounted) setState(() => _uploadCurrent = 1);
 
@@ -744,11 +771,16 @@ class _CheckInPageState extends State<CheckInPage> {
         await AuthRepository().updateMe({'bio': vibeText});
       } catch (_) {}
 
-      // 2️⃣ Medyaları paralel (en fazla 3 eş zamanlı) yükle.
-      await _uploadCheckinMediaParallel(
+      if (!mounted || !uploads.isCurrentSession(uploadSession)) return;
+      // Room entry depends only on the main photo. Additional photos/video
+      // start after activation, so a slow/failed extra cannot roll back a valid check-in.
+      await _uploadSingleMedia(
         checkinId: checkinId,
-        featuredPhotoIndex: _featuredPhotoIndex,
+        index: featuredPhotoIndex,
+        isFeatured: true,
       );
+      if (!mounted || !uploads.isCurrentSession(uploadSession)) return;
+      setState(() => _uploadCurrent = 2);
 
       // Kullanıcı featured foto'yu avatar için kırptıysa bunu kalıcı profil
       // fotoğrafına değil, bu aktif check-in'e özel avatar alanına yaz.
@@ -764,19 +796,82 @@ class _CheckInPageState extends State<CheckInPage> {
         }
       }
 
-      // ✅ Başarılı — featured/avatar foto artık yüklü olduğundan navbar avatarını
-      // (avatarı olmayan kullanıcı için geçici check-in avatarı) tazelemesi için
-      // dinleyicileri uyar.
-      ActiveCheckinService().notifyMediaUpdated();
-      unawaited(MediaCompressor.cleanup());
-      if (!mounted) return;
-      Navigator.pop(context);
+      if (!mounted || !uploads.isCurrentSession(uploadSession)) return;
+
+      final moderationResult =
+          await Navigator.push<CheckinModerationFlowResult>(
+            context,
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => CheckinModerationPage(
+                checkinId: checkinId,
+                previewPath: selectedMedia[featuredPhotoIndex].file.path,
+              ),
+            ),
+          );
+      if (!mounted || !uploads.isCurrentSession(uploadSession)) return;
+
+      if (moderationResult == CheckinModerationFlowResult.approved) {
+        // Register every extra preview before notifying profile/navbar listeners.
+        for (var index = 0; index < selectedMedia.length; index++) {
+          if (index == featuredPhotoIndex) continue;
+          final media = selectedMedia[index];
+          MomentUploadCoordinator.instance.share(
+            file: media.file,
+            checkinId: checkinId,
+            venueId: widget.venueId,
+            textOverlayJson: media.textOverlay?.toJsonString(),
+            previewPath: media.thumbnailPath,
+            expectedGeneration: uploadSession,
+          );
+        }
+        unawaited(MediaCompressor.cleanup());
+        AuthRepository.invalidateMeCache();
+        ActiveCheckinService().setActiveCheckin(
+          checkinId,
+          venueId: widget.venueId,
+        );
+        ActiveCheckinService().notifyMediaUpdated();
+        createdCheckinId = null;
+        Navigator.pop(context);
+        return;
+      }
+
+      if (moderationResult == CheckinModerationFlowResult.cancelled) {
+        // Exit the complete check-in flow. Every entry point pushes this page,
+        // so popping returns to the exact origin: venue detail, profile, home
+        // quick check-in, or map selection.
+        createdCheckinId = null;
+        Navigator.pop(context);
+        return;
+      }
+
+      // The review screen confirms cancellation before returning retake.
+      createdCheckinId = null;
+      if (moderationResult == CheckinModerationFlowResult.retake) {
+        final oldFeaturedIndex = _featuredPhotoIndex;
+        setState(() {
+          if (oldFeaturedIndex >= 0 && oldFeaturedIndex < _media.length) {
+            _media.removeAt(oldFeaturedIndex);
+          }
+          _featuredIndex = 0;
+          _avatarCropFile = null;
+          _isSubmitting = false;
+        });
+        _submitLock = false;
+        await _openCameraAndAddMedia();
+      }
     } catch (e) {
       debugPrint('❌ Check-in error: $e');
-      if (createdCheckinId != null) {
+      if (createdCheckinId != null && uploads.isCurrentSession(uploadSession)) {
         try {
-          await _repo.checkout(createdCheckinId);
-          ActiveCheckinService().clear();
+          await _repo.cancelPendingCheckin(createdCheckinId);
+          if (uploads.isCurrentSession(uploadSession)) {
+            AuthRepository.invalidateMeCache();
+            if (ActiveCheckinService().activeCheckinId == createdCheckinId) {
+              ActiveCheckinService().clear();
+            }
+          }
         } catch (cleanupError) {
           debugPrint('⚠️ Check-in rollback failed: $cleanupError');
         }
@@ -793,6 +888,8 @@ class _CheckInPageState extends State<CheckInPage> {
       } else {
         await showPremiumErrorDialog(
           context,
+          title: publicTextErrorTitle(e),
+          icon: publicTextErrorIcon(e),
           message: publicTextErrorMessage(
             e,
             fallback: 'Check-in could not be completed. Please try again.',
@@ -805,35 +902,26 @@ class _CheckInPageState extends State<CheckInPage> {
     }
   }
 
-  /// Medyaları en fazla [_maxConcurrentUploads] eş zamanlı olacak şekilde
-  /// yükler — 6 fotoğraf tek tek beklemek yerine paralel gider, belirgin hızlı
-  /// ve smooth hissettirir. Herhangi biri başarısız olursa hata yukarı fırlar
-  /// ve dıştaki catch tüm check-in'i rollback eder (tutarlılık korunur).
-  Future<void> _uploadCheckinMediaParallel({
+  Future<void> _uploadSingleMedia({
     required String checkinId,
-    required int featuredPhotoIndex,
+    required int index,
+    required bool isFeatured,
   }) async {
-    const maxConcurrent = _maxConcurrentUploads;
-    var completed = 0;
-
-    for (var start = 0; start < _media.length; start += maxConcurrent) {
-      final end = (start + maxConcurrent).clamp(0, _media.length);
-      await Future.wait([
-        for (var i = start; i < end; i++)
-          _uploadSingleMedia(
-            checkinId: checkinId,
-            index: i,
-            isFeatured:
-                _media[i].type == MediaType.photo && i == featuredPhotoIndex,
-          ).then((_) {
-            completed += 1;
-            if (mounted) setState(() => _uploadCurrent = 1 + completed);
-          }),
-      ]);
+    final releaseVideo = _media[index].type == MediaType.video
+        ? MediaCompressor.retainVideoFiles()
+        : null;
+    try {
+      await _uploadSingleMediaWithRetainedFile(
+        checkinId: checkinId,
+        index: index,
+        isFeatured: isFeatured,
+      );
+    } finally {
+      releaseVideo?.call();
     }
   }
 
-  Future<void> _uploadSingleMedia({
+  Future<void> _uploadSingleMediaWithRetainedFile({
     required String checkinId,
     required int index,
     required bool isFeatured,
@@ -949,312 +1037,347 @@ class _CheckInPageState extends State<CheckInPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(
+    return PopScope(
+      canPop: !_isSubmitting,
+      child: Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: Icon(Icons.close, color: colors.onSurface, size: 28),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Check in',
-          style: TextStyle(
-            color: colors.onSurface,
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
+        appBar: AppBar(
+          backgroundColor: theme.scaffoldBackgroundColor,
+          elevation: 0,
+          centerTitle: true,
+          leading: IconButton(
+            icon: Icon(Icons.close, color: colors.onSurface, size: 28),
+            onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+          ),
+          title: Text(
+            'Check in',
+            style: TextStyle(
+              color: colors.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+            ),
           ),
         ),
-      ),
-      // Bio (veya başka bir alan) dışında herhangi bir yere dokununca klavyeyi
-      // kapat. translucent: çocuk widget'lar kendi tıklamalarını alır, yalnızca
-      // boş alandaki dokunuşlar unfocus'u tetikler.
-      body: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => FocusScope.of(context).unfocus(),
-        child: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                /// INFORMATION TEXT
-                Text(
-                  'Select your featured photo by tapping on it. This will represents you at this venue.',
-                  style: TextStyle(
-                    color: colors.onSurface.withValues(alpha: 0.65),
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
+        // Bio (veya başka bir alan) dışında herhangi bir yere dokununca klavyeyi
+        // kapat. translucent: çocuk widget'lar kendi tıklamalarını alır, yalnızca
+        // boş alandaki dokunuşlar unfocus'u tetikler.
+        body: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: Stack(
+            children: [
+              SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
                 ),
-                const SizedBox(height: 20),
-
-                /// PHOTOS SECTION
-                Text(
-                  'Photos',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: colors.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ...List.generate(_media.length, (index) {
-                      final item = _media[index];
+                    /// INFORMATION TEXT
+                    Text(
+                      'Select your featured photo by tapping on it. This will represents you at this venue.',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.65),
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
 
-                      return _buildMediaBox(
-                        index: index,
-                        isFeatured: _featuredPhotoIndex == index,
-                        media: item,
-                      );
-                    }),
+                    /// PHOTOS SECTION
+                    Text(
+                      'Photos',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: colors.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
 
-                    if (_media.length < _maxMedia) _buildAddBox(),
-                  ],
-                ),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        ...List.generate(_media.length, (index) {
+                          final item = _media[index];
 
-                // ── Avatar crop — featured foto varsa göster ─────────────────
-                if (_shouldOfferCheckinAvatar && _hasFeaturedPhoto) ...[
-                  const SizedBox(height: 16),
-                  _buildAvatarAdjustRow(colors),
-                ],
+                          return _buildMediaBox(
+                            index: index,
+                            isFeatured: _featuredPhotoIndex == index,
+                            media: item,
+                          );
+                        }),
 
-                const SizedBox(height: 30),
+                        if (_media.length < _maxMedia) _buildAddBox(),
+                      ],
+                    ),
 
-                /// VIBE SECTION
-                Text(
-                  'Vibe',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    color: colors.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _vibeController,
-                  maxLines: 4,
-                  maxLength: _vibeMaxLength,
-                  textInputAction: TextInputAction.done,
-                  onChanged: (_) {
-                    setState(() {}); // Buton aktif/pasif için gerekli
-                  },
-                  buildCounter:
-                      (
-                        context, {
-                        required currentLength,
-                        required isFocused,
-                        maxLength,
-                      }) {
-                        final visibleLength =
-                            _vibeController.text.characters.length;
+                    // ── Avatar crop — featured foto varsa göster ─────────────────
+                    if (_shouldOfferCheckinAvatar && _hasFeaturedPhoto) ...[
+                      const SizedBox(height: 16),
+                      _buildAvatarAdjustRow(colors),
+                    ],
 
-                        final remaining = _vibeMaxLength - visibleLength;
-                        final isWarning = remaining <= 20;
+                    const SizedBox(height: 30),
 
-                        return Text(
-                          "$visibleLength / $_vibeMaxLength",
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isWarning
-                                ? colors.secondary
-                                : colors.onSurface.withValues(alpha: 0.65),
-                            fontWeight: isWarning
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ),
-                        );
+                    /// VIBE SECTION
+                    Text(
+                      'Vibe',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: colors.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _vibeController,
+                      maxLines: 4,
+                      maxLength: _vibeMaxLength,
+                      textInputAction: TextInputAction.done,
+                      onChanged: (_) {
+                        setState(() {}); // Buton aktif/pasif için gerekli
                       },
+                      buildCounter:
+                          (
+                            context, {
+                            required currentLength,
+                            required isFocused,
+                            maxLength,
+                          }) {
+                            final visibleLength =
+                                _vibeController.text.characters.length;
 
-                  decoration: InputDecoration(
-                    hintText:
-                        'Say something that helps people pick up your vibe.',
-                    hintStyle: TextStyle(
-                      color: colors.onSurface.withValues(alpha: 0.5),
-                      fontSize: 14,
-                    ),
-                    filled: true,
-                    fillColor: theme.brightness == Brightness.dark
-                        ? colors.surface.withValues(alpha: 0.75)
-                        : const Color(0xFFF8FBFD),
-                    contentPadding: const EdgeInsets.all(16),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: theme.brightness == Brightness.dark
-                            ? colors.onSurface.withValues(alpha: 0.14)
-                            : const Color(0xFFE6EEF4),
+                            final remaining = _vibeMaxLength - visibleLength;
+                            final isWarning = remaining <= 20;
+
+                            return Text(
+                              "$visibleLength / $_vibeMaxLength",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isWarning
+                                    ? colors.secondary
+                                    : colors.onSurface.withValues(alpha: 0.65),
+                                fontWeight: isWarning
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            );
+                          },
+
+                      decoration: InputDecoration(
+                        hintText:
+                            'Say something that helps people pick up your vibe.',
+                        hintStyle: TextStyle(
+                          color: colors.onSurface.withValues(alpha: 0.5),
+                          fontSize: 14,
+                        ),
+                        filled: true,
+                        fillColor: theme.brightness == Brightness.dark
+                            ? colors.surface.withValues(alpha: 0.75)
+                            : const Color(0xFFF8FBFD),
+                        contentPadding: const EdgeInsets.all(16),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: theme.brightness == Brightness.dark
+                                ? colors.onSurface.withValues(alpha: 0.14)
+                                : const Color(0xFFE6EEF4),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: theme.brightness == Brightness.dark
+                                ? colors.onSurface.withValues(alpha: 0.14)
+                                : const Color(0xFFE6EEF4),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: AppTheme.brandPrimary.withValues(
+                              alpha: 0.45,
+                            ),
+                            width: 1.1,
+                          ),
+                        ),
                       ),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: theme.brightness == Brightness.dark
-                            ? colors.onSurface.withValues(alpha: 0.14)
-                            : const Color(0xFFE6EEF4),
+                    const SizedBox(height: 12),
+                    Text(
+                      'What brings you to KMSTRY?',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: colors.onSurface,
                       ),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: AppTheme.brandPrimary.withValues(alpha: 0.45),
-                        width: 1.1,
+                    const SizedBox(height: 4),
+                    Text(
+                      'Required · Select one or more',
+                      style: TextStyle(
+                        color: _showWhatBringsRequiredError
+                            ? colors.error
+                            : colors.onSurface.withValues(alpha: 0.65),
+                        fontSize: 12,
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'What brings you to Kmstry?',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: colors.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Select one or more (up to 3)',
-                  style: TextStyle(
-                    color: colors.onSurface.withValues(alpha: 0.65),
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'This is optional, but it helps us rank people at the venue '
-                  'from most compatible to least compatible for you.',
-                  style: TextStyle(
-                    color: colors.onSurface.withValues(alpha: 0.7),
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (_isLoadingOptions)
-                  const Center(child: CircularProgressIndicator())
-                else
-                  GestureDetector(
-                    onTap: _openWhatBringsSelector,
-                    child: Container(
+                    const SizedBox(height: 4),
+                    Text(
+                      'Your selections help us rank people at the venue '
+                      'from most compatible to least compatible for you.',
+                      style: TextStyle(
+                        color: colors.onSurface.withValues(alpha: 0.7),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (_isLoadingOptions)
+                      const Center(child: CircularProgressIndicator())
+                    else
+                      GestureDetector(
+                        onTap: _openWhatBringsSelector,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? colors.surface
+                                : const Color(0xFFF8FBFD),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _showWhatBringsRequiredError
+                                  ? colors.error
+                                  : AppTheme.brandPrimary.withValues(
+                                      alpha: 0.25,
+                                    ),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _selectedWhatBrings.isEmpty
+                                      ? 'Select options'
+                                      : _selectedWhatBrings
+                                            .map(_formatOptionLabel)
+                                            .join(', '),
+                                  style: TextStyle(
+                                    color: _selectedWhatBrings.isEmpty
+                                        ? colors.onSurface.withValues(
+                                            alpha: 0.5,
+                                          )
+                                        : colors.onSurface,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const Icon(Icons.keyboard_arrow_down),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (_showWhatBringsRequiredError) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Select at least one option to check in.',
+                          style: TextStyle(color: colors.error, fontSize: 12),
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 18),
+                    Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
+                        horizontal: 14,
+                        vertical: 12,
                       ),
                       decoration: BoxDecoration(
                         color: isDark
                             ? colors.surface
                             : const Color(0xFFF8FBFD),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: AppTheme.brandPrimary.withValues(alpha: 0.25),
+                          color: colors.onSurface.withValues(alpha: 0.10),
                         ),
                       ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(
-                            child: Text(
-                              _selectedWhatBrings.isEmpty
-                                  ? 'Select options'
-                                  : _selectedWhatBrings
-                                        .map(_formatOptionLabel)
-                                        .join(', '),
-                              style: TextStyle(
-                                color: _selectedWhatBrings.isEmpty
-                                    ? colors.onSurface.withValues(alpha: 0.5)
-                                    : colors.onSurface,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Show on my profile',
+                                  style: TextStyle(
+                                    color: colors.onSurface,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Adds this venue to your Visited Places.',
+                                  style: TextStyle(
+                                    color: colors.onSurface.withValues(
+                                      alpha: 0.62,
+                                    ),
+                                    fontSize: 12,
+                                    height: 1.25,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const Icon(Icons.keyboard_arrow_down),
+                          Switch.adaptive(
+                            value: _showOnProfile,
+                            activeColor: AppTheme.brandPrimary,
+                            onChanged: _isSubmitting
+                                ? null
+                                : (value) {
+                                    setState(() => _showOnProfile = value);
+                                  },
+                          ),
                         ],
                       ),
                     ),
-                  ),
 
-                const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isDark ? colors.surface : const Color(0xFFF8FBFD),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: colors.onSurface.withValues(alpha: 0.10),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Show on my profile',
-                              style: TextStyle(
-                                color: colors.onSurface,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              'Adds this venue to your Visited Places.',
-                              style: TextStyle(
-                                color: colors.onSurface.withValues(alpha: 0.62),
-                                fontSize: 12,
-                                height: 1.25,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch.adaptive(
-                        value: _showOnProfile,
-                        activeColor: AppTheme.brandPrimary,
-                        onChanged: _isSubmitting
+                    const SizedBox(height: 28),
+
+                    /// CHECK IN BUTTON
+                    SizedBox(
+                      width: double.infinity,
+                      child: PrimaryButton(
+                        label: 'Check in',
+                        loading: _isSubmitting,
+                        // En az bir fotoğraf VE en az bir "What brings you to KMSTRY?"
+                        // seçimi yapılana kadar buton inaktif kalır.
+                        onPressed:
+                            (_media.isEmpty || _selectedWhatBrings.isEmpty)
                             ? null
-                            : (value) {
-                                setState(() => _showOnProfile = value);
-                              },
+                            : _submitCheckin,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 40),
+                  ],
                 ),
+              ),
 
-                const SizedBox(height: 28),
-
-                /// CHECK IN BUTTON
-                SizedBox(
-                  width: double.infinity,
-                  child: PrimaryButton(
-                    label: 'Check in',
-                    loading: _isSubmitting,
-                    onPressed: _media.isEmpty ? null : _submitCheckin,
-                  ),
-                ),
-                const SizedBox(height: 40),
-              ],
-            ),
+              // ── Upload progress overlay ─────────────────────────────────────
+              if (_isSubmitting) _buildUploadOverlay(theme),
+            ],
           ),
-
-          // ── Upload progress overlay ─────────────────────────────────────
-          if (_isSubmitting) _buildUploadOverlay(theme),
-        ],
         ),
       ),
     );
@@ -1336,9 +1459,10 @@ class _CheckInPageState extends State<CheckInPage> {
               // gibi teknik ifade yerine kullanıcı dostu). Hazırlık/oluşturma
               // aşamasında hiç sayı gösterme.
               Text(
-                _media.length > 1 && _uploadCurrent > 1
-                    ? 'Uploading ${(_uploadCurrent - 1).clamp(1, _media.length)} of ${_media.length}'
-                    : 'Please wait...',
+                _media.length > 1
+                    ? 'Your other Moments will upload after you join.'
+                    : 'Getting your Moment ready…',
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
