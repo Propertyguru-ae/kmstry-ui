@@ -31,6 +31,48 @@ void main() {
     VenueSession.instance.clear();
   });
 
+  testWidgets('public viewer excludes pending photos even for venue owner', (
+    tester,
+  ) async {
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.library == 'image resource service') return;
+      originalOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+    service.track(
+      PendingPublicMedia(
+        id: 'review',
+        kind: PendingPublicMediaKind.eventPhoto,
+        venueId: 'venue-a',
+        eventId: 'event-a',
+        localPath: 'assets/images/kmstrylogo.png',
+        isVideo: false,
+        createdAt: DateTime.now(),
+        state: PendingPublicMediaState.underReview,
+        hasServerReceipt: true,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EventGalleryViewer(
+          photos: const ['https://example.invalid/published.jpg'],
+          venueId: 'venue-a',
+          eventId: 'event-a',
+          includePendingUploads: false,
+          service: service,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('1 / 1'), findsOneWidget);
+    expect(find.text('Under review'), findsNothing);
+    expect(find.text('Remove photo'), findsNothing);
+    final pages = tester.widget<PageView>(find.byType(PageView));
+    expect(pages.childrenDelegate.estimatedChildCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'tapping opens a swipeable viewer with a counter; pending pages show their status',
     (tester) async {
