@@ -27,6 +27,7 @@ import 'dart:math' as math;
 import 'venue_detail_page.dart';
 import 'venue_checkin_stats_row.dart';
 import 'venue_list_item.dart';
+import 'venue_map_layout.dart';
 
 const _kKmstryBlue = Color(0xFF1A9FE8);
 const _kKmstryTeal = Color(0xFF1FD9A8);
@@ -202,9 +203,10 @@ class _VenueMapViewState extends State<VenueMapView> {
   bool _showResultsSheet = true;
   bool _resultsSheetExpanded = false;
 
-  static const double _resultsSheetMinSize = 0.18;
-  static const double _resultsSheetInitialSize = 0.48;
-  static const double _resultsSheetMaxSize = 0.94;
+  static const double _resultsSheetMinSize = VenueMapLayout.minSheetExtent;
+  static const double _resultsSheetInitialSize =
+      VenueMapLayout.defaultSheetExtent;
+  double _resultsSheetMaxSize = VenueMapLayout.defaultMaxSheetExtent;
 
   static const List<({String key, String label, IconData icon})>
   _categoryOptions = [
@@ -458,7 +460,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     _recomputeClusters(force: true);
     if (_resultsSheetController.isAttached) {
       _resultsSheetController.animateTo(
-        _resultsSheetInitialSize,
+        math.min(_resultsSheetInitialSize, _resultsSheetMaxSize),
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
       );
@@ -3211,7 +3213,7 @@ class _VenueMapViewState extends State<VenueMapView> {
     }
   }
 
-  Widget _buildResultsSheet() {
+  Widget _buildResultsSheet(VenueMapLayout layout) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
@@ -3227,7 +3229,7 @@ class _VenueMapViewState extends State<VenueMapView> {
       },
       child: DraggableScrollableSheet(
         controller: _resultsSheetController,
-        initialChildSize: _resultsSheetInitialSize,
+        initialChildSize: layout.initialSheetExtent,
         minChildSize: _resultsSheetMinSize,
         maxChildSize: _resultsSheetMaxSize,
         builder: (context, controller) {
@@ -3261,7 +3263,7 @@ class _VenueMapViewState extends State<VenueMapView> {
                   behavior: HitTestBehavior.opaque,
                   onVerticalDragUpdate: (details) {
                     if (!_resultsSheetController.isAttached) return;
-                    final height = MediaQuery.of(context).size.height;
+                    final height = layout.height;
                     final nextSize =
                         (_resultsSheetController.size -
                                 (details.primaryDelta ?? 0) / height)
@@ -3557,93 +3559,120 @@ class _VenueMapViewState extends State<VenueMapView> {
       return const Center(child: Text('Location unavailable'));
     }
 
-    return Stack(
-      children: [
-        GoogleMap(
-          style: Theme.of(context).brightness == Brightness.dark
-              ? kKmstryMapStyleDark
-              : kKmstryMapStyleLight,
-          initialCameraPosition: CameraPosition(
-            target: _currentLocation!,
-            zoom: 15,
-          ),
-          myLocationEnabled: true,
-          myLocationButtonEnabled: false,
-          compassEnabled: true,
-          zoomControlsEnabled: false,
-          onMapCreated: (controller) {
-            _mapController = controller;
-            _latestCameraPosition = CameraPosition(
-              target: _currentLocation!,
-              zoom: 15,
-            );
-            _recomputeClusters(force: true);
-          },
-          onCameraMove: (position) {
-            _latestCameraPosition = position;
-          },
-          onTap: (_) => _collapseResultsSheet(),
-          onCameraIdle: _recomputeClusters,
-          markers: _markers,
-        ),
-
-        /// 🔍 SEARCH BAR — arama aktifken de görünür kalmalı (aksi halde
-        /// odaklanınca kendini gizler ve sadece harita/pinler kalırdı).
-        if (!widget.hideSearch)
-          Positioned(
-            top: 14,
-            left: 16,
-            right: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(children: [Expanded(child: _buildSearchBar())]),
-                const SizedBox(height: 8),
-                _buildSearchResultsPanel(),
-              ],
-            ),
-          ),
-
-        if (!widget.hideSearch && !_showSearchResults)
-          Positioned(top: 68, left: 0, right: 0, child: _buildFilterChipsRow()),
-
-        // Search suggestions own this area while the field is active. Keeping
-        // the floating map controls visible here would place them above the
-        // suggestion panel because they are painted later in the Stack.
-        if (!widget.hideSearch &&
-            !_showSearchResults &&
-            !_searchFocusNode.hasFocus)
-          Positioned(
-            right: 16,
-            top: 110,
-            child: Row(
-              children: [
-                _CircleIcon(
-                  Icons.navigation_outlined,
-                  onTap: () {
-                    if (_currentLocation == null || _mapController == null) {
-                      return;
-                    }
-                    _mapController!.animateCamera(
-                      CameraUpdate.newLatLng(_currentLocation!),
-                    );
-                    widget.onLocationResolved?.call(_currentLocation!);
-                  },
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final layout = VenueMapLayout(
+          height: constraints.maxHeight,
+          hideSearch: widget.hideSearch,
+        );
+        _resultsSheetMaxSize = layout.maxSheetExtent;
+        final sheetVisible =
+            _showResultsSheet && !_showSearchResults && !_searchLoading;
+        return Stack(
+          children: [
+            ListenableBuilder(
+              // Only update the native map padding while the sheet moves. Do not
+              // rebuild/refetch the venue list on every drag frame.
+              listenable: _resultsSheetController,
+              builder: (context, _) => GoogleMap(
+                padding: layout.padding(
+                  sheetVisible: sheetVisible,
+                  sheetExtent: _resultsSheetController.isAttached
+                      ? _resultsSheetController.size
+                      : layout.initialSheetExtent,
                 ),
-                if (_showHeatmapInfoButton) ...[
-                  const SizedBox(width: 8),
-                  _CircleIcon(
-                    Icons.info_outline,
-                    onTap: () => _showHeatmapLegend(context),
-                  ),
-                ],
-              ],
+                style: Theme.of(context).brightness == Brightness.dark
+                    ? kKmstryMapStyleDark
+                    : kKmstryMapStyleLight,
+                initialCameraPosition: CameraPosition(
+                  target: _currentLocation!,
+                  zoom: 15,
+                ),
+                myLocationEnabled: true,
+                myLocationButtonEnabled: false,
+                compassEnabled: true,
+                zoomControlsEnabled: false,
+                onMapCreated: (controller) {
+                  _mapController = controller;
+                  _latestCameraPosition = CameraPosition(
+                    target: _currentLocation!,
+                    zoom: 15,
+                  );
+                  _recomputeClusters(force: true);
+                },
+                onCameraMove: (position) {
+                  _latestCameraPosition = position;
+                },
+                onTap: (_) => _collapseResultsSheet(),
+                onCameraIdle: _recomputeClusters,
+                markers: _markers,
+              ),
             ),
-          ),
 
-        if (_showResultsSheet && !_showSearchResults && !_searchLoading)
-          _buildResultsSheet(),
-      ],
+            /// 🔍 SEARCH BAR — arama aktifken de görünür kalmalı (aksi halde
+            /// odaklanınca kendini gizler ve sadece harita/pinler kalırdı).
+            if (!widget.hideSearch)
+              Positioned(
+                top: 14,
+                left: 16,
+                right: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [Expanded(child: _buildSearchBar())]),
+                    const SizedBox(height: 8),
+                    _buildSearchResultsPanel(),
+                  ],
+                ),
+              ),
+
+            if (!widget.hideSearch && !_showSearchResults)
+              Positioned(
+                top: 68,
+                left: 0,
+                right: 0,
+                child: _buildFilterChipsRow(),
+              ),
+
+            // Search suggestions own this area while the field is active. Keeping
+            // the floating map controls visible here would place them above the
+            // suggestion panel because they are painted later in the Stack.
+            if (!widget.hideSearch &&
+                !_showSearchResults &&
+                !_searchFocusNode.hasFocus)
+              Positioned(
+                right: 16,
+                top: 110,
+                child: Row(
+                  children: [
+                    _CircleIcon(
+                      Icons.navigation_outlined,
+                      onTap: () {
+                        if (_currentLocation == null ||
+                            _mapController == null) {
+                          return;
+                        }
+                        _mapController!.animateCamera(
+                          CameraUpdate.newLatLng(_currentLocation!),
+                        );
+                        widget.onLocationResolved?.call(_currentLocation!);
+                      },
+                    ),
+                    if (_showHeatmapInfoButton) ...[
+                      const SizedBox(width: 8),
+                      _CircleIcon(
+                        Icons.info_outline,
+                        onTap: () => _showHeatmapLegend(context),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+            if (sheetVisible) _buildResultsSheet(layout),
+          ],
+        );
+      },
     );
   }
 }

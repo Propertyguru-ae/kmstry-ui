@@ -54,22 +54,25 @@ Map<String, dynamic> _me({String status = 'ACTIVE', bool empty = false}) => {
             },
         ],
 };
-VenueOwnerStatsResponse _stats(String id, {int today = 117}) =>
-    VenueOwnerStatsResponse(
-      venue: VenueOwnerStatsVenue(id: id, name: 'Cafe $id'),
-      stats: VenueOwnerStats(
-        activeNow: 3,
-        maleNow: 1,
-        femaleNow: 2,
-        todayTotal: today,
-        totalAllTime: 120,
-        followerCount: 41,
-        weeklyTrend: [],
-      ),
-      activeGuests: const [
-        VenueActiveGuest(id: 'guest', username: 'guest', checkinId: 'checkin'),
-      ],
-    );
+VenueOwnerStatsResponse _stats(
+  String id, {
+  int today = 117,
+  List<VenueActiveGuest> guests = const [
+    VenueActiveGuest(id: 'guest', username: 'guest', checkinId: 'checkin'),
+  ],
+}) => VenueOwnerStatsResponse(
+  venue: VenueOwnerStatsVenue(id: id, name: 'Cafe $id'),
+  stats: VenueOwnerStats(
+    activeNow: 3,
+    maleNow: 1,
+    femaleNow: 2,
+    todayTotal: today,
+    totalAllTime: 120,
+    followerCount: 41,
+    weeklyTrend: [],
+  ),
+  activeGuests: guests,
+);
 
 Future<void> _pump(
   WidgetTester tester,
@@ -296,6 +299,33 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('Right now lists only real guests, never sample ones', (
+    tester,
+  ) async {
+    final auth = _Auth(() async => _me());
+    var guests = const <VenueActiveGuest>[];
+    final owner = _Owner((id) async => _stats(id, guests: guests));
+    await _pump(tester, auth, owner);
+    await tester.pumpAndSettle();
+    expect(find.text('RIGHT NOW'), findsOneWidget);
+    for (final sample in ['dnzhtoo', 'yanhtoo', 'samchehab', 'rachellem__']) {
+      expect(find.text(sample), findsNothing);
+    }
+    expect(find.text('+2'), findsNothing);
+
+    guests = const [
+      VenueActiveGuest(id: 'g1', fullName: 'Lina', checkinId: 'c1'),
+    ];
+    final refresh = tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+        .onRefresh();
+    await tester.pumpAndSettle();
+    await refresh;
+    expect(find.text('Lina'), findsOneWidget);
+    expect(find.text('dnzhtoo'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('session changes suppress late dashboard data', (tester) async {
     final stats = Completer<VenueOwnerStatsResponse>();
