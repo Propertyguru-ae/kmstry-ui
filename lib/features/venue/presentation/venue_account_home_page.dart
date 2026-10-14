@@ -31,10 +31,6 @@ import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
-/// DEMO bayrağı — "Here right now" boşken tasarımı göstermek için sahte misafir
-/// enjekte eder (patrona demo). Canlıya çıkmadan ÖNCE false yap.
-const bool _kDemoHereNow = true;
-
 class VenueAccountHomePage extends StatefulWidget {
   final String? venueId;
   const VenueAccountHomePage({
@@ -1082,37 +1078,6 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage>
   /// O an içerideki misafirlerin yatay avatar sırası; kimse yoksa null
   /// (kart o zaman yalnızca "Quiet" durumunu gösterir).
   Widget? _buildGuestRow(List<VenueActiveGuest> guests, int anonymousNow) {
-    // DEMO: gerçek check-in yokken tasarımı göstermek için. Canlıya çıkmadan
-    // _kDemoHereNow = false yap.
-    if (_kDemoHereNow && guests.isEmpty && anonymousNow == 0) {
-      guests = const [
-        VenueActiveGuest(
-          id: 'd1',
-          fullName: 'dnzhtoo',
-          gender: 'MALE',
-          checkinId: 'c1',
-        ),
-        VenueActiveGuest(
-          id: 'd2',
-          fullName: 'yanhtoo',
-          gender: 'FEMALE',
-          checkinId: 'c2',
-        ),
-        VenueActiveGuest(
-          id: 'd3',
-          fullName: 'samchehab',
-          gender: 'MALE',
-          checkinId: 'c3',
-        ),
-        VenueActiveGuest(
-          id: 'd4',
-          fullName: 'rachellem__',
-          gender: 'FEMALE',
-          checkinId: 'c4',
-        ),
-      ];
-      anonymousNow = 2;
-    }
     if (guests.isEmpty && anonymousNow == 0) return null;
 
     return SizedBox(
