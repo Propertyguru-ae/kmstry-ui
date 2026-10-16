@@ -15,6 +15,7 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_search_location.dart';
 import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -37,12 +38,14 @@ class VenueContextOnboardingPage extends StatefulWidget {
   final VoidCallback? onCancel;
   final VenueRepository? repository;
   final AuthRepository? authRepository;
+  final VenueSearchLocationResolver? searchLocationResolver;
   const VenueContextOnboardingPage({
     super.key,
     this.fromAppShell = false,
     this.onCancel,
     this.repository,
     this.authRepository,
+    this.searchLocationResolver,
   });
 
   @override
@@ -68,6 +71,10 @@ class _VenueContextOnboardingPageState
   Venue? _selectedVenue;
   String? _dbVenueId; // ensureVenueDbId sonucu — draft ve claim için kullanılır
   bool _searching = false;
+  int _searchRevision = 0;
+  String _lastSearchText = '';
+  VenueSearchLocation? _searchLocation;
+  bool _searchLocationStarted = false;
 
   // ── Step 2: İletişim ─────────────────────────────────────────────────────
   final _nameCtrl = TextEditingController();
@@ -81,8 +88,8 @@ class _VenueContextOnboardingPageState
   String _lastNameText = '';
   String _lastPhoneText = '';
   void _clearErrorOnType() {
-    final changed = _lastNameText != _nameCtrl.text ||
-        _lastPhoneText != _phoneCtrl.text;
+    final changed =
+        _lastNameText != _nameCtrl.text || _lastPhoneText != _phoneCtrl.text;
     _lastNameText = _nameCtrl.text;
     _lastPhoneText = _phoneCtrl.text;
     // Attaching a TextField also changes its selection. Do not erase a
@@ -153,6 +160,12 @@ class _VenueContextOnboardingPageState
       if (mounted) setState(() => _draftInitFailed = true);
     } finally {
       if (mounted) setState(() => _loadingDraft = false);
+      if (mounted &&
+          !_draftInitFailed &&
+          _step == _Step.search &&
+          _selectedVenue == null) {
+        unawaited(_loadSearchLocation());
+      }
     }
   }
 
@@ -228,59 +241,94 @@ class _VenueContextOnboardingPageState
 
   // ── Step 1: Venue arama ───────────────────────────────────────────────────
 
+  Future<void> _loadSearchLocation() async {
+    if (_searchLocationStarted) return;
+    _searchLocationStarted = true;
+    final session = SecureStorage.sessionRevision;
+    final location =
+        await (widget.searchLocationResolver ?? VenueSearchLocationResolver())
+            .resolve();
+    if (!mounted || session != SecureStorage.sessionRevision) return;
+    _searchLocation = location;
+    // Do not hold up typing for GPS. If a usable position arrives later,
+    // refresh the current search once, without changing its name/city text.
+    final query = _searchCtrl.text.trim();
+    if (location != null &&
+        !_loadingDraft &&
+        _step == _Step.search &&
+        _selectedVenue == null &&
+        query.isNotEmpty) {
+      _debounce?.cancel();
+      unawaited(_search(query));
+    }
+  }
+
   void _onSearchChanged() {
     final q = _searchCtrl.text.trim();
+    // Cursor/focus changes also notify the controller; only text starts work.
+    if (q == _lastSearchText) return;
+    _lastSearchText = q;
+    _searchRevision++;
     _debounce?.cancel();
     if (_loadingDraft ||
         _step != _Step.search ||
         (_selectedVenue != null && q == _selectedVenue!.name)) {
       return;
     }
-    if (_selectedVenue != null && q != _selectedVenue!.name) {
-      setState(() => _selectedVenue = null);
-    }
-    if (q.isEmpty) {
-      setState(() => _results = []);
-      return;
-    }
+    unawaited(_loadSearchLocation());
+    setState(() {
+      _selectedVenue = null;
+      _dbVenueId = null;
+      _results = [];
+      _error = null;
+      _searching = q.isNotEmpty;
+    });
+    if (q.isEmpty) return;
     _debounce = Timer(const Duration(milliseconds: 380), () => _search(q));
   }
 
   Future<void> _search(String q) async {
     if (!mounted ||
+        q.isEmpty ||
         _step != _Step.search ||
         q != _searchCtrl.text.trim() ||
         _selectedVenue != null) {
       return;
     }
+    final revision = ++_searchRevision;
+    final session = SecureStorage.sessionRevision;
+    bool isCurrent() =>
+        mounted &&
+        revision == _searchRevision &&
+        session == SecureStorage.sessionRevision &&
+        _step == _Step.search &&
+        q == _searchCtrl.text.trim() &&
+        _selectedVenue == null;
     setState(() {
       _searching = true;
       _error = null;
     });
     try {
-      final venues = await _repo.searchVenues(query: q);
-      if (!mounted ||
-          _step != _Step.search ||
-          q != _searchCtrl.text.trim() ||
-          _selectedVenue != null) {
-        return;
-      }
+      final venues = await _repo.searchVenues(
+        query: q,
+        latitude: _searchLocation?.latitude,
+        longitude: _searchLocation?.longitude,
+      );
+      if (!isCurrent()) return;
       setState(() => _results = venues);
     } catch (_) {
-      if (!mounted ||
-          _step != _Step.search ||
-          q != _searchCtrl.text.trim() ||
-          _selectedVenue != null) {
-        return;
-      }
+      if (!isCurrent()) return;
       setState(() => _error = 'Search failed. Please try again.');
     } finally {
-      if (mounted) setState(() => _searching = false);
+      if (isCurrent()) setState(() => _searching = false);
     }
   }
 
   void _onVenueSelected(Venue venue) {
+    _debounce?.cancel();
+    _searchRevision++;
     setState(() {
+      _searching = false;
       _selectedVenue = venue;
       // Venue zaten DB'de ise (ör. daha önce claim edilip bırakılmış) id'si DB
       // UUID'sidir → doğrudan kullan; resolve-from-place'e (Google place_id
@@ -547,8 +595,10 @@ class _VenueContextOnboardingPageState
         return;
       }
       setState(() {
-        _error = publicTextErrorMessage(e,
-          fallback: 'Could not submit your claim. Please try again.');
+        _error = publicTextErrorMessage(
+          e,
+          fallback: 'Could not submit your claim. Please try again.',
+        );
         _submitting = false;
       });
     } finally {
@@ -563,14 +613,19 @@ class _VenueContextOnboardingPageState
   bool _validateBirthdate() {
     final dob = _birthdate;
     final now = DateTime.now();
-    final adult = dob != null &&
-        !DateTime(dob.year + 18, dob.month, dob.day).isAfter(
-          DateTime(now.year, now.month, now.day),
-        );
+    final adult =
+        dob != null &&
+        !DateTime(
+          dob.year + 18,
+          dob.month,
+          dob.day,
+        ).isAfter(DateTime(now.year, now.month, now.day));
     if (adult) return true;
-    setState(() => _error = dob == null
-        ? 'Please enter your date of birth.'
-        : 'You must be 18 or older to use KMSTRY.');
+    setState(
+      () => _error = dob == null
+          ? 'Please enter your date of birth.'
+          : 'You must be 18 or older to use KMSTRY.',
+    );
     return false;
   }
 
@@ -580,11 +635,15 @@ class _VenueContextOnboardingPageState
     final value = await showDatePicker(
       context: context,
       initialDate: _birthdate ?? DateTime(now.year - 18, now.month, now.day),
-      firstDate: DateTime(1900), lastDate: now,
+      firstDate: DateTime(1900),
+      lastDate: now,
       helpText: 'Date of birth',
     );
     if (!mounted || value == null) return;
-    setState(() { _birthdate = value; _error = null; });
+    setState(() {
+      _birthdate = value;
+      _error = null;
+    });
   }
 
   void _showCountryPicker(ColorScheme colors) {
@@ -1045,7 +1104,7 @@ class _VenueContextOnboardingPageState
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Search by venue name or city to get started.',
+                    'Add the city to find the right location.',
                     style: TextStyle(
                       fontSize: 13,
                       height: 1.55,
@@ -1096,7 +1155,13 @@ class _VenueContextOnboardingPageState
                     ),
                     Expanded(
                       child: TextField(
+                        key: const ValueKey('venue-search'),
                         controller: _searchCtrl,
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (value) {
+                          _debounce?.cancel();
+                          unawaited(_search(value.trim()));
+                        },
                         style: TextStyle(
                           fontSize: 14,
                           color: isDark
@@ -1104,11 +1169,11 @@ class _VenueContextOnboardingPageState
                               : const Color(0xFF111827),
                         ),
                         decoration: InputDecoration(
-                          hintText: 'Search venues...',
+                          hintText: 'Search by venue name or address',
                           hintStyle: TextStyle(
                             color: isDark
-                                ? const Color(0xFF2E4560)
-                                : Colors.black26,
+                                ? const Color(0xFF93A3BB)
+                                : Colors.black54,
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -1159,26 +1224,33 @@ class _VenueContextOnboardingPageState
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: Color(0xFFEF4444),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _error!,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Color(0xFFEF4444),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _search(_searchCtrl.text.trim()),
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Retry search'),
+                    ),
+                  ],
                 ),
               ),
 
             // Results list (shrinkWrap — no Expanded needed)
             if (hasResults && _selectedVenue == null)
               _buildResultsList(isDark)
-            else if (!hasResults)
+            else if (!hasResults && _selectedVenue == null && _error == null)
               _buildEmptyState(isDark, idle: !hasQuery || _searching),
 
             // Selected venue + continue
             if (_selectedVenue != null) _buildSelectedVenueBar(colors, isDark),
-
-            // Can't find
-            if (_selectedVenue == null) _buildCantFind(isDark),
           ],
         ),
       ),
@@ -1262,10 +1334,10 @@ class _VenueContextOnboardingPageState
                           style: TextStyle(
                             fontSize: 11,
                             color: isDark
-                                ? const Color(0xFF3A5070)
-                                : Colors.black45,
+                                ? const Color(0xFF93A3BB)
+                                : Colors.black54,
                           ),
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                     ],
@@ -1319,8 +1391,8 @@ class _VenueContextOnboardingPageState
           const SizedBox(height: 6),
           Text(
             idle
-                ? 'Type a venue name or city above.'
-                : 'Try a different name or add it manually below.',
+                ? 'Search nearby or in another city.'
+                : 'Try the full venue name and city, or its address.',
             style: TextStyle(
               fontSize: 12,
               height: 1.55,
@@ -1478,64 +1550,6 @@ class _VenueContextOnboardingPageState
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCantFind(bool isDark) {
-    return GestureDetector(
-      onTap: () {},
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0x143B6DEA),
-          border: Border.all(color: const Color(0x293B6DEA)),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: const Color(0x263B6DEA),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.add_rounded,
-                size: 18,
-                color: AppColors.blueDark,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Can't find your venue?",
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF7AAAFF),
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    "Add it manually and we'll verify it",
-                    style: TextStyle(fontSize: 11, color: Color(0xFF5B6F8D)),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              size: 16,
-              color: AppColors.blue,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -2660,7 +2674,8 @@ class _VenueContextOnboardingPageState
                   SharingPermissionHint(
                     controller: _permission,
                     onReview: _submitting ? null : _submitClaim,
-                    message: 'Your application has not been submitted. Allow safety checks to continue. Your details are still here.',
+                    message:
+                        'Your application has not been submitted. Allow safety checks to continue. Your details are still here.',
                   ),
                   // Submit button
                   GestureDetector(
