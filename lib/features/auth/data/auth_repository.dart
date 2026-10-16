@@ -14,6 +14,7 @@ import '../../venue/presentation/profile_preview_page.dart';
 import '../../venue_stories/data/venue_story_viewed_cache.dart';
 import '../../stories/data/story_viewed_cache.dart';
 import '../../../core/push/push_manager.dart';
+import '../../../core/push/push_logout_queue.dart';
 import '../../chat/data/chat_realtime_service.dart';
 import '../../../core/checkin/checkin_ping_manager.dart';
 import '../../checkin/services/active_checkin_service.dart';
@@ -89,6 +90,7 @@ class AuthRepository {
 
   static Future<void>? _sessionExpiry;
   static bool _loggingOut = false;
+  static bool get isLoggingOut => _loggingOut;
   static Future<void>? _logoutFlight;
 
   static Future<void> _expireSession(
@@ -103,6 +105,7 @@ class AuthRepository {
         await SecureStorage.getAccessToken() != null ||
         await SecureStorage.getRefreshToken() != null;
     if (!hasSession) return;
+    PushManager.instance.endSessionTransport();
     PendingPublicMediaService.instance.clear();
     CheckinPingManager.I.resetSession();
     ActiveCheckinService().clear();
@@ -110,6 +113,7 @@ class AuthRepository {
     VenueSession.instance.clear();
     PushManager.instance.onSessionEnded();
     await SecureStorage.clearSession();
+    unawaited(PushLogoutQueue.retryPending());
     invalidateMeCache();
     ProfilePreviewPage.clearActionStateCache();
     VenueStoryViewedCache.instance.clear();
@@ -729,6 +733,7 @@ class AuthRepository {
   }
 
   Future<void> _logout() async {
+    PushManager.instance.endSessionTransport();
     PendingPublicMediaService.instance.clear();
     CheckinPingManager.I.resetSession();
     invalidateMeCache();
@@ -740,12 +745,15 @@ class AuthRepository {
     _pendingAppleAuthorizationCode = null;
     _pendingAppleFullName = null;
     final refreshToken = await SecureStorage.getRefreshToken();
+    final deviceToken = await SecureStorage.getRegisteredDeviceToken();
+    var remoteEnded = false;
     Future<void> revokeRemote() async {
       if (refreshToken == null) return;
       try {
-        await _api
-            .logout(refreshToken: refreshToken)
+        final result = await _api
+            .logout(refreshToken: refreshToken, deviceToken: deviceToken)
             .timeout(const Duration(seconds: 5));
+        remoteEnded = result['success'] == true;
       } catch (_) {
         // Backend logout başarısız olsa da lokal oturumu kapatmaya devam et.
       }
@@ -776,6 +784,9 @@ class AuthRepository {
     // Keep logout single-flight until all cleanup settles. In particular a
     // late remote revoke must not overlap the next interactive login.
     await Future.wait([revokeRemote(), signOutProvider(), clearLocalSession()]);
+    if (remoteEnded && refreshToken != null) {
+      await SecureStorage.completePushLogout(refreshToken);
+    }
   }
 
   /// Root/global hesap silme: kimlik + bağlı contextler tamamen silinir.
@@ -784,6 +795,7 @@ class AuthRepository {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
     await _api.deleteAccount(accessToken: token);
+    PushManager.instance.endSessionTransport();
     await _googleSignIn.signOut();
     CheckinPingManager.I.stop();
     ActiveCheckinService().clear();
@@ -815,6 +827,7 @@ class AuthRepository {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
     await _api.deactivateAccount(accessToken: token);
+    PushManager.instance.endSessionTransport();
     PendingPublicMediaService.instance.clear();
     await _googleSignIn.signOut();
     CheckinPingManager.I.stop();
@@ -1185,6 +1198,16 @@ class AuthRepository {
     if (token == null) throw Exception('Not authenticated');
 
     await _api.updateMe(accessToken: token, data: data);
+    invalidateMeCache();
+  }
+
+  Future<void> completePhotoOnboarding({File? image, bool skip = false}) async {
+    if (skip || image == null) {
+      await updateMe({'skipPhoto': true, 'skip_photo': true});
+    } else {
+      await uploadProfilePhoto(image);
+    }
+    invalidateMeCache();
   }
 
   Future<void> upsertPersonalProfile(Map<String, dynamic> data) async {
@@ -1194,40 +1217,8 @@ class AuthRepository {
     await _api.upsertPersonalProfile(accessToken: token, data: data);
     invalidateMeCache();
 
-    // Keep legacy /auth/me fields in sync for clients that still read user root fields.
-    final mirror = <String, dynamic>{};
-    final fullName = (data['fullName'] ?? data['full_name'])?.toString().trim();
-    if (fullName != null && fullName.isNotEmpty) {
-      mirror['full_name'] = fullName;
-    }
-    final birthdate = data['birthdate']?.toString().trim();
-    if (birthdate != null && birthdate.isNotEmpty) {
-      mirror['birthdate'] = birthdate;
-    }
-    final gender = data['gender']?.toString().trim();
-    if (gender != null && gender.isNotEmpty) {
-      mirror['gender'] = gender;
-    }
-    final interestedIn = (data['interestedIn'] ?? data['interested_in'])
-        ?.toString()
-        .trim();
-    if (interestedIn != null && interestedIn.isNotEmpty) {
-      mirror['interested_in'] = interestedIn;
-    }
-    if (data.containsKey('bio')) {
-      mirror['bio'] = data['bio'];
-    }
-    if (data['skipBio'] == true || data['bioOnboardingSkipped'] == true) {
-      mirror['skip_bio'] = true;
-      mirror['bio_onboarding_skipped'] = true;
-    }
-    if (mirror.isNotEmpty) {
-      // Fire-and-forget: mirror is a legacy sync for old clients.
-      // Never block navigation on this call — personal-profile endpoint is the source of truth.
-      _api
-          .updateMe(accessToken: token, data: mirror)
-          .catchError((_) => <String, dynamic>{});
-    }
+    // The endpoint atomically writes both User and PersonalProfile. A second,
+    // detached legacy PATCH could arrive late and rewind the onboarding step.
   }
 
   Future<void> uploadProfilePhoto1(File file) => uploadProfilePhoto(file);

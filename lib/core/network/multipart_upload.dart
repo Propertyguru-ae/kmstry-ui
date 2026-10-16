@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path/path.dart' as path;
+import 'public_content_permission.dart';
+import 'request_session.dart';
 
 const Duration defaultMultipartUploadTimeout = Duration(minutes: 2);
 
@@ -93,6 +96,10 @@ Future<http.StreamedResponse> sendMultipartRequest(
   http.Client Function()? clientFactory,
 }) async {
   cancellation?.throwIfCancelled();
+  final session = RequestSession(request.headers);
+  await PublicContentPermission.beforeRequest(request.method, request.url.path, request.headers, request.fields);
+  session.check();
+  cancellation?.throwIfCancelled();
   final client = (clientFactory ?? http.Client.new)();
   final detach = cancellation?.listen(client.close);
   try {
@@ -104,6 +111,16 @@ Future<http.StreamedResponse> sendMultipartRequest(
         })
         .timeout(timeout);
     final body = bytes.takeBytes();
+    if (streamed.statusCode >= 400) {
+      try {
+        final data = jsonDecode(utf8.decode(body));
+        if (data is Map && data['errorCode'].toString().startsWith('AWS_SHARING_')) {
+          PublicContentPermission.onServerDenied?.call();
+        }
+      } on FormatException {
+        // Preserve the original non-JSON error for the repository to handle.
+      }
+    }
     cancellation?.throwIfCancelled();
     return http.StreamedResponse(
       Stream<List<int>>.value(body),

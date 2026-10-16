@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/aws_sharing_permission_tile.dart';
 
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -90,6 +91,8 @@ class _PrivacyChoicesPageState extends State<PrivacyChoicesPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
+                const AwsSharingPermissionTile(),
+                const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(

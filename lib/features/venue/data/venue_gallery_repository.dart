@@ -8,14 +8,23 @@ import 'package:mime/mime.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
-import 'package:kmstry_frontend/core/network/app_request_headers.dart';
+import 'package:kmstry_frontend/core/network/authenticated_multipart_upload.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_gallery_model.dart';
+import 'venue_gallery_upload_failure.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 
 class VenueGalleryRepository {
+  VenueGalleryRepository({
+    AuthenticatedMultipartUpload? uploads,
+    PendingPublicMediaService? uploadService,
+  }) : _uploads = uploads ?? AuthenticatedMultipartUpload(),
+       _uploadService = uploadService ?? PendingPublicMediaService.instance;
+
   final ApiClient _api = ApiClient();
+  final AuthenticatedMultipartUpload _uploads;
+  final PendingPublicMediaService _uploadService;
 
   /// Galeri her değiştiğinde (yükleme/silme) artan sayaç. Home'daki galeri
   /// kartı gibi bağımsız state'ler bunu dinleyip kendini tazeleyebilir — böylece
@@ -46,11 +55,17 @@ class VenueGalleryRepository {
     int? uploadSession,
     PendingPublicMedia? pendingDraft,
   }) async {
+    final revision = SecureStorage.sessionRevision;
+    final session = uploadSession ?? _uploadService.sessionGeneration;
+    bool isCurrentSession() =>
+        revision == SecureStorage.sessionRevision &&
+        _uploadService.isCurrentSession(session);
     final token = await SecureStorage.getAccessToken();
-    if (token == null) throw Exception('Not authenticated');
-    return PendingPublicMediaService.instance.runUpload<VenueGalleryItem>(
+    if (!isCurrentSession()) throw StateError('UPLOAD_SESSION_CHANGED');
+    if (token == null) throw VenueGalleryUploadFailure.fromResponse(401, '');
+    return _uploadService.runUpload<VenueGalleryItem>(
       token: token,
-      expectedGeneration: uploadSession,
+      expectedGeneration: session,
       draft:
           pendingDraft ??
           PendingPublicMedia(
@@ -66,48 +81,49 @@ class VenueGalleryRepository {
       onProgress: onProgress,
       send: (onProgress) async {
         final uri = Uri.parse('${AppConfig.baseUrl}/venues/$venueId/gallery');
-        final request = http.MultipartRequest('POST', uri);
-        request.headers.addAll(
-          await AppRequestHeaders.build(accessToken: token),
-        );
-
-        final mimeType =
-            lookupMimeType(file.path) ?? 'application/octet-stream';
-        final mimeParts = mimeType.split('/');
-        request.files.add(
-          await multipartFileWithProgress(
-            field: 'file',
-            file: file,
-            contentType: MediaType(
-              mimeParts[0],
-              mimeParts.length > 1 ? mimeParts[1] : 'octet-stream',
-            ),
-            onProgress: onProgress,
-          ),
-        );
-
-        if (thumbnail != null) {
-          request.files.add(
-            await http.MultipartFile.fromPath(
-              'thumbnail',
-              thumbnail.path,
-              contentType: MediaType('image', 'jpeg'),
-            ),
-          );
-        }
-
-        final response = await sendMultipartRequest(
-          request,
+        final response = await _uploads.send(
+          initialToken: token,
+          isCurrentSession: isCurrentSession,
           timeout: const Duration(minutes: 5),
+          // Multipart streams are single-use. Rebuild only after a definite
+          // authentication rejection; never replay a timeout or server error.
+          createRequest: (headers) async {
+            final request = http.MultipartRequest('POST', uri);
+            request.headers.addAll(headers);
+            final mimeType =
+                lookupMimeType(file.path) ?? 'application/octet-stream';
+            request.files.add(
+              await multipartFileWithProgress(
+                field: 'file',
+                file: file,
+                contentType: MediaType.parse(mimeType),
+                onProgress: onProgress,
+              ),
+            );
+            if (thumbnail != null) {
+              request.files.add(
+                await http.MultipartFile.fromPath(
+                  'thumbnail',
+                  thumbnail.path,
+                  contentType: MediaType('image', 'jpeg'),
+                ),
+              );
+            }
+            return request;
+          },
         );
-        final body = await response.stream.bytesToString();
+        final body = response.body;
         if (response.statusCode >= 400) {
           if (response.statusCode < 500 && response.statusCode != 408) {
-            throw PublicMediaUploadRejected(
-              'Upload failed (${response.statusCode}): $body',
+            throw VenueGalleryUploadFailure.fromResponse(
+              response.statusCode,
+              body,
             );
           }
-          throw Exception('Upload failed (${response.statusCode}): $body');
+          // Do not retain response bodies, signed URLs or private media details.
+          throw HttpException(
+            'Gallery upload could not be confirmed (${response.statusCode})',
+          );
         }
         final json = jsonDecode(body);
         final item = VenueGalleryItem.fromJson(

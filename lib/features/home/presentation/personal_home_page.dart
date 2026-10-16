@@ -32,6 +32,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_people_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/personal_event_detail_page.dart';
 import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
@@ -1600,7 +1601,7 @@ class _RecommendedVenueCard extends StatelessWidget {
                   width: double.infinity,
                   height: 132,
                   child: photo.isNotEmpty
-                      ? CachedImage(
+                      ? GooglePlacePhoto(
                           photo,
                           fit: BoxFit.cover,
                           errorWidget: (context) => _venuePhotoFallback(colors),

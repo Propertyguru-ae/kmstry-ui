@@ -2,11 +2,15 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
 import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/ui/app_logo.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import 'package:kmstry_frontend/features/auth/data/registration_prefill.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
 import 'package:kmstry_frontend/features/profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
@@ -34,7 +38,6 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
-import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/avatar_upload_coordinator.dart';
 import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
@@ -119,8 +122,10 @@ class _VenueProfilePageState extends State<VenueProfilePage>
   VenueOwnerStatsVenue? _venue;
   VenueMemberRole _venueRole = VenueMemberRole.staff;
   MeContextModel? _meContext;
+  RegistrationPrefill? _registrationPrefill;
   String _personalLabel = 'Personal';
   bool _uploadingPhoto = false;
+  final _photoPermission = SharingPermissionController();
   bool _updatingType = false;
   final bool _uploadingStory = false;
   bool _openingStory = false;
@@ -173,6 +178,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     if (oldWidget.venueId != widget.venueId) {
       _venue = null;
       _meContext = null;
+      _registrationPrefill = null;
       _upcomingEvents = const [];
       _avatarStories = const [];
       _partnerships = const [];
@@ -192,6 +198,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
 
   @override
   void dispose() {
+    _photoPermission.dispose();
     _identityRead.dispose();
     _eventsRead.dispose();
     _storiesRead.dispose();
@@ -340,6 +347,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
           _partnerships = const [];
         }
         _meContext = ctx.me;
+        _registrationPrefill = ctx.registrationPrefill;
         _venue = venue;
         _venueRole = ctx.role;
         _personalLabel = ctx.personalLabel;
@@ -462,6 +470,12 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     }
     setState(() => _uploadingPhoto = true);
     try {
+      if (!await _photoPermission.check() ||
+          !mounted ||
+          !uploads.isCurrentSession(session) ||
+          _venue?.id != venueId) {
+        return;
+      }
       final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery,
         imageQuality: 85,
@@ -626,7 +640,10 @@ class _VenueProfilePageState extends State<VenueProfilePage>
 
   Future<void> _editAbout(VenueOwnerStatsVenue venue) async {
     final controller = TextEditingController(text: venue.description ?? '');
-    final saved = await showModalBottomSheet<String>(
+    final permission = SharingPermissionController();
+    bool saving = false;
+    String? saveError;
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -637,86 +654,132 @@ class _VenueProfilePageState extends State<VenueProfilePage>
             ? const Color(0xFFEEF2FF)
             : const Color(0xFF111827);
         final kDim = isDark ? const Color(0xFFB1B4BB) : const Color(0xFF5D6B7B);
-        bool saving = false;
         return StatefulBuilder(
           builder: (ctx, setSheet) {
+            Future<void> save() async {
+              if (saving) return;
+              setSheet(() {
+                saving = true;
+                saveError = null;
+              });
+              try {
+                if (!await permission.check() || !ctx.mounted || !mounted) {
+                  return;
+                }
+                final updated = await _ownerRepo.updateVenue(
+                  venue.id,
+                  description: controller.text.trim(),
+                );
+                if (!ctx.mounted || !mounted) return;
+                setState(() => _venue = updated);
+                Navigator.pop(ctx);
+              } catch (error) {
+                if (ctx.mounted) {
+                  setSheet(
+                    () => saveError = publicTextErrorMessage(
+                      error,
+                      fallback:
+                          'Could not save the venue description. Please try again.',
+                    ),
+                  );
+                }
+              } finally {
+                if (ctx.mounted) setSheet(() => saving = false);
+              }
+            }
+
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(ctx).viewInsets.bottom,
               ),
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-                decoration: BoxDecoration(
-                  color: kCard,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: kDim.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
+              child: SingleChildScrollView(
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                  decoration: BoxDecoration(
+                    color: kCard,
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: kDim.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'About',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: kText,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Shown on your public venue page.',
-                      style: TextStyle(fontSize: 12, color: kDim),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: controller,
-                      maxLength: 1000,
-                      maxLines: 6,
-                      minLines: 4,
-                      textCapitalization: TextCapitalization.sentences,
-                      style: TextStyle(fontSize: 14, height: 1.5, color: kText),
-                      decoration: InputDecoration(
-                        hintText: 'Tell customers about your venue…',
-                        hintStyle: TextStyle(
-                          color: kDim.withValues(alpha: 0.7),
-                        ),
-                        filled: true,
-                        fillColor: isDark
-                            ? const Color(0xFF0D1525)
-                            : const Color(0xFFF3F6FA),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
+                      const SizedBox(height: 16),
+                      Text(
+                        'About',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: kText,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: PrimaryButton(
-                        label: 'Save',
-                        loading: saving,
-                        onPressed: saving
-                            ? null
-                            : () {
-                                setSheet(() => saving = true);
-                                Navigator.pop(ctx, controller.text.trim());
-                              },
+                      const SizedBox(height: 4),
+                      Text(
+                        'Shown on your public venue page.',
+                        style: TextStyle(fontSize: 12, color: kDim),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: controller,
+                        maxLength: 1000,
+                        maxLines: 6,
+                        minLines: 4,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: kText,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Tell customers about your venue…',
+                          hintStyle: TextStyle(
+                            color: kDim.withValues(alpha: 0.7),
+                          ),
+                          filled: true,
+                          fillColor: isDark
+                              ? const Color(0xFF0D1525)
+                              : const Color(0xFFF3F6FA),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SharingPermissionHint(
+                        controller: permission,
+                        onReview: saving ? null : save,
+                      ),
+                      if (saveError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            saveError!,
+                            style: TextStyle(
+                              color: Theme.of(ctx).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      SizedBox(
+                        width: double.infinity,
+                        child: PrimaryButton(
+                          label: 'Save',
+                          loading: saving,
+                          onPressed: saving ? null : save,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -724,25 +787,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
         );
       },
     );
-    if (saved == null || !mounted) return;
-    try {
-      final updated = await _ownerRepo.updateVenue(
-        venue.id,
-        description: saved,
-      );
-      if (mounted) setState(() => _venue = updated);
-    } catch (e) {
-      if (!mounted) return;
-      await showPremiumErrorDialog(
-        context,
-        title: publicTextErrorTitle(e, fallback: 'Description not saved'),
-        icon: publicTextErrorIcon(e),
-        message: publicTextErrorMessage(
-          e,
-          fallback: 'Could not save the venue description. Please try again.',
-        ),
-      );
-    }
+    permission.dispose();
   }
 
   static const _venueTypes = ['bar', 'club', 'cafe', 'lounge', 'restaurant'];
@@ -880,6 +925,10 @@ class _VenueProfilePageState extends State<VenueProfilePage>
   }
 
   void _showPhotoViewer(String url) {
+    if (isGooglePlacePhotoProxyUrl(url)) {
+      showGooglePhotoSourceSheet(context, photoUrl: url);
+      return;
+    }
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
@@ -1064,7 +1113,9 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                           ),
                         ),
                         subtitle: Text(
-                          'Personal',
+                          meCtx.personalSetupIncomplete
+                              ? 'Personal · Finish setup'
+                              : 'Personal',
                           style: TextStyle(
                             color: colors.onSurface.withValues(alpha: 0.55),
                             fontSize: 12,
@@ -1211,7 +1262,10 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const NameDobOnboardingPage(),
+                        builder: (_) => NameDobOnboardingPage(
+                          registrationPrefill: _registrationPrefill,
+                          repository: _authRepo,
+                        ),
                       ),
                     );
                   },
@@ -1366,35 +1420,40 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                   width: double.infinity,
                                   height: 180,
                                   child: hasPhoto
-                                      ? Image.network(
+                                      ? GooglePlacePhoto(
                                           venue!.photo!,
                                           fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
+                                          showAuthorAttribution: true,
+                                          badgeBottom: 16,
+                                          errorWidget: (_) =>
                                               _PhotoPlaceholder(colors: colors),
                                         )
                                       : _PhotoPlaceholder(colors: colors),
                                 ),
                               // Alt gradient — cover sayfa zeminine erir.
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                child: IgnorePointer(
-                                  child: Container(
-                                    height: 90,
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          Colors.transparent,
-                                          theme.scaffoldBackgroundColor,
-                                        ],
+                              if (!isGooglePlacePhotoProxyUrl(
+                                venue?.photo ?? '',
+                              ))
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: IgnorePointer(
+                                    child: Container(
+                                      height: 90,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topCenter,
+                                          end: Alignment.bottomCenter,
+                                          colors: [
+                                            Colors.transparent,
+                                            theme.scaffoldBackgroundColor,
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
                               // Keep the complete status/reason/actions centred
                               // on the cover, including narrow/large-text layouts.
                               if (!isClaimLocked)
@@ -1470,6 +1529,16 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                       ),
 
                       // ── Venue adı + bilgiler ──────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: SharingPermissionHint(
+                          controller: _photoPermission,
+                          isMedia: true,
+                          onReview: _uploadingPhoto
+                              ? null
+                              : _pickAndUploadPhoto,
+                        ),
+                      ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                         child: Column(

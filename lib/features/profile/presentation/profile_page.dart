@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
 import 'package:kmstry_frontend/features/checkin/presentation/moment_limit_dialogs.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -1598,7 +1599,9 @@ class _ProfilePageState extends State<ProfilePage>
                           ),
                         ),
                         subtitle: Text(
-                          'Personal',
+                          meCtx.personalSetupIncomplete
+                              ? 'Personal · Finish setup'
+                              : 'Personal',
                           style: TextStyle(
                             color: colors.onSurface.withValues(alpha: 0.55),
                             fontSize: 12,
@@ -1616,13 +1619,18 @@ class _ProfilePageState extends State<ProfilePage>
                                     lastActiveContext: 'PERSONAL',
                                   );
                                   if (!context.mounted) return;
-                                  Navigator.of(context).pushAndRemoveUntil(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const AppShell(openProfileTab: true),
-                                    ),
-                                    (r) => false,
-                                  );
+                                  final me = await AuthRepository().getMe(forceRefresh: true);
+                                  if (!context.mounted) return;
+                                  if (MeContextModel.fromMe(me).personalSetupIncomplete) {
+                                    Navigator.of(context).pushNamedAndRemoveUntil(
+                                      AuthRoutes.authGate, (r) => false,
+                                    );
+                                  } else {
+                                    Navigator.of(context).pushAndRemoveUntil(
+                                      MaterialPageRoute(builder: (_) => const AppShell(openProfileTab: true)),
+                                      (r) => false,
+                                    );
+                                  }
                                 } catch (_) {}
                               },
                       ),

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import '../../reports/presentation/child_safety_report.dart';
 import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -944,6 +945,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     if (_isReporting) return;
 
     final options = <({String key, String label})>[
+      (key: childSafetyReportReason, label: childSafetyReportLabel),
       (key: 'FAKE_PROFILE', label: 'Fake profile'),
       (key: 'INAPPROPRIATE_CONTENT', label: 'Inappropriate content'),
       (key: 'HARASSMENT', label: 'Harassment'),
@@ -952,7 +954,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       (key: 'OTHER', label: 'Other'),
     ];
 
-    String selected = options.first.key;
+    String selected = 'FAKE_PROFILE';
     final otherCtrl = TextEditingController();
     bool submitting = false;
     var reportSucceeded = false;
@@ -1029,6 +1031,18 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                                     ? null
                                     : () =>
                                           setModalState(() => selected = o.key),
+                              ),
+                            ),
+                          if (selected == childSafetyReportReason)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Text(
+                                childSafetyReportHelp,
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 13,
+                                  height: 1.35,
+                                ),
                               ),
                             ),
                           if (isOther) ...[

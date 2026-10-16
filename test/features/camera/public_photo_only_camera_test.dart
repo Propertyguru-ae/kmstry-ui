@@ -7,6 +7,9 @@ import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/public_content_permission.dart';
 import 'package:image/image.dart' as img;
 import 'package:kmstry_frontend/core/media/public_media_upload_policy.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
@@ -132,6 +135,8 @@ void main() {
       expect(PublicMediaUploadPolicy.allowVideo, isFalse);
       expect(const CameraScreen.publicMedia().allowVideo, isFalse);
       expect(const CameraScreen().allowVideo, isFalse);
+      expect(const CameraScreen.publicMedia().requiresSharingPermission, isTrue);
+      expect(const CameraScreen().requiresSharingPermission, isFalse);
     },
   );
 
@@ -217,6 +222,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(PreviewScreen), findsOneWidget);
       expect(find.text('Use'), findsOneWidget);
+      FlutterSecureStorage.setMockInitialValues({'access_token': 'test'});
+      PublicContentPermission.onRequired = (_) async => throw ApiException(
+        statusCode: 403, data: const {'errorCode': 'AWS_SHARING_PERMISSION_DECLINED'},
+      );
+      addTearDown(() => PublicContentPermission.onRequired = null);
+      await tester.tap(find.text('Use'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PreviewScreen), findsOneWidget);
+      expect(find.text('Nothing was shared. Allow safety checks to continue.'), findsOneWidget);
+      expect(find.text('Review permission'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       await tester.tap(find.text('Retake'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('camera-shutter')), findsOneWidget);

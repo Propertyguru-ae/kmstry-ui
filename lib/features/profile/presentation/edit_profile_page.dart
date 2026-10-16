@@ -17,6 +17,7 @@ import 'package:kmstry_frontend/features/people/data/match_repository.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/avatar_upload_coordinator.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 
 /// Instagram tarzı "Edit Profile" ekranı — çalışır.
 /// - Foto: image_picker ile seçilip `POST /users/me/photo`'ya yüklenir.
@@ -25,15 +26,16 @@ import 'package:kmstry_frontend/features/content_moderation/presentation/owner_p
 ///   (`GET /users/find-by-username`) + Save'de backend'in kesin 409'u.
 class EditProfilePage extends StatefulWidget {
   final Map<String, dynamic> user;
+  final AuthRepository? authRepository;
 
-  const EditProfilePage({super.key, required this.user});
+  const EditProfilePage({super.key, required this.user, this.authRepository});
 
   @override
   State<EditProfilePage> createState() => _EditProfilePageState();
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
-  final AuthRepository _auth = AuthRepository();
+  late final AuthRepository _auth = widget.authRepository ?? AuthRepository();
   final MatchRepository _matchRepo = MatchRepository();
   final ImagePicker _picker = ImagePicker();
 
@@ -60,6 +62,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool _saving = false;
   bool _photoChanged = false;
   String? _saveError;
+  final _savePermission = SharingPermissionController();
+  final _photoPermission = SharingPermissionController();
 
   // Username canlı kontrol durumu
   Timer? _usernameDebounce;
@@ -158,6 +162,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   @override
   void dispose() {
+    _savePermission.dispose();
+    _photoPermission.dispose();
     PendingPublicMediaService.instance.avatarPublicationChanges.removeListener(
       _refreshPhoto,
     );
@@ -198,6 +204,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
     setState(() => _uploadingPhoto = true);
     try {
+      if (!await _photoPermission.check() ||
+          !mounted ||
+          !uploads.isCurrentSession(session)) {
+        return;
+      }
       final picked = await _picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1080,
@@ -356,6 +367,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
     if (usernameChanged) data['username'] = username;
 
     try {
+      if (!await _savePermission.check()) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
+      if (!mounted) return;
       await _auth.upsertPersonalProfile(data);
       AuthRepository.invalidateMeCache();
       // Foto/isim değişikliği sonrası navbar avatarını da tazele (kaydet akışı).
@@ -379,7 +395,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
           : <String>[];
       // Sadece gerçek çakışma (409 / "in use") = taken. Diğer username
       // mesajları (policy: geçersiz karakter vb.) olduğu gibi gösterilir.
-      final isTaken = e.statusCode == 409 || lower.contains('in use');
+      final isTaken =
+          !isAwsSharingPermissionError(e) &&
+          (e.statusCode == 409 || lower.contains('in use'));
       final isUsernamePolicy =
           lower.contains('username') || lower.contains('kullanıcı adı');
       setState(() {
@@ -393,7 +411,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
           _usernameAvailable = false;
           _suggestions = suggestions;
         } else {
-          _saveError = 'Could not save. Please try again.';
+          _saveError = publicTextErrorMessage(
+            e,
+            fallback: 'Could not save. Please try again.',
+          );
         }
       });
     } catch (_) {
@@ -472,16 +493,35 @@ class _EditProfilePageState extends State<EditProfilePage> {
         ),
         bottomNavigationBar: SafeArea(
           minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-          child: PrimaryButton(
-            label: 'Save changes',
-            loading: _saving,
-            onPressed: canSave ? _save : null,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SharingPermissionHint(
+                controller: _savePermission,
+                onReview: canSave ? _save : null,
+              ),
+              PrimaryButton(
+                label: 'Save changes',
+                loading: _saving,
+                onPressed: canSave ? _save : null,
+              ),
+            ],
           ),
         ),
         body: ListView(
           padding: EdgeInsets.zero,
           children: [
             _buildHeader(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: SharingPermissionHint(
+                controller: _photoPermission,
+                isMedia: true,
+                onReview: _uploadingPhoto || _removingPhoto
+                    ? null
+                    : _changePhoto,
+              ),
+            ),
             const SizedBox(height: 22),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),

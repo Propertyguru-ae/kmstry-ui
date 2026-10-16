@@ -35,7 +35,10 @@ class StoryUploadFailure extends PublicMediaUploadRejected {
       // Gateways can return HTML. Do not expose it to the UI or logs.
     }
     (String, String) result;
-    if (reason.contains('app_check_required')) {
+    if (reason.contains('aws_sharing_')) {
+      result = ('AWS_SHARING_PERMISSION_REQUIRED',
+        'Nothing was shared. Review your AWS safety-check permission and try again.');
+    } else if (reason.contains('app_check_required')) {
       result = (
         'APP_CHECK_REQUIRED',
         'App verification could not be completed. Please reopen KMSTRY and try again.',

@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../profile/presentation/settings_page.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import '../../content_moderation/presentation/sharing_permission_hint.dart';
 
 class UsernameOnboardingPage extends StatefulWidget {
   final String? initialUsername;
@@ -20,6 +23,7 @@ class UsernameOnboardingPage extends StatefulWidget {
   /// başarılı olunca authGate'e gitmek yerine bir sonraki adıma ilerlemek için
   /// çağrılır. Null ise klasik authGate yönlendirmesi yapılır.
   final VoidCallback? onContinue;
+  final AuthRepository? repository;
 
   const UsernameOnboardingPage({
     super.key,
@@ -27,6 +31,7 @@ class UsernameOnboardingPage extends StatefulWidget {
     this.onCancel,
     this.cancelRoute,
     this.onContinue,
+    this.repository,
   });
 
   @override
@@ -41,12 +46,19 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
   String? _error;
   String? _suggestionError;
   List<String> _suggestions = const [];
+  final _permission = SharingPermissionController();
+  late final AuthRepository _repository;
+  late final int _sessionRevision;
+  bool get _currentSession =>
+      mounted && _sessionRevision == SecureStorage.sessionRevision;
 
   static final RegExp _usernameRegex = RegExp(r'^[a-z0-9._]{3,30}$');
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository ?? AuthRepository();
+    _sessionRevision = SecureStorage.sessionRevision;
     _usernameController = TextEditingController(
       text: widget.initialUsername?.toLowerCase().trim() ?? '',
     );
@@ -55,6 +67,7 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
   @override
   void dispose() {
     _suggestionDebounce?.cancel();
+    _permission.dispose();
     _usernameController.dispose();
     super.dispose();
   }
@@ -105,16 +118,17 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
   }
 
   Future<void> _continue() async {
-    if (!_isValid || _loading) return;
+    if (!_isValid || _loading || !_currentSession) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      await AuthRepository().upsertPersonalProfile({
+      if (!await _permission.check() || !_currentSession) return;
+      await _repository.upsertPersonalProfile({
         'username': _normalizedUsername,
       });
-      if (!mounted) return;
+      if (!mounted || !_currentSession) return;
       if (widget.onContinue != null) {
         setState(() => _loading = false);
         widget.onContinue!();
@@ -122,11 +136,14 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
         Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!_currentSession) return;
+      if (_permission.handleDecline(e)) return;
       setState(() {
         _loading = false;
         _error = _friendlyError(e);
       });
+    } finally {
+      if (_currentSession) setState(() => _loading = false);
     }
   }
 
@@ -158,14 +175,14 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
       _suggestionError = null;
     });
     try {
-      final result = await AuthRepository().getUsernameSuggestions(base);
-      if (!mounted) return;
+      final result = await _repository.getUsernameSuggestions(base);
+      if (!_currentSession || base != _normalizedUsername) return;
       setState(() {
         _loadingSuggestions = false;
         _suggestions = result.where((v) => v != _normalizedUsername).toList();
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!_currentSession || base != _normalizedUsername) return;
       setState(() {
         _loadingSuggestions = false;
         _suggestions = const [];
@@ -270,6 +287,16 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                         else
                           const SizedBox(width: 38),
                         const Spacer(),
+                        IconButton(
+                          tooltip: 'Account & privacy',
+                          onPressed: () =>
+                              Navigator.of(context, rootNavigator: true).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const SettingsPage(),
+                                ),
+                              ),
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
                         // "Maybe later" yalnızca dönülecek gerçek bir hedef
                         // varken gösterilir (ör. venue kullanıcısı personal hesap
                         // ekleyip vazgeçtiğinde venue home'a döner). Yeni kayıtta
@@ -283,7 +310,7 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                               foregroundColor: _blueBright,
                             ),
                             child: const Text(
-                              'Maybe later',
+                              'Back to venue',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 13.5,
@@ -427,6 +454,29 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                                     fontSize: 12,
                                   ),
                                 ),
+                              ),
+                            SharingPermissionHint(
+                              controller: _permission,
+                              onReview: _loading ? null : _continue,
+                              message:
+                                  'Your personal profile isn’t ready yet. Allow safety checks to continue.',
+                            ),
+                            if (widget.onCancel == null &&
+                                widget.cancelRoute == null)
+                              TextButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () =>
+                                          Navigator.of(
+                                            context,
+                                            rootNavigator: true,
+                                          ).push(
+                                            MaterialPageRoute<void>(
+                                              builder: (_) =>
+                                                  const SettingsPage(),
+                                            ),
+                                          ),
+                                child: const Text('Finish later'),
                               ),
                             if (_error != null)
                               Padding(
@@ -607,7 +657,7 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
           color: color,
         ),
         const SizedBox(width: 8),
-        Text(text, style: TextStyle(fontSize: 11.5, color: color)),
+        Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: color))),
       ],
     );
   }

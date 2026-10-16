@@ -365,6 +365,7 @@ class VenueRepository {
     required String venueId,
     required String ownerNote,
     String? ownerFullName,
+    String? ownerBirthdate,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
     bool hasDocuments = false,
@@ -377,6 +378,7 @@ class VenueRepository {
       body: {
         'venueId': venueId,
         'ownerNote': ownerNote,
+        if (ownerBirthdate != null) 'ownerBirthdate': ownerBirthdate,
         'hasDocuments': hasDocuments,
         if (ownerFullName != null && ownerFullName.isNotEmpty)
           'ownerFullName': ownerFullName,

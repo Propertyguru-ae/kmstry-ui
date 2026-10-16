@@ -15,8 +15,16 @@ class BioOnboardingPage extends StatefulWidget {
   /// Opsiyonel — çok adımlı onboarding akışında bir sonraki adıma ilerlemek için
   /// çağrılır. Null ise klasik authGate yönlendirmesi yapılır.
   final VoidCallback? onContinue;
+  final VoidCallback? onCancel;
+  final AuthRepository? repository;
 
-  const BioOnboardingPage({super.key, this.initialBio, this.onContinue});
+  const BioOnboardingPage({
+    super.key,
+    this.initialBio,
+    this.onContinue,
+    this.onCancel,
+    this.repository,
+  });
 
   static const int maxLength = 150;
 
@@ -91,7 +99,9 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
 
     setState(() => _loading = true);
     try {
-      await AuthRepository().upsertPersonalProfile({'bio': text});
+      await (widget.repository ?? AuthRepository()).upsertPersonalProfile({
+        'bio': text,
+      });
       if (!mounted) return;
       _advance();
     } catch (error) {
@@ -114,22 +124,15 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
     if (_loading) return;
     setState(() => _loading = true);
     try {
-      await AuthRepository().upsertPersonalProfile({
-        'skipBio': true,
-        'bioOnboardingSkipped': true,
+      await (widget.repository ?? AuthRepository()).upsertPersonalProfile({
+        'bio': '',
       });
       if (!mounted) return;
       _advance();
     } catch (_) {
-      try {
-        await AuthRepository().upsertPersonalProfile({'bio': ''});
-        if (!mounted) return;
-        _advance();
-      } catch (_) {
-        if (!mounted) return;
-        setState(() => _loading = false);
-        await showPremiumErrorDialog(context, message: 'Something went wrong');
-      }
+      if (!mounted) return;
+      setState(() => _loading = false);
+      await showPremiumErrorDialog(context, message: 'Something went wrong');
     }
   }
 
@@ -238,6 +241,11 @@ class _BioOnboardingPageState extends State<BioOnboardingPage> {
                         else
                           const SizedBox(width: 38),
                         const Spacer(),
+                        if (widget.onCancel != null)
+                          TextButton(
+                            onPressed: _loading ? null : widget.onCancel,
+                            child: const Text('Back to venue'),
+                          ),
                         TextButton(
                           onPressed: _loading ? null : _skip,
                           style: TextButton.styleFrom(

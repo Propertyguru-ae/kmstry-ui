@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 import 'venue_gallery_repository.dart';
+import 'venue_gallery_upload_failure.dart';
 
 typedef GalleryUploadSender =
     Future<void> Function(
@@ -182,6 +183,13 @@ class VenueGalleryUploadCoordinator {
       if (!_service.isCurrentSession(job.session)) return;
       await _sender(job.draft, prepared, thumbnail, job.session);
     } catch (error) {
+      if (kDebugMode) {
+        // Log only a bounded reason/status, never bodies, tokens or file paths.
+        final code = error is VenueGalleryUploadFailure
+            ? '${error.code} status=${error.statusCode}'
+            : error.runtimeType.toString();
+        debugPrint('[GalleryUpload] $code');
+      }
       // Uncertain transport outcomes are already retained by runUpload and
       // must not turn into automatic retries or false success.
       _service.failPreparedUpload(
@@ -198,7 +206,11 @@ class VenueGalleryUploadCoordinator {
   }
 
   static String _failureMessage(Object error) {
+    if (error is VenueGalleryUploadFailure) return error.message;
     if (error is _GalleryPreparationFailure) return error.message;
+    if (error is FileSystemException) {
+      return 'This photo could not be read from your device. Please select it again.';
+    }
     final text = error.toString();
     if (text.contains('60 seconds or shorter')) {
       return 'Choose a video that is 60 seconds or shorter.';
@@ -209,7 +221,7 @@ class VenueGalleryUploadCoordinator {
     if (text.contains('(403)')) {
       return 'You do not have permission to add media to this venue.';
     }
-    return 'This item could not be added to your gallery. Please choose another file.';
+    return 'Your upload could not be started. Please try again. If it keeps happening, contact support.';
   }
 
   static Future<Duration> _readDuration(File file) async {

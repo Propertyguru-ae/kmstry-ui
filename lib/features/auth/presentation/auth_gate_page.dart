@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../data/personal_onboarding_progress.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
@@ -13,15 +14,19 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_member_invite_
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import '../data/auth_repository.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
 class AuthGatePage extends StatefulWidget {
-  const AuthGatePage({super.key});
+  final AuthRepository? repository;
+
+  const AuthGatePage({super.key, this.repository});
 
   @override
   State<AuthGatePage> createState() => _AuthGatePageState();
 }
 
 class _AuthGatePageState extends State<AuthGatePage> {
+  late final AuthRepository _repository = widget.repository ?? AuthRepository();
   int? _routingRevision;
   @override
   void initState() {
@@ -31,7 +36,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
   Future<void> _decide() async {
     try {
-      final isLoggedIn = await AuthRepository().restoreSession();
+      final isLoggedIn = await _repository.restoreSession();
       if (!mounted) return;
 
       if (!isLoggedIn) {
@@ -42,7 +47,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
       // restoreSession just validated /auth/me against the server. Reuse that
       // exact short-lived, session-scoped result instead of querying it twice.
-      final me = await AuthRepository().getMe();
+      final me = await _repository.getMe();
       if (_legalConsentRequired(me)) {
         _logDecision('legal_consent_required');
         _go(const LegalUpdateRequiredPage());
@@ -70,7 +75,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
       );
       final devicePermissionsDone =
           await SecureStorage.isDevicePermissionsOnboardingDone();
-      final hasNameDob = fullName.isNotEmpty && birthdate.isNotEmpty;
+      final hasNameDob = _hasSavedNameDob(me);
       final hasUsername = username.isNotEmpty;
       final hasGenderInterest = gender.isNotEmpty && interestedIn.isNotEmpty;
       final hasInferredPersonalProfile =
@@ -101,7 +106,8 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
       // On fresh installs, existing accounts can come with COMPLETED but still need
       // device permission onboarding on this device.
-      if (onboardingStep == 'COMPLETED' && !devicePermissionsDone) {
+      if (onboardingStep == 'COMPLETED' && !devicePermissionsDone &&
+          personalOnboardingStep(me) == null) {
         _logDecision('completed_but_device_permissions_missing');
         _go(PermissionsFlowPage(markProfileCompleted: false, forceDark: false));
         return;
@@ -120,6 +126,33 @@ class _AuthGatePageState extends State<AuthGatePage> {
         }
         await _routeToVenueHome();
         return;
+      }
+
+      // Safe fallback for known backend inconsistency:
+      // Intentional personal entry must resume before any legacy venue fallback.
+      if (lastActiveContext != 'VENUE' &&
+          (lastActiveContext == 'PERSONAL' ||
+              homeRoute == 'PERSONAL_HOME' ||
+              homeRoute == 'PERSONAL_ONBOARDING')) {
+        final resume = personalOnboardingStep(me);
+        if (resume != null) {
+          if (resume == 'PERMISSIONS') {
+            _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          } else {
+            _goPersonalOnboarding(
+              switch (resume) {
+                'USERNAME' => OnboardingFlowStep.username,
+                'NAME_DOB' => OnboardingFlowStep.nameDob,
+                'BIO' => OnboardingFlowStep.bio,
+                'GENDER_INTEREST' => OnboardingFlowStep.gender,
+                _ => OnboardingFlowStep.photo,
+              },
+              me,
+              onCancelPersonal,
+            );
+          }
+          return;
+        }
       }
 
       // Safe fallback for known backend inconsistency:
@@ -516,9 +549,15 @@ class _AuthGatePageState extends State<AuthGatePage> {
   }
 
   String? _namePrefill(Map<String, dynamic> me) {
-    final name = (me['fullName'] ?? me['full_name'])?.toString().trim();
-    if (name == null || name.isEmpty) return null;
-    return name;
+    for (final value in [
+      me['fullName'],
+      me['full_name'],
+      me['registrationName'],
+    ]) {
+      final name = value?.toString().trim();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    return null;
   }
 
   DateTime? _birthdatePrefill(Map<String, dynamic> me) {
@@ -562,15 +601,37 @@ class _AuthGatePageState extends State<AuthGatePage> {
     String? resolvedVenueId,
   ) {
     if (!hasVenueMembership) return null;
+    // The gate is replaced by onboarding. Retain the root navigator, not the
+    // gate's disposed BuildContext, and never act for a different login session.
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final revision = SecureStorage.sessionRevision;
+    var returning = false;
     return () async {
+      if (returning ||
+          !navigator.mounted ||
+          revision != SecureStorage.sessionRevision) {
+        return;
+      }
+      returning = true;
       try {
-        await AuthRepository().switchContext(
+        await _repository.switchContext(
           lastActiveContext: 'VENUE',
           activeVenueId: resolvedVenueId,
         );
-      } catch (_) {}
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
+      } catch (_) {
+        if (navigator.mounted && revision == SecureStorage.sessionRevision) {
+          await showPremiumErrorDialog(
+            navigator.context,
+            title: 'Couldn’t return to venue',
+            message: 'Please try again.',
+          );
+        }
+        return;
+      } finally {
+        returning = false;
+      }
+      if (navigator.mounted && revision == SecureStorage.sessionRevision) {
+        navigator.pushNamedAndRemoveUntil(AuthRoutes.authGate, (_) => false);
       }
     };
   }
@@ -579,7 +640,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
     if (!_isCurrentSession) return;
     if (venueId == null || venueId.isEmpty) return;
     try {
-      await AuthRepository().switchContext(
+      await _repository.switchContext(
         lastActiveContext: 'VENUE',
         activeVenueId: venueId,
       );
@@ -632,15 +693,26 @@ class _AuthGatePageState extends State<AuthGatePage> {
     final name = _namePrefill(me);
     _go(
       PersonalOnboardingFlow(
+        repository: _repository,
         startAt: step,
         initialUsername: _usernamePrefill(me),
         initialName: name,
         initialBirthdate: _birthdatePrefill(me),
+        nameDobCompleted: _hasSavedNameDob(me),
         nameReadOnly: false,
         initialBio: _bioPrefill(me),
+        initialGender: me['gender']?.toString(),
+        initialInterest: (me['interestedIn'] ?? me['interested_in'])?.toString(),
         onCancel: onCancel,
       ),
     );
+  }
+
+  bool _hasSavedNameDob(Map<String, dynamic> me) {
+    final publicName =
+        (me['fullName'] ?? me['full_name'])?.toString().trim() ?? '';
+    // registrationName is a private draft, not proof of a completed step.
+    return publicName.isNotEmpty && _birthdatePrefill(me) != null;
   }
 
   @override

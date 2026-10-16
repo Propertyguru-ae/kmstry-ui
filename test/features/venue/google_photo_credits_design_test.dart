@@ -86,6 +86,7 @@ void main() {
       theme: AppTheme.darkTheme,
       launcher: (_) async => false,
     );
+    await tester.ensureVisible(find.text('View on Google Maps'));
     await tester.tap(find.text('View on Google Maps'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -110,6 +111,7 @@ void main() {
         return true;
       },
     );
+    await tester.ensureVisible(find.text('Report to Google Maps'));
     await tester.tap(find.text('Report to Google Maps'));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);

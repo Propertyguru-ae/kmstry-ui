@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/force_dark.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
@@ -29,6 +30,13 @@ class PersonalOnboardingFlow extends StatefulWidget {
   final DateTime? initialBirthdate;
   final bool nameReadOnly;
   final String? initialBio;
+  final String? initialGender;
+  final String? initialInterest;
+
+  /// Only true for a successfully saved public name and date of birth.
+  /// Invitation/provider prefill alone must not complete this step.
+  final bool nameDobCompleted;
+  final AuthRepository? repository;
 
   /// "Maybe later" — venue kullanıcısı personal eklerken vazgeçerse. Null ise
   /// gizlenir (yeni kayıtta username zorunlu).
@@ -42,6 +50,10 @@ class PersonalOnboardingFlow extends StatefulWidget {
     this.initialBirthdate,
     this.nameReadOnly = false,
     this.initialBio,
+    this.initialGender,
+    this.initialInterest,
+    this.nameDobCompleted = false,
+    this.repository,
     this.onCancel,
   });
 
@@ -65,6 +77,7 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
   late List<int> _stack;
   late String? _draftName;
   late DateTime? _draftBirthdate;
+  late bool _nameDobCompleted;
 
   int get _startIndex => _order.indexOf(widget.startAt);
 
@@ -75,6 +88,7 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
     _stack = [for (int i = 0; i <= start; i++) i];
     _draftName = widget.initialName;
     _draftBirthdate = widget.initialBirthdate;
+    _nameDobCompleted = widget.nameDobCompleted;
   }
 
   @override
@@ -112,8 +126,20 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
 
   /// Kaydetme sonrası ilerleme: sonraki adımı stack'e ekle, son adımsa bitir.
   void _advance(int index) {
+    if (!mounted || _stack.isEmpty || _stack.last != index) return;
     if (index < _order.length - 1) {
-      setState(() => _stack.add(index + 1));
+      final next =
+          _order[index] == OnboardingFlowStep.username && _nameDobCompleted
+          ? _order.indexOf(OnboardingFlowStep.bio)
+          : index + 1;
+      // Add Personal can save name/DOB before collecting a username. Go
+      // straight to bio in that case, but retain name/DOB in the back stack
+      // so the user can still choose to edit it. Never resubmit it silently.
+      setState(() {
+        for (var i = index + 1; i <= next; i++) {
+          _stack.add(i);
+        }
+      });
     } else {
       _finish();
     }
@@ -132,12 +158,14 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
     switch (step) {
       case OnboardingFlowStep.username:
         return UsernameOnboardingPage(
+          repository: widget.repository,
           initialUsername: widget.initialUsername,
           onCancel: widget.onCancel,
           onContinue: () => _advance(index),
         );
       case OnboardingFlowStep.nameDob:
         return NameDobOnboardingPage(
+          repository: widget.repository,
           initialName: _draftName,
           initialBirthdate: _draftBirthdate,
           nameReadOnly: widget.nameReadOnly,
@@ -145,18 +173,31 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
           onSaved: (fullName, birthdate) {
             _draftName = fullName;
             _draftBirthdate = birthdate;
+            _nameDobCompleted = true;
           },
           onContinue: () => _advance(index),
         );
       case OnboardingFlowStep.bio:
         return BioOnboardingPage(
+          repository: widget.repository,
+          onCancel: widget.onCancel,
           initialBio: widget.initialBio,
           onContinue: () => _advance(index),
         );
       case OnboardingFlowStep.gender:
-        return GenderInterestOnboardingPage(onContinue: () => _advance(index));
+        return GenderInterestOnboardingPage(
+          repository: widget.repository,
+          onCancel: widget.onCancel,
+          initialGender: widget.initialGender,
+          initialInterest: widget.initialInterest,
+          onContinue: () => _advance(index),
+        );
       case OnboardingFlowStep.photo:
-        return PhotoOnboardingPage(onContinue: () => _advance(index));
+        return PhotoOnboardingPage(
+          repository: widget.repository,
+          onCancel: widget.onCancel,
+          onContinue: () => _advance(index),
+        );
     }
   }
 }
