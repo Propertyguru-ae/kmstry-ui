@@ -5,6 +5,10 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_routes.dart';
+import '../../profile/presentation/settings_page.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import '../../content_moderation/presentation/sharing_permission_hint.dart';
+import '../../auth/data/registration_prefill.dart';
 
 class NameDobOnboardingPage extends StatefulWidget {
   final String? initialName;
@@ -21,6 +25,8 @@ class NameDobOnboardingPage extends StatefulWidget {
   /// çağrılır. Null ise klasik authGate yönlendirmesi yapılır.
   final VoidCallback? onContinue;
   final void Function(String fullName, DateTime birthdate)? onSaved;
+  final AuthRepository? repository;
+  final RegistrationPrefill? registrationPrefill;
 
   const NameDobOnboardingPage({
     super.key,
@@ -30,6 +36,8 @@ class NameDobOnboardingPage extends StatefulWidget {
     this.onCancel,
     this.onContinue,
     this.onSaved,
+    this.repository,
+    this.registrationPrefill,
   });
 
   @override
@@ -41,13 +49,88 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
   late final FocusNode _nameFocusNode;
   DateTime? _birthdate;
   bool _loading = false;
+  late final AuthRepository _repository;
+  final _permission = SharingPermissionController();
+  late final int _sessionRevision;
+  String? _venueId;
+  bool _nameEdited = false;
+  bool _birthdateEdited = false;
+
+  bool get _currentSession =>
+      mounted && _sessionRevision == SecureStorage.sessionRevision;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.initialName ?? '');
-    _birthdate = widget.initialBirthdate;
+    _repository = widget.repository ?? AuthRepository();
+    _sessionRevision = SecureStorage.sessionRevision;
+    final prefill = widget.registrationPrefill?.isCurrentSession == true
+        ? widget.registrationPrefill
+        : null;
+    _nameController = TextEditingController(
+      text: widget.initialName ?? prefill?.name ?? '',
+    );
+    _birthdate = widget.initialBirthdate ?? prefill?.birthdate;
+    _venueId = prefill?.venueId;
     _nameFocusNode = FocusNode()..addListener(_handleNameFocusChange);
+    _nameController.addListener(() => _nameEdited = true);
+    _loadPrefill();
+  }
+
+  Future<void> _loadPrefill() async {
+    try {
+      final me = await _repository.getMe();
+      if (!_currentSession) return;
+      final prefill = RegistrationPrefill.fromMe(
+        me,
+        sessionRevision: _sessionRevision,
+      );
+      setState(() {
+        _venueId = prefill.venueId;
+        if (!_nameEdited &&
+            (widget.initialName == null || widget.initialName!.isEmpty) &&
+            prefill.name != null) {
+          _nameController.text = prefill.name!;
+          // This is a server refresh, not a user edit.
+          _nameEdited = false;
+        }
+        if (!_birthdateEdited && widget.initialBirthdate == null) {
+          _birthdate = prefill.birthdate ?? _birthdate;
+        }
+      });
+    } catch (_) {
+      // Prefill is optional; keep any entered values and permit manual entry.
+    }
+  }
+
+  Future<void> _backToVenue() async {
+    if (!_currentSession || _loading) return;
+    if (widget.onCancel != null) {
+      widget.onCancel!();
+      return;
+    }
+    if (_venueId == null) return;
+    setState(() => _loading = true);
+    try {
+      await _repository.switchContext(
+        lastActiveContext: 'VENUE',
+        activeVenueId: _venueId,
+      );
+      if (!mounted || !_currentSession) return;
+      Navigator.of(
+        context,
+        rootNavigator: true,
+      ).pushNamedAndRemoveUntil(AuthRoutes.authGate, (_) => false);
+    } catch (_) {
+      if (!mounted || !_currentSession) return;
+      await showPremiumErrorDialog(
+        context,
+        title: 'Couldn’t return to venue',
+        message: 'Please try again.',
+      );
+    } finally {
+      if (_currentSession) setState(() => _loading = false);
+    }
   }
 
   bool get _is18Plus {
@@ -71,30 +154,34 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(now.year - 20),
+      initialDate: _birthdate ?? DateTime(now.year - 20),
       firstDate: DateTime(now.year - 100),
       lastDate: now,
       // Kalem (manuel giriş) ikonunu gizle — yalnızca takvim.
       initialEntryMode: DatePickerEntryMode.calendarOnly,
     );
 
-    if (picked != null) {
-      setState(() => _birthdate = picked);
+    if (picked != null && _currentSession) {
+      setState(() {
+        _birthdate = picked;
+        _birthdateEdited = true;
+      });
     }
   }
 
   Future<void> _continue() async {
-    if (!_isValid) return;
+    if (!_isValid || _loading || !_currentSession) return;
 
     setState(() => _loading = true);
 
     try {
-      await AuthRepository().upsertPersonalProfile({
+      if (!await _permission.check() || !_currentSession) return;
+      await _repository.upsertPersonalProfile({
         'fullName': _nameController.text.trim(),
         'birthdate': _birthdate!.toIso8601String(),
       });
 
-      if (!mounted) return;
+      if (!mounted || !_currentSession) return;
       widget.onSaved?.call(_nameController.text.trim(), _birthdate!);
 
       if (widget.onContinue != null) {
@@ -104,7 +191,8 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
         Navigator.pushReplacementNamed(context, AuthRoutes.authGate);
       }
     } catch (error) {
-      setState(() => _loading = false);
+      if (!mounted || !_currentSession) return;
+      if (_permission.handleDecline(error)) return;
       await showPremiumErrorDialog(
         context,
         title: publicTextErrorTitle(error),
@@ -114,11 +202,14 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
           fallback: 'Could not save your profile. Please try again.',
         ),
       );
+    } finally {
+      if (_currentSession) setState(() => _loading = false);
     }
   }
 
   @override
   void dispose() {
+    _permission.dispose();
     _nameFocusNode.removeListener(_handleNameFocusChange);
     _nameController.dispose();
     _nameFocusNode.dispose();
@@ -214,14 +305,24 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                         else
                           const SizedBox(width: 38),
                         const Spacer(),
-                        if (widget.onCancel != null)
+                        IconButton(
+                          tooltip: 'Account & privacy',
+                          onPressed: () =>
+                              Navigator.of(context, rootNavigator: true).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const SettingsPage(),
+                                ),
+                              ),
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                        if (widget.onCancel != null || _venueId != null)
                           TextButton(
-                            onPressed: widget.onCancel,
+                            onPressed: _loading ? null : _backToVenue,
                             style: TextButton.styleFrom(
                               foregroundColor: _blueBright,
                             ),
                             child: const Text(
-                              'Maybe later',
+                              'Back to venue',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 13.5,
@@ -357,12 +458,34 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                             const SizedBox(height: 16),
                             _buildAgeNote(),
                             const SizedBox(height: 20),
+                            SharingPermissionHint(
+                              controller: _permission,
+                              onReview: _loading ? null : _continue,
+                              message:
+                                  'Your personal profile isn’t ready yet. Allow safety checks to continue.',
+                            ),
                             PrimaryButton(
                               label: 'Continue',
                               onPressed: _isValid ? _continue : null,
                               loading: _loading,
                               trailingArrow: true,
                             ),
+                            if (widget.onCancel == null && _venueId == null)
+                              TextButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () =>
+                                          Navigator.of(
+                                            context,
+                                            rootNavigator: true,
+                                          ).push(
+                                            MaterialPageRoute<void>(
+                                              builder: (_) =>
+                                                  const SettingsPage(),
+                                            ),
+                                          ),
+                                child: const Text('Finish later'),
+                              ),
                           ],
                         ),
                       ),

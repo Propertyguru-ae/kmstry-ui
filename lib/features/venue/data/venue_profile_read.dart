@@ -1,4 +1,6 @@
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
+import 'package:kmstry_frontend/features/auth/data/registration_prefill.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_member_model.dart';
 import 'venue_owner_stats_model.dart';
 
@@ -8,11 +10,13 @@ class VenueProfileContext {
     required this.venueId,
     required this.member,
     required this.personalLabel,
+    required this.registrationPrefill,
   });
   final MeContextModel me;
   final String? venueId;
   final MemberVenue? member;
   final String personalLabel;
+  final RegistrationPrefill registrationPrefill;
   VenueMemberRole get role =>
       VenueMemberRoleExt.fromApi(member?.role ?? 'STAFF');
   bool get isClaimLocked =>
@@ -35,6 +39,10 @@ class VenueProfileContext {
     final name = (me['fullName'] ?? me['full_name'])?.toString();
     return VenueProfileContext(
       me: ctx,
+      registrationPrefill: RegistrationPrefill.fromMe(
+        me,
+        sessionRevision: SecureStorage.sessionRevision,
+      ),
       venueId: id,
       member: ctx.memberVenues.where((v) => v.id == id).firstOrNull,
       personalLabel: username != null && username.isNotEmpty

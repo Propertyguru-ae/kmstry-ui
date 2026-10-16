@@ -6,11 +6,19 @@ import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/checkin/services/avatar_crop_helper.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
+import '../../content_moderation/presentation/sharing_permission_hint.dart';
 
 class PhotoOnboardingPage extends StatefulWidget {
   final VoidCallback? onContinue;
+  final VoidCallback? onCancel;
+  final AuthRepository? repository;
 
-  const PhotoOnboardingPage({super.key, this.onContinue});
+  const PhotoOnboardingPage({
+    super.key,
+    this.onContinue,
+    this.onCancel,
+    this.repository,
+  });
 
   @override
   State<PhotoOnboardingPage> createState() => _PhotoOnboardingPageState();
@@ -20,6 +28,14 @@ class _PhotoOnboardingPageState extends State<PhotoOnboardingPage> {
   File? _image;
   bool _loading = false;
   final _picker = ImagePicker();
+  String? _error;
+  final _permission = SharingPermissionController();
+
+  @override
+  void dispose() {
+    _permission.dispose();
+    super.dispose();
+  }
 
   static const _blue = AppColors.blue;
   static const _blueBright = AppColors.blueDark;
@@ -32,8 +48,7 @@ class _PhotoOnboardingPageState extends State<PhotoOnboardingPage> {
   bool _isDark = true;
   Color get _bg => _isDark ? AppColors.darkBg : const Color(0xFFF7FAFF);
   Color get _sheet => _isDark ? AppColors.darkSurface : Colors.white;
-  Color get _textPrimary =>
-      _isDark ? Colors.white : AppColors.lightTextPrimary;
+  Color get _textPrimary => _isDark ? Colors.white : AppColors.lightTextPrimary;
   Color get _textSecondary => _isDark ? _muted : AppColors.lightTextSecondary;
   Color get _iconBtnBg => _isDark
       ? Colors.white.withValues(alpha: 0.05)
@@ -57,20 +72,27 @@ class _PhotoOnboardingPageState extends State<PhotoOnboardingPage> {
 
   Future<void> _chooseFromGallery() => _pickImage(ImageSource.gallery);
 
-  Future<void> _goToPermissions() async {
+  Future<void> _goToPermissions({bool skip = false}) async {
     if (_loading) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      if (_image != null) {
-        await AuthRepository().uploadProfilePhoto(_image!);
-      } else {
-        await AuthRepository().updateMe({
-          'skipPhoto': true,
-          'skip_photo': true,
-        });
-      }
+      await (widget.repository ?? AuthRepository()).completePhotoOnboarding(
+        image: _image,
+        skip: skip,
+      );
     } catch (e) {
-      debugPrint('Photo onboarding error: $e');
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        if (!_permission.handleDecline(e)) {
+          _error =
+              'Could not save this step. Please try again, or skip the photo.';
+        }
+      });
+      return;
     }
 
     if (!mounted) return;
@@ -114,8 +136,15 @@ class _PhotoOnboardingPageState extends State<PhotoOnboardingPage> {
                       else
                         const SizedBox(width: 38),
                       const Spacer(),
+                      if (widget.onCancel != null)
+                        TextButton(
+                          onPressed: _loading ? null : widget.onCancel,
+                          child: const Text('Back to venue'),
+                        ),
                       TextButton(
-                        onPressed: _loading ? null : _goToPermissions,
+                        onPressed: _loading
+                            ? null
+                            : () => _goToPermissions(skip: true),
                         style: TextButton.styleFrom(foregroundColor: _orange),
                         child: const Text(
                           'Skip',
@@ -235,6 +264,20 @@ class _PhotoOnboardingPageState extends State<PhotoOnboardingPage> {
                     ),
                   ),
                   const Spacer(),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  SharingPermissionHint(
+                    controller: _permission,
+                    onReview: _loading ? null : () => _goToPermissions(),
+                  ),
                   SizedBox(
                     width: double.infinity,
                     child: PrimaryButton(

@@ -9,8 +9,19 @@ class GenderInterestOnboardingPage extends StatefulWidget {
   /// Opsiyonel — çok adımlı onboarding akışında bu son profil adımından sonra
   /// akışı bitirmek için çağrılır. Null ise klasik authGate yönlendirmesi.
   final VoidCallback? onContinue;
+  final VoidCallback? onCancel;
+  final AuthRepository? repository;
+  final String? initialGender;
+  final String? initialInterest;
 
-  const GenderInterestOnboardingPage({super.key, this.onContinue});
+  const GenderInterestOnboardingPage({
+    super.key,
+    this.onContinue,
+    this.onCancel,
+    this.repository,
+    this.initialGender,
+    this.initialInterest,
+  });
 
   @override
   State<GenderInterestOnboardingPage> createState() =>
@@ -24,6 +35,13 @@ class _GenderInterestOnboardingPageState
   bool loading = false;
 
   bool get valid => gender != null && interest != null;
+
+  @override
+  void initState() {
+    super.initState();
+    gender = widget.initialGender;
+    interest = widget.initialInterest;
+  }
 
   static const _teal = AppColors.teal;
   static const _blue = AppColors.blue;
@@ -59,11 +77,11 @@ class _GenderInterestOnboardingPageState
       : const [Color(0xFFF2F7FF), Color(0xFFEAF1FB)];
 
   Future<void> submit() async {
-    if (!valid) return;
+    if (!valid || loading) return;
 
     setState(() => loading = true);
     try {
-      await AuthRepository().upsertPersonalProfile({
+      await (widget.repository ?? AuthRepository()).upsertPersonalProfile({
         'gender': gender!,
         'interestedIn': interest!,
       });
@@ -211,7 +229,13 @@ class _GenderInterestOnboardingPageState
                       else
                         const SizedBox(width: 38),
                       const Spacer(),
-                      const SizedBox(width: 38),
+                      if (widget.onCancel != null)
+                        TextButton(
+                          onPressed: loading ? null : widget.onCancel,
+                          child: const Text('Back to venue'),
+                        )
+                      else
+                        const SizedBox(width: 38),
                     ],
                   ),
                 ),
@@ -394,7 +418,9 @@ class _GenderInterestOnboardingPageState
         child: Icon(
           Icons.chevron_left_rounded,
           size: 22,
-          color: _isDark ? const Color(0xFF7D88A8) : AppColors.lightTextSecondary,
+          color: _isDark
+              ? const Color(0xFF7D88A8)
+              : AppColors.lightTextSecondary,
         ),
       ),
     );

@@ -19,6 +19,10 @@ class ContextChoicePage extends StatelessWidget {
   const ContextChoicePage({super.key, this.isAuthenticated = false});
 
   // Dark mode
+  /// "Not sure? Learn about account types" — henüz açıklama sayfası yok;
+  /// sayfa hazır olunca true yap.
+  static const _showAccountTypesHelp = false;
+
   static const _darkBg = Color(0xFF06091A);
   static const _blueCard = Color(0xFF061A2A);
   static const _blueBorder = Color(0xFF164268);
@@ -238,90 +242,93 @@ class ContextChoicePage extends StatelessWidget {
                       const Spacer(flex: 4),
 
                       // Bottom area
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-                        child: Column(
-                          children: [
-                            Container(
-                              height: 1,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Colors.transparent,
-                                    isDark
-                                        ? Colors.white.withValues(alpha: 0.05)
-                                        : Colors.black.withValues(alpha: 0.08),
-                                    Colors.transparent,
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            if (isAuthenticated)
-                              GestureDetector(
-                                onTap: () async {
-                                  await AuthRepository().logout();
-                                  if (context.mounted) {
-                                    Navigator.of(
-                                      context,
-                                    ).pushNamedAndRemoveUntil(
-                                      AuthRoutes.login,
-                                      (_) => false,
-                                    );
-                                  }
-                                },
-                                child: Text(
-                                  'Log out',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: isDark
-                                        ? Colors.white.withValues(alpha: 0.35)
-                                        : Colors.black38,
-                                    fontWeight: FontWeight.w500,
+                      if (isAuthenticated || _showAccountTypesHelp)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                          child: Column(
+                            children: [
+                              Container(
+                                height: 1,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Colors.transparent,
+                                      isDark
+                                          ? Colors.white.withValues(alpha: 0.05)
+                                          : Colors.black.withValues(
+                                              alpha: 0.08,
+                                            ),
+                                      Colors.transparent,
+                                    ],
                                   ),
                                 ),
-                              )
-                            else
-                              Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'Not sure? ',
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        color: isDark
-                                            ? const Color(0xFF3A5070)
-                                            : Colors.black38,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: 'Learn about account types ',
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        color: isDark
-                                            ? AppColors.blueDark
-                                            : AppColors.blueLight,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: '→',
-                                      style: TextStyle(
-                                        fontSize: 12.5,
-                                        color: isDark
-                                            ? AppColors.blueDark
-                                            : AppColors.blueLight,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                textAlign: TextAlign.center,
                               ),
-                          ],
+                              const SizedBox(height: 16),
+                              if (isAuthenticated)
+                                GestureDetector(
+                                  onTap: () async {
+                                    await AuthRepository().logout();
+                                    if (context.mounted) {
+                                      Navigator.of(
+                                        context,
+                                      ).pushNamedAndRemoveUntil(
+                                        AuthRoutes.login,
+                                        (_) => false,
+                                      );
+                                    }
+                                  },
+                                  child: Text(
+                                    'Log out',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.35)
+                                          : Colors.black38,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                )
+                              else
+                                Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'Not sure? ',
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: isDark
+                                              ? const Color(0xFF3A5070)
+                                              : Colors.black38,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: 'Learn about account types ',
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: isDark
+                                              ? AppColors.blueDark
+                                              : AppColors.blueLight,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: '→',
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: isDark
+                                              ? AppColors.blueDark
+                                              : AppColors.blueLight,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),

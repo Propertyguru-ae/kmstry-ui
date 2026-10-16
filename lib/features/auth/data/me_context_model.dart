@@ -1,3 +1,5 @@
+import 'personal_onboarding_progress.dart';
+
 class MemberVenue {
   final String id;
   /// VenueMember kaydının ID'si — accept/decline çağrılarında kullanılır
@@ -40,6 +42,7 @@ class MeContextModel {
   final String? lastActiveContext;
   final String? activeVenueId;
   final bool hasPersonalProfile;
+  final bool personalSetupIncomplete;
   final bool hasVenueMembership;
   final bool hasRejectedClaimOnly;
   final bool canDeleteCurrentContextProfile;
@@ -51,6 +54,7 @@ class MeContextModel {
     required this.lastActiveContext,
     required this.activeVenueId,
     required this.hasPersonalProfile,
+    this.personalSetupIncomplete = false,
     required this.hasVenueMembership,
     this.hasRejectedClaimOnly = false,
     required this.canDeleteCurrentContextProfile,
@@ -111,6 +115,7 @@ class MeContextModel {
           (me['activeVenueId'] ?? me['active_venue_id'])?.toString(),
       hasPersonalProfile:
           me['hasPersonalProfile'] == true || me['has_personal_profile'] == true,
+      personalSetupIncomplete: personalOnboardingStep(me) != null,
       hasVenueMembership:
           me['hasVenueMembership'] == true || me['has_venue_membership'] == true,
       hasRejectedClaimOnly:

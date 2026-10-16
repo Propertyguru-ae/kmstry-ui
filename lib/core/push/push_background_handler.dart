@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../../firebase_options.dart';
 import '../notifications/notifications_service.dart';
+import 'push_audience.dart';
 
 /// Top-level FCM background handler.
 ///
@@ -41,6 +42,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   if (message.notification != null) return;
 
   final data = message.data;
+  if (!await PushAudience.isCurrent(data)) return;
   final title = (data['title'] as String?) ?? '';
   final body = (data['body'] as String?) ?? '';
   if (title.isEmpty && body.isEmpty) return;
@@ -48,6 +50,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // Initialize the local-notifications plugin (no navigatorKey — routing is
   // handled via the tap callback registered when the app is foregrounded).
   await initNotifications();
+  if (!await PushAudience.isCurrent(data)) return;
 
   final androidDetails = AndroidNotificationDetails(
     kForegroundChannel.id,

@@ -1,4 +1,5 @@
 import '../../../core/media/media_reference.dart';
+import '../../../core/models/public_age.dart';
 import '../../media/media_text_overlay.dart';
 
 enum MediaType { photo, video }
@@ -201,7 +202,7 @@ class CheckinProfileUser {
   final String fullName;
   final String? photo;
   final MediaReference? photoReference;
-  final DateTime birthdate;
+  final int? age;
   final String gender;
   final bool isVerified;
   final bool isPremium;
@@ -214,7 +215,7 @@ class CheckinProfileUser {
     required this.fullName,
     this.photo,
     this.photoReference,
-    required this.birthdate,
+    this.age,
     required this.gender,
     required this.isVerified,
     required this.isPremium,
@@ -223,7 +224,6 @@ class CheckinProfileUser {
   });
 
   factory CheckinProfileUser.fromJson(Map<String, dynamic> json) {
-    final birthdateRaw = json['birthdate']?.toString();
     final id = json['id']?.toString() ?? '';
     final photoReference = MediaReference.profilePhoto(json, userId: id);
     return CheckinProfileUser(
@@ -232,9 +232,7 @@ class CheckinProfileUser {
       fullName: (json['full_name'] ?? json['fullName'])?.toString() ?? 'Guest',
       photo: photoReference.url.isEmpty ? null : photoReference.url,
       photoReference: photoReference.url.isEmpty ? null : photoReference,
-      birthdate:
-          DateTime.tryParse(birthdateRaw ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      age: readPublicAge(json),
       gender: json['gender']?.toString() ?? '',
       isVerified: json['is_verified'] == true || json['isVerified'] == true,
       isPremium: json['is_premium'] == true || json['isPremium'] == true,
@@ -257,7 +255,7 @@ class PublicUserProfile {
   final String fullName;
   final String? photo;
   final MediaReference? photoReference;
-  final DateTime birthdate;
+  final int? age;
   final String gender;
   final bool isVerified;
   final bool isPremium;
@@ -273,7 +271,7 @@ class PublicUserProfile {
     required this.fullName,
     this.photo,
     this.photoReference,
-    required this.birthdate,
+    this.age,
     required this.gender,
     required this.isVerified,
     required this.isPremium,
@@ -286,7 +284,6 @@ class PublicUserProfile {
 
   factory PublicUserProfile.fromJson(Map<String, dynamic> json) {
     final activeRaw = json['activeCheckin'] ?? json['active_checkin'];
-    final birthdateRaw = json['birthdate']?.toString();
     String? readString(List<String> keys) {
       for (final key in keys) {
         final value = json[key]?.toString().trim();
@@ -310,9 +307,7 @@ class PublicUserProfile {
           'User',
       photo: photoReference.url.isEmpty ? null : photoReference.url,
       photoReference: photoReference.url.isEmpty ? null : photoReference,
-      birthdate:
-          DateTime.tryParse(birthdateRaw ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      age: readPublicAge(json),
       gender: json['gender']?.toString() ?? '',
       isVerified: json['isVerified'] == true || json['is_verified'] == true,
       isPremium: json['isPremium'] == true || json['is_premium'] == true,

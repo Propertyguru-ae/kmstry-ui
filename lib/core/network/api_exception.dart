@@ -24,6 +24,17 @@ class ApiException implements Exception {
 const publicTextRejectionMessage =
     "This text doesn't meet our content guidelines. Your changes haven't been saved. Please edit it and try again.";
 
+bool isAwsSharingPermissionDeclined(Object error) =>
+    error is ApiException &&
+    error.data['errorCode'] == 'AWS_SHARING_PERMISSION_DECLINED';
+
+bool isAwsSharingPermissionError(Object error) {
+  final code = error is ApiException
+      ? error.data['errorCode']?.toString() ?? ''
+      : error.toString();
+  return code.contains('AWS_SHARING_');
+}
+
 /// Stable mapping for the backend's public UGC filter contract. Multipart
 /// repositories currently wrap response JSON in an Exception, so the fallback
 /// string check keeps upload flows consistent too.
@@ -38,6 +49,15 @@ String publicTextErrorMessage(Object error, {required String fallback}) {
   final code = error is ApiException
       ? error.data['errorCode']?.toString() ?? ''
       : error.toString();
+  if (code.contains('AWS_SHARING_PERMISSION')) {
+    return 'Nothing was shared. Allow AWS safety checks when you are ready to submit public content.';
+  }
+  if (code.contains('AWS_SHARING_NOTICE_CHANGED')) {
+    return 'The safety-check information has changed. Please try again to review it.';
+  }
+  if (code.contains('AWS_SHARING_CHOICE_CHANGED')) {
+    return 'Your privacy choice changed. Please try again to review it.';
+  }
   if (code.contains('PUBLIC_TEXT_CHECK_UNAVAILABLE')) {
     return "We couldn't check this text right now. Your changes haven't been saved. Please try again.";
   }
@@ -56,6 +76,7 @@ String publicTextErrorTitle(
   final code = error is ApiException
       ? error.data['errorCode']?.toString() ?? ''
       : error.toString();
+  if (code.contains('AWS_SHARING_')) return 'Safety checks permission';
   if (code.contains('PUBLIC_TEXT_CHECK_UNAVAILABLE')) {
     return 'Text check unavailable';
   }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
@@ -75,6 +76,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
   List<String> _existingPhotos = [];
   final List<File> _newPhotos = [];
   bool _saving = false;
+  final _savePermission = SharingPermissionController();
   bool _confirmingStop = false;
   String _currency = 'TRY';
 
@@ -232,6 +234,7 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
 
   @override
   void dispose() {
+    _savePermission.dispose();
     PendingPublicMediaService.instance.changes.removeListener(
       _onUploadsChanged,
     );
@@ -637,6 +640,14 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
         : _isEdit && _initialCreateOffer;
     try {
       final priceText = _priceCtrl.text.trim();
+      if (!await _savePermission.check()) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
+      if (!mounted ||
+          !PendingPublicMediaService.instance.isCurrentSession(generation)) {
+        return;
+      }
       final price = priceText.isEmpty ? null : int.tryParse(priceText);
       final capacityText = _capacityCtrl.text.trim();
       final capacity = capacityText.isEmpty ? null : int.tryParse(capacityText);
@@ -2322,10 +2333,19 @@ class _AddVenueEventPageState extends State<AddVenueEventPage> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
-          child: PrimaryButton(
-            label: _isEdit ? 'Save Changes' : 'Publish Event',
-            onPressed: _saving ? null : () => _save(),
-            loading: _saving,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SharingPermissionHint(
+                controller: _savePermission,
+                onReview: _saving ? null : _save,
+              ),
+              PrimaryButton(
+                label: _isEdit ? 'Save Changes' : 'Publish Event',
+                onPressed: _saving ? null : () => _save(),
+                loading: _saving,
+              ),
+            ],
           ),
         ),
       ),

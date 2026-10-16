@@ -76,6 +76,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
 
   bool _loading = true;
   String? _error;
+  String? _claimAccessCode;
   List<VenueMember> _members = [];
   int? _roleCount;
 
@@ -116,6 +117,7 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       _roleCount = null;
       _linkInvites = [];
       _hasMembers = false;
+      _claimAccessCode = null;
       _read.reset();
       _load();
     }
@@ -142,6 +144,9 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         PendingPublicMediaService.instance.isCurrentSession(session);
     void failed(Object error) {
       if (!current()) return;
+      final code = error is ApiException && error.statusCode == 403
+          ? error.data['errorCode']
+          : null;
       denied =
           denied ||
           (error is ApiException && [401, 403, 404].contains(error.statusCode));
@@ -154,12 +159,17 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
         }
         _loading = false;
         _error = 'Failed to load team.';
+        if (code == 'VENUE_APPROVAL_REQUIRED' ||
+            code == 'VENUE_CLAIM_REJECTED') {
+          _claimAccessCode = code as String;
+        }
       });
     }
 
     setState(() {
       _loading = !_hasMembers;
       _error = null;
+      _claimAccessCode = null;
     });
     // Link davetleri ek bilgi: ekip listesini bekletmez, alınamazsa liste
     // yine açılır.
@@ -474,9 +484,60 @@ class _VenueTeamPageState extends State<VenueTeamPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _claimAccessCode != null
+          ? _buildClaimAccessNotice(colors)
           : _error != null
           ? _buildError(colors)
           : _buildList(colors, isDark),
+    );
+  }
+
+  Widget _buildClaimAccessNotice(ColorScheme colors) {
+    final pending = _claimAccessCode == 'VENUE_APPROVAL_REQUIRED';
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              pending ? Icons.hourglass_empty_rounded : Icons.info_outline,
+              size: 44,
+              color: colors.primary,
+            ),
+            const SizedBox(height: 18),
+            Text(
+              pending
+                  ? 'Venue approval pending'
+                  : 'Venue request not approved',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: colors.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              pending
+                  ? 'You can add team members and manage roles once your venue ownership is approved.'
+                  : 'Review your ownership request in your venue profile. Team management will be available after approval.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.5,
+                color: colors.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 22),
+            TextButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Check status'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

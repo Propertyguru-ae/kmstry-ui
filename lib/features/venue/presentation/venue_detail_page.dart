@@ -2369,6 +2369,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                               sourceLoader:
                                   _venueContextRepo.getGooglePhotoSource,
                               badgeBottom: 44,
+                              showAuthorAttribution: true,
                               overlay: Align(
                                 alignment: Alignment.bottomCenter,
                                 child: Container(

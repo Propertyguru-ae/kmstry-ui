@@ -19,6 +19,8 @@ import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/force_dark.dart';
+import '../../auth/data/registration_prefill.dart';
+import '../../content_moderation/presentation/sharing_permission_hint.dart';
 
 enum _Step { search, contact, documents, review }
 
@@ -33,10 +35,14 @@ enum _Step { search, contact, documents, review }
 class VenueContextOnboardingPage extends StatefulWidget {
   final bool fromAppShell;
   final VoidCallback? onCancel;
+  final VenueRepository? repository;
+  final AuthRepository? authRepository;
   const VenueContextOnboardingPage({
     super.key,
     this.fromAppShell = false,
     this.onCancel,
+    this.repository,
+    this.authRepository,
   });
 
   @override
@@ -46,7 +52,11 @@ class VenueContextOnboardingPage extends StatefulWidget {
 
 class _VenueContextOnboardingPageState
     extends State<VenueContextOnboardingPage> {
-  final _repo = VenueRepository();
+  late final VenueRepository _repo;
+  late final AuthRepository _auth;
+  final _permission = SharingPermissionController();
+  DateTime? _birthdate;
+  bool _savedBirthdate = false;
 
   // ── Adım ─────────────────────────────────────────────────────────────────
   _Step _step = _Step.search;
@@ -68,8 +78,16 @@ class _VenueContextOnboardingPageState
     (c) => c.code == 'AE',
   );
 
+  String _lastNameText = '';
+  String _lastPhoneText = '';
   void _clearErrorOnType() {
-    if (_error != null) setState(() => _error = null);
+    final changed = _lastNameText != _nameCtrl.text ||
+        _lastPhoneText != _phoneCtrl.text;
+    _lastNameText = _nameCtrl.text;
+    _lastPhoneText = _phoneCtrl.text;
+    // Attaching a TextField also changes its selection. Do not erase a
+    // validation error when returning from Review unless text really changed.
+    if (changed && _error != null) setState(() => _error = null);
   }
 
   // ── Step 3: Belgeler ─────────────────────────────────────────────────────
@@ -88,6 +106,9 @@ class _VenueContextOnboardingPageState
   @override
   void initState() {
     super.initState();
+    _repo = widget.repository ?? VenueRepository();
+    _auth = widget.authRepository ?? AuthRepository();
+    _permission.addListener(_permissionChanged);
     _searchCtrl.addListener(_onSearchChanged);
     _nameCtrl.addListener(_clearErrorOnType);
     _phoneCtrl.addListener(_clearErrorOnType);
@@ -96,6 +117,8 @@ class _VenueContextOnboardingPageState
 
   @override
   void dispose() {
+    _permission.removeListener(_permissionChanged);
+    _permission.dispose();
     _debounce?.cancel();
     _searchCtrl.dispose();
     _nameCtrl.dispose();
@@ -120,8 +143,10 @@ class _VenueContextOnboardingPageState
       }
       // İsim alanı henüz boşsa kullanıcının profil ad-soyadıyla önceden doldur.
       // Kullanıcı Step 2'de dilerse düzenleyebilir.
-      if (_nameCtrl.text.trim().isEmpty) {
-        await _prefillOwnerName();
+      await _prefillOwnerName();
+      // Old/resumed drafts cannot bypass the newly required age check.
+      if (_step.index > _Step.contact.index && _birthdate == null) {
+        _step = _Step.contact;
       }
     } catch (e) {
       debugPrint('[VenueClaimFlow] draft init failed: $e');
@@ -134,9 +159,14 @@ class _VenueContextOnboardingPageState
   /// Owner adını mevcut kullanıcının profilinden doldurur (boşsa).
   Future<void> _prefillOwnerName() async {
     try {
-      final me = await AuthRepository().getMe();
+      final revision = SecureStorage.sessionRevision;
+      final me = await _auth.getMe();
       if (!mounted) return;
-      final fullName = (me['fullName'] ?? me['full_name'])?.toString().trim();
+      if (revision != SecureStorage.sessionRevision) return;
+      final prefill = RegistrationPrefill.fromMe(me, sessionRevision: revision);
+      final fullName = prefill.name;
+      _birthdate ??= prefill.birthdate;
+      _savedBirthdate = prefill.birthdate != null;
       if (fullName != null &&
           fullName.isNotEmpty &&
           _nameCtrl.text.trim().isEmpty) {
@@ -200,10 +230,15 @@ class _VenueContextOnboardingPageState
 
   void _onSearchChanged() {
     final q = _searchCtrl.text.trim();
+    _debounce?.cancel();
+    if (_loadingDraft ||
+        _step != _Step.search ||
+        (_selectedVenue != null && q == _selectedVenue!.name)) {
+      return;
+    }
     if (_selectedVenue != null && q != _selectedVenue!.name) {
       setState(() => _selectedVenue = null);
     }
-    _debounce?.cancel();
     if (q.isEmpty) {
       setState(() => _results = []);
       return;
@@ -212,16 +247,32 @@ class _VenueContextOnboardingPageState
   }
 
   Future<void> _search(String q) async {
+    if (!mounted ||
+        _step != _Step.search ||
+        q != _searchCtrl.text.trim() ||
+        _selectedVenue != null) {
+      return;
+    }
     setState(() {
       _searching = true;
       _error = null;
     });
     try {
       final venues = await _repo.searchVenues(query: q);
-      if (!mounted) return;
+      if (!mounted ||
+          _step != _Step.search ||
+          q != _searchCtrl.text.trim() ||
+          _selectedVenue != null) {
+        return;
+      }
       setState(() => _results = venues);
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted ||
+          _step != _Step.search ||
+          q != _searchCtrl.text.trim() ||
+          _selectedVenue != null) {
+        return;
+      }
       setState(() => _error = 'Search failed. Please try again.');
     } finally {
       if (mounted) setState(() => _searching = false);
@@ -288,6 +339,7 @@ class _VenueContextOnboardingPageState
       setState(() => _error = 'Please enter your phone number.');
       return;
     }
+    if (!_validateBirthdate()) return;
     setState(() => _error = null);
     await _saveDraft(stepNumber: 2);
     if (mounted) setState(() => _step = _Step.documents);
@@ -437,6 +489,11 @@ class _VenueContextOnboardingPageState
   Future<void> _submitClaim() async {
     final venue = _selectedVenue;
     if (venue == null) return;
+    if (!_validateBirthdate()) {
+      setState(() => _step = _Step.contact);
+      return;
+    }
+    if (_submitting) return;
 
     setState(() {
       _submitting = true;
@@ -449,6 +506,7 @@ class _VenueContextOnboardingPageState
     );
 
     try {
+      if (!await _permission.check()) return;
       final dbVenueId =
           _dbVenueId ??
           (venue.isInDb
@@ -456,6 +514,7 @@ class _VenueContextOnboardingPageState
               : await _repo.ensureVenueDbId(venue.placeId ?? venue.id));
       await _repo.claimVenue(
         venueId: dbVenueId,
+        ownerBirthdate: _birthdate!.toIso8601String().split('T').first,
         ownerFullName: _nameCtrl.text.trim().isNotEmpty
             ? _nameCtrl.text.trim()
             : null,
@@ -470,7 +529,7 @@ class _VenueContextOnboardingPageState
         hasDocuments: hasDocuments,
       );
       AuthRepository.invalidateMeCache();
-      await AuthRepository().switchContext(
+      await _auth.switchContext(
         lastActiveContext: 'VENUE',
         activeVenueId: dbVenueId,
       );
@@ -479,6 +538,7 @@ class _VenueContextOnboardingPageState
       _onClaimSuccess(hasDocuments: hasDocuments);
     } catch (e) {
       if (!mounted) return;
+      if (_permission.handleDecline(e)) return;
       final msg = e.toString().toLowerCase();
       if (msg.contains('already pending') ||
           msg.contains('already an active')) {
@@ -487,10 +547,44 @@ class _VenueContextOnboardingPageState
         return;
       }
       setState(() {
-        _error = 'Could not submit your claim. Please try again.';
+        _error = publicTextErrorMessage(e,
+          fallback: 'Could not submit your claim. Please try again.');
         _submitting = false;
       });
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  void _permissionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool _validateBirthdate() {
+    final dob = _birthdate;
+    final now = DateTime.now();
+    final adult = dob != null &&
+        !DateTime(dob.year + 18, dob.month, dob.day).isAfter(
+          DateTime(now.year, now.month, now.day),
+        );
+    if (adult) return true;
+    setState(() => _error = dob == null
+        ? 'Please enter your date of birth.'
+        : 'You must be 18 or older to use KMSTRY.');
+    return false;
+  }
+
+  Future<void> _pickBirthdate() async {
+    if (_savedBirthdate) return;
+    final now = DateTime.now();
+    final value = await showDatePicker(
+      context: context,
+      initialDate: _birthdate ?? DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(1900), lastDate: now,
+      helpText: 'Date of birth',
+    );
+    if (!mounted || value == null) return;
+    setState(() { _birthdate = value; _error = null; });
   }
 
   void _showCountryPicker(ColorScheme colors) {
@@ -1672,6 +1766,83 @@ class _VenueContextOnboardingPageState
                     ),
                     const SizedBox(height: 12),
 
+                    Text(
+                      'DATE OF BIRTH',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: isDark
+                            ? const Color(0xFF5E708B)
+                            : Colors.black45,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    OutlinedButton(
+                      key: const ValueKey('claim-birthdate'),
+                      onPressed: _savedBirthdate ? null : _pickBirthdate,
+                      style: OutlinedButton.styleFrom(
+                        // Read-only dates must stay legible, not inherit the
+                        // app's white disabled-button background in dark mode.
+                        backgroundColor: isDark
+                            ? const Color(0xFF0F1C35)
+                            : const Color(0xFFF3F6FA),
+                        disabledBackgroundColor: isDark
+                            ? const Color(0xFF0F1C35)
+                            : const Color(0xFFF3F6FA),
+                        foregroundColor: isDark
+                            ? const Color(0xFFC8D8F0)
+                            : const Color(0xFF111827),
+                        disabledForegroundColor: isDark
+                            ? const Color(0xFFC8D8F0)
+                            : const Color(0xFF111827),
+                        side: BorderSide(
+                          color: isDark
+                              ? const Color(0xFF1A3060)
+                              : const Color(0xFFD9E1EA),
+                          width: 1.5,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        minimumSize: const Size.fromHeight(52),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today_outlined, size: 19),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _birthdate == null
+                                  ? 'DD/MM/YYYY'
+                                  : '${_birthdate!.day.toString().padLeft(2, '0')}/'
+                                        '${_birthdate!.month.toString().padLeft(2, '0')}/'
+                                        '${_birthdate!.year.toString().padLeft(4, '0')}',
+                            ),
+                          ),
+                          Icon(
+                            _savedBirthdate
+                                ? Icons.lock_outline_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'Used to confirm you are 18 or older. Your date of birth is not shown publicly.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
                     // Phone
                     Text(
                       'PHONE NUMBER',
@@ -2486,6 +2657,11 @@ class _VenueContextOnboardingPageState
                     const SizedBox(height: 10),
                   ],
 
+                  SharingPermissionHint(
+                    controller: _permission,
+                    onReview: _submitting ? null : _submitClaim,
+                    message: 'Your application has not been submitted. Allow safety checks to continue. Your details are still here.',
+                  ),
                   // Submit button
                   GestureDetector(
                     onTap: _submitting ? null : _submitClaim,

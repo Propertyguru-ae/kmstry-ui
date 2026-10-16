@@ -22,6 +22,7 @@ class CameraScreen extends StatefulWidget {
   final bool useFrontCamera;
   final bool optimizeForUpload;
   final bool allowVideo;
+  final bool requiresSharingPermission;
   final String previewConfirmLabel;
   final IconData? previewConfirmIcon;
 
@@ -38,7 +39,7 @@ class CameraScreen extends StatefulWidget {
     this.previewConfirmLabel = 'Use',
     this.previewConfirmIcon,
     this.cropToScreen = true,
-  });
+  }) : requiresSharingPermission = false;
 
   /// All public story/Moment/check-in entry points use this release policy.
   const CameraScreen.publicMedia({
@@ -48,7 +49,8 @@ class CameraScreen extends StatefulWidget {
     this.previewConfirmLabel = 'Use',
     this.previewConfirmIcon,
     this.cropToScreen = true,
-  }) : allowVideo = PublicMediaUploadPolicy.allowVideo;
+  }) : allowVideo = PublicMediaUploadPolicy.allowVideo,
+       requiresSharingPermission = true;
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -401,6 +403,7 @@ class _CameraScreenState extends State<CameraScreen>
       MaterialPageRoute(
         builder: (_) => PreviewScreen(
           file: savedImage,
+          requiresSharingPermission: widget.requiresSharingPermission,
           isFrontCamera: captureLensDirection == CameraLensDirection.front,
           screenAr: screenAr,
           confirmLabel: widget.previewConfirmLabel,

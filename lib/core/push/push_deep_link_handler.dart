@@ -2,6 +2,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../storage/secure_storage.dart';
+import 'push_audience.dart';
 
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/messageDetail/presentation/message_detail.dart';
@@ -92,6 +93,7 @@ class PushDeepLinkHandler {
     GlobalKey<NavigatorState> navigatorKey,
     Map<String, dynamic> data,
   ) async {
+    if (!await PushAudience.isCurrent(data)) return;
     final type = data['type'] as String?;
     if (type == null) return;
 

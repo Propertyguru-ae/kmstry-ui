@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/public_content_permission.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue_events/data/venue_event_repository.dart';
 import 'package:kmstry_frontend/features/venue_events/presentation/add_venue_event_page.dart';
@@ -47,6 +48,7 @@ void main() {
   setUp(
     () => FlutterSecureStorage.setMockInitialValues({'access_token': 'test'}),
   );
+  tearDown(() => PublicContentPermission.onRequired = null);
 
   for (final recurring in [false, true]) {
     test(
@@ -82,6 +84,11 @@ void main() {
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
         final api = _RejectedTextApi(_rejection());
+        var allowed = false;
+        PublicContentPermission.onRequired = (_) async {
+          if (!allowed) throw ApiException(statusCode: 403,
+            data: const {'errorCode': 'AWS_SHARING_PERMISSION_DECLINED'});
+        };
         var committed = false;
         await tester.pumpWidget(
           MaterialApp(
@@ -116,6 +123,12 @@ void main() {
         await tester.ensureVisible(description);
         await tester.enterText(description, 'fuck');
         await tester.tap(find.text('Save Changes'));
+        await tester.pumpAndSettle();
+        expect(api.bodies, isEmpty);
+        expect(find.text('Review permission'), findsOneWidget);
+        expect(find.byType(AlertDialog), findsNothing);
+        allowed = true;
+        await tester.tap(find.text('Review permission'));
         await tester.pumpAndSettle();
         expect(api.bodies.single['description'], 'fuck');
         expect(api.bodies.single['editScope'], scope);

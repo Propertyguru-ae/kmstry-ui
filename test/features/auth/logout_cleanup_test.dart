@@ -22,7 +22,10 @@ class FakeAuthApi extends AuthApi {
   final refreshStarted = Completer<void>();
   int logoutCalls = 0;
   @override
-  Future<Map<String, dynamic>> logout({required String refreshToken}) async {
+  Future<Map<String, dynamic>> logout({
+    required String refreshToken,
+    String? deviceToken,
+  }) async {
     logoutCalls++;
     throw StateError('offline');
   }
@@ -63,7 +66,10 @@ class LoginApi extends FakeAuthApi {
   }
 
   @override
-  Future<Map<String, dynamic>> logout({required String refreshToken}) {
+  Future<Map<String, dynamic>> logout({
+    required String refreshToken,
+    String? deviceToken,
+  }) {
     logoutCalls++;
     logoutStarted.complete();
     return remoteLogout?.future ?? Future.value({'success': true});

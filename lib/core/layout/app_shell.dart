@@ -21,6 +21,7 @@ import 'package:kmstry_frontend/features/notifications/data/notification_reposit
 import 'package:kmstry_frontend/features/notifications/data/notification_realtime_service.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
+import 'package:kmstry_frontend/features/auth/data/registration_prefill.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -79,6 +80,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String? _userAvatarUrl;
   MediaReference? _userAvatarReference;
   Map<String, dynamic>? _avatarMe;
+  RegistrationPrefill? _registrationPrefill;
   PersonalAvatarSelection _avatarSelection = const PersonalAvatarSelection();
   int _userLoadRequest = 0;
   int _unreadNotificationCount = 0;
@@ -549,12 +551,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _loadUserInitial() async {
     if (LogoutFlow.busy.value) return;
+    final revision = SecureStorage.sessionRevision;
     final request = ++_userLoadRequest;
     final uploads = PendingPublicMediaService.instance;
     final session = uploads.sessionGeneration;
     try {
       final me = await AuthRepository().getMe();
       if (!mounted ||
+          revision != SecureStorage.sessionRevision ||
           LogoutFlow.busy.value ||
           request != _userLoadRequest ||
           !uploads.isCurrentSession(session)) {
@@ -602,6 +606,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final isVenueCtx = hasRejectedClaim
           ? true
           : lastContext == 'VENUE' && hasVenueContext;
+      if (!isVenueCtx && context.personalSetupIncomplete &&
+          (context.hasPersonalProfile || lastContext == 'PERSONAL')) {
+        // Also protect direct shell entry (e.g. restored routes/deep links).
+        Navigator.of(this.context).pushReplacementNamed(AuthRoutes.authGate);
+        return;
+      }
       if (isVenueCtx && resolvedVenueId != null) {
         for (final venue in allKnownVenues) {
           if (venue.id == resolvedVenueId) {
@@ -627,6 +637,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _userInitial = email[0].toUpperCase();
         }
         _avatarMe = me;
+        _registrationPrefill = RegistrationPrefill.fromMe(
+          me,
+          sessionRevision: revision,
+        );
         _applyPersonalAvatar(me);
         _isVenueContext = isVenueCtx;
         _isPendingClaim = resolvedVenue?.isPendingOwnerClaim ?? false;
@@ -724,11 +738,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _switchToPersonal() async {
+    final revision = SecureStorage.sessionRevision;
+    final prefill = _registrationPrefill;
     await _changeContext(lastActiveContext: 'PERSONAL');
-    if (!mounted) return;
+    if (!mounted || revision != SecureStorage.sessionRevision) return;
     if (!_hasPersonalProfile) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const NameDobOnboardingPage()),
+        MaterialPageRoute(
+          builder: (_) => NameDobOnboardingPage(registrationPrefill: prefill),
+        ),
       );
       return;
     }
@@ -738,10 +756,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// In-place switch to the personal context landing on the Profile tab — the
   /// smooth counterpart of [_switchToVenue] for the profile-screen switcher.
   Future<void> _switchToPersonalProfile() async {
+    final revision = SecureStorage.sessionRevision;
     await _changeContext(lastActiveContext: 'PERSONAL');
-    if (!mounted) return;
-    if (!_hasPersonalProfile) {
-      // No personal profile yet → let the gate handle onboarding.
+    final me = await AuthRepository().getMe(forceRefresh: true);
+    if (!mounted || revision != SecureStorage.sessionRevision) return;
+    final personal = MeContextModel.fromMe(me);
+    if (!personal.hasPersonalProfile || personal.personalSetupIncomplete) {
+      // A partially saved profile must resume, never open the shell directly.
       Navigator.of(context).pushReplacementNamed(AuthRoutes.authGate);
       return;
     }
@@ -1015,6 +1036,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           : _personalAccountLabel,
                       style: TextStyle(color: colors.onSurface),
                     ),
+                    subtitle: _isVenueContext && _hasPersonalProfile &&
+                            MeContextModel.fromMe(_avatarMe ?? {}).personalSetupIncomplete
+                        ? const Text('Finish setup')
+                        : null,
                     trailing: !_isVenueContext
                         ? Icon(Icons.check_circle, color: colors.primary)
                         : null,

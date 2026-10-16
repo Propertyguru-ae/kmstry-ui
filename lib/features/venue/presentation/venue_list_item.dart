@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_checkin_stats_row.dart';
 import '../data/venue_model.dart';
@@ -370,7 +372,7 @@ class _MetadataText extends StatelessWidget {
   }
 }
 
-class _VenuePhotoStrip extends StatelessWidget {
+class _VenuePhotoStrip extends StatefulWidget {
   final List<String> photos;
   final bool isDark;
   final String coverUrl;
@@ -384,38 +386,112 @@ class _VenuePhotoStrip extends StatelessWidget {
   });
 
   @override
+  State<_VenuePhotoStrip> createState() => _VenuePhotoStripState();
+}
+
+class _VenuePhotoStripState extends State<_VenuePhotoStrip> {
+  final Set<String> _loaded = {};
+
+  void _recordImageState(String url, bool loaded) {
+    if (_loaded.contains(url) == loaded) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !widget.photos.contains(url) ||
+          _loaded.contains(url) == loaded) {
+        return;
+      }
+      setState(() {
+        if (loaded) {
+          _loaded.add(url);
+        } else {
+          _loaded.remove(url);
+        }
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _VenuePhotoStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _loaded.removeWhere((url) => !widget.photos.contains(url));
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visible = photos.take(4).toList();
-    return SizedBox(
-      height: 116,
-      child: Row(
-        children: [
-          for (var i = 0; i < visible.length; i++) ...[
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(13),
-                child: Container(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.06)
-                      : const Color(0xFFEAF1F4),
-                  child: CachedImage(
-                    visible[i],
-                    mediaReference: visible[i] == coverUrl
-                        ? coverReference
-                        : null,
-                    fit: BoxFit.cover,
-                    errorWidget: (context) => Icon(
-                      Icons.image_not_supported_outlined,
-                      color: isDark ? Colors.white38 : Colors.black26,
+    final visible = widget.photos.take(4).toList();
+    final credited = visible
+        .where(
+          (url) => isGooglePlacePhotoProxyUrl(url) && _loaded.contains(url),
+        )
+        .toList();
+    final isDark = widget.isDark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 116,
+          child: Row(
+            children: [
+              for (var i = 0; i < visible.length; i++) ...[
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(13),
+                    child: Container(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : const Color(0xFFEAF1F4),
+                      child: CachedImage(
+                        visible[i],
+                        mediaReference: visible[i] == widget.coverUrl
+                            ? widget.coverReference
+                            : null,
+                        fit: BoxFit.cover,
+                        errorWidget: (context) => Icon(
+                          Icons.image_not_supported_outlined,
+                          color: isDark ? Colors.white38 : Colors.black26,
+                        ),
+                        contentBuilder: (context, image, loaded) {
+                          _recordImageState(visible[i], loaded);
+                          return image;
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
-            if (i != visible.length - 1) const SizedBox(width: 7),
-          ],
-        ],
-      ),
+                if (i != visible.length - 1) const SizedBox(width: 7),
+              ],
+            ],
+          ),
+        ),
+        if (credited.isNotEmpty)
+          Wrap(
+            spacing: 12,
+            children: [
+              for (final photo in credited)
+                TextButton(
+                  onPressed: () =>
+                      showGooglePhotoSourceSheet(context, photoUrl: photo),
+                  style: TextButton.styleFrom(
+                    foregroundColor: isDark
+                        ? Colors.white
+                        : const Color(0xFF1F1F1F),
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    minimumSize: const Size(0, 32),
+                  ),
+                  child: Text(
+                    credited.length == 1
+                        ? 'Google Maps · Credits'
+                        : 'Google Maps · Photo ${visible.indexOf(photo) + 1}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+      ],
     );
   }
 }
