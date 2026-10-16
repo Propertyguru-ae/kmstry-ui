@@ -21,6 +21,9 @@ import 'core/linking/app_links_bootstrap.dart';
 import 'core/config/app_config.dart';
 import 'core/config/session_environment_coordinator.dart';
 import 'core/network/api_client.dart';
+import 'core/network/public_content_permission.dart';
+import 'features/content_moderation/data/aws_sharing_permission.dart';
+import 'features/content_moderation/presentation/aws_sharing_permission_dialog.dart';
 import 'core/update/app_update_coordinator.dart';
 import 'features/media/overlay_fonts.dart';
 
@@ -103,6 +106,13 @@ Future<void> main() async {
 
   // Wire up silent 401 token-refresh interceptor.
   AuthRepository.init(navigatorKey: navigatorKey);
+  AwsSharingPermission.instance.prompt = (notice) async {
+    final context = navigatorKey.currentContext;
+    if (context == null) return false;
+    return showAwsSharingPermissionDialog(context, notice);
+  };
+  PublicContentPermission.onRequired = AwsSharingPermission.instance.ensure;
+  PublicContentPermission.onServerDenied = AwsSharingPermission.instance.invalidate;
   AppUpdateCoordinator.instance.init(navigatorKey);
   ApiClient.onUpdateRequired = AppUpdateCoordinator.instance.show;
 

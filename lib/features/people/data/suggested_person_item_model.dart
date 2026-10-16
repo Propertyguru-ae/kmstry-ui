@@ -1,11 +1,12 @@
 import 'package:kmstry_frontend/features/people/data/username_search_item_model.dart';
+import '../../../core/models/public_age.dart';
 
 class SuggestedPersonItem {
   final String id;
   final String username;
   final String? fullName;
   final String? photo;
-  final DateTime? birthdate;
+  final int? age;
   final String? bio;
   final int sharedVenueCount;
   final String suggestionReason;
@@ -17,7 +18,7 @@ class SuggestedPersonItem {
     required this.username,
     this.fullName,
     this.photo,
-    this.birthdate,
+    this.age,
     this.bio,
     required this.sharedVenueCount,
     required this.suggestionReason,
@@ -52,7 +53,7 @@ class SuggestedPersonItem {
       username: (json['username'] ?? '').toString(),
       fullName: readString(const ['fullName', 'full_name']),
       photo: readString(const ['photo', 'photoUrl', 'photo_url']),
-      birthdate: DateTime.tryParse((json['birthdate'] ?? '').toString()),
+      age: readPublicAge(json),
       bio: readString(const ['bio', 'about', 'aboutMe']),
       sharedVenueCount:
           int.tryParse(

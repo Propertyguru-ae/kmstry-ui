@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/network/upload_session_identity.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -815,6 +816,14 @@ class PendingPublicMediaService {
       await flushPersistence();
       return result;
     } catch (error) {
+      if (expectedGeneration == _session && isAwsSharingPermissionError(error)) {
+        // No upload was accepted. A privacy choice is not a network failure or
+        // a moderation rejection, and must not leave a stuck "Sharing" card.
+        _items.remove(draft.id);
+        _notify();
+        await flushPersistence();
+        rethrow;
+      }
       if (expectedGeneration == _session &&
           !(draft.isStory && storyCancellation(draft.id).isCancelled) &&
           _items.containsKey(draft.id)) {

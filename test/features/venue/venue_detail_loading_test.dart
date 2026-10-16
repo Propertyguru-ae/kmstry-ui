@@ -298,7 +298,8 @@ void main() {
           return true;
         },
       );
-      expect(repo.photoSourceCalls, 0);
+      // Large covers load their author credits without waiting for a tap.
+      expect(repo.photoSourceCalls, 1);
       await tester.tap(find.byTooltip('Report'));
       await tester.pumpAndSettle();
       expect(find.text('Report photo'), findsOneWidget);
@@ -307,7 +308,7 @@ void main() {
       await tester.tap(find.text('Report photo'));
       await tester.pumpAndSettle();
       expect(opened, isEmpty);
-      expect(repo.photoSourceCalls, 1);
+      expect(repo.photoSourceCalls, 2);
       expect(find.byType(GooglePhotoSourceSheet), findsNothing);
       expect(find.text('Why are you reporting this photo?'), findsOneWidget);
       await _close(tester);

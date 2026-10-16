@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/data/me_context_model.dart';
+import 'package:kmstry_frontend/features/auth/data/registration_prefill.dart';
+import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/profile/presentation/account_detail_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/name_dob_onboarding_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
 class ManageAccountsPage extends StatefulWidget {
-  const ManageAccountsPage({super.key});
+  const ManageAccountsPage({super.key, this.repository});
+  final AuthRepository? repository;
 
   @override
   State<ManageAccountsPage> createState() => _ManageAccountsPageState();
@@ -17,20 +20,28 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
   bool _loading = true;
   MeContextModel? _context;
   String? _fullName;
+  RegistrationPrefill? _registrationPrefill;
+  late final AuthRepository _repository;
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository ?? AuthRepository();
     _load();
   }
 
   Future<void> _load() async {
+    final revision = SecureStorage.sessionRevision;
     try {
       // Taze çek: yeni eklenen/onaylanan venue anında görünsün (stale cache olmasın).
-      final me = await AuthRepository().getMe(forceRefresh: true);
-      if (!mounted) return;
+      final me = await _repository.getMe(forceRefresh: true);
+      if (!mounted || revision != SecureStorage.sessionRevision) return;
       setState(() {
         _context = MeContextModel.fromMe(me);
+        _registrationPrefill = RegistrationPrefill.fromMe(
+          me,
+          sessionRevision: revision,
+        );
         final username = me['username']?.toString();
         final fullName = (me['fullName'] ?? me['full_name'])?.toString();
         _fullName = (username != null && username.isNotEmpty)
@@ -119,7 +130,10 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                       await Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const NameDobOnboardingPage(),
+                          builder: (_) => NameDobOnboardingPage(
+                            registrationPrefill: _registrationPrefill,
+                            repository: _repository,
+                          ),
                         ),
                       );
                       if (mounted) _load();
@@ -144,10 +158,21 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                       name: _fullName?.isNotEmpty == true
                           ? _fullName!
                           : 'Personal Account',
-                      subtitle: 'Personal',
+                      subtitle: ctx.personalSetupIncomplete
+                          ? 'Personal · Finish setup'
+                          : 'Personal',
                       icon: Icons.person_outline,
                       colors: colors,
+                      actionLabel: ctx.personalSetupIncomplete ? 'Finish setup' : 'Manage',
                       onManage: () async {
+                        if (ctx.personalSetupIncomplete) {
+                          await _repository.switchContext(lastActiveContext: 'PERSONAL');
+                          if (!context.mounted) return;
+                          Navigator.of(context).pushNamedAndRemoveUntil(
+                            AuthRoutes.authGate, (_) => false,
+                          );
+                          return;
+                        }
                         await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -272,6 +297,7 @@ class _AccountCard extends StatelessWidget {
   final IconData icon;
   final ColorScheme colors;
   final VoidCallback onManage;
+  final String actionLabel;
 
   const _AccountCard({
     required this.name,
@@ -279,6 +305,7 @@ class _AccountCard extends StatelessWidget {
     required this.icon,
     required this.colors,
     required this.onManage,
+    this.actionLabel = 'Manage',
   });
 
   @override
@@ -333,9 +360,9 @@ class _AccountCard extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               foregroundColor: colors.primary,
             ),
-            child: const Text(
-              'Manage',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            child: Text(
+              actionLabel,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
             ),
           ),
         ],

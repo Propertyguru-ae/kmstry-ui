@@ -43,6 +43,8 @@ class SecureStorage {
   static const _sessionApiOriginKey = 'session_api_origin';
   static const _sessionBuildEnvKey = 'session_build_env';
   static const _registeredDeviceTokenKey = 'registered_device_token';
+  static const _pushSessionKey = 'registered_push_session';
+  static const _pendingPushLogoutsKey = 'pending_push_logouts';
 
   static Future<bool> isNotificationOnboardingDone() async {
     // Keep this flag in app prefs (not keychain) so uninstall resets it.
@@ -123,6 +125,25 @@ class SecureStorage {
     _sessionEnded.add(null);
     ChatMemoryCache.shared.clear();
     return _writeSession(() async {
+      // Persist the old credentials before erasing them. Cleanup uses this
+      // exact session/API, never the next account's credentials.
+      final refreshToken = await getRefreshToken();
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        final pending = await getPendingPushLogouts();
+        final environment = await getSessionEnvironment();
+        if (!pending.any((item) => item['refreshToken'] == refreshToken)) {
+          pending.add({
+            'refreshToken': refreshToken,
+            'deviceToken': await getRegisteredDeviceToken() ?? '',
+            'apiOrigin': environment?.apiOrigin ?? AppConfig.baseUrl,
+            'buildEnv': environment?.buildEnv ?? AppConfig.buildEnv,
+          });
+          await _storage.write(
+            key: _pendingPushLogoutsKey,
+            value: jsonEncode(pending),
+          );
+        }
+      }
       await Future.wait([
         for (final key in [
           _accessTokenKey,
@@ -130,6 +151,7 @@ class SecureStorage {
           _sessionApiOriginKey,
           _sessionBuildEnvKey,
           _registeredDeviceTokenKey,
+          _pushSessionKey,
         ])
           _storage.delete(key: key),
         SharedPreferences.getInstance().then((prefs) async {
@@ -144,7 +166,10 @@ class SecureStorage {
     required String refreshToken,
   }) {
     _sessionRevision++;
-    return _writeSession(() => _saveTokens(accessToken, refreshToken));
+    return _writeSession(() async {
+      await _storage.delete(key: _pushSessionKey);
+      await _saveTokens(accessToken, refreshToken);
+    });
   }
 
   /// A delayed sign-in may not reopen a session ended by logout, or replace
@@ -156,6 +181,7 @@ class SecureStorage {
   }) => _writeSession(() async {
     if (expectedRevision != _sessionRevision) return false;
     final revision = ++_sessionRevision;
+    await _storage.delete(key: _pushSessionKey);
     await _saveTokens(accessToken, refreshToken);
     return revision == _sessionRevision;
   });
@@ -200,6 +226,46 @@ class SecureStorage {
   static Future<void> saveRegisteredDeviceToken(String token) async {
     await _storage.write(key: _registeredDeviceTokenKey, value: token);
   }
+
+  static Future<bool> savePushRegistration({
+    required int expectedRevision,
+    required String token,
+    required String sessionId,
+  }) => _writeSession(() async {
+    if (expectedRevision != _sessionRevision ||
+        await getAccessToken() == null) {
+      return false;
+    }
+    if (expectedRevision != _sessionRevision) return false;
+    await _storage.write(key: _registeredDeviceTokenKey, value: token);
+    await _storage.write(key: _pushSessionKey, value: sessionId);
+    return expectedRevision == _sessionRevision;
+  });
+
+  static Future<String?> getPushSessionId() =>
+      _storage.read(key: _pushSessionKey);
+
+  static Future<List<Map<String, String>>> getPendingPushLogouts() async {
+    final raw = await _storage.read(key: _pendingPushLogoutsKey);
+    if (raw == null) return [];
+    return (jsonDecode(raw) as List)
+        .map((item) => Map<String, String>.from(item as Map))
+        .toList();
+  }
+
+  static Future<void> completePushLogout(String refreshToken) =>
+      _writeSession(() async {
+        final pending = await getPendingPushLogouts();
+        pending.removeWhere((item) => item['refreshToken'] == refreshToken);
+        if (pending.isEmpty) {
+          await _storage.delete(key: _pendingPushLogoutsKey);
+        } else {
+          await _storage.write(
+            key: _pendingPushLogoutsKey,
+            value: jsonEncode(pending),
+          );
+        }
+      });
 
   static Future<String?> getRegisteredDeviceToken() =>
       _storage.read(key: _registeredDeviceTokenKey);

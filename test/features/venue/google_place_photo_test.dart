@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/google_photo_source.dart';
@@ -180,7 +181,7 @@ void main() {
   );
 
   testWidgets(
-    'credits expose the optional Google report link without a fullscreen photo',
+    'credits pair a larger contained photo with attribution without a new fullscreen route',
     (tester) async {
       var loads = 0;
       final pending = Completer<GooglePhotoSource>();
@@ -216,6 +217,12 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.text('Alice'), findsOneWidget);
+      final preview = tester.widget<CachedImage>(
+        find.byKey(ValueKey('credited-photo:${source.photoUrl}')),
+      );
+      expect(preview.url, source.photoUrl);
+      expect(preview.fit, BoxFit.contain);
+      expect(tester.getSize(find.byWidget(preview)).height, greaterThan(140));
       expect(find.text('View on Google Maps'), findsOneWidget);
       expect(find.text('Report Google photo'), findsNothing);
       expect(find.text('Report photo'), findsNothing);
@@ -333,10 +340,13 @@ void main() {
       ),
     );
     await tester.pump();
+    await tester.ensureVisible(find.text('View on Google Maps'));
     await tester.tap(find.text('View on Google Maps'));
     await tester.pump();
+    await tester.ensureVisible(find.text('Alice'));
     await tester.tap(find.text('Alice'));
     await tester.pump();
+    await tester.ensureVisible(find.text('Report to Google Maps'));
     await tester.tap(find.text('Report to Google Maps'));
     await tester.pump();
     expect(opened, [
@@ -407,6 +417,152 @@ void main() {
   });
 
   testWidgets(
+    'large covers show matching authors without replacing page navigation',
+    (tester) async {
+      const fresh = '$photo-fresh';
+      final decoded = _pendingPhoto(fresh);
+      decoded.complete(await _decodedPhoto(tester));
+      final attributed = GooglePhotoSource(
+        photoUrl: fresh,
+        authors: source.authors,
+        sourceUrl: source.sourceUrl,
+        reportUrl: source.reportUrl,
+        reportIsDirect: true,
+      );
+      var loads = 0;
+      Future<GooglePhotoSource> loader(String _) async {
+        loads++;
+        return attributed;
+      }
+
+      Widget host() => MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            height: 210,
+            child: GooglePlacePhoto(
+              photo,
+              showAuthorAttribution: true,
+              mediaReference: const MediaReference(
+                mediaId: 'old-photo',
+                url: photo,
+              ),
+              sourceLoader: loader,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(host());
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Google Maps · Credits'), findsOneWidget);
+      final preview = tester.widget<CachedImage>(find.byType(CachedImage));
+      expect(preview.url, fresh);
+      expect(preview.mediaReference, isNull);
+      await tester.pumpWidget(host());
+      await tester.pump();
+      expect(loads, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cover source failure is retryable without showing uncredited media',
+    (tester) async {
+      final decoded = _pendingPhoto(photo);
+      decoded.complete(await _decodedPhoto(tester));
+      var loads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 210,
+              child: GooglePlacePhoto(
+                photo,
+                showAuthorAttribution: true,
+                sourceLoader: (_) async {
+                  if (++loads == 1) throw StateError('offline');
+                  return source;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Retry photo'), findsOneWidget);
+      expect(find.byType(CachedImage), findsNothing);
+      await tester.tap(find.text('Retry photo'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Alice'), findsOneWidget);
+      expect(loads, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'source replacement never shows the old photo or author while loading',
+    (tester) async {
+      final pending = Completer<GooglePhotoSource>();
+      Future<GooglePhotoSource> loader(String url) =>
+          url == photo ? Future.value(source) : pending.future;
+      Widget host(String url) => MaterialApp(
+        home: Scaffold(
+          body: GooglePhotoSourceSheet(photoUrl: url, sourceLoader: loader),
+        ),
+      );
+      await tester.pumpWidget(host(photo));
+      await tester.pump();
+      expect(find.text('Alice'), findsOneWidget);
+      await tester.pumpWidget(host('$photo-new'));
+      expect(find.text('Alice'), findsNothing);
+      expect(find.byType(CachedImage), findsNothing);
+      pending.complete(
+        GooglePhotoSource(
+          photoUrl: '$photo-new',
+          authors: const [GooglePhotoAuthor(name: 'Bob')],
+          sourceUrl: source.sourceUrl,
+          reportUrl: source.reportUrl,
+          reportIsDirect: true,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Bob'), findsOneWidget);
+      expect(find.text('Alice'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('missing optional authors never invents a contributor', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GooglePhotoSourceSheet(
+            photoUrl: photo,
+            sourceLoader: (_) async => GooglePhotoSource(
+              photoUrl: photo,
+              authors: const [],
+              sourceUrl: source.sourceUrl,
+              reportUrl: source.reportUrl,
+              reportIsDirect: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('PHOTO BY'), findsNothing);
+    expect(find.text('Photo contributor'), findsNothing);
+    expect(find.text('View on Google Maps'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
     'map venue photo strips preserve card navigation without a new photo/report interaction',
     (tester) async {
       var taps = 0;
@@ -436,6 +592,44 @@ void main() {
       await tester.pump();
       expect(taps, 1);
       expect(find.byType(GooglePlacePhoto), findsNothing);
+      expect(find.byType(GooglePhotoSourceSheet), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'map strip shows source only for decoded Google photos; card tap still opens venue',
+    (tester) async {
+      final pending = _pendingPhoto(photo);
+      var taps = 0;
+      final venue = Venue(
+        id: 'google:ChIJVenue123',
+        name: 'Test venue',
+        type: 'CAFE',
+        status: 'ACTIVE',
+        address: 'Dubai',
+        city: 'Dubai',
+        photoUrl: photo,
+        latitude: 25,
+        longitude: 55,
+        tag: '',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: VenueListItem(venue: venue, onTap: (_) => taps++),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Google Maps · Credits'), findsNothing);
+      pending.complete(await _decodedPhoto(tester));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Google Maps · Credits'), findsOneWidget);
+      await tester.tapAt(tester.getCenter(find.byType(CachedImage).first));
+      expect(taps, 1);
       expect(find.byType(GooglePhotoSourceSheet), findsNothing);
       expect(tester.takeException(), isNull);
     },

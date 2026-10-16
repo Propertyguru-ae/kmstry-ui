@@ -14,8 +14,9 @@ import 'package:url_launcher/url_launcher.dart';
 typedef GooglePhotoSourceLoader = Future<GooglePhotoSource> Function(String);
 typedef GooglePhotoLinkLauncher = Future<bool> Function(Uri);
 
-/// Provider details are loaded only when requested. The source badge opens a
-/// compact sheet; the photo keeps its parent card's normal navigation.
+/// Thumbnail provider details are loaded only when requested. The source badge opens a
+/// sheet with the larger source photo and its full author attribution; the
+/// thumbnail keeps its parent card's normal navigation.
 class GooglePlacePhoto extends StatelessWidget {
   const GooglePlacePhoto(
     this.url, {
@@ -27,6 +28,7 @@ class GooglePlacePhoto extends StatelessWidget {
     this.overlay,
     this.badgeBottom = 6,
     this.showSourceBadge = true,
+    this.showAuthorAttribution = false,
   });
   final String url;
   final MediaReference? mediaReference;
@@ -39,18 +41,36 @@ class GooglePlacePhoto extends StatelessWidget {
   // where the full provider name remains readable without covering a photo.
   final bool showSourceBadge;
 
+  /// Large covers credit contributors on the photo itself. Compact thumbnails
+  /// expose full attribution through the larger photo in the credits sheet.
+  final bool showAuthorAttribution;
+
   @override
   Widget build(BuildContext context) {
     final isGooglePhoto = isGooglePlacePhotoProxyUrl(url);
+    if (isGooglePhoto && showAuthorAttribution) {
+      return _AttributedGooglePlacePhoto(photo: this);
+    }
+    return _buildPhoto(context);
+  }
+
+  Widget _buildPhoto(BuildContext context, {GooglePhotoSource? attribution}) {
+    final photoUrl = attribution?.photoUrl ?? url;
     return CachedImage(
-      url,
-      mediaReference: mediaReference,
+      photoUrl,
+      // A refreshed source supplies an exact photo/author pair. An older
+      // venue MediaReference must not substitute a different image here.
+      mediaReference: attribution == null ? mediaReference : null,
       fit: fit,
       errorWidget: errorWidget,
       contentBuilder: (context, image, imageLoaded) => _buildContent(
         context,
         image,
-        showCredits: isGooglePhoto && imageLoaded && showSourceBadge,
+        showCredits:
+            isGooglePlacePhotoProxyUrl(photoUrl) &&
+            imageLoaded &&
+            (showSourceBadge || showAuthorAttribution),
+        attribution: attribution,
       ),
     );
   }
@@ -59,12 +79,15 @@ class GooglePlacePhoto extends StatelessWidget {
     BuildContext context,
     Widget image, {
     required bool showCredits,
+    GooglePhotoSource? attribution,
   }) {
     if (!showCredits && overlay == null) return image;
     void open() => showGooglePhotoSourceSheet(
       context,
-      photoUrl: url,
-      sourceLoader: sourceLoader,
+      photoUrl: attribution?.photoUrl ?? url,
+      sourceLoader: attribution == null
+          ? sourceLoader
+          : (_) async => attribution,
     );
     final content = Stack(
       fit: StackFit.expand,
@@ -73,40 +96,183 @@ class GooglePlacePhoto extends StatelessWidget {
         if (overlay != null) IgnorePointer(child: overlay!),
         if (showCredits)
           Positioned(
+            left: attribution == null ? null : 6,
             right: 6,
             bottom: badgeBottom,
-            child: Semantics(
-              button: true,
-              label: 'Google Maps photo credits and source',
-              child: GestureDetector(
-                onTap: open,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (attribution != null && attribution.authors.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(6),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 4,
+                      children: [
+                        for (final author in attribution.authors)
+                          _InlineAuthor(author: author),
+                      ],
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: const Text(
-                    'Google Maps · Credits',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: 0,
+                Semantics(
+                  button: true,
+                  label: 'Google Maps photo credits and source',
+                  child: GestureDetector(
+                    onTap: open,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Text(
+                        'Google Maps · Credits',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
       ],
     );
     return content;
   }
+}
+
+class _AttributedGooglePlacePhoto extends StatefulWidget {
+  const _AttributedGooglePlacePhoto({required this.photo});
+  final GooglePlacePhoto photo;
+
+  @override
+  State<_AttributedGooglePlacePhoto> createState() =>
+      _AttributedGooglePlacePhotoState();
+}
+
+class _AttributedGooglePlacePhotoState
+    extends State<_AttributedGooglePlacePhoto> {
+  late Future<GooglePhotoSource> _source;
+
+  Future<GooglePhotoSource> _load() => Future.sync(
+    () =>
+        (widget.photo.sourceLoader ??
+        VenueContextRepository().getGooglePhotoSource)(widget.photo.url),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _source = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AttributedGooglePlacePhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.photo.url != widget.photo.url ||
+        oldWidget.photo.sourceLoader != widget.photo.sourceLoader) {
+      _source = _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<GooglePhotoSource>(
+    key: ValueKey(_source),
+    future: _source,
+    builder: (context, snapshot) {
+      final source = snapshot.data;
+      if (source != null) {
+        return widget.photo._buildPhoto(context, attribution: source);
+      }
+      // Do not show a large photo with another photo's author or without its
+      // required credits when the source endpoint is unavailable.
+      return ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: Center(
+          child: snapshot.hasError
+              ? TextButton.icon(
+                  onPressed: () {
+                    final next = _load();
+                    setState(() {
+                      _source = next;
+                    });
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry photo'),
+                )
+              : const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+        ),
+      );
+    },
+  );
+}
+
+class _InlineAuthor extends StatelessWidget {
+  const _InlineAuthor({required this.author});
+  final GooglePhotoAuthor author;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Photo by ${author.name}',
+    link: author.profileUrl != null,
+    child: GestureDetector(
+      onTap: author.profileUrl == null
+          ? null
+          : () async {
+              var opened = false;
+              try {
+                opened = await launchUrl(
+                  author.profileUrl!,
+                  mode: LaunchMode.externalApplication,
+                );
+              } catch (_) {
+                /* Surface a retryable error without leaving the page. */
+              }
+              if (!opened && context.mounted) {
+                showErrorToast(
+                  context,
+                  message: "Couldn't open Google Maps. Please try again.",
+                );
+              }
+            },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(width: 24, height: 24, child: _AuthorAvatar(author: author)),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              author.name,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+          if (author.profileUrl != null) ...[
+            const SizedBox(width: 4),
+            const Icon(Icons.open_in_new, color: Colors.white, size: 12),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 Future<void> showGooglePhotoSourceSheet(
@@ -149,6 +315,15 @@ class _GooglePhotoSourceSheetState extends State<GooglePhotoSourceSheet> {
   void initState() {
     super.initState();
     _source = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant GooglePhotoSourceSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.photoUrl != widget.photoUrl ||
+        oldWidget.sourceLoader != widget.sourceLoader) {
+      _source = _load();
+    }
   }
 
   Future<GooglePhotoSource> _load() => Future.sync(
@@ -212,6 +387,9 @@ class _GooglePhotoSourceSheetState extends State<GooglePhotoSourceSheet> {
                 subtitle: 'This photo comes from Google Maps.',
               ),
               FutureBuilder<GooglePhotoSource>(
+                // FutureBuilder otherwise retains the previous photo/author
+                // while a replacement source is loading.
+                key: ValueKey(_source),
                 future: _source,
                 builder: (context, snapshot) {
                   if (snapshot.hasError) return _buildError(palette);
@@ -271,6 +449,29 @@ class _GooglePhotoSourceSheetState extends State<GooglePhotoSourceSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Use the photo returned together with these credits. A place-based
+        // proxy can resolve to a different photo later; never reuse its old
+        // thumbnail with fresh attribution. Google images remain memory-only.
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            color: Colors.black,
+            height: MediaQuery.sizeOf(context).height * 0.36,
+            child: CachedImage(
+              source.photoUrl,
+              key: ValueKey('credited-photo:${source.photoUrl}'),
+              fit: BoxFit.contain,
+              errorWidget: (_) => const Center(
+                child: Text(
+                  'Photo unavailable. Refresh the venue to try again.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         if (source.authors.isNotEmpty) ...[
           const AppSheetSectionLabel('Photo by'),
           AppSheetCard(

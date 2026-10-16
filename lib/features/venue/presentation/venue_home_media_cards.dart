@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/venue/plan_gate.dart';
@@ -89,6 +90,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
 
   @override
   void dispose() {
+    _galleryPermission.dispose();
     _storiesRead.dispose();
     _galleryRead.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -289,13 +291,20 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
   // ── Gallery ────────────────────────────────────────────────────────────────
 
   bool _pickingMedia = false;
+  final _galleryPermission = SharingPermissionController();
 
   Future<void> _addGalleryMedia() async {
     if (!widget.canEditGallery || _pickingMedia) return;
     final venueId = widget.venueId;
     final session = PendingPublicMediaService.instance.sessionGeneration;
-    _pickingMedia = true;
+    setState(() => _pickingMedia = true);
     try {
+      if (!await _galleryPermission.check() ||
+          !mounted ||
+          venueId != widget.venueId ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       final files = await pickVenueGalleryMedia();
       if (!mounted ||
           venueId != widget.venueId ||
@@ -317,7 +326,7 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
         );
       }
     } finally {
-      _pickingMedia = false;
+      if (mounted) setState(() => _pickingMedia = false);
     }
   }
 
@@ -382,28 +391,38 @@ class _VenueHomeMediaCardsState extends State<VenueHomeMediaCards>
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
       // Kartlar bir tık küçük: satır genişliğinin %86'sı, ortalı.
-      child: bothShown
-          ? Center(
-              child: FractionallySizedBox(
-                widthFactor: _cardsWidthFactor,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: _buildStoryCard()),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildGalleryCard()),
-                  ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SharingPermissionHint(
+            controller: _galleryPermission,
+            isMedia: true,
+            onReview: _pickingMedia ? null : _addGalleryMedia,
+          ),
+          bothShown
+              ? Center(
+                  child: FractionallySizedBox(
+                    widthFactor: _cardsWidthFactor,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: _buildStoryCard()),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildGalleryCard()),
+                      ],
+                    ),
+                  ),
+                )
+              // Tek kart: iki kart durumundaki genişliği koru (yarım) ve ortala.
+              : Align(
+                  alignment: Alignment.center,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.5 * _cardsWidthFactor,
+                    child: showStory ? _buildStoryCard() : _buildGalleryCard(),
+                  ),
                 ),
-              ),
-            )
-          // Tek kart: iki kart durumundaki genişliği koru (yarım) ve ortala.
-          : Align(
-              alignment: Alignment.center,
-              child: FractionallySizedBox(
-                widthFactor: 0.5 * _cardsWidthFactor,
-                child: showStory ? _buildStoryCard() : _buildGalleryCard(),
-              ),
-            ),
+        ],
+      ),
     );
   }
 

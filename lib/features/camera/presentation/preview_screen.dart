@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:image/image.dart' as img;
@@ -24,6 +27,7 @@ class PreviewScreen extends StatefulWidget {
   final String cancelLabel;
   final String confirmLabel;
   final IconData? confirmIcon;
+  final bool requiresSharingPermission;
 
   /// Kamera çekiminden geliyorsa: ham fotoğraf ANINDA gösterilir, ağır
   /// orientation/crop/resize işlemesi arka planda yapılıp hazır olunca
@@ -52,6 +56,7 @@ class PreviewScreen extends StatefulWidget {
     this.cancelLabel = 'Retake',
     this.confirmLabel = 'Use',
     this.confirmIcon,
+    this.requiresSharingPermission = false,
     this.imageFit = BoxFit.cover,
     this.allowText = true,
     this.allowDownload = true,
@@ -78,6 +83,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
   bool _editing = false;
   bool _confirming = false;
   bool _saving = false;
+  final _permission = SharingPermissionController();
 
   // Instant-preview state: önce ham dosya gösterilir, işleme bitince değişir.
   late File _displayFile;
@@ -115,6 +121,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   @override
   void dispose() {
+    _permission.dispose();
     _textController.dispose();
     super.dispose();
   }
@@ -175,6 +182,10 @@ class _PreviewScreenState extends State<PreviewScreen> {
     if (_confirming || _saving) return;
     setState(() => _confirming = true);
     try {
+      if (widget.requiresSharingPermission && !await _permission.check()) {
+        return;
+      }
+      if (!mounted) return;
       // İşleme henüz bitmediyse bitene kadar bekle (kullanıcı hemen onayladıysa).
       await _awaitProcessing();
       final result = await _composedFile();
@@ -183,6 +194,15 @@ class _PreviewScreenState extends State<PreviewScreen> {
       // kapatır (aşağıya bak). Böylece kamera "alttan" pop edilmiyor ve CameraX
       // surface dispose crash'i olmuyor.
       Navigator.pop(context, result);
+    } catch (error) {
+      if (!mounted) return;
+      await showPremiumErrorDialog(
+        context,
+        message: publicTextErrorMessage(
+          error,
+          fallback: 'Could not prepare your photo. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _confirming = false);
     }
@@ -545,13 +565,23 @@ class _PreviewScreenState extends State<PreviewScreen> {
       bottom: 24,
       child: SafeArea(
         top: false,
-        child: PreviewBottomActions(
-          cancelLabel: widget.cancelLabel,
-          confirmLabel: widget.confirmLabel,
-          confirmIcon: widget.confirmIcon,
-          confirming: _confirming,
-          onCancel: busy ? null : () => Navigator.pop(context),
-          onConfirm: busy ? null : _usePhoto,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SharingPermissionHint(
+              controller: _permission,
+              isMedia: true,
+              onReview: busy ? null : _usePhoto,
+            ),
+            PreviewBottomActions(
+              cancelLabel: widget.cancelLabel,
+              confirmLabel: widget.confirmLabel,
+              confirmIcon: widget.confirmIcon,
+              confirming: _confirming,
+              onCancel: busy ? null : () => Navigator.pop(context),
+              onConfirm: busy ? null : _usePhoto,
+            ),
+          ],
         ),
       ),
     );

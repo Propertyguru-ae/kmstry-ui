@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_member_repository.dart
 import 'package:kmstry_frontend/features/stories/presentation/story_viewer_page.dart';
 import 'package:kmstry_frontend/core/venue/venue_read_changes.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
+import 'package:kmstry_frontend/core/network/public_content_permission.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/content_moderation/presentation/owner_photo_preview.dart';
@@ -210,6 +211,45 @@ Future<void> _pump(
 );
 
 void main() {
+  testWidgets(
+    'Add Personal from venue profile paints existing account defaults immediately',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 950);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final pending = Completer<Map<String, dynamic>>();
+      var reads = 0;
+      final account = {
+        ..._me(),
+        'hasPersonalProfile': false,
+        'fullName': null,
+        'registrationName': 'Invited Member',
+        'birthdate': '1990-01-02T00:00:00Z',
+      };
+      final auth = _Auth(
+        () => ++reads == 1 ? Future.value(account) : pending.future,
+      );
+      await _pump(
+        tester,
+        auth,
+        _Owner((id) async => _identity(id), (_) async => []),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(of: find.byType(AppBar), matching: find.text('Cafe a')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add Personal Account'));
+      await tester.pumpAndSettle();
+      expect(pending.isCompleted, false);
+      expect(find.text('Invited Member'), findsOneWidget);
+      expect(find.text('01/02/1990'), findsOneWidget);
+      pending.complete(account);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final allowed in [false, true]) {
     testWidgets(
       'profile avatar tap and long press respect statistics permission: $allowed',
@@ -362,7 +402,7 @@ void main() {
 
   for (final unavailable in [false, true]) {
     testWidgets(
-      'About ${unavailable ? 'AWS outage' : 'policy rejection'} shows a specific title and preserves saved description',
+      'About ${unavailable ? 'AWS outage' : 'policy rejection'} preserves the editor and unsaved draft',
       (tester) async {
         final owner = _Owner((id) async => _identity(id), (_) async => []);
         var saves = 0;
@@ -391,22 +431,15 @@ void main() {
 
         expect(saves, 1);
         expect(find.text('Something went wrong'), findsNothing);
-        expect(
-          find.text(
-            unavailable ? 'Text check unavailable' : 'Please edit your text',
-          ),
-          findsOneWidget,
-        );
         expect(find.text('Full About'), findsOneWidget);
         if (unavailable) {
           expect(find.textContaining("haven't been saved"), findsOneWidget);
         } else {
           expect(find.text(publicTextRejectionMessage), findsOneWidget);
         }
-        await tester.tap(find.text('OK'));
-        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsNothing);
         expect(find.text('Full About'), findsOneWidget);
-        expect(find.text('test description'), findsNothing);
+        expect(find.text('test description'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
@@ -428,6 +461,49 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'venue Not now keeps About open; Review permission saves the same draft',
+    (tester) async {
+      FlutterSecureStorage.setMockInitialValues({'access_token': 'test'});
+      var allow = false;
+      var saves = 0;
+      PublicContentPermission.onRequired = (_) async {
+        if (!allow)
+          throw ApiException(
+            statusCode: 403,
+            data: const {'errorCode': 'AWS_SHARING_PERMISSION_DECLINED'},
+          );
+      };
+      final owner = _Owner((id) async => _identity(id), (_) async => []);
+      owner.saveAbout = (id, description) async {
+        saves++;
+        return _identity(id, about: description!);
+      };
+      await _pump(tester, _Auth(() async => _me()), owner);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Edit').first);
+      await tester.tap(find.text('Edit').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField),
+        'Unsaved venue description',
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(saves, 0);
+      expect(find.text('Unsaved venue description'), findsOneWidget);
+      expect(find.text('Review permission'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      allow = true;
+      await tester.tap(find.text('Review permission'));
+      await tester.pumpAndSettle();
+      expect(saves, 1);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Unsaved venue description'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'fresh return has no identity/event/story/benefit reads; hidden changes refresh only their sections',
@@ -543,6 +619,7 @@ void main() {
     VenueSession.instance.clear();
   });
   tearDown(() {
+    PublicContentPermission.onRequired = null;
     PendingPublicMediaService.instance.clear();
     VenueSession.instance.clear();
   });

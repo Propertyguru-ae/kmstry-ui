@@ -3,10 +3,11 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'report_ui.dart';
+import 'child_safety_report.dart';
 import '../../checkin/data/checkin_repository.dart';
 
 /// The backend `ReportReason` enum only has coarse buckets
-/// (fake_profile/harassment/spam/scam/inappropriate_behavior/other);
+/// (including a dedicated child_safety reason);
 /// each fine-grained UI category maps to one of these, and the exact
 /// category label is always stored in `details` for admin visibility.
 class _ReportCategory {
@@ -16,6 +17,7 @@ class _ReportCategory {
 }
 
 const _kReportCategories = <_ReportCategory>[
+  _ReportCategory(childSafetyReportLabel, childSafetyReportReason),
   _ReportCategory('Nudity or sexual activity', 'INAPPROPRIATE_CONTENT'),
   _ReportCategory('Hate speech or symbols', 'HARASSMENT'),
   _ReportCategory('Scam or fraud', 'SPAM_SCAM'),
@@ -117,54 +119,86 @@ Future<bool> showReportUserSheet(
                 children: [
                   const SizedBox(height: 10),
                   const AppSheetHeader(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const ReportHeaderIcon(),
-                        const SizedBox(height: 14),
-                        Text(
-                          title,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: palette.title,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          reportsSelectedContent
-                              ? 'The selected content will be shared with authorised KMSTRY moderators. This person won\'t know you reported it. Reporting content does not block the account.'
-                              : 'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 13,
-                            height: 1.35,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.fromLTRB(22, 0, 22, 4),
-                      itemCount: _kReportCategories.length,
-                      itemBuilder: (ctx, i) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: ReportReasonTile(
-                          label: _kReportCategories[i].label,
-                          selected: selectedIndex == i,
-                          onTap: submitting
-                              ? null
-                              : () => setModalState(() => selectedIndex = i),
-                        ),
-                      ),
+                      itemCount: _kReportCategories.length + 1,
+                      itemBuilder: (ctx, index) {
+                        // Let the introduction scroll too: on compact screens
+                        // or large text it must not squeeze all reasons away.
+                        if (index == 0) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const ReportHeaderIcon(),
+                                const SizedBox(height: 14),
+                                Text(
+                                  title,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: palette.title,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  reportsSelectedContent
+                                      ? 'The selected content will be shared with authorised KMSTRY moderators. This person won\'t know you reported it. Reporting content does not block the account.'
+                                      : 'This report will be sent to the KMSTRY team. This person won\'t know you reported them. Once submitted, this user will be automatically blocked and messaging will be paused.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: palette.muted,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        final i = index - 1;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              ReportReasonTile(
+                                label: _kReportCategories[i].label,
+                                selected: selectedIndex == i,
+                                onTap: submitting
+                                    ? null
+                                    : () => setModalState(
+                                        () => selectedIndex = i,
+                                      ),
+                              ),
+                              if (selectedIndex == i &&
+                                  _kReportCategories[i].backendReason ==
+                                      childSafetyReportReason)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    4,
+                                    8,
+                                    4,
+                                    4,
+                                  ),
+                                  child: Text(
+                                    childSafetyReportHelp,
+                                    style: TextStyle(
+                                      color: palette.muted,
+                                      fontSize: 13,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
                   if (submitError != null)

@@ -7,6 +7,7 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/push/push_logout_queue.dart';
 
 class AuthApi {
   final ApiClient _client = ApiClient();
@@ -187,13 +188,18 @@ class AuthApi {
     return res as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> logout({required String refreshToken}) async {
-    final res = await _client.post(
-      '/auth/logout',
-      body: {'refreshToken': refreshToken},
-    );
-
-    return res as Map<String, dynamic>;
+  Future<Map<String, dynamic>> logout({
+    required String refreshToken,
+    String? deviceToken,
+  }) async {
+    return {
+      'success': await PushLogoutQueue.revoke({
+        'refreshToken': refreshToken,
+        'deviceToken': deviceToken ?? '',
+        'apiOrigin': AppConfig.baseUrl,
+        'buildEnv': AppConfig.buildEnv,
+      }),
+    };
   }
 
   Future<Map<String, dynamic>> loginWithGoogle({

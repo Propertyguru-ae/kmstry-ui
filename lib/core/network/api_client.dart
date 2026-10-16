@@ -9,6 +9,7 @@ import 'api_exception.dart';
 import '../performance/performance_diagnostics.dart';
 import '../storage/secure_storage.dart';
 import 'request_session.dart';
+import 'public_content_permission.dart';
 
 class ApiClient {
   ApiClient({
@@ -116,6 +117,9 @@ class ApiClient {
     final payload = data is Map
         ? Map<String, dynamic>.from(data)
         : <String, dynamic>{'message': data?.toString() ?? 'Request failed'};
+    if (payload['errorCode']?.toString().startsWith('AWS_SHARING_') == true) {
+      PublicContentPermission.onServerDenied?.call();
+    }
     if (statusCode == 426 && payload['errorCode'] == 'APP_UPDATE_REQUIRED') {
       await onUpdateRequired?.call(payload);
     }
@@ -275,6 +279,8 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final session = RequestSession(headers);
+    await PublicContentPermission.beforeRequest('POST', path, headers, body);
+    session.check();
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -400,6 +406,8 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final session = RequestSession(headers);
+    await PublicContentPermission.beforeRequest('PATCH', path, headers, body);
+    session.check();
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',
@@ -468,6 +476,8 @@ class ApiClient {
     Map<String, String>? headers,
   }) async {
     final session = RequestSession(headers);
+    await PublicContentPermission.beforeRequest('PUT', path, headers, body);
+    session.check();
     final url = Uri.parse('${AppConfig.baseUrl}$path');
     final merged = {
       'Content-Type': 'application/json',

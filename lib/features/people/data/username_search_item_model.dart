@@ -1,9 +1,11 @@
+import '../../../core/models/public_age.dart';
+
 class UsernameSearchItem {
   final String id;
   final String username;
   final String? fullName;
   final String? photo;
-  final DateTime? birthdate;
+  final int? age;
   final UsernameSearchActiveCheckin? activeCheckin;
   final bool isMatched;
   final String? chatId;
@@ -17,7 +19,7 @@ class UsernameSearchItem {
     required this.username,
     this.fullName,
     this.photo,
-    this.birthdate,
+    this.age,
     this.activeCheckin,
     this.isMatched = false,
     this.chatId,
@@ -110,7 +112,7 @@ class UsernameSearchItem {
       username: (json['username'] ?? '').toString(),
       fullName: (json['fullName'] ?? json['full_name'])?.toString(),
       photo: readString(json, const ['photo', 'photoUrl', 'photo_url']),
-      birthdate: DateTime.tryParse((json['birthdate'] ?? '').toString()),
+      age: readPublicAge(json),
       activeCheckin: active,
       isMatched: isMatched,
       chatId: chatId,

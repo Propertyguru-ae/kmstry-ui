@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:kmstry_frontend/core/ui/media_viewer_buttons.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:video_player/video_player.dart';
@@ -76,6 +77,7 @@ class _VenueGallerySectionState extends State<VenueGallerySection>
 
   @override
   void dispose() {
+    _galleryPermission.dispose();
     _visibleRead.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _uploads.changes.removeListener(_onPendingChanged);
@@ -139,13 +141,20 @@ class _VenueGallerySectionState extends State<VenueGallerySection>
   }
 
   bool _pickingMedia = false;
+  final _galleryPermission = SharingPermissionController();
 
   Future<void> _addMedia() async {
     if (!widget.canEdit || _pickingMedia) return;
     final venueId = widget.venueId;
     final session = PendingPublicMediaService.instance.sessionGeneration;
-    _pickingMedia = true;
+    setState(() => _pickingMedia = true);
     try {
+      if (!await _galleryPermission.check() ||
+          !mounted ||
+          venueId != widget.venueId ||
+          !PendingPublicMediaService.instance.isCurrentSession(session)) {
+        return;
+      }
       final files = await pickVenueGalleryMedia();
       if (!mounted ||
           venueId != widget.venueId ||
@@ -167,7 +176,7 @@ class _VenueGallerySectionState extends State<VenueGallerySection>
         );
       }
     } finally {
-      _pickingMedia = false;
+      if (mounted) setState(() => _pickingMedia = false);
     }
   }
 
@@ -243,6 +252,14 @@ class _VenueGallerySectionState extends State<VenueGallerySection>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SharingPermissionHint(
+            controller: _galleryPermission,
+            isMedia: true,
+            onReview: _pickingMedia ? null : _addMedia,
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Row(
