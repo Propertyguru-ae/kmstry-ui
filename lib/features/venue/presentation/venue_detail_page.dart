@@ -2300,6 +2300,8 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   @override
   Widget build(BuildContext context) {
     final hasActiveCheckinHere = _isActiveCheckinAtCurrentVenue();
+    final hasGoogleCover =
+        _hasVenuePhoto && isGooglePlacePhotoProxyUrl(_venuePhotoUrl.trim());
     final opening =
         _venueDetails?['openingHours'] ??
         _enrichedVenueData?['openingHours'] ??
@@ -2337,62 +2339,78 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    /// COVER HERO — tam genişlik, alta doğru sayfa zeminine erir.
-                    /// Fotoğrafı olmayan mekânda varsayılan görsel yerine
-                    /// sade bir zemin ve daha kısa bir alan gösterilir.
-                    SizedBox(
-                      height: _hasVenuePhoto ? 210 : 130,
-                      width: double.infinity,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (!_hasVenuePhoto)
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    _isDark
-                                        ? AppColors.darkSurface
-                                        : const Color(0xFFEFF3F8),
-                                    _pageBg,
-                                  ],
+                    // Google cover credits take their own space below the
+                    // photo; neither a gradient nor the identity overlaps it.
+                    if (hasGoogleCover)
+                      GooglePlacePhoto(
+                        _venuePhotoUrl.trim(),
+                        mediaReference: _venuePhotoReference,
+                        sourceLoader: _venueContextRepo.getGooglePhotoSource,
+                        showAuthorAttribution: true,
+                        creditsBelowPhotoHeight: 210,
+                      )
+                    else
+                      SizedBox(
+                        height: _hasVenuePhoto ? 210 : 130,
+                        width: double.infinity,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (!_hasVenuePhoto)
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      _isDark
+                                          ? AppColors.darkSurface
+                                          : const Color(0xFFEFF3F8),
+                                      _pageBg,
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            )
-                          else
-                            GooglePlacePhoto(
-                              _venuePhotoUrl.trim(),
-                              mediaReference: _venuePhotoReference,
-                              fit: BoxFit.cover,
-                              sourceLoader:
-                                  _venueContextRepo.getGooglePhotoSource,
-                              badgeBottom: 44,
-                              showAuthorAttribution: true,
-                              overlay: Align(
-                                alignment: Alignment.bottomCenter,
-                                child: Container(
-                                  height: 120,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [Colors.transparent, _pageBg],
+                              )
+                            else
+                              GooglePlacePhoto(
+                                _venuePhotoUrl.trim(),
+                                mediaReference: _venuePhotoReference,
+                                fit: BoxFit.cover,
+                                sourceLoader:
+                                    _venueContextRepo.getGooglePhotoSource,
+                                badgeBottom: 44,
+                                showAuthorAttribution: true,
+                                overlay: Align(
+                                  alignment: Alignment.bottomCenter,
+                                  child: Container(
+                                    height: 120,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [Colors.transparent, _pageBg],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
 
-                    /// COVER ALTI — cover'ı örtmek için 28px yukarı çekilir
+                    // Keep the existing overlap for owner uploads/empty covers,
+                    // but leave the Google attribution row unobstructed.
                     Transform.translate(
-                      offset: const Offset(0, -28),
+                      offset: hasGoogleCover
+                          ? Offset.zero
+                          : const Offset(0, -28),
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                        padding: EdgeInsets.fromLTRB(
+                          18,
+                          hasGoogleCover ? 18 : 0,
+                          18,
+                          28,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [

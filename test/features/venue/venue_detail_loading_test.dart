@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
@@ -229,6 +231,60 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     PendingPublicMediaService.instance.clear();
   });
+
+  testWidgets(
+    'venue detail keeps Google credits below the cover and above identity',
+    (tester) async {
+      const url =
+          'https://pre-prod-api.kmstry.net/venues/places/photo/cover-layout.signature';
+      final decoded = await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        ui.Canvas(recorder).drawColor(Colors.blue, ui.BlendMode.src);
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(1, 1);
+        picture.dispose();
+        return image;
+      });
+      PaintingBinding.instance.imageCache.putIfAbsent(
+        NetworkImage(resolveMediaNetworkUrl(url)),
+        () => OneFrameImageStreamCompleter(
+          Future.value(ImageInfo(image: decoded!)),
+        ),
+      );
+      addTearDown(() {
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+      });
+      final repo = _Context();
+      repo.identity = () async => {..._identity(), 'photo': url};
+      repo.events = () async => [];
+      repo.photoSource = () async => GooglePhotoSource(
+        photoUrl: url,
+        authors: const [GooglePhotoAuthor(name: 'Photo contributor')],
+        sourceUrl: Uri.parse('https://www.google.com/maps/photo/example'),
+        reportUrl: Uri.parse('https://www.google.com/maps/photo/example'),
+        reportIsDirect: false,
+      );
+      await _pump(tester, repo, venue: _venue(photoUrl: url));
+      await tester.pump();
+      final cover = tester.getRect(
+        find.byKey(const ValueKey('google-photo-cover-image')),
+      );
+      final credits = tester.getRect(
+        find.byKey(const ValueKey('google-photo-credits-footer')),
+      );
+      final title = tester.getRect(find.text('Cafe Alpha'));
+      expect(cover.height, 210);
+      expect(credits.top, greaterThanOrEqualTo(cover.bottom));
+      expect(title.top, greaterThanOrEqualTo(credits.bottom));
+      final widget = tester.widget<GooglePlacePhoto>(
+        find.byType(GooglePlacePhoto),
+      );
+      expect(widget.overlay, isNull);
+      expect(tester.takeException(), isNull);
+      await _close(tester);
+    },
+  );
 
   testWidgets(
     'venue report icon separates venue and photo without opening the avatar',

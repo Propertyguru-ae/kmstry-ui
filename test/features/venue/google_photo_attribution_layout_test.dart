@@ -91,6 +91,16 @@ void main() {
                 textTheme: AppTheme.darkTheme.textTheme.apply(
                   fontFamily: 'Roboto',
                 ),
+                textButtonTheme: TextButtonThemeData(
+                  style: AppTheme.darkTheme.textButtonTheme.style?.copyWith(
+                    textStyle: const WidgetStatePropertyAll(
+                      TextStyle(
+                        fontFamily: 'Roboto',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
               ),
               builder: (context, child) => MediaQuery(
                 data: MediaQuery.of(
@@ -111,11 +121,11 @@ void main() {
                             ),
                           )
                         : SizedBox(
-                            height: 210,
                             width: double.infinity,
                             child: GooglePlacePhoto(
                               photo,
                               showAuthorAttribution: true,
+                              creditsBelowPhotoHeight: 210,
                               sourceLoader: (_) async => source,
                             ),
                           ),
