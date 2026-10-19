@@ -6,10 +6,10 @@ import 'package:kmstry_frontend/features/content_moderation/data/pending_public_
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_follower_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
-import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
 /// Venue home'daki "Followers" KPI'ına basınca açılan liste.
 /// Friends sayfasıyla aynı düzen: isimle arama + seçilebilir sıralama.
+/// Read-only: venue accounts must not enter personal profile actions here.
 class VenueFollowersPage extends StatefulWidget {
   final String venueId;
   const VenueFollowersPage({super.key, required this.venueId, this.repository});
@@ -201,21 +201,6 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
     );
   }
 
-  void _openProfile(VenueFollower f) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfilePreviewPage(
-          userId: f.userId,
-          userName: f.fullName,
-          userUsername: f.username,
-          fallbackBio: (f.bio != null && f.bio!.trim().isNotEmpty)
-              ? f.bio
-              : null,
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -357,7 +342,6 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
           final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
           return ListTile(
             contentPadding: const EdgeInsets.symmetric(vertical: 4),
-            onTap: () => _openProfile(f),
             leading: CircleAvatar(
               radius: 24,
               backgroundColor: theme.colorScheme.primary.withValues(
@@ -392,10 +376,6 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
                     ),
                   )
                 : null,
-            trailing: Icon(
-              Icons.chevron_right_rounded,
-              color: onSurface.withValues(alpha: 0.3),
-            ),
           );
         },
       ),
