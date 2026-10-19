@@ -6,6 +6,7 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/media/media_network_url.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/features/venue/data/google_photo_source.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
@@ -94,11 +95,252 @@ Widget _photoHost(
   ),
 );
 
+Widget _coverHost({
+  String url = photo,
+  GooglePhotoSourceLoader? loader,
+  double width = 320,
+  double scale = 1,
+  bool dark = true,
+}) => MaterialApp(
+  theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+    child: child!,
+  ),
+  home: Scaffold(
+    body: SingleChildScrollView(
+      child: SizedBox(
+        width: width,
+        child: GooglePlacePhoto(
+          url,
+          showAuthorAttribution: true,
+          creditsBelowPhotoHeight: 210,
+          sourceLoader: loader ?? (_) async => source,
+          errorWidget: (_) => const Text('Photo unavailable'),
+        ),
+      ),
+    ),
+  ),
+);
+
 void main() {
   tearDown(() {
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
+
+  for (final dark in [true, false]) {
+    for (final width in [320.0, 390.0]) {
+      for (final scale in [1.0, 1.8]) {
+        testWidgets(
+          'cover footer stays below image: dark=$dark width=$width scale=$scale',
+          (tester) async {
+            final pending = _pendingPhoto(photo);
+            pending.complete(await _decodedPhoto(tester));
+            final contributors = GooglePhotoSource(
+              photoUrl: photo,
+              authors: [
+                GooglePhotoAuthor(
+                  name: 'A contributor with a very long display name',
+                  profileUrl: source.authors.first.profileUrl,
+                ),
+                const GooglePhotoAuthor(name: 'Second contributor'),
+              ],
+              sourceUrl: source.sourceUrl,
+              reportUrl: source.reportUrl,
+              reportIsDirect: true,
+            );
+            await tester.pumpWidget(
+              _coverHost(
+                width: width,
+                scale: scale,
+                dark: dark,
+                loader: (_) async => contributors,
+              ),
+            );
+            await tester.pumpAndSettle();
+            final imageRect = tester.getRect(
+              find.byKey(const ValueKey('google-photo-cover-image')),
+            );
+            final footerRect = tester.getRect(
+              find.byKey(const ValueKey('google-photo-credits-footer')),
+            );
+            expect(imageRect.height, 210);
+            expect(footerRect.top, greaterThanOrEqualTo(imageRect.bottom));
+            expect(find.text('Google Maps · Credits'), findsNothing);
+            expect(find.text('Google Maps'), findsOneWidget);
+            expect(
+              find.text('A contributor with a very long display name'),
+              findsOneWidget,
+            );
+            expect(find.text('Second contributor'), findsOneWidget);
+            for (final text in [
+              'Google Maps',
+              'Credits',
+              'A contributor with a very long display name',
+              'Second contributor',
+            ]) {
+              final rect = tester.getRect(find.text(text));
+              expect(rect.left, greaterThanOrEqualTo(footerRect.left));
+              expect(rect.right, lessThanOrEqualTo(footerRect.right));
+            }
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
+
+  testWidgets(
+    'footer opens the unchanged credits sheet for the exact displayed source',
+    (tester) async {
+      const fresh = '$photo-fresh';
+      _pendingPhoto(fresh).complete(await _decodedPhoto(tester));
+      var loads = 0;
+      final exactSource = GooglePhotoSource(
+        photoUrl: fresh,
+        authors: source.authors,
+        sourceUrl: source.sourceUrl,
+        reportUrl: source.reportUrl,
+        reportIsDirect: true,
+      );
+      await tester.pumpWidget(
+        _coverHost(
+          loader: (_) async {
+            loads++;
+            return exactSource;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Alice'), findsOneWidget);
+      await tester.tap(find.text('Credits'));
+      await tester.pumpAndSettle();
+      expect(find.byType(GooglePhotoSourceSheet), findsOneWidget);
+      expect(find.text('Photo credits'), findsOneWidget);
+      expect(find.text('Photo contributor'), findsOneWidget);
+      expect(find.text('View on Google Maps'), findsOneWidget);
+      expect(find.text('Report to Google Maps'), findsOneWidget);
+      expect(find.byKey(ValueKey('credited-photo:$fresh')), findsOneWidget);
+      expect(loads, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('failed cover image has no orphaned footer or author', (
+    tester,
+  ) async {
+    final pending = _pendingPhoto(photo);
+    await tester.pumpWidget(_coverHost());
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('google-photo-credits-footer')),
+      findsNothing,
+    );
+    pending.completeError(
+      NetworkImageLoadException(statusCode: 404, uri: Uri.parse(photo)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Photo unavailable'), findsOneWidget);
+    expect(find.text('Alice'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('google-photo-credits-footer')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'cover without author metadata shows source but invents no author',
+    (tester) async {
+      _pendingPhoto(photo).complete(await _decodedPhoto(tester));
+      await tester.pumpWidget(
+        _coverHost(
+          loader: (_) async => GooglePhotoSource(
+            photoUrl: photo,
+            authors: const [],
+            sourceUrl: source.sourceUrl,
+            reportUrl: source.reportUrl,
+            reportIsDirect: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Photo by'), findsNothing);
+      expect(find.text('Google Maps'), findsOneWidget);
+      expect(find.text('Credits'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cover metadata retry keeps image height and never shows stale credits',
+    (tester) async {
+      _pendingPhoto(photo).complete(await _decodedPhoto(tester));
+      var loads = 0;
+      await tester.pumpWidget(
+        _coverHost(
+          loader: (_) async {
+            if (++loads == 1) throw StateError('offline');
+            return source;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(GooglePlacePhoto)).height, 210);
+      expect(
+        find.byKey(const ValueKey('google-photo-credits-footer')),
+        findsNothing,
+      );
+      await tester.tap(find.text('Retry photo'));
+      await tester.pumpAndSettle();
+      expect(find.text('Alice'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('google-photo-credits-footer')),
+        findsOneWidget,
+      );
+      expect(loads, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cover URL replacement hides old author until the new exact photo loads',
+    (tester) async {
+      const replacement = '$photo-next';
+      _pendingPhoto(photo).complete(await _decodedPhoto(tester));
+      final newImage = _pendingPhoto(replacement);
+      final newSource = Completer<GooglePhotoSource>();
+      Future<GooglePhotoSource> loader(String url) =>
+          url == photo ? Future.value(source) : newSource.future;
+      await tester.pumpWidget(_coverHost(loader: loader));
+      await tester.pumpAndSettle();
+      expect(find.text('Alice'), findsOneWidget);
+      await tester.pumpWidget(_coverHost(url: replacement, loader: loader));
+      await tester.pump();
+      expect(find.text('Alice'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('google-photo-credits-footer')),
+        findsNothing,
+      );
+      newSource.complete(
+        GooglePhotoSource(
+          photoUrl: replacement,
+          authors: const [GooglePhotoAuthor(name: 'Bob')],
+          sourceUrl: source.sourceUrl,
+          reportUrl: source.reportUrl,
+          reportIsDirect: true,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Bob'), findsNothing);
+      newImage.complete(await _decodedPhoto(tester));
+      await tester.pumpAndSettle();
+      expect(find.text('Bob'), findsOneWidget);
+      expect(find.text('Alice'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test(
     'metadata calls current build API path, not the advertised origin',

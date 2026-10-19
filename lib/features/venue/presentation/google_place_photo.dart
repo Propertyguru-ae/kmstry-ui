@@ -29,6 +29,7 @@ class GooglePlacePhoto extends StatelessWidget {
     this.badgeBottom = 6,
     this.showSourceBadge = true,
     this.showAuthorAttribution = false,
+    this.creditsBelowPhotoHeight,
   });
   final String url;
   final MediaReference? mediaReference;
@@ -41,9 +42,13 @@ class GooglePlacePhoto extends StatelessWidget {
   // where the full provider name remains readable without covering a photo.
   final bool showSourceBadge;
 
-  /// Large covers credit contributors on the photo itself. Compact thumbnails
+  /// Large covers credit contributors beside the photo. Compact thumbnails
   /// expose full attribution through the larger photo in the credits sheet.
   final bool showAuthorAttribution;
+
+  /// Opt-in cover layout: keep this image height and place credits underneath.
+  /// The parent must allow the footer to take its natural height.
+  final double? creditsBelowPhotoHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +86,6 @@ class GooglePlacePhoto extends StatelessWidget {
     required bool showCredits,
     GooglePhotoSource? attribution,
   }) {
-    if (!showCredits && overlay == null) return image;
     void open() => showGooglePhotoSourceSheet(
       context,
       photoUrl: attribution?.photoUrl ?? url,
@@ -89,6 +93,28 @@ class GooglePlacePhoto extends StatelessWidget {
           ? sourceLoader
           : (_) async => attribution,
     );
+    if (creditsBelowPhotoHeight != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            key: const ValueKey('google-photo-cover-image'),
+            height: creditsBelowPhotoHeight,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                image,
+                if (overlay != null) IgnorePointer(child: overlay!),
+              ],
+            ),
+          ),
+          if (showCredits)
+            _PhotoCreditsFooter(attribution: attribution, onOpen: open),
+        ],
+      );
+    }
+    if (!showCredits && overlay == null) return image;
     final content = Stack(
       fit: StackFit.expand,
       children: [
@@ -156,6 +182,100 @@ class GooglePlacePhoto extends StatelessWidget {
   }
 }
 
+class _PhotoCreditsFooter extends StatelessWidget {
+  const _PhotoCreditsFooter({required this.attribution, required this.onOpen});
+  final GooglePhotoSource? attribution;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final muted = dark ? AppColors.darkTextSecondary : const Color(0xFF59667C);
+    final accent = dark ? AppColors.blueDark : AppColors.blueLight;
+    final authors = attribution?.authors ?? const <GooglePhotoAuthor>[];
+    final authorList = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final author in authors)
+          _InlineAuthor(author: author, belowPhoto: true),
+      ],
+    );
+    final credits = Semantics(
+      label: 'Google Maps photo credits and source',
+      button: true,
+      child: TextButton(
+        onPressed: onOpen,
+        style: TextButton.styleFrom(
+          foregroundColor: accent,
+          minimumSize: const Size(44, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Google Maps',
+              style: TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                letterSpacing: 0,
+              ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Credits', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 2),
+                Icon(Icons.chevron_right, size: 14, color: accent),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    return Container(
+      key: const ValueKey('google-photo-credits-footer'),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+      decoration: BoxDecoration(
+        color: dark ? AppColors.darkBg : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: dark ? const Color(0xFF222C43) : const Color(0xFFE0E6EF),
+          ),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Large accessibility text must not compress long contributor names
+          // into the source link or impose a fixed-height attribution area.
+          final stacked =
+              constraints.maxWidth < 300 &&
+              MediaQuery.textScalerOf(context).scale(12) > 18;
+          if (stacked) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (authors.isNotEmpty) authorList,
+                Align(alignment: Alignment.centerRight, child: credits),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: authorList),
+              const SizedBox(width: 12),
+              credits,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _AttributedGooglePlacePhoto extends StatefulWidget {
   const _AttributedGooglePlacePhoto({required this.photo});
   final GooglePlacePhoto photo;
@@ -201,25 +321,28 @@ class _AttributedGooglePlacePhotoState
       }
       // Do not show a large photo with another photo's author or without its
       // required credits when the source endpoint is unavailable.
-      return ColoredBox(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Center(
-          child: snapshot.hasError
-              ? TextButton.icon(
-                  onPressed: () {
-                    final next = _load();
-                    setState(() {
-                      _source = next;
-                    });
-                  },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry photo'),
-                )
-              : const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+      return SizedBox(
+        height: widget.photo.creditsBelowPhotoHeight,
+        child: ColoredBox(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Center(
+            child: snapshot.hasError
+                ? TextButton.icon(
+                    onPressed: () {
+                      final next = _load();
+                      setState(() {
+                        _source = next;
+                      });
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry photo'),
+                  )
+                : const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+          ),
         ),
       );
     },
@@ -227,52 +350,78 @@ class _AttributedGooglePlacePhotoState
 }
 
 class _InlineAuthor extends StatelessWidget {
-  const _InlineAuthor({required this.author});
+  const _InlineAuthor({required this.author, this.belowPhoto = false});
   final GooglePhotoAuthor author;
+  final bool belowPhoto;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    label: 'Photo by ${author.name}',
-    link: author.profileUrl != null,
-    child: GestureDetector(
-      onTap: author.profileUrl == null
-          ? null
-          : () async {
-              var opened = false;
-              try {
-                opened = await launchUrl(
-                  author.profileUrl!,
-                  mode: LaunchMode.externalApplication,
-                );
-              } catch (_) {
-                /* Surface a retryable error without leaving the page. */
-              }
-              if (!opened && context.mounted) {
-                showErrorToast(
-                  context,
-                  message: "Couldn't open Google Maps. Please try again.",
-                );
-              }
-            },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(width: 24, height: 24, child: _AuthorAvatar(author: author)),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              author.name,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-            ),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = belowPhoto ? theme.colorScheme.onSurface : Colors.white;
+    return Semantics(
+      label: 'Photo by ${author.name}',
+      link: author.profileUrl != null,
+      child: GestureDetector(
+        onTap: author.profileUrl == null
+            ? null
+            : () async {
+                var opened = false;
+                try {
+                  opened = await launchUrl(
+                    author.profileUrl!,
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (_) {
+                  /* Surface a retryable error without leaving the page. */
+                }
+                if (!opened && context.mounted) {
+                  showErrorToast(
+                    context,
+                    message: "Couldn't open Google Maps. Please try again.",
+                  );
+                }
+              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: belowPhoto ? 44 : 0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: _AuthorAvatar(author: author),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (belowPhoto)
+                      Text(
+                        'Photo by',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontSize: 11,
+                        ),
+                      ),
+                    Text(
+                      author.name,
+                      style: TextStyle(color: foreground, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              if (author.profileUrl != null) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.open_in_new, color: foreground, size: 12),
+              ],
+            ],
           ),
-          if (author.profileUrl != null) ...[
-            const SizedBox(width: 4),
-            const Icon(Icons.open_in_new, color: Colors.white, size: 12),
-          ],
-        ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 Future<void> showGooglePhotoSourceSheet(
