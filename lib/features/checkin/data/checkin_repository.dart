@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:kmstry_frontend/core/config/app_config.dart';
 
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/network/app_request_headers.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -689,6 +690,66 @@ class CheckinRepository {
     if (response is! Map) return false;
     return response['checkin_inactivated'] == true ||
         response['checkinInactivated'] == true;
+  }
+
+  /// Cancel one server-received Moment, never the entire pending check-in.
+  /// Keep the original session across token reads, retries and reconciliation.
+  Future<bool> cancelMomentUpload({
+    required String mediaId,
+    required String checkinId,
+    required bool Function() isCurrentSession,
+  }) async {
+    void checkSession() {
+      if (!isCurrentSession()) throw StateError('Upload session changed');
+    }
+
+    checkSession();
+    final token = await SecureStorage.getAccessToken();
+    checkSession();
+    if (token == null) throw StateError('Not authenticated');
+    final headers = {'Authorization': 'Bearer $token'};
+    try {
+      final response = await _api.delete(
+        '/checkins/photos/$mediaId',
+        headers: headers,
+      );
+      checkSession();
+      if (response is! Map ||
+          response['success'] != true ||
+          response['checkin_id'] != checkinId ||
+          response['checkin_inactivated'] is! bool) {
+        throw StateError('Upload cancellation could not be confirmed');
+      }
+      return response['checkin_inactivated'] as bool;
+    } on ApiException catch (error) {
+      checkSession();
+      if (error.statusCode != 404 ||
+          error.data['message'] != 'Media not found') {
+        rethrow;
+      }
+      // A previous DELETE may have succeeded before its response was lost.
+      // Confirm check-in state instead of guessing that it should be cleared.
+      try {
+        final status = await _api.get(
+          '/checkins/$checkinId/activation-status',
+          headers: headers,
+        );
+        checkSession();
+        if (status is! Map ||
+            status['checkin_id'] != checkinId ||
+            status['can_join'] is! bool) {
+          throw StateError('Check-in state could not be confirmed');
+        }
+        return status['can_join'] != true;
+      } on ApiException catch (statusError) {
+        checkSession();
+        if (statusError.statusCode == 404 &&
+            statusError.data['message'] == 'Check-in not found') {
+          return true;
+        }
+        rethrow;
+      }
+    }
   }
 
   Future<void> sendFeedAction({
