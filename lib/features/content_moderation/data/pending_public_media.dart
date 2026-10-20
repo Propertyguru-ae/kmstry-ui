@@ -294,6 +294,7 @@ class PendingPublicMediaService {
   final Set<String> _removingGalleryPhotos = {};
   final Set<String> _removingEventPhotos = {};
   final Set<String> _cancellingStories = {};
+  final Set<String> _cancellingMoments = {};
   final Map<String, MultipartUploadCancellation> _storyCancellations = {};
   final Map<String, MultipartUploadCancellation> _eventPhotoCancellations = {};
   final Set<String> _deletedEventTargets = {};
@@ -469,8 +470,44 @@ class PendingPublicMediaService {
 
   bool _isRemovingUpload(String id) =>
       isCancellingStory(id) ||
+      _cancellingMoments.contains(id) ||
       isRemovingEventPhoto(id) ||
       isRemovingGalleryPhoto(id);
+
+  /// Unlike Dismiss, cancellation must be confirmed by the server. The
+  /// captured receipt remains valid if approval arrives during confirmation.
+  Future<bool> cancelMoment(
+    PendingPublicMedia item, {
+    required int expectedGeneration,
+    required Future<bool> Function(bool Function() isCurrentSession) cancel,
+  }) async {
+    bool isCurrent() => isCurrentSession(expectedGeneration);
+    if (!isCurrent()) throw StateError('Upload session changed');
+    if (item.kind != PendingPublicMediaKind.checkinMoment ||
+        !item.hasServerReceipt ||
+        (item.checkinId?.isEmpty ?? true)) {
+      throw StateError('Upload cancellation could not be confirmed');
+    }
+    if (!_cancellingMoments.add(item.id)) {
+      throw StateError('Upload cancellation is already in progress');
+    }
+    _notify();
+    try {
+      final checkinInactivated = await cancel(isCurrent);
+      if (!isCurrent()) throw StateError('Upload session changed');
+      _items.remove(item.id);
+      _publishedIds.remove(item.id);
+      if (item.uploadId != null) _publishedIds.remove(item.uploadId!);
+      _notify();
+      unawaited(flushPersistence());
+      return checkinInactivated;
+    } finally {
+      if (isCurrent()) {
+        _cancellingMoments.remove(item.id);
+        _notify();
+      }
+    }
+  }
 
   bool isRemovingGalleryPhoto(String id) =>
       _removingGalleryPhotos.contains(byId(id)?.id ?? id);
@@ -816,7 +853,8 @@ class PendingPublicMediaService {
       await flushPersistence();
       return result;
     } catch (error) {
-      if (expectedGeneration == _session && isAwsSharingPermissionError(error)) {
+      if (expectedGeneration == _session &&
+          isAwsSharingPermissionError(error)) {
         // No upload was accepted. A privacy choice is not a network failure or
         // a moderation rejection, and must not leave a stuck "Sharing" card.
         _items.remove(draft.id);
@@ -1101,6 +1139,7 @@ class PendingPublicMediaService {
     _publishedRequests.clear();
     _watching.clear();
     _cancellingStories.clear();
+    _cancellingMoments.clear();
     _removingEventPhotos.clear();
     _removingGalleryPhotos.clear();
     _storyCancellations.clear();

@@ -10,6 +10,7 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/media_upload_progress_dialog.dart';
 import 'package:kmstry_frontend/core/ui/media_viewer_buttons.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/core/ui/destructive_confirmation_dialog.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_route.dart';
 import 'package:kmstry_frontend/features/camera/presentation/camera_screen.dart';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
@@ -78,6 +79,7 @@ class _MomentsViewerPageState extends State<MomentsViewerPage>
   late final CheckinRepository _repo;
   bool _loading = false; // sadece "featured yap" işlemi (yıldız spinner'ı)
   bool _deleting = false;
+  bool _confirmingCancellation = false;
   late List<CheckinProfileMedia> _media;
   bool _hasChanged = false;
   VideoPlayerController? _videoController;
@@ -582,6 +584,79 @@ class _MomentsViewerPageState extends State<MomentsViewerPage>
     if (mounted) setState(() => _deleting = false);
   }
 
+  Future<void> _cancelPendingMoment(PendingPublicMedia pending) async {
+    if (!widget.allowFeature ||
+        _deleting ||
+        _confirmingCancellation ||
+        !_uploads.isCurrentSession(_uploadSession)) {
+      return;
+    }
+    setState(() => _confirmingCancellation = true);
+    final confirmed = await showDestructiveConfirmationDialog(
+      context,
+      title: 'Cancel this upload?',
+      message: _media.isNotEmpty
+          ? 'Only this Moment will be removed. Your other Moments and check-in will stay.'
+          : 'This Moment will be removed. If no approved Moments remain, your check-in will end.',
+      confirmLabel: 'Cancel upload',
+      cancelLabel: 'Keep sharing',
+      icon: Icons.delete_outline_rounded,
+    );
+    if (mounted) setState(() => _confirmingCancellation = false);
+    // Session invalidation may have closed the confirmation above this route.
+    // Finish closing this viewer too; never leave a stale private preview open.
+    if (mounted && _closingUpload) {
+      if (ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.pop(context, _hasChanged);
+      }
+      return;
+    }
+    if (!mounted ||
+        confirmed != true ||
+        !_uploads.isCurrentSession(_uploadSession)) {
+      return;
+    }
+    setState(() => _deleting = true);
+    try {
+      final inactivated = await _uploads.cancelMoment(
+        pending,
+        expectedGeneration: _uploadSession,
+        cancel: (isCurrentSession) => _repo.cancelMomentUpload(
+          mediaId: pending.id,
+          checkinId: pending.checkinId!,
+          isCurrentSession: isCurrentSession,
+        ),
+      );
+      if (!_uploads.isCurrentSession(_uploadSession)) return;
+      _hasChanged = true;
+      // Remember removal before a late canonical refresh can restore the card.
+      _ownerSequence?.removePublished(pending.id);
+      widget.onDeleted?.call(pending.id, inactivated);
+      final active = ActiveCheckinService();
+      if (active.activeCheckinId == pending.checkinId) {
+        if (inactivated) {
+          active.clear();
+        } else {
+          active.notifyMediaUpdated();
+        }
+      }
+      if (mounted && inactivated) _closeUpload();
+    } catch (_) {
+      if (mounted &&
+          !_closingUpload &&
+          _uploads.isCurrentSession(_uploadSession)) {
+        setState(() => _deleting = false);
+        await showPremiumErrorDialog(
+          context,
+          title: 'Could not cancel upload',
+          message: 'We could not confirm cancellation. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   Future<_DeleteChoice> _confirmDelete(
     CheckinProfileMedia media, {
     required bool isLastMoment,
@@ -1052,6 +1127,19 @@ class _MomentsViewerPageState extends State<MomentsViewerPage>
                             widget.reportedUserId?.isNotEmpty == true)
                           MediaViewerReportButton(
                             onPressed: _reportCurrentMedia,
+                          ),
+                        if (widget.allowFeature &&
+                            pending != null &&
+                            pending.hasServerReceipt &&
+                            pending.checkinId == widget.checkinId &&
+                            !ownerStoryHasNoPreview(pending) &&
+                            pending.state != PendingPublicMediaState.published)
+                          MediaViewerDeleteButton(
+                            tooltip: 'Cancel upload',
+                            busy: _deleting,
+                            onPressed: _confirmingCancellation || _loading
+                                ? null
+                                : () => _cancelPendingMoment(pending),
                           ),
                         MediaViewerCloseButton(onPressed: _closeUpload),
                       ],

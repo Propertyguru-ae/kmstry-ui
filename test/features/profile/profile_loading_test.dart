@@ -44,8 +44,19 @@ class _Checkins extends CheckinRepository {
   final histories = <Completer<List<CheckinVisitedPlace>>>[];
   final calls = <String>[];
   final deletion = Completer<bool>();
+  final cancelled = <String>[];
   @override
   Future<bool> deletePhoto(String photoId) => deletion.future;
+
+  @override
+  Future<bool> cancelMomentUpload({
+    required String mediaId,
+    required String checkinId,
+    required bool Function() isCurrentSession,
+  }) {
+    cancelled.add('$checkinId:$mediaId');
+    return deletion.future;
+  }
 
   @override
   Future<CheckinProfile> getCheckinProfile(String checkinId) {
@@ -130,6 +141,62 @@ void main() {
     ActiveCheckinService().clear();
     PendingPublicMediaService.instance.clear();
   });
+
+  testWidgets(
+    'cancel pending profile card preserves approved Moment and active check-in',
+    (tester) async {
+      final auth = _Auth();
+      final checkins = _Checkins();
+      await _mount(tester, auth, checkins);
+      checkins.moments['checkin-a']!.complete(_profile('checkin-a', 'first'));
+      checkins.histories.single.complete([]);
+      await tester.pumpAndSettle();
+      final uploads = PendingPublicMediaService.instance;
+      uploads.track(
+        PendingPublicMedia(
+          id: 'pending-second',
+          uploadId: 'local-second',
+          kind: PendingPublicMediaKind.checkinMoment,
+          checkinId: 'checkin-a',
+          venueId: 'venue-checkin-a',
+          localPath: '',
+          isVideo: false,
+          createdAt: DateTime.now(),
+          hasServerReceipt: true,
+          state: PendingPublicMediaState.underReview,
+        ),
+      );
+      await tester.pump();
+      final pendingCard = find.byKey(
+        const ValueKey('profile-pending-moment-local-second'),
+      );
+      await tester.ensureVisible(pendingCard);
+      await tester.tap(pendingCard);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Cancel upload'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel upload'));
+      await tester.pump();
+      expect(checkins.cancelled, ['checkin-a:pending-second']);
+      // Block profile refresh so it cannot mask local list updates.
+      auth.next = Completer<Map<String, dynamic>>();
+      checkins.deletion.complete(false);
+      await tester.pumpAndSettle();
+      expect(uploads.byId('pending-second'), isNull);
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(pendingCard, findsNothing);
+      expect(
+        find.byKey(const ValueKey('profile-moment-first')),
+        findsOneWidget,
+      );
+      expect(ActiveCheckinService().activeCheckinId, 'checkin-a');
+      expect(find.text('No active check-in'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      uploads.clear();
+    },
+  );
 
   testWidgets(
     'admin story approval adds the profile story ring without pulling to refresh',
