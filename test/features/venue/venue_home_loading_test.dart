@@ -13,6 +13,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart'
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_account_home_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_upload_docs_page.dart';
 
 class _Auth extends AuthRepository {
   _Auth(this.read);
@@ -101,6 +102,45 @@ void main() {
     PendingPublicMediaService.instance.clear();
   });
   tearDown(() => PendingPublicMediaService.instance.clear());
+
+  for (final isDraft in [true, false]) {
+    testWidgets(
+      'Upload Documents opens the existing uploader for ${isDraft ? 'registration' : 'pending claim'}',
+      (tester) async {
+        final item = {
+          'id': 'a',
+          'name': 'Cafe a',
+          'status': isDraft ? 'DRAFT' : 'PENDING',
+          'hasDocuments': false,
+          if (!isDraft) 'role': 'OWNER',
+        };
+        final auth = _Auth(
+          () async => {
+            'hasPersonalProfile': true,
+            'memberVenues': isDraft ? [] : [item],
+            if (isDraft) 'venueRegistration': item,
+          },
+        );
+        final owner = _Owner((id) async => _stats(id));
+        await _pump(tester, auth, owner);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Upload Documents'));
+        await tester.tap(find.text('Upload Documents'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        final page = tester.widget<VenueUploadDocsPage>(
+          find.byType(VenueUploadDocsPage),
+        );
+        expect(page.venueId, 'a');
+        expect(page.venueName, 'Cafe a');
+        expect(page.isRegistrationDraft, isDraft);
+        expect(find.text('Trade Licence'), findsOneWidget);
+        expect(find.text('Search by venue name or address'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
 
   testWidgets(
     'fast tab returns reuse dashboard; hidden changes refresh once on return without hiding old data',

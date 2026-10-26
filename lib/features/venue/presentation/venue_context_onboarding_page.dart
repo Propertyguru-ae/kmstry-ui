@@ -101,6 +101,7 @@ class _VenueContextOnboardingPageState
   String? _ownerVideoUrl;
   bool _uploadingLicence = false;
   bool _uploadingVideo = false;
+  bool _skippingDocuments = false;
 
   // ── Genel ─────────────────────────────────────────────────────────────────
   bool _loadingDraft = true;
@@ -214,7 +215,7 @@ class _VenueContextOnboardingPageState
     };
   }
 
-  Future<void> _saveDraft({required int stepNumber}) async {
+  Future<bool> _saveDraft({required int stepNumber}) async {
     setState(() => _savingDraft = true);
     try {
       debugPrint(
@@ -226,13 +227,23 @@ class _VenueContextOnboardingPageState
             ? _nameCtrl.text.trim()
             : null,
         ownerPhone: _phoneCtrl.text.trim().isNotEmpty ? _fullPhone : null,
-        tradeLicenceUrl: _tradeLicenceUrl,
+        ownerBirthdate: _birthdate?.toIso8601String().split('T').first,
+        // An explicit empty reference clears a removed document in the draft.
+        tradeLicenceUrl: _tradeLicenceUrl ?? '',
         ownerVideoUrl: _ownerVideoUrl,
         currentStep: stepNumber,
       );
       debugPrint('[VenueWizard] draft saved ok step=$stepNumber');
+      AuthRepository.invalidateMeCache();
+      return true;
     } catch (e) {
       debugPrint('[VenueWizard] draft save FAILED (step $stepNumber): $e');
+      if (mounted) {
+        setState(
+          () => _error = 'Could not save your details. Please try again.',
+        );
+      }
+      return false;
     } finally {
       if (mounted) setState(() => _savingDraft = false);
     }
@@ -358,11 +369,14 @@ class _VenueContextOnboardingPageState
               _selectedVenue!.placeId ?? _selectedVenue!.id,
             );
     } catch (_) {
-      // Başarısız olsa bile devam et; submit'te tekrar denenecek
+      if (mounted) {
+        setState(() => _error = 'Could not save this venue. Please try again.');
+      }
+      return;
     } finally {
       if (mounted) setState(() => _searching = false);
     }
-    await _saveDraft(stepNumber: 1);
+    if (!await _saveDraft(stepNumber: 2)) return;
     if (mounted) setState(() => _step = _Step.contact);
   }
 
@@ -388,7 +402,7 @@ class _VenueContextOnboardingPageState
     }
     if (!_validateBirthdate()) return;
     setState(() => _error = null);
-    await _saveDraft(stepNumber: 2);
+    if (!await _saveDraft(stepNumber: 3)) return;
     if (mounted) setState(() => _step = _Step.documents);
   }
 
@@ -516,19 +530,31 @@ class _VenueContextOnboardingPageState
       return;
     }
     setState(() => _error = null);
-    await _saveDraft(stepNumber: 3);
+    if (!await _saveDraft(stepNumber: 4)) return;
     if (mounted) setState(() => _step = _Step.review);
   }
 
   Future<void> _onDocumentsSkip() async {
-    _tradeLicenceUrl = null;
-    _ownerVideoUrl = null;
-    await _saveDraft(stepNumber: 3);
-    if (mounted)
-      setState(() {
-        _error = null;
-        _step = _Step.review;
-      });
+    if (_savingDraft ||
+        _skippingDocuments ||
+        _uploadingLicence ||
+        _uploadingVideo) {
+      return;
+    }
+    setState(() => _skippingDocuments = true);
+    try {
+      _tradeLicenceUrl = null;
+      _ownerVideoUrl = null;
+      if (!await _saveDraft(stepNumber: 3)) return;
+      if (mounted) {
+        setState(() {
+          _error = null;
+          _step = _Step.review;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _skippingDocuments = false);
+    }
   }
 
   // ── Step 4: Submit ────────────────────────────────────────────────────────
@@ -553,6 +579,16 @@ class _VenueContextOnboardingPageState
     );
 
     try {
+      if (!hasDocuments) {
+        if (!await _saveDraft(stepNumber: 4)) return;
+        await _auth.switchContext(
+          lastActiveContext: 'VENUE',
+          activeVenueId: _dbVenueId ?? venue.id,
+        );
+        AuthRepository.invalidateMeCache();
+        if (mounted) await _onClaimSuccess(hasDocuments: false);
+        return;
+      }
       if (!await _permission.check()) return;
       final dbVenueId =
           _dbVenueId ??
@@ -2066,7 +2102,11 @@ class _VenueContextOnboardingPageState
             ? 1
             : 0);
     const requiredCount = ClaimDocumentPolicy.requiredDocumentCount;
-    final isBusy = _savingDraft || _uploadingLicence || _uploadingVideo;
+    final isBusy =
+        _savingDraft ||
+        _skippingDocuments ||
+        _uploadingLicence ||
+        _uploadingVideo;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2362,7 +2402,7 @@ class _VenueContextOnboardingPageState
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Center(
-                        child: _savingDraft
+                        child: _savingDraft && !_skippingDocuments
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
@@ -2409,17 +2449,35 @@ class _VenueContextOnboardingPageState
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Center(
-                        child: Text(
-                          "I don't have them right now",
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: isBusy
-                                ? const Color(0xFF2A3D58)
-                                : (isDark
-                                      ? const Color(0xFFAFC0DA)
-                                      : const Color(0xFF4C5A6E)),
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_skippingDocuments) ...[
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            Flexible(
+                              child: Text(
+                                "I don't have them right now",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: isBusy && !_skippingDocuments
+                                      ? const Color(0xFF2A3D58)
+                                      : (isDark
+                                            ? const Color(0xFFAFC0DA)
+                                            : const Color(0xFF4C5A6E)),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -2715,14 +2773,17 @@ class _VenueContextOnboardingPageState
                                     color: Colors.white,
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    hasDocuments
-                                        ? 'Submit Claim'
-                                        : 'Register Without Documents',
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
+                                  Flexible(
+                                    child: Text(
+                                      hasDocuments
+                                          ? 'Submit Claim'
+                                          : 'Register Without Documents',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -2756,16 +2817,20 @@ class _VenueContextOnboardingPageState
                         ),
                         children: [
                           TextSpan(
-                            text: 'You can upload your documents anytime to ',
+                            text:
+                                'Your account details will be saved. Upload your documents later to ',
                           ),
                           TextSpan(
-                            text: 'complete your claim',
+                            text: 'submit your claim',
                             style: TextStyle(
                               color: AppColors.blueDark,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          TextSpan(text: ' and speed up approval.'),
+                          TextSpan(
+                            text:
+                                '. Venue features stay locked until approval.',
+                          ),
                         ],
                       ),
                       textAlign: TextAlign.center,
@@ -3307,28 +3372,30 @@ class _RevDocRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: uploaded
-                      ? const Color(0xFF00D4C8)
-                      : const Color(0xFFE05050),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: uploaded
+                        ? const Color(0xFF00D4C8)
+                        : const Color(0xFFE05050),
+                  ),
                 ),
-              ),
-              Text(
-                sub,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: isDark
-                      ? const Color(0xFF9DB0CD)
-                      : const Color(0xFF556376),
+                Text(
+                  sub,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: isDark
+                        ? const Color(0xFF9DB0CD)
+                        : const Color(0xFF556376),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),

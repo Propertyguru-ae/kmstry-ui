@@ -50,6 +50,30 @@ VenueOwnerStatsResponse _stats(String id) => VenueOwnerStatsResponse(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'private registration reuses the locked home without claiming an owner role',
+    () async {
+      final account = _me(venues: [], next: 'GO_TO_VENUE_HOME');
+      account['venueRegistration'] = {
+        'venue': {'id': 'a', 'name': 'Draft Cafe'},
+        'status': 'DRAFT',
+        'isVerifiedOwner': false,
+        'hasDocuments': false,
+      };
+      final read = VenueHomeRead(
+        readMe: () async => account,
+        readDashboard: (_) async =>
+            throw StateError('No membership permissions'),
+      );
+      final result = await read.load(venueId: 'a', isCurrent: () => true);
+      expect(result!.context.hasClaimView, isTrue);
+      expect(result.context.pendingHasDocuments, isFalse);
+      expect(result.context.pendingVenue!.isRegistrationDraft, isTrue);
+      expect(result.context.pendingVenue!.isPendingOwnerClaim, isFalse);
+      expect(result.context.pendingVenue!.role, isNull);
+      expect(result.dashboard, isNull);
+    },
+  );
+  test(
     'known venue starts both reads immediately; fast dashboard is not exposed before account confirmation',
     () async {
       final me = Completer<Map<String, dynamic>>();

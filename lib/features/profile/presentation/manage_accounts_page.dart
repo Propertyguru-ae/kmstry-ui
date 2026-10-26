@@ -194,7 +194,7 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                       .where(
                         (v) =>
                             v.isActive ||
-                            v.isPendingOwnerClaim ||
+                            v.isPendingOwnerSetup ||
                             v.isRejectedOwnerClaim,
                       )
                       .map(
@@ -202,7 +202,9 @@ class _ManageAccountsPageState extends State<ManageAccountsPage> {
                           padding: const EdgeInsets.only(top: 8),
                           child: _AccountCard(
                             name: venue.name,
-                            subtitle: venue.isActive
+                            subtitle: venue.isRegistrationDraft
+                                ? 'Documents needed'
+                                : venue.isActive
                                 ? (venue.role ?? 'Venue')
                                 : venue.isRejectedOwnerClaim
                                 ? 'Claim rejected — tap to review'
