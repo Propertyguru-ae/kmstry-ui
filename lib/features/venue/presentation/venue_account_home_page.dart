@@ -742,6 +742,8 @@ class _VenueAccountHomePageState extends State<VenueAccountHomePage>
                       MaterialPageRoute(
                         builder: (_) => VenueUploadDocsPage(
                           venueName: _pendingVenue?.name ?? 'Your Venue',
+                          venueId: _pendingVenue?.id,
+                          isRegistrationDraft: _pendingVenue?.isRegistrationDraft == true,
                         ),
                       ),
                     )

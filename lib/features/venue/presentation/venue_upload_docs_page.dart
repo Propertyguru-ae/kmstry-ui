@@ -14,6 +14,8 @@ import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
+import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
+import '../../content_moderation/presentation/sharing_permission_hint.dart';
 
 // Renksiz sabitler — tema bağımsız
 const _kBlue = AppColors.blue;
@@ -24,15 +26,25 @@ const _kTeal = Color(0xFF00BFB3);
 
 class VenueUploadDocsPage extends StatefulWidget {
   final String venueName;
+  final String? venueId;
+  final bool isRegistrationDraft;
+  final VenueRepository? repository;
 
-  const VenueUploadDocsPage({super.key, required this.venueName});
+  const VenueUploadDocsPage({
+    super.key,
+    required this.venueName,
+    this.venueId,
+    this.isRegistrationDraft = false,
+    this.repository,
+  });
 
   @override
   State<VenueUploadDocsPage> createState() => _VenueUploadDocsPageState();
 }
 
 class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
-  final _repo = VenueRepository();
+  late final _repo = widget.repository ?? VenueRepository();
+  final _permission = SharingPermissionController();
   final _picker = ImagePicker();
 
   String? _licenceUrl;
@@ -42,8 +54,14 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
   bool _submitting = false;
   bool _showValidationError = false;
 
+  @override
+  void dispose() {
+    _permission.dispose();
+    super.dispose();
+  }
+
   Future<void> _pickLicence() async {
-    if (_uploadingLicence) return;
+    if (_uploadingLicence || _submitting) return;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
@@ -165,21 +183,36 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
   }
 
   Future<void> _submit() async {
-    if (_submitting) return;
+    if (_submitting || _uploadingLicence || _uploadingVideo) return;
     if (!ClaimDocumentPolicy.hasRequiredDocuments(_licenceUrl, _videoUrl)) {
       setState(() => _showValidationError = true);
       return;
     }
     setState(() => _submitting = true);
     try {
-      await _repo.submitClaimDocuments(
-        tradeLicenceUrl: _licenceUrl!,
-        ownerVideoUrl: _videoUrl,
-      );
+      if (widget.isRegistrationDraft) {
+        if (!await _permission.check()) return;
+        final venueId = widget.venueId;
+        if (venueId == null || venueId.isEmpty) {
+          throw StateError('Missing selected venue');
+        }
+        await _repo.submitRegistrationDocuments(
+          venueId: venueId,
+          tradeLicenceUrl: _licenceUrl!,
+        );
+      } else {
+        await _repo.submitClaimDocuments(
+          venueId: widget.venueId,
+          tradeLicenceUrl: _licenceUrl!,
+          ownerVideoUrl: _videoUrl,
+        );
+      }
+      AuthRepository.invalidateMeCache();
       if (!mounted) return;
       await _showSuccessDialog();
     } catch (e) {
       if (!mounted) return;
+      if (_permission.handleDecline(e)) return;
       _showError('Could not submit documents. Please try again.');
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -502,7 +535,9 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Your claim is registered. Upload your documents to complete verification and get full access to your venue account.',
+                      widget.isRegistrationDraft
+                          ? 'Your venue details are saved. Upload your documents and submit your ownership claim for review.'
+                          : 'Your claim is registered. Upload your documents to complete verification and get full access to your venue account.',
                       style: TextStyle(
                         fontSize: 12.5,
                         color: kSubtitle,
@@ -627,6 +662,10 @@ class _VenueUploadDocsPageState extends State<VenueUploadDocsPage> {
                         ),
                       ),
 
+                    SharingPermissionHint(
+                      controller: _permission,
+                      onReview: _submitting ? null : _submit,
+                    ),
                     // Submit button
                     GestureDetector(
                       onTap: _submitting ? null : _submit,

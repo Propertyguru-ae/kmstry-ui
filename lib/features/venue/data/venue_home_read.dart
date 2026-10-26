@@ -41,10 +41,10 @@ class VenueHomeContext {
     final activeVenue = ctx.memberVenues
         .where((v) => v.id == venueId)
         .firstOrNull;
-    final pendingVenue = (activeVenue?.isPendingOwnerClaim ?? false)
+    final pendingVenue = (activeVenue?.isPendingOwnerSetup ?? false)
         ? activeVenue
         : (activeVenue == null
-              ? ctx.memberVenues.where((v) => v.isPendingOwnerClaim).firstOrNull
+              ? ctx.memberVenues.where((v) => v.isPendingOwnerSetup).firstOrNull
               : null);
     final rejectedVenue = (activeVenue?.isRejectedOwnerClaim ?? false)
         ? activeVenue

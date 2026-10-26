@@ -142,7 +142,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final member = _meContext?.memberVenues
         .where((v) => v.id == _venue!.id)
         .firstOrNull;
-    return member?.isPendingOwnerClaim != true &&
+    return member?.isPendingOwnerSetup != true &&
         member?.isRejectedOwnerClaim != true;
   }
 
@@ -394,7 +394,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final member = _meContext?.memberVenues
         .where((v) => v.id == venueId)
         .firstOrNull;
-    if (member?.isPendingOwnerClaim == true ||
+    if (member?.isPendingOwnerSetup == true ||
         member?.isRejectedOwnerClaim == true) {
       return;
     }
@@ -1057,7 +1057,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final accountVenues = meCtx.memberVenues
-        .where((v) => v.isActive || v.isPendingOwnerClaim)
+        .where((v) => v.isActive || v.isPendingOwnerSetup)
         .toList();
     final isPersonalActive =
         !(meCtx.lastActiveContext?.toUpperCase().contains('VENUE') ?? false);
@@ -1138,7 +1138,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                       final isActive =
                           !isPersonalActive &&
                           (meCtx.activeVenueId == venue.id);
-                      final isPending = venue.isPendingOwnerClaim;
+                      final isPending = venue.isPendingOwnerSetup;
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundColor: isPending
@@ -1161,7 +1161,9 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                           ),
                         ),
                         subtitle: Text(
-                          isPending
+                          venue.isRegistrationDraft
+                              ? 'Documents needed'
+                              : isPending
                               ? 'Pending review'
                               : (venue.role ?? 'Venue'),
                           style: TextStyle(
@@ -1179,8 +1181,8 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                   color: Colors.orange.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Text(
-                                  'Pending',
+                                child: Text(
+                                  venue.isRegistrationDraft ? 'Documents needed' : 'Pending',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -1344,7 +1346,7 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final activeMemberVenue = _meContext?.memberVenues
         .where((v) => v.id == (venue?.id ?? widget.venueId))
         .firstOrNull;
-    final isPendingClaim = activeMemberVenue?.isPendingOwnerClaim ?? false;
+    final isPendingClaim = activeMemberVenue?.isPendingOwnerSetup ?? false;
     final isRejectedClaim = activeMemberVenue?.isRejectedOwnerClaim ?? false;
     final isClaimLocked = isPendingClaim || isRejectedClaim;
     final canShowCoverPhoto = hasPhoto && !isClaimLocked;

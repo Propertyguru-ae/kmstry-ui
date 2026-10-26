@@ -12,6 +12,7 @@ import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
 
 class _Auth extends AuthRepository {
+  int switches = 0;
   Map<String, dynamic> me = {
     'registrationName': 'Provider Name',
     'birthdate': '1990-01-02',
@@ -22,7 +23,10 @@ class _Auth extends AuthRepository {
   Future<Map<String, dynamic>> switchContext({
     required String lastActiveContext,
     String? activeVenueId,
-  }) async => {};
+  }) async {
+    switches++;
+    return {};
+  }
 }
 
 class _Venues extends VenueRepository {
@@ -32,6 +36,26 @@ class _Venues extends VenueRepository {
   String? submittedDob;
   bool fail = true;
   bool draftDeleted = false;
+  String? licence = 'https://fixture.example/licence.pdf';
+  bool failSave = false;
+  String? savedBirthdate;
+  @override
+  Future<Map<String, dynamic>> upsertClaimDraft({
+    String? venueId,
+    String? ownerFullName,
+    String? ownerPhone,
+    String? ownerBirthdate,
+    String? tradeLicenceUrl,
+    String? ownerVideoUrl,
+    int? currentStep,
+  }) async {
+    if (failSave) throw StateError('fixture save unavailable');
+    step = currentStep ?? step;
+    savedBirthdate = ownerBirthdate;
+    licence = tradeLicenceUrl?.isNotEmpty == true ? tradeLicenceUrl : null;
+    return {};
+  }
+
   @override
   Future<void> deleteClaimDraft() async {
     draftDeleted = true;
@@ -41,6 +65,7 @@ class _Venues extends VenueRepository {
   Future<Map<String, dynamic>?> getClaimDraft() async => {
     'current_step': step,
     'owner_phone': '+971501234567',
+    'trade_licence_url': licence,
     'venue': {
       'id': 'venue',
       'name': 'Fixture Cafe',
@@ -80,6 +105,7 @@ void main() {
     _Venues venues, {
     ThemeData? theme,
     Size size = const Size(800, 1100),
+    VoidCallback? onCancel,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -88,12 +114,13 @@ void main() {
       MaterialApp(
         theme: theme,
         routes: {
-          AuthRoutes.authGate: (_) =>
-              const Scaffold(body: Text('Claim received')),
+          AuthRoutes.authGate: (_) => const Scaffold(body: Text('Venue home')),
         },
         home: VenueContextOnboardingPage(
           repository: venues,
           authRepository: auth,
+          fromAppShell: onCancel != null,
+          onCancel: onCancel,
         ),
       ),
     );
@@ -212,7 +239,7 @@ void main() {
     };
     final venues = _Venues();
     await open(tester, _Auth(), venues);
-    await tap(tester, 'Register Without Documents');
+    await tap(tester, 'Submit Claim');
     expect(venues.submissions, 0);
     expect(find.byType(Dialog), findsNothing);
     expect(
@@ -235,10 +262,10 @@ void main() {
       await SecureStorage.setNotificationOnboardingDone();
       final venues = _Venues()..fail = false;
       await open(tester, _Auth(), venues);
-      await tap(tester, 'Register Without Documents');
+      await tap(tester, 'Submit Claim');
       expect(venues.submissions, 1);
       expect(venues.draftDeleted, isTrue);
-      expect(find.text('Claim received'), findsOneWidget);
+      expect(find.text('Venue home'), findsOneWidget);
     },
   );
 
@@ -249,9 +276,87 @@ void main() {
       ..me = {'registrationName': 'Member', 'birthdate': '2020-01-01'};
     final venues = _Venues();
     await open(tester, auth, venues);
-    await tap(tester, 'Register Without Documents');
+    await tap(tester, 'Submit Claim');
     expect(venues.submissions, 0);
     expect(find.text('You must be 18 or older to use KMSTRY.'), findsOneWidget);
     expect(find.text('STEP 2 OF 4'), findsOneWidget);
   });
+
+  testWidgets(
+    'documentless registration opens venue home, retains its draft and never submits a claim',
+    (tester) async {
+      await SecureStorage.setNotificationOnboardingDone();
+      final auth = _Auth();
+      final venues = _Venues()
+        ..step = 3
+        ..licence = null;
+      var permissionPrompts = 0;
+      PublicContentPermission.onRequired = (_) async {
+        permissionPrompts++;
+      };
+      await open(tester, auth, venues);
+      await tap(tester, "I don't have them right now");
+      await tap(tester, 'Register Without Documents');
+      expect(find.text('Venue home'), findsOneWidget);
+      expect(venues.submissions, 0);
+      expect(auth.switches, 1);
+      expect(venues.draftDeleted, isFalse);
+      expect(permissionPrompts, 0);
+      expect(venues.savedBirthdate, '1990-01-02');
+      await tester.pumpWidget(const SizedBox());
+      await open(tester, auth, venues);
+      expect(find.text('Register Without Documents'), findsOneWidget);
+      expect(venues.submissions, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'failed draft save preserves the form and cannot show a saved registration',
+    (tester) async {
+      await SecureStorage.setNotificationOnboardingDone();
+      final venues = _Venues()
+        ..step = 3
+        ..licence = null;
+      await open(tester, _Auth(), venues);
+      await tap(tester, "I don't have them right now");
+      venues.failSave = true;
+      await tap(tester, 'Register Without Documents');
+      expect(find.text('Venue home'), findsNothing);
+      expect(
+        find.text('Could not save your details. Please try again.'),
+        findsOneWidget,
+      );
+      expect(venues.submissions, 0);
+      venues.failSave = false;
+      await tap(tester, 'Register Without Documents');
+      expect(find.text('Venue home'), findsOneWidget);
+    },
+  );
+
+  for (final dark in [true, false]) {
+    testWidgets(
+      'Add Venue opens the existing home without submitting in ${dark ? 'dark' : 'light'} mode',
+      (tester) async {
+        await SecureStorage.setNotificationOnboardingDone();
+        final auth = _Auth()..me['lastActiveContext'] = 'PERSONAL';
+        final venues = _Venues()..licence = null;
+        await open(
+          tester,
+          auth,
+          venues,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+          size: const Size(390, 844),
+          onCancel: () {},
+        );
+        await tap(tester, 'Register Without Documents');
+        expect(find.text('Venue home'), findsOneWidget);
+        expect(find.text('Venue setup saved'), findsNothing);
+        expect(auth.switches, 1);
+        expect(venues.submissions, 0);
+        expect(venues.draftDeleted, isFalse);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
