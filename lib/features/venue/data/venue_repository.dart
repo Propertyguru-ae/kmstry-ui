@@ -1,4 +1,5 @@
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'venue_model.dart';
 import 'claim_document_policy.dart';
@@ -370,6 +371,16 @@ class VenueRepository {
     String? ownerVideoUrl,
     bool hasDocuments = false,
   }) async {
+    if (!ClaimDocumentPolicy.hasRequiredDocuments(tradeLicenceUrl)) {
+      throw ApiException(
+        statusCode: 400,
+        data: {
+          'errorCode': 'CLAIM_DOCUMENT_REQUIRED',
+          'message':
+              'Please upload your trade licence before submitting your claim.',
+        },
+      );
+    }
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
@@ -379,7 +390,7 @@ class VenueRepository {
         'venueId': venueId,
         'ownerNote': ownerNote,
         if (ownerBirthdate != null) 'ownerBirthdate': ownerBirthdate,
-        'hasDocuments': hasDocuments,
+        'hasDocuments': true,
         if (ownerFullName != null && ownerFullName.isNotEmpty)
           'ownerFullName': ownerFullName,
         if (tradeLicenceUrl != null) 'tradeLicenceUrl': tradeLicenceUrl,
@@ -396,6 +407,7 @@ class VenueRepository {
   Future<void> submitClaimDocuments({
     required String tradeLicenceUrl,
     String? ownerVideoUrl,
+    String? venueId,
   }) async {
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
@@ -404,6 +416,7 @@ class VenueRepository {
       '/venues/claim/documents',
       body: {
         'tradeLicenceUrl': tradeLicenceUrl,
+        if (venueId != null) 'venueId': venueId,
         if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
           'ownerVideoUrl': ownerVideoUrl,
       },
@@ -442,25 +455,52 @@ class VenueRepository {
 
   Future<Map<String, dynamic>?> getClaimDraft() async {
     final token = await SecureStorage.getAccessToken();
-    if (token == null) return null;
-    try {
-      final result = await _api.get(
-        '/venues/claim-draft',
-        headers: {'Authorization': 'Bearer $token'},
+    if (token == null) throw Exception('Not authenticated');
+    final result = await _api.get(
+      '/venues/claim-draft',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final map = Map<String, dynamic>.from(result as Map);
+    return map['data'] != null
+        ? Map<String, dynamic>.from(map['data'] as Map)
+        : null;
+  }
+
+  /// A saved registration becomes a claim only after documents are submitted.
+  Future<void> submitRegistrationDocuments({
+    required String venueId,
+    required String tradeLicenceUrl,
+  }) async {
+    final draft = await getClaimDraft();
+    final venue = draft?['venue'];
+    final draftVenueId =
+        draft?['venue_id'] ?? (venue is Map ? venue['id'] : null);
+    final name = draft?['owner_full_name']?.toString().trim() ?? '';
+    final phone = draft?['owner_phone']?.toString().trim() ?? '';
+    if (draftVenueId != venueId || name.isEmpty || phone.isEmpty) {
+      throw ApiException(
+        statusCode: 409,
+        data: {
+          'message':
+              'Your saved venue details could not be loaded. Please return to Home and try again.',
+        },
       );
-      final map = Map<String, dynamic>.from(result as Map);
-      return map['data'] != null
-          ? Map<String, dynamic>.from(map['data'] as Map)
-          : null;
-    } catch (_) {
-      return null;
     }
+    await claimVenue(
+      venueId: venueId,
+      ownerFullName: name,
+      ownerNote: 'Owner: $name\nPhone: $phone\nTrade licence uploaded.',
+      tradeLicenceUrl: tradeLicenceUrl,
+      hasDocuments: true,
+    );
+    await deleteClaimDraft();
   }
 
   Future<Map<String, dynamic>> upsertClaimDraft({
     String? venueId,
     String? ownerFullName,
     String? ownerPhone,
+    String? ownerBirthdate,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
     int? currentStep,
@@ -472,6 +512,7 @@ class VenueRepository {
       if (venueId != null) 'venue_id': venueId,
       if (ownerFullName != null) 'owner_full_name': ownerFullName,
       if (ownerPhone != null) 'owner_phone': ownerPhone,
+      if (ownerBirthdate != null) 'owner_birthdate': ownerBirthdate,
       if (tradeLicenceUrl != null) 'trade_licence_url': tradeLicenceUrl,
       if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
         'owner_video_url': ownerVideoUrl,

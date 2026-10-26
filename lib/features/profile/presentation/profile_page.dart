@@ -1541,7 +1541,7 @@ class _ProfilePageState extends State<ProfilePage>
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final accountVenues = meCtx.memberVenues
-        .where((v) => v.isActive || v.isPendingOwnerClaim)
+        .where((v) => v.isActive || v.isPendingOwnerSetup)
         .toList();
     final isPersonalActive =
         !(meCtx.lastActiveContext?.toUpperCase().contains('VENUE') ?? false);
@@ -1639,7 +1639,7 @@ class _ProfilePageState extends State<ProfilePage>
                       final isActive =
                           !isPersonalActive &&
                           (meCtx.activeVenueId == venue.id);
-                      final isPending = venue.isPendingOwnerClaim;
+                      final isPending = venue.isPendingOwnerSetup;
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundColor: isPending
@@ -1662,7 +1662,9 @@ class _ProfilePageState extends State<ProfilePage>
                           ),
                         ),
                         subtitle: Text(
-                          isPending
+                          venue.isRegistrationDraft
+                              ? 'Documents needed'
+                              : isPending
                               ? 'Pending review'
                               : (venue.role ?? 'Venue'),
                           style: TextStyle(
@@ -1680,8 +1682,8 @@ class _ProfilePageState extends State<ProfilePage>
                                   color: Colors.orange.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Text(
-                                  'Pending',
+                                child: Text(
+                                  venue.isRegistrationDraft ? 'Documents needed' : 'Pending',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,

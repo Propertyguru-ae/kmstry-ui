@@ -579,7 +579,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           .where((v) => v.isActive)
           .toList();
       final hasPendingClaim = context.memberVenues.any(
-        (v) => v.isPendingOwnerClaim,
+        (v) => v.isPendingOwnerSetup,
       );
       final hasRejectedClaim =
           context.hasRejectedClaimOnly ||
@@ -597,7 +597,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         resolvedVenueId = activeVenues.isNotEmpty
             ? activeVenues.first.id
             : hasPendingClaim
-            ? context.memberVenues.firstWhere((v) => v.isPendingOwnerClaim).id
+            ? context.memberVenues.firstWhere((v) => v.isPendingOwnerSetup).id
             : hasRejectedClaim
             ? context.memberVenues.firstWhere((v) => v.isRejectedOwnerClaim).id
             : null;
@@ -643,7 +643,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         );
         _applyPersonalAvatar(me);
         _isVenueContext = isVenueCtx;
-        _isPendingClaim = resolvedVenue?.isPendingOwnerClaim ?? false;
+        _isPendingClaim = resolvedVenue?.isPendingOwnerSetup ?? false;
         _isRejectedClaim = resolvedVenue?.isRejectedOwnerClaim ?? false;
         _hasPersonalProfile = context.hasPersonalProfile;
         _personalAccountLabel = username != null && username.isNotEmpty
@@ -819,7 +819,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final colors = theme.colorScheme;
 
     final activeVenues = _memberVenues.where((v) => v.isActive).toList();
-    final pendingVenues = _memberVenues.where((v) => v.isPending).toList();
+    final pendingVenues = _memberVenues.where((v) => v.isPending || v.isRegistrationDraft).toList();
 
     showModalBottomSheet(
       context: context,
@@ -935,8 +935,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                   color: Colors.orange.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Text(
-                                  'Pending',
+                                child: Text(
+                                  venue.isRegistrationDraft ? 'Documents needed' : 'Pending',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,

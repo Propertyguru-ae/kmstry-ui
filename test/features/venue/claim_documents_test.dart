@@ -2,12 +2,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
+import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_upload_docs_page.dart';
 
 class _ClaimApi extends ApiClient {
   final calls = <({String path, Map<String, dynamic>? body})>[];
+  Map<String, dynamic>? draft = {
+    'venue_id': 'venue-a',
+    'owner_full_name': 'Registered Owner',
+    'owner_phone': '+971501234567',
+  };
+  bool failRead = false;
+  bool failSubmit = false;
+  int deleted = 0;
+
+  @override
+  Future<dynamic> get(
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    if (failRead) throw ApiException(statusCode: 503, data: {});
+    return {'success': true, 'data': draft};
+  }
+
+  @override
+  Future<dynamic> delete(String path, {Map<String, String>? headers}) async {
+    deleted++;
+    return {'success': true};
+  }
 
   @override
   Future<dynamic> post(
@@ -16,6 +41,7 @@ class _ClaimApi extends ApiClient {
     Map<String, String>? headers,
   }) async {
     calls.add((path: path, body: body));
+    if (failSubmit) throw ApiException(statusCode: 503, data: {});
     return {'ok': true, 'status': 'PENDING'};
   }
 
@@ -63,6 +89,22 @@ void main() {
     expect(api.calls.single.body, isNot(contains('ownerVideoUrl')));
   });
 
+  test(
+    'client cannot submit a documentless claim even when hasDocuments is true',
+    () async {
+      final api = _ClaimApi();
+      await expectLater(
+        VenueRepository(apiClient: api).claimVenue(
+          venueId: 'venue-a',
+          ownerNote: 'Private contact',
+          hasDocuments: true,
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(api.calls, isEmpty);
+    },
+  );
+
   test('pending claims submit documents without ownership video', () async {
     final api = _ClaimApi();
     await VenueRepository(apiClient: api).submitClaimDocuments(
@@ -89,6 +131,91 @@ void main() {
       containsPair('trade_licence_url', 'https://fixture.example/licence.pdf'),
     );
   });
+
+  test(
+    'saved registration submits the selected venue with its stored contact and uploaded licence',
+    () async {
+      final api = _ClaimApi();
+      await VenueRepository(apiClient: api).submitRegistrationDocuments(
+        venueId: 'venue-a',
+        tradeLicenceUrl: 'https://fixture.example/licence.pdf',
+      );
+      expect(api.calls.single.path, '/venues/claim');
+      expect(api.calls.single.body, containsPair('venueId', 'venue-a'));
+      expect(
+        api.calls.single.body,
+        containsPair('ownerFullName', 'Registered Owner'),
+      );
+      expect(
+        api.calls.single.body,
+        containsPair('tradeLicenceUrl', 'https://fixture.example/licence.pdf'),
+      );
+      expect(api.deleted, 1);
+    },
+  );
+
+  test(
+    'draft read failure is not treated as an empty or new registration',
+    () async {
+      final api = _ClaimApi()..failRead = true;
+      final repo = VenueRepository(apiClient: api);
+      await expectLater(repo.getClaimDraft(), throwsA(isA<ApiException>()));
+      await expectLater(
+        repo.submitRegistrationDocuments(
+          venueId: 'venue-a',
+          tradeLicenceUrl: 'https://fixture.example/licence.pdf',
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(api.calls, isEmpty);
+      expect(api.deleted, 0);
+    },
+  );
+
+  test(
+    'another venue draft cannot be submitted from the open document page',
+    () async {
+      final api = _ClaimApi();
+      await expectLater(
+        VenueRepository(apiClient: api).submitRegistrationDocuments(
+          venueId: 'venue-b',
+          tradeLicenceUrl: 'https://fixture.example/licence.pdf',
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(api.calls, isEmpty);
+      expect(api.deleted, 0);
+    },
+  );
+
+  test(
+    'failed claim submission keeps the saved registration for retry',
+    () async {
+      final api = _ClaimApi()..failSubmit = true;
+      await expectLater(
+        VenueRepository(apiClient: api).submitRegistrationDocuments(
+          venueId: 'venue-a',
+          tradeLicenceUrl: 'https://fixture.example/licence.pdf',
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(api.deleted, 0);
+    },
+  );
+
+  test(
+    'existing pending claim document submission includes its selected venue',
+    () async {
+      final api = _ClaimApi();
+      await VenueRepository(apiClient: api).submitClaimDocuments(
+        venueId: 'venue-b',
+        tradeLicenceUrl: 'https://fixture.example/licence.pdf',
+      );
+      expect(api.calls.single.path, '/venues/claim/documents');
+      expect(api.calls.single.body, containsPair('venueId', 'venue-b'));
+      expect(api.deleted, 0);
+    },
+  );
 
   for (final brightness in Brightness.values) {
     testWidgets(

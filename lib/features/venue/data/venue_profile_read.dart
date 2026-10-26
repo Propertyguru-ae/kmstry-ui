@@ -20,7 +20,7 @@ class VenueProfileContext {
   VenueMemberRole get role =>
       VenueMemberRoleExt.fromApi(member?.role ?? 'STAFF');
   bool get isClaimLocked =>
-      member?.isPendingOwnerClaim == true ||
+      member?.isPendingOwnerSetup == true ||
       member?.isRejectedOwnerClaim == true;
 
   factory VenueProfileContext.fromMe(
