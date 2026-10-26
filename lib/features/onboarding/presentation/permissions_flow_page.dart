@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/permissions/location_permission_service.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
@@ -12,15 +11,7 @@ import 'permission_steps.dart';
 class PermissionsFlowPage extends StatefulWidget {
   final bool markProfileCompleted;
 
-  /// true → izin adımları dark'a zorlanır (fresh signup / ilk kurulum marka
-  /// akışı). false → seçilen temayı izler (mevcut kullanıcı add-personal/venue).
-  final bool forceDark;
-
-  const PermissionsFlowPage({
-    super.key,
-    this.markProfileCompleted = true,
-    this.forceDark = true,
-  });
+  const PermissionsFlowPage({super.key, this.markProfileCompleted = true});
 
   @override
   State<PermissionsFlowPage> createState() => _PermissionsFlowPageState();
@@ -173,11 +164,6 @@ class _PermissionsFlowPageState extends State<PermissionsFlowPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Fresh signup / ilk kurulum → dark (marka akışı). Mevcut kullanıcı
-    // add-personal/add-venue → seçilen temayı izler.
-    if (widget.forceDark) {
-      return ForceDark(child: Builder(builder: _buildBody));
-    }
     return _buildBody(context);
   }
 

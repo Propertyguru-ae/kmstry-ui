@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
 import '../data/auth_repository.dart';
@@ -93,7 +92,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ForceDark(child: Builder(builder: _buildBody));
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -116,7 +115,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil(
+                      onPressed: () =>
+                          Navigator.of(context).pushNamedAndRemoveUntil(
                             AuthRoutes.login,
                             (route) => false,
                           ),
@@ -168,12 +168,11 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                         SizedBox(
                           height: 50,
                           child: ElevatedButton(
-                            onPressed: () => Navigator.of(
-                              context,
-                            ).pushNamedAndRemoveUntil(
-                              AuthRoutes.login,
-                              (route) => false,
-                            ),
+                            onPressed: () =>
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  AuthRoutes.login,
+                                  (route) => false,
+                                ),
                             child: const Text('Go to sign in'),
                           ),
                         ),

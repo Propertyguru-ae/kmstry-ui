@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 
@@ -25,10 +24,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   void _goToLogin() {
-    Navigator.of(context).pushNamedAndRemoveUntil(
-      AuthRoutes.login,
-      (route) => false,
-    );
+    Navigator.of(
+      context,
+    ).pushNamedAndRemoveUntil(AuthRoutes.login, (route) => false);
   }
 
   Future<void> _send() async {
@@ -75,7 +73,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   Color get _textPrimary =>
       _isDark ? const Color(0xFFEEF2FF) : AppColors.lightTextPrimary;
   Color get _textSecondary => _isDark ? _muted : AppColors.lightTextSecondary;
-  Color get _hint => _isDark ? const Color(0xFF33486A) : const Color(0xFF95A8C2);
+  Color get _hint =>
+      _isDark ? const Color(0xFF33486A) : const Color(0xFF95A8C2);
   Color get _handle => _isDark
       ? Colors.white.withValues(alpha: 0.10)
       : AppColors.lightTextPrimary.withValues(alpha: 0.12);
@@ -88,7 +87,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ForceDark(child: Builder(builder: _buildBody));
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -272,7 +271,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             contentPadding: const EdgeInsets.symmetric(vertical: 15),
             prefixIcon: const Padding(
               padding: EdgeInsets.only(left: 15, right: 10),
-              child: Icon(Icons.alternate_email_rounded, size: 20, color: _blue),
+              child: Icon(
+                Icons.alternate_email_rounded,
+                size: 20,
+                color: _blue,
+              ),
             ),
             prefixIconConstraints: const BoxConstraints(
               minWidth: 0,
@@ -340,10 +343,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 22),
-        PrimaryButton(
-          label: 'Back to sign in',
-          onPressed: _goToLogin,
-        ),
+        PrimaryButton(label: 'Back to sign in', onPressed: _goToLogin),
         const SizedBox(height: 4),
         PrimaryButton.secondary(
           label: 'Use a different email',
@@ -384,7 +384,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         child: Icon(
           Icons.chevron_left_rounded,
           size: 22,
-          color: _isDark ? const Color(0xFF7D88A8) : AppColors.lightTextSecondary,
+          color: _isDark
+              ? const Color(0xFF7D88A8)
+              : AppColors.lightTextSecondary,
         ),
       ),
     );

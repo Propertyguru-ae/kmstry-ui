@@ -64,6 +64,12 @@ class ThemeToggleButton extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 item(
+                  title: 'Auto',
+                  subtitle: 'Follow your device’s appearance',
+                  icon: Icons.brightness_auto_rounded,
+                  mode: ThemeMode.system,
+                ),
+                item(
                   title: 'Light',
                   subtitle: 'Bright background, same accent palette',
                   icon: Icons.wb_sunny_rounded,
@@ -86,12 +92,17 @@ class ThemeToggleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-    final isDark = themeProvider.isDarkMode;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isAuto = themeProvider.themeMode == ThemeMode.system;
 
     return IconButton(
       tooltip: 'Appearance',
       onPressed: () => _openThemeSheet(context),
-      icon: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
+      icon: Icon(
+        isAuto
+            ? Icons.brightness_auto_rounded
+            : (isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
+      ),
       color: isDark
           ? const Color(0xFF1FE4D2)
           : Theme.of(context).colorScheme.primary,

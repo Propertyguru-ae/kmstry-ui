@@ -1,103 +1,61 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 
+/// Device preference shared by personal and venue contexts, not profile data.
 class ThemeProvider with ChangeNotifier {
   static const String _themeKey = 'theme_mode';
-  bool _isDarkMode = true;
-
-  bool get isDarkMode => _isDarkMode;
-
-  ThemeProvider() {
-    _bootstrap();
+  ThemeProvider({
+    Future<String?> Function()? readPreference,
+    Future<void> Function(String)? writePreference,
+  }) : _readPreference =
+           readPreference ?? (() => SecureStorage.read(_themeKey)),
+       _writePreference =
+           writePreference ??
+           ((value) => SecureStorage.write(_themeKey, value)) {
+    ready = _restore();
   }
 
-  Future<void> _bootstrap() async {
-    final savedTheme = await SecureStorage.read(_themeKey);
-    if (savedTheme != null) {
-      _isDarkMode = savedTheme == 'dark';
-      notifyListeners();
-    }
-    await _syncThemeFromBackend();
-  }
+  final Future<String?> Function() _readPreference;
+  final Future<void> Function(String) _writePreference;
+  late final Future<void> ready;
+  ThemeMode _mode = ThemeMode.system;
+  Future<void> _writes = Future<void>.value();
+  int _revision = 0;
+  bool _disposed = false;
 
-  Future<void> toggleTheme() async {
-    await setThemeMode(_isDarkMode ? ThemeMode.light : ThemeMode.dark);
-  }
+  ThemeMode get themeMode => _mode;
 
-  Future<void> setThemeMode(ThemeMode mode, {bool syncRemote = true}) async {
-    _isDarkMode = mode == ThemeMode.dark;
-    await SecureStorage.write(_themeKey, _isDarkMode ? 'dark' : 'light');
-    notifyListeners();
-    if (syncRemote) {
-      await _saveThemeToBackend(_isDarkMode ? 'dark' : 'light');
-    }
-  }
-
-  ThemeMode get themeMode => _isDarkMode ? ThemeMode.dark : ThemeMode.light;
-
-  Future<void> _syncThemeFromBackend() async {
+  Future<void> _restore() async {
+    final revision = _revision;
     try {
-      final me = await AuthRepository().getMe();
-      final parsed = _parseThemeFromMe(me);
-      if (parsed == null) return;
-      final isDark = parsed == 'dark';
-      if (isDark == _isDarkMode) return;
-      _isDarkMode = isDark;
-      await SecureStorage.write(_themeKey, parsed);
+      final saved = await _readPreference();
+      if (_disposed || revision != _revision) return;
+      _mode = switch (saved) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
       notifyListeners();
     } catch (_) {
-      // User may be logged out or backend may not support this field.
+      // Storage failure must not block startup or erase an existing preference.
     }
   }
 
-  String? _parseThemeFromMe(Map<String, dynamic> me) {
-    String? normalize(dynamic value) {
-      if (value == null) return null;
-      final raw = value.toString().trim().toLowerCase();
-      if (raw.isEmpty) return null;
-      if (raw == 'dark' || raw == '1' || raw == 'true') return 'dark';
-      if (raw == 'light' || raw == '0' || raw == 'false') return 'light';
-      return null;
-    }
-
-    final preferences = me['preferences'] is Map<String, dynamic>
-        ? me['preferences'] as Map<String, dynamic>
-        : null;
-    final settings = me['settings'] is Map<String, dynamic>
-        ? me['settings'] as Map<String, dynamic>
-        : null;
-
-    return normalize(me['theme_mode']) ??
-        normalize(me['themeMode']) ??
-        normalize(me['app_theme']) ??
-        normalize(me['appTheme']) ??
-        normalize(preferences?['theme_mode']) ??
-        normalize(preferences?['themeMode']) ??
-        normalize(settings?['theme_mode']) ??
-        normalize(settings?['themeMode']);
+  Future<void> setThemeMode(ThemeMode mode) {
+    _revision++;
+    _mode = mode;
+    notifyListeners();
+    // Serialize rapid selections without delaying the visual change.
+    final write = _writes
+        .catchError((Object _) {})
+        .then((_) => _writePreference(mode.name));
+    _writes = write;
+    return write;
   }
 
-  Future<void> _saveThemeToBackend(String mode) async {
-    final repo = AuthRepository();
-    final payloads = <Map<String, dynamic>>[
-      {'theme_mode': mode},
-      {'themeMode': mode},
-      {
-        'preferences': {'theme_mode': mode},
-      },
-      {
-        'settings': {'theme_mode': mode},
-      },
-    ];
-
-    for (final payload in payloads) {
-      try {
-        await repo.updateMe(payload);
-        return;
-      } catch (_) {
-        // Try next payload format.
-      }
-    }
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

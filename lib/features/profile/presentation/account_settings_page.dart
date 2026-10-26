@@ -398,6 +398,13 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
               child: Column(
                 children: [
                   _buildThemeModeTile(
+                    title: 'Auto',
+                    subtitle: 'Follow your device’s appearance',
+                    mode: ThemeMode.system,
+                    selected: selectedMode,
+                    icon: Icons.brightness_auto_rounded,
+                  ),
+                  _buildThemeModeTile(
                     title: 'Light',
                     subtitle: 'Clean white interface',
                     mode: ThemeMode.light,

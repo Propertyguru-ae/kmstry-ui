@@ -4,7 +4,6 @@ import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_invite_repository.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_context_onboarding_page.dart';
@@ -340,7 +339,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ForceDark(child: Builder(builder: _buildBody));
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -594,7 +593,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                       height: 1.5,
                                       color: isDark
                                           ? _darkTextMuted
-                                          : Colors.black54,
+                                          : AppColors.lightTextSecondary,
                                     ),
                                   ),
                                 ),
@@ -616,7 +615,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                       height: 1.5,
                                       color: isDark
                                           ? _darkTextMuted
-                                          : Colors.black54,
+                                          : AppColors.lightTextSecondary,
                                     ),
                                     children: [
                                       const TextSpan(text: 'I agree to the '),
@@ -755,7 +754,7 @@ class _RegisterSetPasswordPageState extends State<RegisterSetPasswordPage> {
                                             height: 1.45,
                                             color: isDark
                                                 ? const Color(0xFF9ADDD8)
-                                                : Colors.black45,
+                                                : AppColors.lightTextSecondary,
                                           ),
                                           children: const [
                                             TextSpan(text: 'Your password is '),
@@ -820,7 +819,9 @@ class _CircleBackButton extends StatelessWidget {
         child: Icon(
           Icons.chevron_left_rounded,
           size: 22,
-          color: isDark ? const Color(0xFF607090) : Colors.black54,
+          color: isDark
+              ? const Color(0xFF607090)
+              : AppColors.lightTextSecondary,
         ),
       ),
     );
@@ -930,7 +931,7 @@ class _FieldLabel extends StatelessWidget {
         letterSpacing: 1,
         color: isDark
             ? _RegisterSetPasswordPageState._darkTextSoft
-            : Colors.black45,
+            : AppColors.lightTextSecondary,
       ),
     );
   }
@@ -965,19 +966,25 @@ class _PasswordField extends StatelessWidget {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(
-          color: isDark ? const Color(0xFF6F84A8) : Colors.black38,
+          color: isDark
+              ? const Color(0xFF6F84A8)
+              : AppColors.lightTextSecondary,
         ),
         prefixIcon: Icon(
           Icons.lock_outline_rounded,
           size: 18,
-          color: isDark ? const Color(0xFF6F84A8) : Colors.black45,
+          color: isDark
+              ? const Color(0xFF6F84A8)
+              : AppColors.lightTextSecondary,
         ),
         suffixIcon: IconButton(
           onPressed: onToggle,
           icon: Icon(
             obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
             size: 18,
-            color: isDark ? const Color(0xFF6F84A8) : Colors.black45,
+            color: isDark
+                ? const Color(0xFF6F84A8)
+                : AppColors.lightTextSecondary,
           ),
         ),
         filled: true,
@@ -1056,7 +1063,7 @@ class _StrengthBars extends StatelessWidget {
                 fontSize: 10.5,
                 color: isDark
                     ? _RegisterSetPasswordPageState._darkTextSoft
-                    : Colors.black45,
+                    : AppColors.lightTextSecondary,
               ),
             ),
             if (label.isNotEmpty)
@@ -1134,7 +1141,7 @@ class _Rule extends StatelessWidget {
               ? teal
               : (isDark
                     ? _RegisterSetPasswordPageState._darkTextSoft
-                    : Colors.black38),
+                    : AppColors.lightTextSecondary),
         ),
         const SizedBox(width: 8),
         Text(
@@ -1145,7 +1152,7 @@ class _Rule extends StatelessWidget {
                 ? teal
                 : (isDark
                       ? _RegisterSetPasswordPageState._darkTextMuted
-                      : Colors.black54),
+                      : AppColors.lightTextSecondary),
           ),
         ),
       ],

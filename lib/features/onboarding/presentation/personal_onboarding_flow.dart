@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/username_onboarding_page.dart';
@@ -118,10 +117,8 @@ class _PersonalOnboardingFlowState extends State<PersonalOnboardingFlow> {
       ),
     );
 
-    // İlk kayıt (onCancel == null) → marka akışı, DAİMA dark.
-    // Add-personal (venue kullanıcısı sonradan ekliyor, onCancel != null) →
-    // kullanıcının seçtiği temayı izler.
-    return widget.onCancel == null ? ForceDark(child: flow) : flow;
+    // First signup and Add personal share the app's selected appearance.
+    return flow;
   }
 
   /// Kaydetme sonrası ilerleme: sonraki adımı stack'e ekle, son adımsa bitir.

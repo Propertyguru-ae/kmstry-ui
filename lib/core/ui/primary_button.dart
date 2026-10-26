@@ -29,16 +29,16 @@ class PrimaryButton extends StatelessWidget {
     super.key,
     required this.label,
     required this.onPressed,
-  })  : loading = false,
-        trailingArrow = false,
-        _secondary = true;
+  }) : loading = false,
+       trailingArrow = false,
+       _secondary = true;
 
   static const _blue = AppColors.blue; // #1A9FE8 — logo mavisi
   static const _blueBright = AppColors.blueDark; // #4EC8FF
 
   @override
   Widget build(BuildContext context) {
-    if (_secondary) return _buildSecondary();
+    if (_secondary) return _buildSecondary(context);
     return _buildPrimary();
   }
 
@@ -108,13 +108,15 @@ class PrimaryButton extends StatelessWidget {
     );
   }
 
-  Widget _buildSecondary() {
+  Widget _buildSecondary(BuildContext context) {
     return SizedBox(
       height: 52,
       child: TextButton(
         onPressed: onPressed,
         style: TextButton.styleFrom(
-          foregroundColor: _blueBright,
+          foregroundColor: Theme.of(context).brightness == Brightness.dark
+              ? _blueBright
+              : AppColors.blueLight,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
