@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/presentation/register_set_password_page.dart';
 
@@ -253,7 +252,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ForceDark(child: Builder(builder: _buildBody));
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -375,7 +374,9 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                           style: TextStyle(
                             fontSize: 12.5,
                             height: 1.55,
-                            color: isDark ? _darkTextMuted : Colors.black45,
+                            color: isDark
+                                ? _darkTextMuted
+                                : AppColors.lightTextSecondary,
                           ),
                         ),
                       ],
@@ -436,7 +437,9 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 1,
-                                color: isDark ? _darkTextSoft : Colors.black38,
+                                color: isDark
+                                    ? _darkTextSoft
+                                    : AppColors.lightTextSecondary,
                               ),
                             ),
                             const SizedBox(height: 12),
@@ -542,7 +545,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                   fontSize: 11,
                                   color: isDark
                                       ? _darkTextSoft
-                                      : Colors.black45,
+                                      : AppColors.lightTextSecondary,
                                 ),
                                 textAlign: TextAlign.center,
                               ),
@@ -592,7 +595,8 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                                 fontSize: 12.5,
                                                 color: isDark
                                                     ? _darkTextSoft
-                                                    : Colors.black45,
+                                                    : AppColors
+                                                          .lightTextSecondary,
                                               ),
                                               children: [
                                                 TextSpan(
@@ -614,7 +618,8 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                               fontSize: 12.5,
                                               color: isDark
                                                   ? _darkTextSoft
-                                                  : Colors.black45,
+                                                  : AppColors
+                                                        .lightTextSecondary,
                                             ),
                                             children: [
                                               const TextSpan(
@@ -668,10 +673,12 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(
+                                  Icon(
                                     Icons.shield_outlined,
                                     size: 15,
-                                    color: _pink,
+                                    color: isDark
+                                        ? _pink
+                                        : const Color(0xFF008577),
                                   ),
                                   const SizedBox(width: 8),
                                   Expanded(
@@ -682,21 +689,23 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                           height: 1.45,
                                           color: isDark
                                               ? _darkTextMuted
-                                              : Colors.black45,
+                                              : AppColors.lightTextSecondary,
                                         ),
-                                        children: const [
-                                          TextSpan(
+                                        children: [
+                                          const TextSpan(
                                             text:
                                                 "This code confirms it's really you. ",
                                           ),
                                           TextSpan(
                                             text: 'Never share it',
                                             style: TextStyle(
-                                              color: _pink,
+                                              color: isDark
+                                                  ? _pink
+                                                  : const Color(0xFF008577),
                                               fontWeight: FontWeight.w600,
                                             ),
                                           ),
-                                          TextSpan(text: ' with anyone.'),
+                                          const TextSpan(text: ' with anyone.'),
                                         ],
                                       ),
                                     ),
@@ -732,7 +741,7 @@ class _RegisterEmailOtpPageState extends State<RegisterEmailOtpPage> {
                                   fontSize: 12,
                                   color: isDark
                                       ? _darkTextSoft
-                                      : Colors.black38,
+                                      : AppColors.lightTextSecondary,
                                 ),
                                 children: [
                                   const TextSpan(text: 'Wrong email address? '),
@@ -798,10 +807,10 @@ class _VerifiedEmailCard extends StatelessWidget {
               color: AppColors.teal.withValues(alpha: isDark ? 0.18 : 0.12),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.check_rounded,
               size: 22,
-              color: AppColors.tealDark,
+              color: isDark ? AppColors.tealDark : const Color(0xFF008577),
             ),
           ),
           const SizedBox(width: 12),
@@ -862,7 +871,9 @@ class _CircleBackButton extends StatelessWidget {
         child: Icon(
           Icons.chevron_left_rounded,
           size: 22,
-          color: isDark ? const Color(0xFF607090) : Colors.black54,
+          color: isDark
+              ? const Color(0xFF607090)
+              : AppColors.lightTextSecondary,
         ),
       ),
     );

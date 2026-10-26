@@ -106,10 +106,11 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
       // On fresh installs, existing accounts can come with COMPLETED but still need
       // device permission onboarding on this device.
-      if (onboardingStep == 'COMPLETED' && !devicePermissionsDone &&
+      if (onboardingStep == 'COMPLETED' &&
+          !devicePermissionsDone &&
           personalOnboardingStep(me) == null) {
         _logDecision('completed_but_device_permissions_missing');
-        _go(PermissionsFlowPage(markProfileCompleted: false, forceDark: false));
+        _go(const PermissionsFlowPage(markProfileCompleted: false));
         return;
       }
 
@@ -137,7 +138,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         final resume = personalOnboardingStep(me);
         if (resume != null) {
           if (resume == 'PERMISSIONS') {
-            _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+            _go(const PermissionsFlowPage());
           } else {
             _goPersonalOnboarding(
               switch (resume) {
@@ -252,7 +253,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _logDecision(
             'personal_home_step_gender_interest_completed_go_permissions',
           );
-          _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PHOTO') {
@@ -262,7 +263,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         }
         if (onboardingStep == 'PERMISSIONS') {
           _logDecision('personal_home_step_permissions');
-          _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          _go(const PermissionsFlowPage());
           return;
         }
         _logDecision('server_route_personal_home');
@@ -364,7 +365,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           _logDecision(
             'server_route_personal_onboarding_gender_interest_completed_go_permissions',
           );
-          _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'PHOTO') {
@@ -374,7 +375,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
         }
         if (onboardingStep == 'PERMISSIONS') {
           _logDecision('server_route_personal_onboarding_permissions');
-          _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          _go(const PermissionsFlowPage());
           return;
         }
         if (onboardingStep == 'COMPLETED') {
@@ -499,7 +500,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
 
         case 'PERMISSIONS':
           _logDecision('legacy_permissions');
-          _go(PermissionsFlowPage(forceDark: onCancelPersonal == null));
+          _go(const PermissionsFlowPage());
           return;
 
         case 'COMPLETED':
@@ -507,12 +508,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           final devicePermissionsDone =
               await SecureStorage.isDevicePermissionsOnboardingDone();
           if (!devicePermissionsDone) {
-            _go(
-              PermissionsFlowPage(
-                markProfileCompleted: false,
-                forceDark: false,
-              ),
-            );
+            _go(PermissionsFlowPage(markProfileCompleted: false));
             return;
           }
           await PushManager.instance.ensureRegisteredIfAllowed();
@@ -524,12 +520,7 @@ class _AuthGatePageState extends State<AuthGatePage> {
           final devicePermissionsDone =
               await SecureStorage.isDevicePermissionsOnboardingDone();
           if (!devicePermissionsDone) {
-            _go(
-              PermissionsFlowPage(
-                markProfileCompleted: false,
-                forceDark: false,
-              ),
-            );
+            _go(PermissionsFlowPage(markProfileCompleted: false));
             return;
           }
           await PushManager.instance.ensureRegisteredIfAllowed();
@@ -702,7 +693,8 @@ class _AuthGatePageState extends State<AuthGatePage> {
         nameReadOnly: false,
         initialBio: _bioPrefill(me),
         initialGender: me['gender']?.toString(),
-        initialInterest: (me['interestedIn'] ?? me['interested_in'])?.toString(),
+        initialInterest: (me['interestedIn'] ?? me['interested_in'])
+            ?.toString(),
         onCancel: onCancel,
       ),
     );

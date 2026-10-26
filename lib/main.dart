@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:kmstry_frontend/core/notifications/notifications_service.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/theme/theme_provider.dart';
+import 'package:kmstry_frontend/core/theme/appearance_system_ui.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/auth/presentation/auth_routes.dart';
 import 'features/auth/presentation/reset_password_page.dart';
@@ -26,6 +27,7 @@ import 'features/content_moderation/data/aws_sharing_permission.dart';
 import 'features/content_moderation/presentation/aws_sharing_permission_dialog.dart';
 import 'core/update/app_update_coordinator.dart';
 import 'features/media/overlay_fonts.dart';
+import 'features/onboarding/presentation/startup_brand.dart';
 
 late List<CameraDescription> cameras;
 
@@ -112,15 +114,18 @@ Future<void> main() async {
     return showAwsSharingPermissionDialog(context, notice);
   };
   PublicContentPermission.onRequired = AwsSharingPermission.instance.ensure;
-  PublicContentPermission.onServerDenied = AwsSharingPermission.instance.invalidate;
+  PublicContentPermission.onServerDenied =
+      AwsSharingPermission.instance.invalidate;
   AppUpdateCoordinator.instance.init(navigatorKey);
   ApiClient.onUpdateRequired = AppUpdateCoordinator.instance.show;
 
+  // Restore before the first Flutter frame to avoid flashing the wrong theme.
+  final themeProvider = ThemeProvider();
+  await themeProvider.ready;
+  await StartupBrand.warmUp();
+
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
-      child: const MyApp(),
-    ),
+    ChangeNotifierProvider(create: (_) => themeProvider, child: const MyApp()),
   );
 }
 
@@ -135,7 +140,9 @@ class MyApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       child: MaterialApp(
         navigatorKey: navigatorKey,
-        builder: (_, child) => LogoutGuard(child: child ?? const SizedBox()),
+        builder: (_, child) => AppearanceSystemUi(
+          child: LogoutGuard(child: child ?? const SizedBox()),
+        ),
         debugShowCheckedModeBanner: false,
         title: 'KMSTRY',
         theme: AppTheme.lightTheme,

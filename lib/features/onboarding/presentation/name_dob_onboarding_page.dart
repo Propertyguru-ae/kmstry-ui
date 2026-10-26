@@ -319,7 +319,9 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                           TextButton(
                             onPressed: _loading ? null : _backToVenue,
                             style: TextButton.styleFrom(
-                              foregroundColor: _blueBright,
+                              foregroundColor: _isDark
+                                  ? _blueBright
+                                  : AppColors.blueLight,
                             ),
                             child: const Text(
                               'Back to venue',
@@ -542,15 +544,19 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
   Widget _fieldLabel(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 13, color: _blueBright),
+        Icon(
+          icon,
+          size: 13,
+          color: _isDark ? _blueBright : AppColors.blueLight,
+        ),
         const SizedBox(width: 6),
         Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10.5,
             fontWeight: FontWeight.w700,
             letterSpacing: 1,
-            color: _blueBright,
+            color: _isDark ? _blueBright : AppColors.blueLight,
           ),
         ),
       ],
@@ -660,18 +666,18 @@ class _NameDobOnboardingPageState extends State<NameDobOnboardingPage> {
                   fontWeight: FontWeight.w500,
                   color: _textSecondary,
                 ),
-                children: const [
-                  TextSpan(
+                children: [
+                  const TextSpan(
                     text: 'We use your date of birth to confirm that you’re ',
                   ),
                   TextSpan(
                     text: '18 or older',
                     style: TextStyle(
-                      color: _blueBright,
+                      color: _isDark ? _blueBright : AppColors.blueLight,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  TextSpan(text: '. It will never be shown publicly.'),
+                  const TextSpan(text: '. It will never be shown publicly.'),
                 ],
               ),
             ),

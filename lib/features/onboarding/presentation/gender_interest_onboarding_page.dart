@@ -429,15 +429,19 @@ class _GenderInterestOnboardingPageState
   Widget _fieldLabel(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 13, color: _blueBright),
+        Icon(
+          icon,
+          size: 13,
+          color: _isDark ? _blueBright : AppColors.blueLight,
+        ),
         const SizedBox(width: 6),
         Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10.5,
             fontWeight: FontWeight.w800,
             letterSpacing: 1,
-            color: _blueBright,
+            color: _isDark ? _blueBright : AppColors.blueLight,
           ),
         ),
       ],

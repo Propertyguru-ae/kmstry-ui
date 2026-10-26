@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_gate_page.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/photo_onboarding_page.dart';
@@ -24,6 +23,7 @@ class AuthRoutes {
   static const login = '/login';
   static const signup = '/signup';
   static const forgotPassword = '/forgot-password';
+
   /// Query: e-posta linki `.../auth/reset-password?token=`. [arguments] ile `String` token verilir.
   static const resetPassword = '/reset-password';
   static const home = '/home';
@@ -59,12 +59,8 @@ class AuthRoutes {
       return VenueInvitePage(token: token);
     },
     people: (_) => const FindFriendsPage(),
-    // Bu named route'lar yalnızca signup akışında kullanılır (register → username
-    // → …). Marka akışı olduğu için daima dark.
-    onboardingPhoto: (context) =>
-        const ForceDark(child: PhotoOnboardingPage()),
-    onboardingUsername: (context) =>
-        const ForceDark(child: UsernameOnboardingPage()),
+    onboardingPhoto: (context) => const PhotoOnboardingPage(),
+    onboardingUsername: (context) => const UsernameOnboardingPage(),
     appShell: (context) => const AppShell(),
   };
 }

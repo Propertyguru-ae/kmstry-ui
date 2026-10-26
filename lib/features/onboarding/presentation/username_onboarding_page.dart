@@ -224,6 +224,7 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
   Color get _textPrimary =>
       _isDark ? const Color(0xFFEEF2FF) : AppColors.lightTextPrimary;
   Color get _textSecondary => _isDark ? _muted : AppColors.lightTextSecondary;
+  Color get _successColor => _isDark ? _teal : const Color(0xFF008577);
   Color get _hint =>
       _isDark ? const Color(0xFF33486A) : const Color(0xFF95A8C2);
   Color get _handle => _isDark
@@ -307,7 +308,9 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                           TextButton(
                             onPressed: _onCancel,
                             style: TextButton.styleFrom(
-                              foregroundColor: _blueBright,
+                              foregroundColor: _isDark
+                                  ? _blueBright
+                                  : AppColors.blueLight,
                             ),
                             child: const Text(
                               'Back to venue',
@@ -419,13 +422,15 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                                 ),
                               ),
                             ),
-                            const Text(
+                            Text(
                               'USERNAME',
                               style: TextStyle(
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 1,
-                                color: _blueBright,
+                                color: _isDark
+                                    ? _blueBright
+                                    : AppColors.blueLight,
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -622,9 +627,9 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                 child: Container(
                   width: 22,
                   height: 22,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _teal,
+                    color: _successColor,
                   ),
                   child: Icon(Icons.check_rounded, size: 14, color: _bg),
                 ),
@@ -644,7 +649,7 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
   }
 
   Widget _buildRule(bool ok, String text, {bool informational = false}) {
-    final color = ok ? _teal : _mutedDim;
+    final color = ok ? _successColor : _mutedDim;
     return Row(
       children: [
         Icon(
@@ -657,7 +662,9 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
           color: color,
         ),
         const SizedBox(width: 8),
-        Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: color))),
+        Expanded(
+          child: Text(text, style: TextStyle(fontSize: 11.5, color: color)),
+        ),
       ],
     );
   }
@@ -683,10 +690,10 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
         ),
         child: Text(
           s,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: _blueBright,
+            color: _isDark ? _blueBright : AppColors.blueLight,
           ),
         ),
       ),
@@ -724,16 +731,16 @@ class _UsernameOnboardingPageState extends State<UsernameOnboardingPage> {
                   fontWeight: FontWeight.w500,
                   color: _textSecondary,
                 ),
-                children: const [
-                  TextSpan(text: 'Your username is '),
+                children: [
+                  const TextSpan(text: 'Your username is '),
                   TextSpan(
                     text: 'public',
                     style: TextStyle(
-                      color: _blueBright,
+                      color: _isDark ? _blueBright : AppColors.blueLight,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  TextSpan(
+                  const TextSpan(
                     text:
                         ' and visible to other users. You can change it later.',
                   ),

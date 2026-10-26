@@ -19,7 +19,6 @@ import 'package:kmstry_frontend/features/venue/data/venue_search_location.dart';
 import 'package:kmstry_frontend/features/venue/data/claim_document_policy.dart';
 import 'package:kmstry_frontend/features/onboarding/presentation/notification_permission_page.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import '../../auth/data/registration_prefill.dart';
 import '../../content_moderation/presentation/sharing_permission_hint.dart';
 
@@ -669,8 +668,6 @@ class _VenueContextOnboardingPageState
     final notifDone = await SecureStorage.isNotificationOnboardingDone();
     if (!mounted) return;
     if (!notifDone) {
-      // Personal ile aynı: yeni venue-signup → dark; add-venue → seçilen tema.
-      final forceDark = !widget.fromAppShell && widget.onCancel == null;
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) {
@@ -679,7 +676,7 @@ class _VenueContextOnboardingPageState
                 context,
               ).pushReplacementNamed(AuthRoutes.authGate),
             );
-            return forceDark ? ForceDark(child: page) : page;
+            return page;
           },
         ),
       );
@@ -724,12 +721,7 @@ class _VenueContextOnboardingPageState
 
   @override
   Widget build(BuildContext context) {
-    // Personal ile aynı mantık: yeni venue-signup / ilk kurulum (paramsız) →
-    // marka akışı, DAİMA dark. Login sonrası add-venue (fromAppShell veya
-    // onCancel ile açılan) → kullanıcının seçtiği temayı izler.
-    final forceDark = !widget.fromAppShell && widget.onCancel == null;
-    final content = Builder(builder: _buildBody);
-    return forceDark ? ForceDark(child: content) : content;
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -783,7 +775,9 @@ class _VenueContextOnboardingPageState
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
-                    color: isDark ? const Color(0xFF4A6280) : Colors.black54,
+                    color: isDark
+                        ? const Color(0xFF4A6280)
+                        : AppColors.lightTextSecondary,
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -921,7 +915,9 @@ class _VenueContextOnboardingPageState
                 child: Icon(
                   Icons.chevron_left_rounded,
                   size: 22,
-                  color: isDark ? const Color(0xFF607090) : Colors.black54,
+                  color: isDark
+                      ? const Color(0xFF607090)
+                      : AppColors.lightTextSecondary,
                 ),
               ),
             )
@@ -929,12 +925,12 @@ class _VenueContextOnboardingPageState
             const SizedBox(width: 38),
           GestureDetector(
             onTap: _useDifferentAccount,
-            child: const Text(
+            child: Text(
               'Use a different account →',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: AppColors.blueDark,
+                color: isDark ? AppColors.blueDark : AppColors.blueLight,
               ),
             ),
           ),
@@ -965,17 +961,21 @@ class _VenueContextOnboardingPageState
             if (active) {
               numBg = const Color(0xFF1E4FC7);
               numFg = Colors.white;
-              labelFg = AppColors.blueDark;
+              labelFg = isDark ? AppColors.blueDark : AppColors.blueLight;
             } else if (done) {
               numBg = const Color(0x3300D4C8);
-              numFg = _teal;
-              labelFg = _teal;
+              numFg = isDark ? _teal : const Color(0xFF008577);
+              labelFg = isDark ? _teal : const Color(0xFF008577);
             } else {
               numBg = isDark
                   ? Colors.white.withValues(alpha: 0.05)
                   : Colors.black.withValues(alpha: 0.05);
-              numFg = isDark ? const Color(0xFF2E4560) : Colors.black38;
-              labelFg = isDark ? const Color(0xFF2E4560) : Colors.black38;
+              numFg = isDark
+                  ? const Color(0xFF2E4560)
+                  : AppColors.lightTextSecondary;
+              labelFg = isDark
+                  ? const Color(0xFF2E4560)
+                  : AppColors.lightTextSecondary;
             }
             return Expanded(
               child: AnimatedContainer(
@@ -1108,7 +1108,9 @@ class _VenueContextOnboardingPageState
                     style: TextStyle(
                       fontSize: 13,
                       height: 1.55,
-                      color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                      color: isDark
+                          ? const Color(0xFFB1B4BB)
+                          : AppColors.lightTextSecondary,
                     ),
                   ),
                 ],
@@ -1173,7 +1175,7 @@ class _VenueContextOnboardingPageState
                           hintStyle: TextStyle(
                             color: isDark
                                 ? const Color(0xFF93A3BB)
-                                : Colors.black54,
+                                : AppColors.lightTextSecondary,
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -1212,7 +1214,7 @@ class _VenueContextOnboardingPageState
                             size: 13,
                             color: isDark
                                 ? const Color(0xFF4A6280)
-                                : Colors.black38,
+                                : AppColors.lightTextSecondary,
                           ),
                         ),
                       ),
@@ -1335,7 +1337,7 @@ class _VenueContextOnboardingPageState
                             fontSize: 11,
                             color: isDark
                                 ? const Color(0xFF93A3BB)
-                                : Colors.black54,
+                                : AppColors.lightTextSecondary,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -1385,7 +1387,7 @@ class _VenueContextOnboardingPageState
               fontWeight: FontWeight.w700,
               color: isDark
                   ? const Color.fromARGB(255, 79, 102, 130)
-                  : Colors.black54,
+                  : AppColors.lightTextSecondary,
             ),
           ),
           const SizedBox(height: 6),
@@ -1398,7 +1400,7 @@ class _VenueContextOnboardingPageState
               height: 1.55,
               color: isDark
                   ? Color.fromARGB(255, 147, 153, 167)
-                  : Colors.black38,
+                  : AppColors.lightTextSecondary,
             ),
             textAlign: TextAlign.center,
           ),
@@ -1629,7 +1631,9 @@ class _VenueContextOnboardingPageState
                   style: TextStyle(
                     fontSize: 12.5,
                     height: 1.55,
-                    color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                    color: isDark
+                        ? const Color(0xFFB1B4BB)
+                        : AppColors.lightTextSecondary,
                   ),
                 ),
               ],
@@ -1766,7 +1770,7 @@ class _VenueContextOnboardingPageState
                         letterSpacing: 1,
                         color: isDark
                             ? const Color(0xFF5E708B)
-                            : Colors.black45,
+                            : AppColors.lightTextSecondary,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -1788,7 +1792,7 @@ class _VenueContextOnboardingPageState
                         letterSpacing: 1,
                         color: isDark
                             ? const Color(0xFF5E708B)
-                            : Colors.black45,
+                            : AppColors.lightTextSecondary,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -1866,7 +1870,7 @@ class _VenueContextOnboardingPageState
                         letterSpacing: 1,
                         color: isDark
                             ? const Color(0xFF5E708B)
-                            : Colors.black45,
+                            : AppColors.lightTextSecondary,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -1914,7 +1918,7 @@ class _VenueContextOnboardingPageState
                                   size: 16,
                                   color: isDark
                                       ? const Color(0xFF3A5070)
-                                      : Colors.black38,
+                                      : AppColors.lightTextSecondary,
                                 ),
                               ],
                             ),
@@ -2130,7 +2134,9 @@ class _VenueContextOnboardingPageState
                 style: TextStyle(
                   fontSize: 12.5,
                   height: 1.55,
-                  color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                  color: isDark
+                      ? const Color(0xFFB1B4BB)
+                      : AppColors.lightTextSecondary,
                 ),
               ),
             ],
@@ -2502,7 +2508,9 @@ class _VenueContextOnboardingPageState
                 style: TextStyle(
                   fontSize: 12.5,
                   height: 1.55,
-                  color: isDark ? const Color(0xFFB1B4BB) : Colors.black54,
+                  color: isDark
+                      ? const Color(0xFFB1B4BB)
+                      : AppColors.lightTextSecondary,
                 ),
               ),
             ],
@@ -2842,7 +2850,9 @@ class _ContactField extends StatelessWidget {
               child: Icon(
                 prefixIcon,
                 size: 17,
-                color: isDark ? const Color(0xFF2E4A6A) : Colors.black38,
+                color: isDark
+                    ? const Color(0xFF2E4A6A)
+                    : AppColors.lightTextSecondary,
               ),
             ),
           Expanded(
@@ -2859,7 +2869,9 @@ class _ContactField extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: hint,
                 hintStyle: TextStyle(
-                  color: isDark ? const Color(0xFF253A58) : Colors.black38,
+                  color: isDark
+                      ? const Color(0xFF253A58)
+                      : AppColors.lightTextSecondary,
                 ),
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
@@ -2912,7 +2924,7 @@ class _UploadCard extends StatelessWidget {
         : (isRequired ? const Color(0xFFDCEAFF) : const Color(0xFFEEF4FF));
     final iconFg = isDark
         ? (isRequired ? const Color(0xFF90B8FF) : const Color(0xFF4A6A9A))
-        : (isRequired ? AppColors.blueLight : Colors.black38);
+        : (isRequired ? AppColors.blueLight : AppColors.lightTextSecondary);
     final borderColor = uploaded
         ? AppColors.teal.withValues(alpha: isDark ? 0.5 : 0.6)
         : isRequired

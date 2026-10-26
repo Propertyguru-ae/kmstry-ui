@@ -173,11 +173,16 @@ flutter_launcher_icons:
   remove_alpha_ios: true
 
 flutter_native_splash:
-  color: "#06091A"
-  image: assets/images/native_splash_logo.png
+  # iOS uses the cache-safe LaunchScreenBrand storyboard and
+  # LaunchBrandAppearance asset catalog. Keep those bindings when regenerating.
+  color: "#F7FAFF"
+  color_dark: "#06091A"
+  image: assets/images/native_splash_logo_light.png
+  image_dark: assets/images/native_splash_logo_dark.png
   android: true
   ios: true
   web: false
   android_12:
-    color: "#06091A"
+    color: "#F7FAFF"
+    color_dark: "#06091A"
     image: assets/images/android12_splash_logo.png

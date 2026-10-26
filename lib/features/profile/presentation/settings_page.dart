@@ -399,6 +399,12 @@ class _SettingsPageState extends State<SettingsPage>
                   _label('Preferences'),
                   _card([
                     _themeTile(
+                      ThemeMode.system,
+                      'Auto',
+                      Icons.brightness_auto_outlined,
+                      subtitle: 'Follow your device’s appearance',
+                    ),
+                    _themeTile(
                       ThemeMode.light,
                       'Light',
                       Icons.light_mode_outlined,
@@ -831,13 +837,19 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
-  Widget _themeTile(ThemeMode mode, String title, IconData icon) {
+  Widget _themeTile(
+    ThemeMode mode,
+    String title,
+    IconData icon, {
+    String? subtitle,
+  }) {
     final selected = context.watch<ThemeProvider>().themeMode == mode;
     final colors = Theme.of(context).colorScheme;
     return _tile(
       icon: icon,
       color: AppColors.blue,
       title: title,
+      subtitle: subtitle,
       onTap: () => context.read<ThemeProvider>().setThemeMode(mode),
       trailing: Icon(
         selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,

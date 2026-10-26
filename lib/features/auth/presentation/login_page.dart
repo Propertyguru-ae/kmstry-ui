@@ -33,14 +33,19 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscure = true;
   String? _error;
 
-  static const _bg = AppColors.darkBg;
-  static const _surface = AppColors.darkSurface;
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg => _isDark ? AppColors.darkBg : const Color(0xFFF7FAFF);
+  Color get _surface => _isDark ? AppColors.darkSurface : Colors.white;
+  Color get _textPrimary => _isDark ? Colors.white : AppColors.lightTextPrimary;
+  Color get _linkColor => _isDark ? _blueBright : AppColors.blueLight;
   static const _blue = AppColors.blue;
   static const _blueBright = AppColors.blueDark;
   static const _magenta = AppColors.magentaDark;
   static const _brand = AppColors.brand;
-  static const _muted = Color(0xFFA6B3D2);
-  static const _mutedDim = Color(0xFF7F91B2);
+  Color get _muted =>
+      _isDark ? const Color(0xFFA6B3D2) : AppColors.lightTextSecondary;
+  Color get _mutedDim =>
+      _isDark ? const Color(0xFF7F91B2) : AppColors.lightTextSecondary;
 
   bool _isConsentRequiredError(ApiException error) {
     final code = error.data['errorCode']?.toString().toUpperCase();
@@ -579,14 +584,18 @@ class _LoginPageState extends State<LoginPage> {
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
                       decoration: BoxDecoration(
-                        color: _surface.withValues(alpha: 0.78),
+                        color: _surface.withValues(alpha: _isDark ? 0.78 : 1),
                         borderRadius: BorderRadius.circular(30),
                         border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.08),
+                          color: _isDark
+                              ? Colors.white.withValues(alpha: 0.08)
+                              : const Color(0xFFD9E5F4),
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.30),
+                            color: Colors.black.withValues(
+                              alpha: _isDark ? 0.30 : 0.06,
+                            ),
                             blurRadius: 32,
                             offset: const Offset(0, 18),
                           ),
@@ -609,7 +618,7 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                             const SizedBox(height: 20),
-                            const Text(
+                            Text(
                               'Welcome',
                               textAlign: TextAlign.center,
                               style: TextStyle(
@@ -617,11 +626,11 @@ class _LoginPageState extends State<LoginPage> {
                                 height: 1.05,
                                 letterSpacing: -0.5,
                                 fontWeight: FontWeight.w900,
-                                color: Colors.white,
+                                color: _textPrimary,
                               ),
                             ),
                             const SizedBox(height: 8),
-                            const Text(
+                            Text(
                               'Sign in to catch the vibe around you.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
@@ -636,8 +645,8 @@ class _LoginPageState extends State<LoginPage> {
                               controller: _emailCtrl,
                               keyboardType: TextInputType.text,
                               autocorrect: false,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: _textPrimary,
                                 fontWeight: FontWeight.w700,
                               ),
                               decoration: _inputDecoration(
@@ -656,8 +665,8 @@ class _LoginPageState extends State<LoginPage> {
                             TextFormField(
                               controller: _passCtrl,
                               obscureText: _obscure,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: _textPrimary,
                                 fontWeight: FontWeight.w700,
                               ),
                               decoration: _inputDecoration(
@@ -702,8 +711,10 @@ class _LoginPageState extends State<LoginPage> {
                                 child: Text(
                                   _error!,
                                   textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Color(0xFFFF8A8A),
+                                  style: TextStyle(
+                                    color: _isDark
+                                        ? const Color(0xFFFF8A8A)
+                                        : const Color(0xFFB91C1C),
                                     fontWeight: FontWeight.w700,
                                     fontSize: 12.5,
                                   ),
@@ -720,7 +731,7 @@ class _LoginPageState extends State<LoginPage> {
                                 );
                               },
                               style: TextButton.styleFrom(
-                                foregroundColor: _blueBright,
+                                foregroundColor: _linkColor,
                               ),
                               child: const Text(
                                 'Forgot Password?',
@@ -731,8 +742,10 @@ class _LoginPageState extends State<LoginPage> {
                             Row(
                               children: [
                                 Expanded(child: _divider()),
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 12),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
                                   child: Text(
                                     'Or sign in with',
                                     style: TextStyle(
@@ -770,7 +783,7 @@ class _LoginPageState extends State<LoginPage> {
                               alignment: WrapAlignment.center,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                const Text(
+                                Text(
                                   "Don’t have an account? ",
                                   style: TextStyle(
                                     color: _muted,
@@ -785,7 +798,7 @@ class _LoginPageState extends State<LoginPage> {
                                     );
                                   },
                                   style: TextButton.styleFrom(
-                                    foregroundColor: _blueBright,
+                                    foregroundColor: _linkColor,
                                     padding: EdgeInsets.zero,
                                     minimumSize: const Size(0, 34),
                                     tapTargetSize:
@@ -821,21 +834,32 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(18),
-      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+      borderSide: BorderSide(
+        color: _isDark
+            ? Colors.white.withValues(alpha: 0.08)
+            : const Color(0xFFD9E5F4),
+      ),
     );
     return InputDecoration(
-      prefixIcon: Icon(icon, color: Colors.white.withValues(alpha: 0.88)),
+      prefixIcon: Icon(
+        icon,
+        color: _isDark
+            ? Colors.white.withValues(alpha: 0.88)
+            : AppColors.blueLight,
+      ),
       suffixIcon: suffix,
       hintText: hint,
-      hintStyle: const TextStyle(color: _mutedDim, fontWeight: FontWeight.w600),
+      hintStyle: TextStyle(color: _mutedDim, fontWeight: FontWeight.w600),
       filled: true,
-      fillColor: Colors.white.withValues(alpha: 0.035),
+      fillColor: _isDark
+          ? Colors.white.withValues(alpha: 0.035)
+          : const Color(0xFFF3F6FA),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       border: border,
       enabledBorder: border,
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _blueBright, width: 1.2),
+        borderSide: BorderSide(color: _linkColor, width: 1.2),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
@@ -861,14 +885,15 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Widget _divider() {
+    final color = _isDark ? Colors.white : AppColors.lightTextPrimary;
     return Container(
       height: 1,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            Colors.white.withValues(alpha: 0),
-            Colors.white.withValues(alpha: 0.12),
-            Colors.white.withValues(alpha: 0),
+            color.withValues(alpha: 0),
+            color.withValues(alpha: 0.12),
+            color.withValues(alpha: 0),
           ],
         ),
       ),
@@ -905,6 +930,8 @@ class _SocialCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = isDark ? Colors.white : AppColors.lightTextPrimary;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
@@ -912,9 +939,15 @@ class _SocialCircle extends StatelessWidget {
         width: 52,
         height: 52,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.045),
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.045)
+              : const Color(0xFFF3F6FA),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.10)
+                : const Color(0xFFD9E5F4),
+          ),
           boxShadow: [
             BoxShadow(
               color: AppColors.blue.withValues(alpha: 0.10),
@@ -925,20 +958,20 @@ class _SocialCircle extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: loading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: foreground,
                 ),
               )
             : Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
-                  color: Colors.white,
+                  color: foreground,
                 ),
               ),
       ),
