@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/config/app_config.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/primary_button.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/ui/account_exists_sheet.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/auth/data/apple_sign_in_cancellation.dart';
@@ -36,7 +35,6 @@ class _SignupPageState extends State<SignupPage> {
   String? _error;
   static const _darkBg = Color(0xFF06091A);
   static const _sheetBg = Color(0xFF0B1322);
-  static const _blueAccent = AppColors.blueDark;
   static const _darkTextMuted = Color(0xFFA6B3D2);
   static const _darkTextSoft = Color(0xFF8FA2C4);
 
@@ -245,94 +243,89 @@ class _SignupPageState extends State<SignupPage> {
       context: context,
       isScrollControlled: true,
       builder: (_) {
-        // Signup akışı dark → onay sheet'i de ForceDark ile eşleşir.
-        return ForceDark(
-          child: Builder(
-            builder: (sheetContext) {
-              final colors = Theme.of(sheetContext).colorScheme;
-              return StatefulBuilder(
-                builder: (context, setSheetState) {
-                  return SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text(
-                            'Consent Required',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
+        return Builder(
+          builder: (sheetContext) {
+            final colors = Theme.of(sheetContext).colorScheme;
+            return StatefulBuilder(
+              builder: (context, setSheetState) {
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Consent Required',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Please agree to continue with Google sign in.',
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Checkbox(
+                              value: consent,
+                              onChanged: (v) =>
+                                  setSheetState(() => consent = v ?? false),
                             ),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Please agree to continue with Google sign in.',
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Checkbox(
-                                value: consent,
-                                onChanged: (v) =>
-                                    setSheetState(() => consent = v ?? false),
-                              ),
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(top: 12),
-                                  child: Wrap(
-                                    children: [
-                                      const Text('I agree to the '),
-                                      InkWell(
-                                        onTap: () => _openPolicy('/terms'),
-                                        child: Text(
-                                          'Terms of Service',
-                                          style: TextStyle(
-                                            color: colors.primary,
-                                            decoration:
-                                                TextDecoration.underline,
-                                          ),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: Wrap(
+                                  children: [
+                                    const Text('I agree to the '),
+                                    InkWell(
+                                      onTap: () => _openPolicy('/terms'),
+                                      child: Text(
+                                        'Terms of Service',
+                                        style: TextStyle(
+                                          color: colors.primary,
+                                          decoration: TextDecoration.underline,
                                         ),
                                       ),
-                                      const Text(' and '),
-                                      InkWell(
-                                        onTap: () => _openPolicy('/privacy'),
-                                        child: Text(
-                                          'Privacy Policy',
-                                          style: TextStyle(
-                                            color: colors.primary,
-                                            decoration:
-                                                TextDecoration.underline,
-                                          ),
+                                    ),
+                                    const Text(' and '),
+                                    InkWell(
+                                      onTap: () => _openPolicy('/privacy'),
+                                      child: Text(
+                                        'Privacy Policy',
+                                        style: TextStyle(
+                                          color: colors.primary,
+                                          decoration: TextDecoration.underline,
                                         ),
                                       ),
-                                      const Text('.'),
-                                    ],
-                                  ),
+                                    ),
+                                    const Text('.'),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: consent
-                                  ? () => Navigator.of(sheetContext).pop(true)
-                                  : null,
-                              child: const Text('Continue'),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: consent
+                                ? () => Navigator.of(sheetContext).pop(true)
+                                : null,
+                            child: const Text('Continue'),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  );
-                },
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -383,7 +376,7 @@ class _SignupPageState extends State<SignupPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ForceDark(child: Builder(builder: _buildBody));
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {
@@ -460,7 +453,9 @@ class _SignupPageState extends State<SignupPage> {
                         style: TextStyle(
                           fontSize: 13,
                           height: 1.6,
-                          color: isDark ? _darkTextMuted : Colors.black54,
+                          color: isDark
+                              ? _darkTextMuted
+                              : AppColors.lightTextSecondary,
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -527,7 +522,9 @@ class _SignupPageState extends State<SignupPage> {
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 1,
-                                color: isDark ? _darkTextSoft : Colors.black38,
+                                color: isDark
+                                    ? _darkTextSoft
+                                    : AppColors.lightTextSecondary,
                               ),
                             ),
                             const SizedBox(height: 7),
@@ -542,7 +539,7 @@ class _SignupPageState extends State<SignupPage> {
                                 fontSize: 11,
                                 color: isDark
                                     ? const Color(0xFF8FA2C4)
-                                    : Colors.black45,
+                                    : AppColors.lightTextSecondary,
                               ),
                             ),
 
@@ -590,7 +587,7 @@ class _SignupPageState extends State<SignupPage> {
                                       fontSize: 11,
                                       color: isDark
                                           ? _darkTextSoft
-                                          : Colors.black38,
+                                          : AppColors.lightTextSecondary,
                                     ),
                                   ),
                                 ),
@@ -637,7 +634,7 @@ class _SignupPageState extends State<SignupPage> {
                                   height: 1.6,
                                   color: isDark
                                       ? _darkTextSoft
-                                      : Colors.black38,
+                                      : AppColors.lightTextSecondary,
                                 ),
                                 children: [
                                   const TextSpan(
@@ -648,7 +645,7 @@ class _SignupPageState extends State<SignupPage> {
                                     style: TextStyle(
                                       color: isDark
                                           ? AppColors.blueDark
-                                          : _blueAccent,
+                                          : AppColors.blueLight,
                                     ),
                                   ),
                                   const TextSpan(text: ' and '),
@@ -657,7 +654,7 @@ class _SignupPageState extends State<SignupPage> {
                                     style: TextStyle(
                                       color: isDark
                                           ? AppColors.blueDark
-                                          : _blueAccent,
+                                          : AppColors.blueLight,
                                     ),
                                   ),
                                 ],
@@ -692,7 +689,7 @@ class _SignupPageState extends State<SignupPage> {
                                   fontSize: 12,
                                   color: isDark
                                       ? _darkTextSoft
-                                      : Colors.black38,
+                                      : AppColors.lightTextSecondary,
                                 ),
                                 children: [
                                   const TextSpan(
@@ -707,7 +704,7 @@ class _SignupPageState extends State<SignupPage> {
                                           fontSize: 12,
                                           color: isDark
                                               ? AppColors.blueDark
-                                              : _blueAccent,
+                                              : AppColors.blueLight,
                                           fontWeight: FontWeight.w600,
                                         ),
                                       ),
@@ -759,7 +756,9 @@ class _CircleBackButton extends StatelessWidget {
         child: Icon(
           Icons.chevron_left_rounded,
           size: 22,
-          color: isDark ? const Color(0xFF607090) : Colors.black54,
+          color: isDark
+              ? const Color(0xFF607090)
+              : AppColors.lightTextSecondary,
         ),
       ),
     );
@@ -969,7 +968,9 @@ class _AccountBadge extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.4,
-                    color: isDark ? const Color(0xFF8FA2C4) : Colors.black45,
+                    color: isDark
+                        ? const Color(0xFF8FA2C4)
+                        : AppColors.lightTextSecondary,
                   ),
                 ),
               ],
@@ -1017,7 +1018,9 @@ class _EmailField extends StatelessWidget {
         prefixIcon: Icon(
           Icons.mail_outline_rounded,
           size: 18,
-          color: isDark ? const Color(0xFF2E4A6A) : Colors.black38,
+          color: isDark
+              ? const Color(0xFF2E4A6A)
+              : AppColors.lightTextSecondary,
         ),
         filled: true,
         fillColor: isDark ? const Color(0xFF0F1C35) : const Color(0xFFF8FAFF),

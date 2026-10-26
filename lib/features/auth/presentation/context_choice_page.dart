@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/force_dark.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
@@ -46,11 +45,6 @@ class ContextChoicePage extends StatelessWidget {
   static const _lightPurpleTagColor = AppColors.brandLight;
   @override
   Widget build(BuildContext context) {
-    // Signup öncesi hesap-türü seçimi (isAuthenticated == false) → marka akışı,
-    // DAİMA dark. Login sonrası bağlam ekleme/seçme → seçilen temayı izler.
-    if (!isAuthenticated) {
-      return ForceDark(child: Builder(builder: _buildBody));
-    }
     return _buildBody(context);
   }
 

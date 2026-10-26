@@ -16,14 +16,16 @@ class _AppIntroPageState extends State<AppIntroPage> {
   int _currentIndex = 0;
   bool _completing = false;
 
-  static const _bg = AppColors.darkBg;
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg => _isDark ? AppColors.darkBg : const Color(0xFFF7FAFF);
   static const _teal = AppColors.teal;
   static const _tealBright = AppColors.tealDark;
   static const _blue = AppColors.blue;
   static const _blueBright = AppColors.blueDark;
   static const _magenta = AppColors.magenta;
   static const _purple = AppColors.brandLight;
-  static const _muted = Color(0xFFA6B3D2);
+  Color get _muted =>
+      _isDark ? const Color(0xFFA6B3D2) : AppColors.lightTextSecondary;
 
   static const List<_IntroSlide> _slides = [
     _IntroSlide(
@@ -155,16 +157,23 @@ class _AppIntroPageState extends State<AppIntroPage> {
                               child: Icon(
                                 slide.icon,
                                 size: 68,
-                                color: slide.iconColor,
+                                color: _isDark
+                                    ? slide.iconColor
+                                    : AppColors.blueLight,
                               ),
                             ),
                             const SizedBox(height: 34),
-                            _gradientTitle(slide.title, slide.gradient),
+                            _gradientTitle(
+                              slide.title,
+                              _isDark
+                                  ? slide.gradient
+                                  : AppColors.gradientLight,
+                            ),
                             const SizedBox(height: 14),
                             Text(
                               slide.description,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: _muted,
                                 fontSize: 15.5,
                                 height: 1.45,
@@ -193,7 +202,10 @@ class _AppIntroPageState extends State<AppIntroPage> {
                               : null,
                           color: selected
                               ? null
-                              : Colors.white.withValues(alpha: 0.16),
+                              : (_isDark
+                                        ? Colors.white
+                                        : AppColors.lightTextPrimary)
+                                    .withValues(alpha: 0.16),
                           borderRadius: BorderRadius.circular(99),
                           boxShadow: [
                             if (selected)
@@ -239,12 +251,14 @@ class _AppIntroPageState extends State<AppIntroPage> {
         Text(
           firstLine,
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 30,
             height: 1.12,
             letterSpacing: -0.7,
             fontWeight: FontWeight.w800,
-            color: Color(0xFFF4F6FF),
+            color: _isDark
+                ? const Color(0xFFF4F6FF)
+                : AppColors.lightTextPrimary,
           ),
         ),
         if (secondLine.isNotEmpty)

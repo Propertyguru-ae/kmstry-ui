@@ -6,6 +6,7 @@ import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
+import 'startup_brand.dart';
 
 class StartupGatePage extends StatefulWidget {
   const StartupGatePage({super.key});
@@ -22,19 +23,20 @@ class _StartupGatePageState extends State<StartupGatePage>
   late final AnimationController _buttonPressController;
 
   late final Animation<double> _fadeAnimation;
-  late final Animation<double> _slideAnimation;
   late final Animation<double> _buttonScaleAnimation;
 
   bool _checking = true;
   bool _navigating = false;
 
-  static const Color _bgColor = AppColors.darkBg;
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bgColor => _isDark ? AppColors.darkBg : const Color(0xFFF7FAFF);
   static const Color _blue = AppColors.blue;
   static const Color _blueBright = AppColors.blueDark;
   static const Color _magenta = AppColors.magentaDark;
   static const Color _teal = AppColors.tealDark;
   static const Color _brand = AppColors.brand;
-  static const Color _muted = Color(0xFFA6B3D2);
+  Color get _muted =>
+      _isDark ? const Color(0xFFA6B3D2) : AppColors.lightTextSecondary;
 
   @override
   void initState() {
@@ -42,7 +44,7 @@ class _StartupGatePageState extends State<StartupGatePage>
 
     _introController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 950),
+      duration: StartupBrand.revealDuration,
     );
 
     _bgController = AnimationController(
@@ -68,10 +70,6 @@ class _StartupGatePageState extends State<StartupGatePage>
     _fadeAnimation = CurvedAnimation(
       parent: _introController,
       curve: Curves.easeOut,
-    );
-
-    _slideAnimation = Tween<double>(begin: 26, end: 0).animate(
-      CurvedAnimation(parent: _introController, curve: Curves.easeOutCubic),
     );
 
     _buttonScaleAnimation = CurvedAnimation(
@@ -148,25 +146,35 @@ class _StartupGatePageState extends State<StartupGatePage>
     return Scaffold(
       backgroundColor: _bgColor,
       body: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: SystemUiOverlayStyle.light,
-        child: Stack(
-          children: [
-            _buildAnimatedBackground(),
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 28),
-                child: Column(
-                  children: [
-                    const Spacer(flex: 3),
-                    _buildBrandSection(),
-                    const Spacer(flex: 4),
-                    _buildBottomSection(),
-                    const SizedBox(height: 18),
-                  ],
-                ),
+        value: _isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            children: [
+              FadeTransition(
+                key: const ValueKey('startup-background-reveal'),
+                opacity: _fadeAnimation,
+                child: _buildAnimatedBackground(),
               ),
-            ),
-          ],
+              // Same canvas and full-screen anchor as the native launch image.
+              // Footer/loading/label changes cannot move the brand layer.
+              Positioned(
+                left: (constraints.maxWidth - StartupBrand.size.width) / 2,
+                top:
+                    (constraints.maxHeight - StartupBrand.size.height) / 2 -
+                    StartupBrand.lift,
+                width: StartupBrand.size.width,
+                height: StartupBrand.size.height,
+                child: _buildBrandSection(),
+              ),
+              Positioned(
+                left: 28,
+                right: 28,
+                bottom: MediaQuery.viewPaddingOf(context).bottom + 18,
+                child: _buildBottomSection(),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -231,27 +239,32 @@ class _StartupGatePageState extends State<StartupGatePage>
   }
 
   Widget _buildBrandSection() {
-    return Column(
+    return Stack(
       children: [
-        // Logo — native splash ile BİREBİR aynı konumda kalır (opacity 0'dan
-        // gelmez); yalnızca etrafındaki parıltı/kutu fade-in ile belirir. Bu,
-        // native splash → bu ekran geçişini kusursuz (zıplamasız) yapar.
-        AnimatedBuilder(
-          animation: Listenable.merge([_introController, _pulseController]),
-          builder: (context, child) {
-            final fade = _fadeAnimation.value;
-            final shimmer = ((_pulseController.value - 0.98) / (1.03 - 0.98))
-                .clamp(0.0, 1.0);
-            final borderTarget = Color.lerp(
-              Colors.white.withValues(alpha: 0.12),
-              _blueBright.withValues(alpha: 0.38),
-              shimmer,
-            )!;
-            return Transform.scale(
-              scale: _pulseController.value,
-              child: Container(
-                width: 166,
-                height: 166,
+        Positioned(
+          left: StartupBrand.logoCenter.dx - 83,
+          top: StartupBrand.logoCenter.dy - 83,
+          width: 166,
+          height: 166,
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_introController, _pulseController]),
+            builder: (context, child) {
+              final fade = _fadeAnimation.value;
+              final shimmer = ((_pulseController.value - 0.98) / 0.05).clamp(
+                0.0,
+                1.0,
+              );
+              final border = Color.lerp(
+                (_isDark ? Colors.white : AppColors.lightTextPrimary)
+                    .withValues(alpha: 0.12),
+                (_isDark ? _blueBright : AppColors.blueLight).withValues(
+                  alpha: 0.38,
+                ),
+                shimmer,
+              )!;
+              // Only the decoration changes. The symbol never scales/pulses.
+              return DecoratedBox(
+                key: const ValueKey('startup-logo-decoration'),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(44),
                   gradient: LinearGradient(
@@ -264,7 +277,7 @@ class _StartupGatePageState extends State<StartupGatePage>
                     end: Alignment.bottomRight,
                   ),
                   border: Border.all(
-                    color: Color.lerp(Colors.transparent, borderTarget, fade)!,
+                    color: Color.lerp(Colors.transparent, border, fade)!,
                     width: 1.1,
                   ),
                   boxShadow: [
@@ -277,85 +290,45 @@ class _StartupGatePageState extends State<StartupGatePage>
                     ),
                   ],
                 ),
-                child: child,
-              ),
-            );
-          },
-          child: const Padding(
-            padding: EdgeInsets.all(6),
-            child: Image(
-              image: AssetImage('assets/images/kmstrylogo.png'),
-              fit: BoxFit.contain,
-              alignment: Alignment.center,
-            ),
+              );
+            },
           ),
         ),
-        const SizedBox(height: 40),
-        // KMSTRY + tagline — aşağıdan yükselerek belirir.
-        AnimatedBuilder(
-          animation: _introController,
-          builder: (context, child) {
-            return Transform.translate(
-              offset: Offset(0, _slideAnimation.value),
-              child: FadeTransition(opacity: _fadeAnimation, child: child),
-            );
-          },
-          child: Column(
-            children: [
-              // letterSpacing son harften SONRA da boşluk ekler → ortalanan
-              // metin sola kaymış görünür. Aralık kadar sol padding ile optik
-              // olarak ortalıyoruz.
-              const SizedBox(
-                width: double.infinity,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Padding(
-                    padding: EdgeInsets.only(left: 7),
-                    child: Text(
-                      'KMSTRY',
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 52,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 7,
-                        height: 1,
-                        shadows: [
-                          Shadow(
-                            color: Color(0x661A9FE8),
-                            blurRadius: 22,
-                            offset: Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                    ),
+        Positioned.fill(
+          child: Image.asset(
+            StartupBrand.assetFor(Theme.of(context).brightness),
+            key: StartupBrand.imageKey,
+            width: StartupBrand.size.width,
+            height: StartupBrand.size.height,
+            fit: BoxFit.fill,
+            gaplessPlayback: true,
+            semanticLabel: 'KMSTRY',
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: StartupBrand.wordmarkBottom + 18,
+          child: FadeTransition(
+            key: const ValueKey('startup-tagline-reveal'),
+            opacity: _fadeAnimation,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 2.8),
+                child: Text(
+                  'REAL PLACES. REAL FACES.',
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                    color: _muted.withValues(alpha: _isDark ? 0.76 : 1),
+                    fontSize: 12,
+                    letterSpacing: 2.8,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 2.8),
-                    child: Text(
-                      'REAL PLACES. REAL FACES.',
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: _muted.withValues(alpha: 0.76),
-                        fontSize: 12,
-                        letterSpacing: 2.8,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
+            ),
           ),
         ),
       ],
@@ -363,33 +336,29 @@ class _StartupGatePageState extends State<StartupGatePage>
   }
 
   Widget _buildBottomSection() {
-    return AnimatedBuilder(
-      animation: _introController,
-      builder: (context, child) {
-        return Transform.translate(
-          offset: Offset(0, _slideAnimation.value * 0.8),
-          child: FadeTransition(opacity: _fadeAnimation, child: child),
-        );
-      },
-      child: Column(
-        children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 320),
-            child: _checking
-                ? const SizedBox(
-                    height: 60,
-                    width: 60,
+    return FadeTransition(
+      key: const ValueKey('startup-footer-reveal'),
+      opacity: _fadeAnimation,
+      child: AnimatedSwitcher(
+        duration: StartupBrand.revealDuration,
+        child: _checking
+            ? SizedBox(
+                height: 62,
+                child: Center(
+                  child: SizedBox(
+                    width: 26,
+                    height: 26,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white24,
+                      color: _isDark ? Colors.white24 : AppColors.blueLight,
                     ),
-                  )
-                : ScaleTransition(
-                    scale: _buttonScaleAnimation,
-                    child: _buildContinueButton(),
                   ),
-          ),
-        ],
+                ),
+              )
+            : ScaleTransition(
+                scale: _buttonScaleAnimation,
+                child: _buildContinueButton(),
+              ),
       ),
     );
   }
