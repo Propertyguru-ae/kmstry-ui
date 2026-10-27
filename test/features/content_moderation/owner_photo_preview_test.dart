@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
@@ -65,6 +67,75 @@ void main() {
         ],
       ),
     ),
+  );
+
+  testWidgets(
+    'local venue cover hides old Google credits and rejection restores the complete credited cover',
+    (tester) async {
+      final image = await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawColor(Colors.blueGrey, BlendMode.src);
+        final picture = recorder.endRecording();
+        final decoded = await picture.toImage(4, 4);
+        picture.dispose();
+        return decoded;
+      });
+      PaintingBinding.instance.imageCache.putIfAbsent(
+        ResizeImage.resizeIfNeeded(
+          1080,
+          null,
+          FileImage(File('/tmp/owner-photo-test-preview.jpg')),
+        ),
+        () => OneFrameImageStreamCompleter(
+          Future.value(ImageInfo(image: image!)),
+        ),
+      );
+      addTearDown(() {
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: OwnerPhotoPreview(
+              kind: PendingPublicMediaKind.venueAvatar,
+              venueId: 'alpha',
+              width: double.infinity,
+              height: 210,
+              preserveChildHeight: true,
+              service: service,
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(height: 210, child: Text('Approved Google photo')),
+                  SizedBox(height: 56, child: Text('Google photo credits')),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(tester.getSize(find.byType(OwnerPhotoPreview)).height, 266);
+      add(
+        kind: PendingPublicMediaKind.venueAvatar,
+        venueId: 'alpha',
+        state: PendingPublicMediaState.underReview,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('Google photo credits'), findsNothing);
+      expect(tester.getSize(find.byType(OwnerPhotoPreview)).height, 210);
+      service.clear();
+      add(
+        kind: PendingPublicMediaKind.venueAvatar,
+        venueId: 'alpha',
+        state: PendingPublicMediaState.rejected,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Google photo credits'), findsOneWidget);
+      expect(tester.getSize(find.byType(OwnerPhotoPreview)).height, 266);
+      expect(tester.takeException(), isNull);
+    },
   );
 
   for (final state in [
