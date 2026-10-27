@@ -52,6 +52,7 @@ class OwnerPhotoPreview extends StatelessWidget {
     required this.child,
     required this.width,
     required this.height,
+    this.preserveChildHeight = false,
     this.venueId,
     this.checkinId,
     this.radius = 0,
@@ -63,6 +64,10 @@ class OwnerPhotoPreview extends StatelessWidget {
   final String? checkinId;
   final Widget child;
   final double width, height, radius;
+
+  /// Let a canonical cover include its attribution below the image. A local
+  /// candidate still uses [height] and never inherits the old photo's credits.
+  final bool preserveChildHeight;
   final PendingPublicMediaService? service;
   final bool isActive;
 
@@ -81,11 +86,13 @@ class OwnerPhotoPreview extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         child: SizedBox(
           width: width,
-          height: height,
+          height: preserveChildHeight ? null : height,
           child: hidden || path == null || path.isEmpty
               ? child
               : Image.file(
                   File(path),
+                  width: width,
+                  height: height,
                   fit: BoxFit.cover,
                   cacheWidth: width > 200 ? 1080 : 540,
                   errorBuilder: (_, _, _) => child,
