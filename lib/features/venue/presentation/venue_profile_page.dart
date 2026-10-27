@@ -69,6 +69,7 @@ class VenueProfilePage extends StatefulWidget {
     this.galleryRepository,
     this.partnershipRepository,
     this.venueSession,
+    this.photoSourceLoader,
     this.isActive = true,
   });
   final VenueOwnerRepository? repository;
@@ -78,6 +79,7 @@ class VenueProfilePage extends StatefulWidget {
   final ExternalPartnershipRepository? partnershipRepository;
   final bool isActive;
   final VenueSession? venueSession;
+  final GooglePhotoSourceLoader? photoSourceLoader;
 
   @override
   State<VenueProfilePage> createState() => _VenueProfilePageState();
@@ -1182,7 +1184,9 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Text(
-                                  venue.isRegistrationDraft ? 'Documents needed' : 'Pending',
+                                  venue.isRegistrationDraft
+                                      ? 'Documents needed'
+                                      : 'Pending',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -1350,6 +1354,9 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final isRejectedClaim = activeMemberVenue?.isRejectedOwnerClaim ?? false;
     final isClaimLocked = isPendingClaim || isRejectedClaim;
     final canShowCoverPhoto = hasPhoto && !isClaimLocked;
+    final hasGoogleCover =
+        canShowCoverPhoto && isGooglePlacePhotoProxyUrl(venue.photo!);
+    const coverHeight = 210.0;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -1388,13 +1395,11 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ── Venue fotoğrafı ───────────────────────────────
-                      // ── Cover hero (venue detay sayfası gibi: tam genişlik +
-                      // alt gradient). Kalem avatara taşındı. Foto yoksa
-                      // placeholder; yetkiliyse dokununca foto ekleme açılır.
+                      // Match the detail cover: Google credits occupy their own
+                      // row below the photo; owner controls stay on the image.
                       GestureDetector(
                         onTap: canShowCoverPhoto
-                            ? () => _showPhotoViewer(venue!.photo!)
+                            ? () => _showPhotoViewer(venue.photo!)
                             : (!isClaimLocked &&
                                   session.can(VenuePermission.venueEdit) &&
                                   !_uploadingPhoto)
@@ -1402,17 +1407,19 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                             : null,
                         child: SizedBox(
                           key: const ValueKey('venue-profile-cover'),
-                          height: 180,
                           width: double.infinity,
                           child: Stack(
-                            fit: StackFit.expand,
                             children: [
                               if (isClaimLocked)
-                                _PhotoPlaceholder(
-                                  colors: colors,
-                                  locked: true,
-                                  message:
-                                      'You can add a photo after your venue is approved.',
+                                SizedBox(
+                                  height: coverHeight,
+                                  width: double.infinity,
+                                  child: _PhotoPlaceholder(
+                                    colors: colors,
+                                    locked: true,
+                                    message:
+                                        'You can add a photo after your venue is approved.',
+                                  ),
                                 )
                               else
                                 OwnerPhotoPreview(
@@ -1420,22 +1427,26 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                   kind: PendingPublicMediaKind.venueAvatar,
                                   venueId: venue?.id,
                                   width: double.infinity,
-                                  height: 180,
+                                  height: coverHeight,
+                                  preserveChildHeight: hasGoogleCover,
                                   child: hasPhoto
                                       ? GooglePlacePhoto(
-                                          venue!.photo!,
+                                          venue.photo!,
                                           fit: BoxFit.cover,
                                           showAuthorAttribution: true,
-                                          badgeBottom: 16,
+                                          sourceLoader:
+                                              widget.photoSourceLoader,
+                                          creditsBelowPhotoHeight:
+                                              hasGoogleCover
+                                              ? coverHeight
+                                              : null,
                                           errorWidget: (_) =>
                                               _PhotoPlaceholder(colors: colors),
                                         )
                                       : _PhotoPlaceholder(colors: colors),
                                 ),
                               // Alt gradient — cover sayfa zeminine erir.
-                              if (!isGooglePlacePhotoProxyUrl(
-                                venue?.photo ?? '',
-                              ))
+                              if (!hasGoogleCover)
                                 Positioned(
                                   left: 0,
                                   right: 0,
@@ -1459,7 +1470,11 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                               // Keep the complete status/reason/actions centred
                               // on the cover, including narrow/large-text layouts.
                               if (!isClaimLocked)
-                                Positioned.fill(
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  height: coverHeight,
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 16,

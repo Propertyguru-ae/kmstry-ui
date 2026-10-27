@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:kmstry_frontend/core/media/media_network_url.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/venue/venue_session.dart';
 import 'package:kmstry_frontend/core/venue/venue_plan.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_member_model.dart';
@@ -17,11 +20,13 @@ import 'package:kmstry_frontend/features/content_moderation/presentation/owner_p
 import 'package:kmstry_frontend/features/venue/data/external_partnership_model.dart';
 import 'package:kmstry_frontend/features/venue/data/external_partnership_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_model.dart';
+import 'package:kmstry_frontend/features/venue/data/google_photo_source.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_gallery_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_profile_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.dart';
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 
@@ -138,15 +143,19 @@ Map<String, dynamic> _me({String status = 'ACTIVE'}) => {
       {'id': id, 'name': 'Cafe $id', 'role': 'OWNER', 'status': status},
   ],
 };
-VenueOwnerStatsVenue _identity(String id, {String about = 'Full About'}) =>
-    VenueOwnerStatsVenue(
-      id: id,
-      name: 'Cafe $id',
-      description: about,
-      address: 'Venue Address',
-      type: 'CAFE',
-      city: 'Dubai',
-    );
+VenueOwnerStatsVenue _identity(
+  String id, {
+  String about = 'Full About',
+  String? photo,
+}) => VenueOwnerStatsVenue(
+  id: id,
+  name: 'Cafe $id',
+  photo: photo,
+  description: about,
+  address: 'Venue Address',
+  type: 'CAFE',
+  city: 'Dubai',
+);
 VenueUpcomingEvent _event(String title) {
   final start = DateTime.now().add(const Duration(hours: 1));
   return VenueUpcomingEvent(
@@ -194,8 +203,18 @@ Future<void> _pump(
   ExternalPartnershipRepository? partnerships,
   bool active = true,
   VenueSession? session,
+  GooglePhotoSourceLoader? photoSourceLoader,
+  ThemeData? theme,
+  double textScale = 1,
 }) => tester.pumpWidget(
   MaterialApp(
+    theme: theme,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: VenueProfilePage(
       key: const ValueKey('profile'),
       venueId: id,
@@ -205,12 +224,109 @@ Future<void> _pump(
       storyRepository: stories ?? _Stories(),
       partnershipRepository: partnerships ?? _Partnerships(),
       venueSession: session,
+      photoSourceLoader: photoSourceLoader,
       isActive: active,
     ),
   ),
 );
 
 void main() {
+  for (final dark in [false, true]) {
+    for (final scale in [1.0, 1.8]) {
+      testWidgets(
+        'profile Google cover credits remain below the photo and tappable: dark=$dark scale=$scale',
+        (tester) async {
+          tester.view.physicalSize = const Size(390, 950);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          const photo =
+              'https://pre-prod-api.kmstry.net/venues/places/photo/profile.signature';
+          final image = await tester.runAsync(() async {
+            final recorder = ui.PictureRecorder();
+            Canvas(recorder).drawColor(Colors.blueGrey, BlendMode.src);
+            final picture = recorder.endRecording();
+            final decoded = await picture.toImage(4, 4);
+            picture.dispose();
+            return decoded;
+          });
+          PaintingBinding.instance.imageCache.putIfAbsent(
+            NetworkImage(resolveMediaNetworkUrl(photo)),
+            () => OneFrameImageStreamCompleter(
+              Future.value(ImageInfo(image: image!)),
+            ),
+          );
+          addTearDown(() {
+            PaintingBinding.instance.imageCache.clear();
+            PaintingBinding.instance.imageCache.clearLiveImages();
+          });
+          final uploads = PendingPublicMediaService.instance;
+          uploads.track(
+            PendingPublicMedia(
+              id: 'google-cover-review',
+              kind: PendingPublicMediaKind.venueAvatar,
+              venueId: 'a',
+              localPath: '',
+              isVideo: false,
+              createdAt: DateTime.now(),
+              state: PendingPublicMediaState.underReview,
+              hasServerReceipt: false,
+            ),
+          );
+          await _pump(
+            tester,
+            _Auth(() async => _me()),
+            _Owner((id) async => _identity(id, photo: photo), (_) async => []),
+            theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+            textScale: scale,
+            photoSourceLoader: (_) async => GooglePhotoSource(
+              photoUrl: photo,
+              authors: [
+                GooglePhotoAuthor(
+                  name: 'Example Contributor With A Long Name',
+                  profileUrl: Uri.parse(
+                    'https://www.google.com/maps/contrib/example',
+                  ),
+                ),
+              ],
+              sourceUrl: Uri.parse('https://www.google.com/maps/photo/example'),
+              reportUrl: Uri.parse('https://www.google.com/maps/photo/example'),
+              reportIsDirect: true,
+            ),
+          );
+          await tester.pumpAndSettle();
+          final imageRect = tester.getRect(
+            find.byKey(const ValueKey('google-photo-cover-image')),
+          );
+          final footerRect = tester.getRect(
+            find.byKey(const ValueKey('google-photo-credits-footer')),
+          );
+          expect(imageRect.height, 210);
+          expect(footerRect.top, imageRect.bottom);
+          final statusViewport = tester.getRect(
+            find.byKey(const ValueKey('venue-cover-upload-status')),
+          );
+          expect(statusViewport.center, imageRect.center);
+          expect(statusViewport.bottom, lessThanOrEqualTo(imageRect.bottom));
+          expect(find.text('Google Maps · Credits'), findsNothing);
+          expect(find.text('Credits').hitTestable(), findsOneWidget);
+          expect(
+            find.byIcon(Icons.edit_outlined).first.hitTestable(),
+            findsOneWidget,
+          );
+          await tester.tap(find.text('Credits'));
+          await tester.pumpAndSettle();
+          expect(find.text('Photo credits'), findsOneWidget);
+          expect(find.text('PHOTO BY'), findsOneWidget);
+          expect(
+            uploads.byId('google-cover-review')?.state,
+            PendingPublicMediaState.underReview,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   testWidgets(
     'Add Personal from venue profile paints existing account defaults immediately',
     (tester) async {
