@@ -303,12 +303,14 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
             colors: [bg, bg],
           ),
         ),
+        // Yatay boşluk içerikte: liste ekran kenarına kadar uzanır, böylece kart
+        // gölgesi liste sınırında kesilmez.
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 16),
           child: Column(
             children: [
               Container(
-                padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                 child: Container(
                   decoration: BoxDecoration(
                     color: isDark
@@ -375,7 +377,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
               const SizedBox(height: 12),
               if (_error != null)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                   child: Text(
                     _error!,
                     style: TextStyle(
@@ -392,9 +394,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                       )
                     : _loading
                     ? Center(
-                        child: CircularProgressIndicator(
-                          color: _kKmstryBlue,
-                        ),
+                        child: CircularProgressIndicator(color: _kKmstryBlue),
                       )
                     : _items.isEmpty
                     ? _FindFriendsEmptyState(
@@ -402,68 +402,84 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
                         mode: _FindFriendsEmptyMode.noResults,
                       )
                     : ListView.separated(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         itemCount: _items.length,
                         separatorBuilder: (_, index) =>
                             const SizedBox(height: 10),
                         itemBuilder: (context, index) {
                           final item = _items[index];
-                          return Material(
-                            color: Colors.transparent,
-                            child: InkWell(
+                          // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(18),
-                              onTap: () => _openProfile(item),
-                              child: Ink(
-                                decoration: BoxDecoration(
-                                  color: cardColor,
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(color: borderColor),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      blurRadius: 14,
-                                      offset: const Offset(0, 8),
-                                      color: isDark
-                                          ? _kKmstryBlue.withValues(alpha: 0.06)
-                                          : Colors.black.withValues(alpha: 0.04),
-                                    ),
-                                  ],
+                              boxShadow: [
+                                BoxShadow(
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 8),
+                                  color: isDark
+                                      ? _kKmstryBlue.withValues(alpha: 0.06)
+                                      : Colors.black.withValues(alpha: 0.04),
                                 ),
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(18),
+                                onTap: () => _openProfile(item),
+                                child: Ink(
+                                  decoration: BoxDecoration(
+                                    color: cardColor,
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(color: borderColor),
                                   ),
-                                  leading: CircleAvatar(
-                                    radius: 24,
-                                    backgroundColor: _kKmstryBlue
-                                        .withValues(alpha: isDark ? 0.18 : 0.12),
-                                    child: Icon(
-                                      Icons.person_outline,
-                                      color: _kKmstryBlue,
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 6,
                                     ),
-                                  ),
-                                  title: Text(
-                                    '@${item.username}',
-                                    style: TextStyle(
-                                      color: isDark ? Colors.white : Colors.black87,
-                                      fontWeight: FontWeight.w800,
+                                    leading: CircleAvatar(
+                                      radius: 24,
+                                      backgroundColor: _kKmstryBlue.withValues(
+                                        alpha: isDark ? 0.18 : 0.12,
+                                      ),
+                                      child: Icon(
+                                        Icons.person_outline,
+                                        color: _kKmstryBlue,
+                                      ),
                                     ),
-                                  ),
-                                  subtitle: Text(
-                                    item.fullName?.trim().isNotEmpty == true
-                                        ? item.fullName!
-                                        : 'No name yet',
-                                    style: TextStyle(
+                                    title: Text(
+                                      '@${item.username}',
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? Colors.white
+                                            : Colors.black87,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      item.fullName?.trim().isNotEmpty == true
+                                          ? item.fullName!
+                                          : 'No name yet',
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? Colors.white.withValues(
+                                                alpha: 0.58,
+                                              )
+                                            : Colors.black.withValues(
+                                                alpha: 0.50,
+                                              ),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    trailing: Icon(
+                                      Icons.chevron_right_rounded,
                                       color: isDark
-                                          ? Colors.white.withValues(alpha: 0.58)
-                                          : Colors.black.withValues(alpha: 0.50),
-                                      fontWeight: FontWeight.w600,
+                                          ? Colors.white.withValues(alpha: 0.34)
+                                          : Colors.black.withValues(
+                                              alpha: 0.30,
+                                            ),
                                     ),
-                                  ),
-                                  trailing: Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: isDark
-                                        ? Colors.white.withValues(alpha: 0.34)
-                                        : Colors.black.withValues(alpha: 0.30),
                                   ),
                                 ),
                               ),
@@ -483,10 +499,7 @@ class _FindFriendsPageState extends State<FindFriendsPage> {
 enum _FindFriendsEmptyMode { idle, noResults }
 
 class _FindFriendsEmptyState extends StatelessWidget {
-  const _FindFriendsEmptyState({
-    required this.isDark,
-    required this.mode,
-  });
+  const _FindFriendsEmptyState({required this.isDark, required this.mode});
 
   final bool isDark;
   final _FindFriendsEmptyMode mode;
@@ -497,7 +510,7 @@ class _FindFriendsEmptyState extends StatelessWidget {
     return Align(
       alignment: const Alignment(0, -0.38),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Container(
           width: double.infinity,
           constraints: const BoxConstraints(maxWidth: 340),

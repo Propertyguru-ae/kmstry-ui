@@ -214,6 +214,7 @@ class VenueOwnerRepository {
     String? description,
     String? photo,
     String? type,
+    String? reservationPhone,
   }) async {
     final session = PendingPublicMediaService.instance.sessionGeneration;
     final headers = await _authHeaders();
@@ -222,6 +223,7 @@ class VenueOwnerRepository {
     if (description != null) body['description'] = description;
     if (photo != null) body['photo'] = photo;
     if (type != null) body['type'] = type;
+    if (reservationPhone != null) body['reservation_phone'] = reservationPhone;
 
     final data = await _api.patch(
       '/venues/$venueId',

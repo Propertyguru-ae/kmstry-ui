@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -10,6 +11,9 @@ import 'package:kmstry_frontend/features/checkin/services/active_checkin_service
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/profile/presentation/profile_page.dart';
 import 'package:kmstry_frontend/features/profile/data/profile_stats_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/followed_venues_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
@@ -73,9 +77,15 @@ class _Checkins extends CheckinRepository {
 }
 
 class _Stats extends ProfileStatsRepository {
+  int venues = 7;
   @override
   Future<ProfileStats> load() async =>
-      const ProfileStats(friends: 45, venues: 7);
+      ProfileStats(friends: 45, venues: venues);
+}
+
+class _NoFollowedVenues extends VenueContextRepository {
+  @override
+  Future<List<Venue>> getFollowedVenues() async => const [];
 }
 
 Map<String, dynamic> _me(String? checkin) => {
@@ -115,19 +125,32 @@ Future<void> _mount(
   _Auth auth,
   _Checkins checkins, {
   _Stories? stories,
+  _Stats? stats,
+  VenueContextRepository? venues,
+  void Function(String id)? selectTabId,
 }) async {
   tester.view.physicalSize = const Size(800, 1400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  final page = ProfilePage(
+    authRepository: auth,
+    checkinRepository: checkins,
+    statsRepository: stats ?? _Stats(),
+    storyRepository: stories,
+    venueContextRepository: venues,
+  );
   await tester.pumpWidget(
     MaterialApp(
-      home: ProfilePage(
-        authRepository: auth,
-        checkinRepository: checkins,
-        statsRepository: _Stats(),
-        storyRepository: stories,
-      ),
+      home: selectTabId == null
+          ? page
+          : AppShellNav(
+              selectTab: (_) {},
+              selectTabId: selectTabId,
+              switchToVenueProfile: (_) {},
+              switchToPersonalProfile: () {},
+              child: page,
+            ),
     ),
   );
   await tester.pump();
@@ -639,4 +662,63 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('the empty Venues page leads to the map tab, Back does not', (
+    tester,
+  ) async {
+    final tabs = <String>[];
+    await _mount(
+      tester,
+      _Auth()..current = _me(null),
+      _Checkins(),
+      venues: _NoFollowedVenues(),
+      selectTabId: tabs.add,
+    );
+    Future<void> openVenues() async {
+      await tester.tap(find.text('Venues'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('No followed venues yet'), findsOneWidget);
+    }
+
+    await openVenues();
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(FollowedVenuesPage), findsNothing);
+    expect(tabs, isEmpty);
+
+    await openVenues();
+    await tester.tap(find.text('Discover on map'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(FollowedVenuesPage), findsNothing);
+    expect(tabs, [kPersonalDiscoverTabId]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('following a venue elsewhere refreshes the Venues count', (
+    tester,
+  ) async {
+    addTearDown(() => VenueContextRepository.followChanges.value = null);
+    final stats = _Stats();
+    await _mount(
+      tester,
+      _Auth()..current = _me(null),
+      _Checkins(),
+      stats: stats,
+    );
+    expect(find.text('7'), findsOneWidget);
+    stats.venues = 8;
+    VenueContextRepository.followChanges.value = const VenueFollowChange(
+      venueId: 'venue-1',
+      following: true,
+      session: 0,
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('8'), findsOneWidget);
+    expect(find.text('7'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

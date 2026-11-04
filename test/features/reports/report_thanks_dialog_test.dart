@@ -65,6 +65,16 @@ void main() {
         );
         await tester.tap(find.text('Report'));
         await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('Scam or fraud'),
+          100,
+          scrollable: find.descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.ensureVisible(find.text('Scam or fraud'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Scam or fraud'));
         await tester.pump();
         // User reports also block, so the button says so.

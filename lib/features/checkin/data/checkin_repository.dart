@@ -9,6 +9,8 @@ import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/network/app_request_headers.dart';
 import 'package:kmstry_frontend/core/network/multipart_upload.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
+import 'package:kmstry_frontend/core/user/daily_undo_quota.dart';
+import 'package:kmstry_frontend/features/people/data/match_item_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_intent_selection.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:http_parser/http_parser.dart' as http_parser;
@@ -126,7 +128,7 @@ class CheckinRepository {
       'checkin_method': 'gps',
       'latitude': latitude,
       'longitude': longitude,
-      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters,
+      'accuracy_meters': ?accuracyMeters,
       if (locationCapturedAt != null)
         'location_captured_at': locationCapturedAt.toUtc().toIso8601String(),
       'vibe': vibe,
@@ -165,7 +167,7 @@ class CheckinRepository {
       'checkin_method': 'gps',
       'latitude': latitude,
       'longitude': longitude,
-      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters,
+      'accuracy_meters': ?accuracyMeters,
       if (locationCapturedAt != null)
         'location_captured_at': locationCapturedAt.toUtc().toIso8601String(),
       'vibe': vibe,
@@ -752,40 +754,58 @@ class CheckinRepository {
     }
   }
 
-  Future<void> sendFeedAction({
+  Future<MatchItem?> sendFeedAction({
     required String targetUserId,
     String? venueId,
-    // required String checkinId,
+    ({String id, DateTime version})? interestNotice,
     required String action,
   }) async {
     final token = await SecureStorage.getAccessToken();
 
     final body = <String, dynamic>{
       'target_user_id': targetUserId,
-      //'checkin_id': checkinId,
+      if (interestNotice != null) ...{
+        'interest_notification_id': interestNotice.id,
+        'interest_notification_version': interestNotice.version.toUtc().toIso8601String(),
+      },
       'action': action,
     };
     if (venueId != null && venueId.isNotEmpty) {
       body['venue_id'] = venueId;
     }
 
-    await _api.post(
+    final response = await _api.post(
       '/feed/actions',
       headers: {'Authorization': 'Bearer $token'},
       body: body,
     );
+    final raw = response is Map ? response['friendship'] : null;
+    if (raw is! Map || raw['user_id'] != targetUserId) return null;
+    final connection = MatchItem.fromJson(Map<String, dynamic>.from(raw));
+    return connection.matchId.isEmpty ? null : connection;
+  }
+
+  Future<DailyUndoQuota?> getUndoQuota() async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null || token.isEmpty) return null;
+    final data = await _api.get(
+      '/feed/undo-quota',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return DailyUndoQuota.fromResponse(data);
   }
 
   /// Rewind/undo the current user's last action (pass OR interested) toward
   /// [targetUserId] so the profile becomes actionable again. Backend enforces
   /// the daily rewind quota (403 REWIND_LIMIT_REACHED) and blocks undoing an
   /// interested once matched (409 MATCH_EXISTS).
-  Future<void> undoAction(String targetUserId) async {
+  Future<DailyUndoQuota?> undoAction(String targetUserId) async {
     final token = await SecureStorage.getAccessToken();
-    await _api.delete(
+    final data = await _api.delete(
       '/feed/actions/$targetUserId',
       headers: {'Authorization': 'Bearer $token'},
     );
+    return DailyUndoQuota.fromResponse(data);
   }
 
   Future<void> blockUser(String targetUserId) async {

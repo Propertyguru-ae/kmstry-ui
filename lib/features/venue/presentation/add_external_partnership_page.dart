@@ -284,77 +284,83 @@ class _SelectTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+    return DecoratedBox(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            color: selected
-                ? AppColors.blue.withValues(alpha: isDark ? 0.16 : 0.10)
-                : kCard,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                  color: AppColors.blue.withValues(alpha: 0.16),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
               color: selected
-                  ? AppColors.blue.withValues(alpha: 0.62)
-                  : kBorder,
-              width: selected ? 1.2 : 1,
+                  ? AppColors.blue.withValues(alpha: isDark ? 0.16 : 0.10)
+                  : kCard,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected
+                    ? AppColors.blue.withValues(alpha: 0.62)
+                    : kBorder,
+                width: selected ? 1.2 : 1,
+              ),
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                      color: AppColors.blue.withValues(alpha: 0.16),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    gradient: selected
+                        ? const LinearGradient(
+                            colors: [AppColors.blue, AppColors.teal],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: selected ? null : Colors.transparent,
+                    border: Border.all(
+                      color: selected
+                          ? Colors.transparent
+                          : kText.withValues(alpha: isDark ? 0.42 : 0.28),
+                      width: 1.6,
                     ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: selected
-                      ? const LinearGradient(
-                          colors: [AppColors.blue, AppColors.teal],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        )
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check_rounded,
+                          color: Colors.white, size: 17)
                       : null,
-                  color: selected ? null : Colors.transparent,
-                  border: Border.all(
-                    color: selected
-                        ? Colors.transparent
-                        : kText.withValues(alpha: isDark ? 0.42 : 0.28),
-                    width: 1.6,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: selected
+                          ? kText
+                          : kText.withValues(alpha: isDark ? 0.78 : 0.72),
+                      fontSize: 14.5,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                    ),
                   ),
                 ),
-                child: selected
-                    ? const Icon(Icons.check_rounded,
-                        color: Colors.white, size: 17)
-                    : null,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: selected
-                        ? kText
-                        : kText.withValues(alpha: isDark ? 0.78 : 0.72),
-                    fontSize: 14.5,
-                    fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                  ),
-                ),
-              ),
-              if (selected)
-                const Icon(Icons.done_rounded, color: AppColors.teal, size: 18),
-            ],
+                if (selected)
+                  const Icon(Icons.done_rounded, color: AppColors.teal, size: 18),
+              ],
+            ),
           ),
         ),
       ),

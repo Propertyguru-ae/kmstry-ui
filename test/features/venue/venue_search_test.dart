@@ -43,6 +43,7 @@ class _Venues extends VenueRepository {
     String? venueId,
     String? ownerFullName,
     String? ownerPhone,
+    String? reservationPhone,
     String? ownerBirthdate,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,

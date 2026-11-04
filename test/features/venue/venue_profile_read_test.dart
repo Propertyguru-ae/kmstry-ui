@@ -39,6 +39,50 @@ VenueOwnerStatsVenue _identity(String id) => VenueOwnerStatsVenue(
 
 void main() {
   test(
+    'pending claim uses its own phone from auth context, not public identity',
+    () async {
+      final read = VenueProfileRead(
+        readMe: (_) async => {
+          'memberVenues': [
+            {
+              'venue': {'id': 'a', 'name': 'Cafe a'},
+              'myRole': 'OWNER',
+              'status': 'PENDING',
+              'claimReservationPhone': ' +442079460002 ',
+            },
+          ],
+        },
+        readIdentity: (_) async => throw StateError('VIEW_STATS denied'),
+      );
+      final result = (await read.load(venueId: 'a', isCurrent: () => true))!;
+      expect(result.venue!.reservationPhone, '+442079460002');
+      expect(result.context.isClaimLocked, true);
+      expect(result.venue!.description, isNull);
+    },
+  );
+
+  test('rejected claim never displays a stale submitted phone', () async {
+    final read = VenueProfileRead(
+      readMe: (_) async => _me(
+        venues: [
+          {
+            ..._member('a', status: 'REJECTED'),
+            'claimReservationPhone': '+442079460002',
+          },
+        ],
+      ),
+      readIdentity: (_) async => throw StateError('VIEW_STATS denied'),
+    );
+    expect(
+      (await read.load(
+        venueId: 'a',
+        isCurrent: () => true,
+      ))!.venue!.reservationPhone,
+      isNull,
+    );
+  });
+
+  test(
     'explicit venue starts account and identity in parallel, not exposing identity before confirmation',
     () async {
       final account = Completer<Map<String, dynamic>>();

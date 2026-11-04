@@ -40,21 +40,29 @@ class ChatRepository {
 
   ChatDetail? cachedChat(String chatId) => _cache.detail(chatId);
 
-  /// GET /chats — list of active chats with last_message_at, sorted by last_message_at.
+  bool canMessage(ChatListItem row) {
+    if (row.isBlocked || !row.canSendMessages) return false;
+    final current = _cache.chats?.where((c) => c.id == row.id).firstOrNull;
+    return current == null || (!current.isBlocked && current.canSendMessages);
+  }
+
+  /// Messages history includes ended friendships; recipients must pass canMessage.
   Future<List<ChatListItem>> getChats() async {
     final generation = _cache.generation;
+    final revision = _cache.relationshipRevision;
     final snapshot = _cache.chats;
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
 
     final data = await _api.get(
-      '/chats',
+      '/chats?include_inactive=true',
       headers: {'Authorization': 'Bearer $token'},
     );
     final chats = _parseChatList(data);
-    return generation == _cache.generation
+    return generation == _cache.generation &&
+            revision == _cache.relationshipRevision
         ? _cache.acceptRows(chats, snapshot: snapshot)
-        : chats;
+        : (_cache.chats ?? <ChatListItem>[]);
   }
 
   /// GET /chats/search?query=... — chat list filtered by participant name.
@@ -65,7 +73,7 @@ class ChatRepository {
     if (trimmed.isEmpty) return getChats();
     final encoded = Uri.encodeQueryComponent(trimmed);
     final data = await _api.get(
-      '/chats/search?query=$encoded',
+      '/chats/search?query=$encoded&include_inactive=true',
       headers: {'Authorization': 'Bearer $token'},
     );
     return _parseChatList(data);
@@ -98,7 +106,7 @@ class ChatRepository {
     if (token == null) throw Exception('Not authenticated');
 
     final data = await _api.post(
-      '/chats',
+      '/chats?include_inactive=true',
       headers: {'Authorization': 'Bearer $token'},
       body: {'other_user_id': otherUserId},
     );
@@ -126,6 +134,7 @@ class ChatRepository {
     int? take,
   }) async {
     final generation = _cache.generation;
+    final revision = _cache.relationshipRevision;
     final snapshot = _cache.detail(chatId);
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
@@ -144,7 +153,13 @@ class ChatRepository {
 
     final detail = ChatDetail.fromJson(data as Map<String, dynamic>);
     // History pages are not the latest page: never replace its warm snapshot.
-    if (beforeId != null || generation != _cache.generation) return detail;
+    if (generation != _cache.generation ||
+        _cache.relationshipChangedSince(detail, revision) ||
+        (snapshot != null &&
+            _cache.relationshipChangedSince(snapshot, revision))) {
+      return detail.copyWith(isActive: false, canSendMessages: false);
+    }
+    if (beforeId != null) return detail;
     return _cache.acceptDetail(detail, snapshot);
   }
 

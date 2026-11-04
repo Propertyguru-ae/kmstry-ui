@@ -1,27 +1,30 @@
+import '../../people/data/friendship_changes.dart';
+import '../../people/data/match_item_model.dart';
+import '../../people/presentation/block_user_dialog.dart';
+import '../../people/presentation/remove_friend_dialog.dart';
+import '../../people/presentation/user_actions_sheet.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import '../../reports/presentation/child_safety_report.dart';
-import 'package:flutter/services.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
-import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/user/premium_feature.dart';
+import 'package:kmstry_frontend/core/user/daily_undo_quota.dart';
 import 'package:kmstry_frontend/core/user/premium_gate.dart';
+import 'package:kmstry_frontend/core/user/user_session.dart';
 import 'package:kmstry_frontend/features/auth/data/auth_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_profile_model.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
-import 'package:kmstry_frontend/features/reports/presentation/report_ui.dart';
+import 'package:kmstry_frontend/features/reports/presentation/report_user_sheet.dart';
 import 'package:kmstry_frontend/features/stories/data/story_model.dart';
 import 'package:kmstry_frontend/features/stories/data/story_repository.dart';
 import 'package:kmstry_frontend/features/stories/presentation/story_ring_painter.dart';
@@ -32,6 +35,8 @@ import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+
+enum _UndoPhase { idle, awaitingConfirmation, optimistic }
 
 enum ProfileActionState {
   showActions,
@@ -64,6 +69,8 @@ StoryGroup? profileStoryGroupFor(List<StoryGroup> groups, String userId) {
 
 class ProfilePreviewPage extends StatefulWidget {
   static final Map<String, ProfileActionState> _actionStateCacheByUserId = {};
+  static int _actionCacheRevision = 0;
+  static int _actionSession = -1;
 
   static void clearActionStateCache() {
     _actionStateCacheByUserId.clear();
@@ -71,6 +78,12 @@ class ProfilePreviewPage extends StatefulWidget {
 
   static ProfileActionState? peekCachedActionState(String? userId) {
     if (userId == null || userId.isEmpty) return null;
+    if (_actionCacheRevision != FriendshipChanges.revision ||
+        _actionSession != SecureStorage.sessionRevision) {
+      _actionStateCacheByUserId.clear();
+      _actionCacheRevision = FriendshipChanges.revision;
+      _actionSession = SecureStorage.sessionRevision;
+    }
     return _actionStateCacheByUserId[userId];
   }
 
@@ -81,6 +94,7 @@ class ProfilePreviewPage extends StatefulWidget {
   final String? userUsername;
   final String? userPhoto;
   final bool isMatchedHint;
+  final ({String id, DateTime version})? interestNotice;
   final String? chatIdHint;
   final ProfileActionState? actionStateHint;
   final String? fallbackBio;
@@ -90,6 +104,7 @@ class ProfilePreviewPage extends StatefulWidget {
   final String? hintVenuePhoto;
   final bool hideVenueInfo;
   final CheckinRepository? checkinRepository;
+  final MatchRepository? matchRepository;
 
   const ProfilePreviewPage({
     super.key,
@@ -100,6 +115,7 @@ class ProfilePreviewPage extends StatefulWidget {
     this.userUsername,
     this.userPhoto,
     this.isMatchedHint = false,
+    this.interestNotice,
     this.chatIdHint,
     this.actionStateHint,
     this.fallbackBio,
@@ -109,6 +125,7 @@ class ProfilePreviewPage extends StatefulWidget {
     this.hintVenuePhoto,
     this.hideVenueInfo = false,
     this.checkinRepository,
+    this.matchRepository,
   }) : assert(
          checkinId != null || userId != null,
          'Either checkinId or userId must be provided.',
@@ -118,9 +135,10 @@ class ProfilePreviewPage extends StatefulWidget {
   State<ProfilePreviewPage> createState() => _ProfilePreviewPageState();
 }
 
-class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
+class _ProfilePreviewPageState extends State<ProfilePreviewPage>
+    with WidgetsBindingObserver {
   late final _repo = widget.checkinRepository ?? CheckinRepository();
-  final _matchRepo = MatchRepository();
+  late final _matchRepo = widget.matchRepository ?? MatchRepository();
   final _venueRepo = VenueCheckinRepository();
   final _venueContextRepository = VenueContextRepository();
   static const Color _darkBg = Color(0xFF0B0F17);
@@ -135,7 +153,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   /// When false: viewer is not at this venue (no active check-in here) -> hide posts & vibe.
   bool _showPostsAndVibe = false;
-  bool _showSuggestedForYou = false;
   bool _isBlocked = false;
   // Karşı taraf BENİ blokladıysa true. Backend, iki yönlü blokta profili 403
   // (`Profile unavailable`) ile reddeder — bunu yakalayıp mesaj butonunu iki
@@ -149,7 +166,39 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   final Set<String> _viewedStoryIds = {};
   bool _isBlocking = false;
   bool _isReporting = false;
-  bool _isSendingAction = false;
+  bool _removingFriend = false;
+  bool _ignoreMatchedHint = false;
+  MatchItem? _friendship;
+  int _friendshipRequest = 0;
+  int _profileRequest = 0;
+  bool _checkingFriendship = true;
+  Future<void>? _pendingSend;
+  bool get _isSendingAction => _pendingSend != null;
+  _UndoPhase _undoPhase = _UndoPhase.idle;
+  bool get _undoing => _undoPhase != _UndoPhase.idle;
+  ({String action, Future<void> Function() submit})? _afterUndo;
+  ProfileActionState? get _visibleAction {
+    if (_undoPhase != _UndoPhase.optimistic || !_hasUndoableAction) {
+      return _actionState;
+    }
+    return switch (_afterUndo?.action) {
+      'interested' => ProfileActionState.waitingResponse,
+      'pass' => ProfileActionState.proactivePass,
+      _ => ProfileActionState.showActions,
+    };
+  }
+
+  bool _hasCheckedFriendship = false;
+  bool get _hasUndoableAction =>
+      _actionState == ProfileActionState.waitingResponse ||
+      _actionState == ProfileActionState.proactivePass ||
+      _actionState == ProfileActionState.reactivePass;
+  bool _interestUnavailable = false;
+  int _acceptRequest = 0;
+  Timer? _slowAcceptTimer;
+  bool _accepting = false;
+  bool _retryAccept = false;
+  bool _openingChat = false;
   int _selectedProfileTab = 0;
   final Map<String, String?> _videoPosterPathByUrl = {};
   final Map<String, Future<String?>> _videoPosterFutureByUrl = {};
@@ -225,6 +274,8 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
 
   void _rememberActionState(String? userId, ProfileActionState state) {
     if (userId == null || userId.isEmpty) return;
+    // Apply session invalidation before writing a newly confirmed state.
+    ProfilePreviewPage.peekCachedActionState(userId);
     ProfilePreviewPage._actionStateCacheByUserId[userId] = state;
   }
 
@@ -244,14 +295,9 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     required ProfileActionState serverState,
     ProfileActionState? localState,
   }) {
-    // Prevent temporary stale backend states from downgrading a local matched state.
-    if (localState == ProfileActionState.matched &&
-        serverState != ProfileActionState.matched) {
-      return localState!;
-    }
-
-    // Keep optimistic/local UX state when backend still returns "showActions"
-    // due to eventual consistency or venue-independent action flow.
+    // A profile snapshot must not undo an accepted interest. The dedicated
+    // friendship lookup below confirms removals once the write has finished.
+    if (localState == ProfileActionState.matched) return localState!;
     if (serverState == ProfileActionState.showActions &&
         localState != null &&
         localState != ProfileActionState.showActions) {
@@ -263,7 +309,130 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    FriendshipChanges.changes.addListener(_onFriendshipChanged);
+    _warmUndoQuota();
     _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _slowAcceptTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    FriendshipChanges.changes.removeListener(_onFriendshipChanged);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _warmUndoQuota();
+      unawaited(_loadProfile());
+    }
+  }
+
+  void _onFriendshipChanged() {
+    final change = FriendshipChanges.changes.value;
+    if (!mounted || change == null) return;
+    ProfilePreviewPage._actionStateCacheByUserId.remove(change.userId);
+    if (change.userId.isNotEmpty &&
+        change.userId != (_profile?.user.id ?? widget.userId)) {
+      return;
+    }
+    _ignoreMatchedHint = true;
+    setState(() {
+      // Reconnect asks for revalidation; it does not mean friendship ended.
+      if (change.userId.isNotEmpty) {
+        _friendship = change.active ? change.friendship ?? _friendship : null;
+        if (!change.active || change.friendship != null) {
+          _slowAcceptTimer?.cancel();
+          ++_acceptRequest;
+          _accepting = false;
+        }
+        _retryAccept = false;
+        _interestUnavailable = !change.active && widget.interestNotice != null;
+        _afterUndo = null;
+        _actionState = change.active
+            ? ProfileActionState.matched
+            : ProfileActionState.showActions;
+      }
+      _storyGroup = null;
+    });
+    if (change.active && change.friendship != null) {
+      ++_profileRequest;
+      ++_friendshipRequest;
+      _checkingFriendship = false;
+      _rememberActionState(change.userId, ProfileActionState.matched);
+      if (!_loading) return;
+    }
+    unawaited(_loadProfile());
+  }
+
+  Future<void> _refreshFriendship() async {
+    final userId = _profile?.user.id ?? widget.userId;
+    if (userId == null ||
+        _profileUnavailable ||
+        _blockedByOther ||
+        _isSendingAction ||
+        _undoing) {
+      if (mounted) setState(() => _checkingFriendship = false);
+      return;
+    }
+    final request = ++_friendshipRequest;
+    final profileRequest = _profileRequest;
+    bool isCurrent() =>
+        mounted &&
+        request == _friendshipRequest &&
+        profileRequest == _profileRequest;
+    setState(() => _checkingFriendship = true);
+    try {
+      final friendship = await _matchRepo.getFriendship(userId);
+      if (!isCurrent()) return;
+      setState(() {
+        _friendship = friendship;
+        _ignoreMatchedHint = true;
+        if (friendship != null) {
+          _actionState = ProfileActionState.matched;
+        } else if (_actionState == ProfileActionState.matched) {
+          if (widget.interestNotice != null) _interestUnavailable = true;
+          _actionState = ProfileActionState.showActions;
+        }
+      });
+      if (_actionState != null) _rememberActionState(userId, _actionState!);
+    } catch (_) {
+      // Do not offer a destructive action without an authoritative version.
+      if (isCurrent()) {
+        setState(() => _friendship = null);
+      }
+    } finally {
+      if (isCurrent()) {
+        setState(() {
+          _hasCheckedFriendship = true;
+          _checkingFriendship = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _removeFriend() async {
+    final friendship = _friendship;
+    if (_removingFriend || friendship == null) return;
+    setState(() => _removingFriend = true);
+    try {
+      final name =
+          _profile?.user.fullName ??
+          _publicProfile?.fullName ??
+          widget.userName ??
+          'this person';
+      if (!await confirmRemoveFriend(context, name) || !mounted) return;
+      await _matchRepo.removeFriend(friendship);
+      if (mounted) showFriendRemovedNotice(context);
+    } catch (_) {
+      if (mounted) showRemoveFriendFailedNotice(context);
+      unawaited(_refreshFriendship());
+    } finally {
+      if (mounted) setState(() => _removingFriend = false);
+    }
   }
 
   String _formatWhatBringsLabel(String raw) {
@@ -283,6 +452,13 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   }
 
   Future<void> _loadProfile() async {
+    if (_undoing || _accepting || (_isSendingAction && _hasUndoableAction)) {
+      return;
+    }
+    final request = ++_profileRequest;
+    ++_friendshipRequest;
+    bool isCurrent() => mounted && request == _profileRequest;
+    setState(() => _checkingFriendship = true);
     // Profil fetch'i 403 (`Profile unavailable`) dönerse iki yönlü blok vardır;
     // ben bloklamadıysam karşı taraf beni bloklamış demektir.
     bool blockedByOther = false;
@@ -303,6 +479,10 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       if (checkinId != null && checkinId.isNotEmpty) {
         try {
           final profile = await _repo.getCheckinProfile(checkinId);
+          if (widget.interestNotice != null &&
+              widget.userId != profile.user.id) {
+            throw StateError('Check-in no longer identifies this requester');
+          }
           // Prefer API check-in venue (DB UUID). Caller may pass Google [Venue.id] as venueId — do not use that for gating.
           final profileVenueId = profile.checkin.venueId;
           if (profileVenueId != null && profileVenueId.isNotEmpty) {
@@ -326,15 +506,18 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           if (sameVenueAsCheckin || sameVenueFallback) {
             showPostsAndVibe = true;
           }
-          if (!mounted) return;
+          if (!isCurrent()) return;
           final blockedIds = await _repo.getBlockedUserIds();
-          if (!mounted) return;
+          if (!isCurrent()) return;
           setState(() {
             final determined = _determineActionState(profile);
             final localHint =
+                _actionState ??
+                (widget.interestNotice != null
+                    ? ProfileActionState.incomingInterested
+                    : null) ??
                 _cachedActionStateFor(profile.user.id) ??
-                widget.actionStateHint ??
-                _actionState;
+                widget.actionStateHint;
             _profile = profile;
             _publicProfile = null;
             _resolvedVenueId = resolvedVenueId;
@@ -345,7 +528,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             _isBlocked = blockedIds.contains(profile.user.id);
             _blockedByOther = false;
             _showPostsAndVibe = showPostsAndVibe;
-            _showSuggestedForYou = false;
             _loading = false;
           });
           unawaited(_loadUserStories());
@@ -360,7 +542,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         }
       }
 
-      if (!mounted) return;
+      if (!isCurrent()) return;
       final targetUserId = widget.userId;
       PublicUserProfile? publicProfile;
       var profileUnavailable = false;
@@ -381,32 +563,35 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         }
       }
       final blockedIds = await _repo.getBlockedUserIds();
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() {
         _profile = null;
         _publicProfile = publicProfile;
         _resolvedVenueId = resolvedVenueId;
-        _actionState = widget.isMatchedHint
+        _actionState = widget.isMatchedHint && !_ignoreMatchedHint
             ? ProfileActionState.matched
-            : (_cachedActionStateFor(targetUserId) ??
-                  _actionState ??
+            : (_actionState ??
+                  (widget.interestNotice != null
+                      ? ProfileActionState.incomingInterested
+                      : null) ??
+                  _cachedActionStateFor(targetUserId) ??
                   widget.actionStateHint ??
                   ProfileActionState.showActions);
         _isBlocked = targetUserId != null && blockedIds.contains(targetUserId);
         _blockedByOther = blockedByOther;
         _profileUnavailable = profileUnavailable;
         _showPostsAndVibe = false;
-        _showSuggestedForYou =
-            _actionState != ProfileActionState.matched &&
-            widget.checkinId == null &&
-            (resolvedVenueId == null || resolvedVenueId.isEmpty);
         _loading = false;
       });
       unawaited(_loadUserStories());
     } catch (e) {
       debugPrint('❌ profile load error: $e');
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() => _loading = false);
+    } finally {
+      if (isCurrent()) {
+        await _refreshFriendship();
+      }
     }
   }
 
@@ -414,6 +599,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   /// mekan bazlı geldiği için mekan bağlamı (Who's here vb.) gerekir; yoksa ya
   /// da engelleme varsa halka gösterilmez. Hata halka için sessizce yutulur.
   Future<void> _loadUserStories() async {
+    final revision = FriendshipChanges.revision;
     final userId = (_profile?.user.id ?? widget.userId ?? '').trim();
     final venueId =
         (_resolvedVenueId ??
@@ -427,7 +613,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
     try {
       final groups = await StoryRepository().getVenueStories(venueId);
-      if (!mounted) return;
+      if (!mounted || revision != FriendshipChanges.revision) return;
       final match = profileStoryGroupFor(groups, userId);
       setState(() => _storyGroup = match);
     } catch (e) {
@@ -532,137 +718,353 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     return ProfileActionState.showActions;
   }
 
-  Future<void> _undoAction() async {
-    if (_isSendingAction) return;
-    final targetUserId = _profile?.user.id ?? widget.userId;
-    if (targetUserId == null || targetUserId.isEmpty) return;
+  bool _sendWasRejected(Object error) =>
+      error is ApiException &&
+      error.statusCode >= 400 &&
+      error.statusCode < 500 &&
+      error.statusCode != 408;
 
-    // ── OPTIMISTIC: anında aksiyon alınabilir duruma dön, network arka planda ──
-    final previousState = _actionState;
-    setState(() => _actionState = ProfileActionState.showActions);
-    _rememberActionState(targetUserId, ProfileActionState.showActions);
-    unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
+  bool get _hasUnlimitedUndos {
+    final member = UserSession.instance;
+    final until = member.premiumUntil;
+    return member.loaded &&
+        member.has(PremiumFeature.unlimitedRewinds) &&
+        (until == null || until.isAfter(DateTime.now()));
+  }
 
-    try {
-      await _repo.undoAction(targetUserId);
-    } on ApiException catch (e) {
-      // Hata: optimistic durumu geri al ve uygun mesajı göster.
-      if (mounted) {
-        setState(() => _actionState = previousState);
-        _rememberActionState(
-          targetUserId,
-          previousState ?? ProfileActionState.showActions,
-        );
-      }
-      if (!mounted) return;
-      final code = e.data['error']?.toString();
-      if (e.statusCode == 403 && code == 'REWIND_LIMIT_REACHED') {
-        await PremiumGate.ensure(
-          context,
-          PremiumFeature.unlimitedRewinds,
-          title: 'Out of rewinds today',
-          message:
-              'You\'ve used all your rewinds for today. Unlimited rewinds are '
-              'not enabled for this beta account.',
-        );
-      } else if (e.statusCode == 409 && code == 'MATCH_EXISTS') {
-        await showPremiumErrorDialog(
-          context,
-          message: 'You have already matched. Use unmatch instead.',
-        );
-      } else {
-        await showPremiumErrorDialog(
-          context,
-          message: 'Could not undo. Please try again.',
-        );
-      }
-    } catch (e) {
-      debugPrint('❌ undo action error: $e');
-      if (mounted) {
-        setState(() => _actionState = previousState);
-        _rememberActionState(
-          targetUserId,
-          previousState ?? ProfileActionState.showActions,
-        );
-      }
+  void _warmUndoQuota() {
+    if (!_hasUnlimitedUndos && !_undoing) {
+      unawaited(UserSession.instance.warmUndoQuota(_repo.getUndoQuota));
     }
   }
 
-  Future<void> _handleAction(String action) async {
-    if (_isBlocked) {
+  Future<void> _undoAction() async {
+    if (_undoing) {
+      // Cancelling a queued choice only cancels that local intent.
+      if (_afterUndo != null) setState(() => _afterUndo = null);
       return;
     }
-    if (_isSendingAction) return;
-
-    final targetUserId = _profile?.user.id ?? widget.userId;
-    final venueIdForAction = _resolvedVenueId ?? _profile?.checkin.venueId;
-    if (targetUserId == null || targetUserId.isEmpty) return;
-    final isAcceptFlow =
-        action == 'interested' &&
-        _actionState == ProfileActionState.incomingInterested;
-
-    // Only allow actions in showActions or incomingInterested states
-    if (_actionState != ProfileActionState.showActions &&
-        _actionState != ProfileActionState.incomingInterested) {
+    if (!_hasUndoableAction ||
+        _isBlocked ||
+        _blockedByOther ||
+        _interestUnavailable) {
       return;
     }
-
-    // ── OPTIMISTIC: UI anında yeni duruma geçer, network arka planda döner ──
-    // Böylece butona basınca uzun spinner beklemek yok; hata olursa geri alınır.
-    final previousState = _actionState;
-    final nextState = action == 'interested'
-        ? (isAcceptFlow
-              ? ProfileActionState.matched
-              : ProfileActionState.waitingResponse)
-        : ProfileActionState.proactivePass;
-
+    final target = _profile?.user.id ?? widget.userId;
+    if (target == null || target.isEmpty) return;
+    final session = SecureStorage.sessionRevision;
+    final send = _pendingSend;
+    final repo = _repo;
+    final member = UserSession.instance;
+    final unlimited = _hasUnlimitedUndos;
+    final remaining = member.recentUndoQuota?.remaining;
+    if (remaining == 0) {
+      await PremiumGate.showDailyUndoLimit(context);
+      return;
+    }
+    // Ignore any pre-tap read that finishes after the mutation.
+    member.recordUndoQuota(null);
+    // A lookup started before this tap must not restore the outgoing interest.
+    ++_profileRequest;
+    ++_friendshipRequest;
     setState(() {
-      _actionState = nextState;
-      _isSendingAction = false;
+      _checkingFriendship = false;
+      _undoPhase = unlimited || (remaining != null && remaining > 0)
+          ? _UndoPhase.optimistic
+          : _UndoPhase.awaitingConfirmation;
     });
-    _rememberActionState(targetUserId, nextState);
-    if (action == 'interested' && !isAcceptFlow) {
-      unawaited(SecureStorage.addPendingInterestedUserId(targetUserId));
-    } else {
-      unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
-    }
 
-    // Network'ü arka planda çalıştır; UI'ı bloke etme.
-    unawaited(() async {
-      try {
-        bool isVenueContext = false;
+    Object? failure;
+    Future<void> Function()? followUp;
+    try {
+      var needsRewind = true;
+      if (send != null) {
         try {
-          final me = await AuthRepository().getMe();
-          final contextRaw =
-              (me['lastActiveContext'] ?? me['last_active_context'])
-                  ?.toString();
-          isVenueContext = contextRaw?.toUpperCase() == 'VENUE';
-        } catch (_) {
-          isVenueContext = false;
-        }
-
-        await _repo.sendFeedAction(
-          targetUserId: targetUserId,
-          venueId: isVenueContext ? venueIdForAction : null,
-          action: action,
-        );
-
-        // Only "interested" can create a mutual match server-side; sync in bg.
-        if (action == 'interested' && mounted) {
-          unawaited(_loadProfile());
-        }
-      } catch (e) {
-        debugPrint('❌ feed action error: $e');
-        // Hata: optimistic durumu geri al.
-        if (mounted) {
-          setState(() => _actionState = previousState);
-          _rememberActionState(
-            targetUserId,
-            previousState ?? ProfileActionState.showActions,
-          );
+          await send;
+        } catch (e) {
+          // A definitive rejection did not create an action. If the reply
+          // was lost, the server still needs to receive the requested Undo.
+          needsRewind = !_sendWasRejected(e);
         }
       }
-    }());
+      if (session != SecureStorage.sessionRevision) return;
+      if (needsRewind) {
+        final quota = await repo.undoAction(target);
+        if (session != SecureStorage.sessionRevision) return;
+        member.recordUndoQuota(quota);
+        if (_actionState != ProfileActionState.matched) {
+          _actionState = ProfileActionState.showActions;
+          _rememberActionState(target, ProfileActionState.showActions);
+        }
+        unawaited(SecureStorage.removePendingInterestedUserId(target));
+      }
+    } catch (e) {
+      failure = e;
+      if (session == SecureStorage.sessionRevision &&
+          e is ApiException &&
+          e.data['error'] == 'REWIND_LIMIT_REACHED') {
+        member.recordUndoQuota(DailyUndoQuota.fromResponse(e.data));
+      }
+    } finally {
+      followUp = _afterUndo?.submit;
+      _afterUndo = null;
+      _undoPhase = _UndoPhase.idle;
+      if (mounted) setState(() {});
+    }
+    if (session != SecureStorage.sessionRevision) return;
+    if (failure == null) {
+      if (_actionState == ProfileActionState.showActions &&
+          !_interestUnavailable &&
+          !_isBlocked &&
+          !_blockedByOther) {
+        await followUp?.call();
+      } else if (mounted &&
+          _actionState == ProfileActionState.matched &&
+          _friendship == null) {
+        unawaited(_refreshFriendship());
+      }
+      return;
+    }
+    if (!mounted) return;
+    final code = failure is ApiException ? failure.data['error'] : null;
+    if (code == 'MATCH_EXISTS') {
+      setState(() => _actionState = ProfileActionState.matched);
+      _rememberActionState(target, ProfileActionState.matched);
+      unawaited(SecureStorage.removePendingInterestedUserId(target));
+      await showPremiumErrorDialog(
+        context,
+        message: 'You have already matched. Use unmatch instead.',
+      );
+      if (mounted &&
+          session == SecureStorage.sessionRevision &&
+          _friendship == null) {
+        unawaited(_refreshFriendship());
+      }
+    } else if (code == 'REWIND_LIMIT_REACHED') {
+      await PremiumGate.showDailyUndoLimit(context);
+    } else {
+      await showPremiumErrorDialog(
+        context,
+        message: 'Could not undo. Please try again.',
+      );
+    }
+  }
+
+  Future<MatchItem?> _sendProfileAction(
+    String action,
+    String target,
+    String? venue,
+    int session,
+    CheckinRepository repo,
+    ({String id, DateTime version})? notice,
+  ) async {
+    String? actionVenue;
+    if (notice == null && venue != null && venue.isNotEmpty) {
+      try {
+        final me = await AuthRepository().getMe();
+        final contextType =
+            me['lastActiveContext'] ?? me['last_active_context'];
+        if (contextType?.toString().toUpperCase() == 'VENUE') {
+          actionVenue = venue;
+        }
+      } catch (_) {
+        // Keep the existing personal-action fallback when context is unavailable.
+      }
+    }
+    if (session != SecureStorage.sessionRevision) return null;
+    return repo.sendFeedAction(
+      targetUserId: target,
+      venueId: actionVenue,
+      interestNotice: notice,
+      action: action,
+    );
+  }
+
+  Future<void> _handleAction(String action) async {
+    if (_isBlocked || _blockedByOther || _interestUnavailable || _accepting) {
+      return;
+    }
+    final choice = _visibleAction;
+    if (choice != ProfileActionState.showActions &&
+        choice != ProfileActionState.incomingInterested) {
+      return;
+    }
+    if (_undoPhase == _UndoPhase.awaitingConfirmation ||
+        (!_undoing && (_isSendingAction || _checkingFriendship))) {
+      return;
+    }
+    final target = _profile?.user.id ?? widget.userId;
+    if (target == null || target.isEmpty) return;
+    final venue = _resolvedVenueId ?? _profile?.checkin.venueId;
+    final repo = _repo;
+    final notice = widget.interestNotice;
+    final session = SecureStorage.sessionRevision;
+    Future<MatchItem?> post() =>
+        _sendProfileAction(action, target, venue, session, repo, notice);
+    Future<void> submit() =>
+        action == 'interested' &&
+            (choice == ProfileActionState.incomingInterested || notice != null)
+        ? _acceptInterest(target, session, post)
+        : _submitProfileAction(action, target, choice!, session, post);
+    if (_undoing) {
+      setState(() => _afterUndo = (action: action, submit: submit));
+      return;
+    }
+    _warmUndoQuota();
+    await submit();
+  }
+
+  Future<void> _acceptInterest(
+    String target,
+    int session,
+    Future<MatchItem?> Function() post,
+  ) async {
+    final recheckFirst = _retryAccept;
+    final request = ++_acceptRequest;
+    bool current() =>
+        mounted &&
+        session == SecureStorage.sessionRevision &&
+        request == _acceptRequest;
+    ++_profileRequest;
+    ++_friendshipRequest;
+    setState(() {
+      _accepting = true;
+      _retryAccept = false;
+      _checkingFriendship = false;
+    });
+    MatchItem? confirmed;
+    Object? failure;
+    try {
+      if (recheckFirst) {
+        confirmed = await _matchRepo.getFriendship(target);
+        if (!current()) return;
+      }
+      if (confirmed == null) {
+        final response = post();
+        // The write may already be committed while its response waits for
+        // notification delivery. One read covers a missing realtime event.
+        final earlyMatch = Completer<MatchItem?>();
+        final timer = _slowAcceptTimer = Timer(
+          const Duration(milliseconds: 400),
+          () async {
+            if (!current()) return;
+            try {
+              final friendship = await _matchRepo.getFriendship(target);
+              if (current() && friendship != null) {
+                earlyMatch.complete(friendship);
+              }
+            } catch (_) {
+              // A failed or empty read cannot settle the original write.
+            }
+          },
+        );
+        try {
+          confirmed = await Future.any([response, earlyMatch.future]);
+        } finally {
+          timer.cancel();
+          if (identical(timer, _slowAcceptTimer)) _slowAcceptTimer = null;
+        }
+      }
+    } catch (error) {
+      failure = error;
+    }
+    if (!current()) return;
+    // A timeout or a consumed receipt can follow a committed acceptance.
+    // Older servers also omit friendship from a successful write.
+    try {
+      confirmed ??= await _matchRepo.getFriendship(target);
+    } catch (_) {
+      if (current()) {
+        setState(() {
+          _accepting = false;
+          _retryAccept = true;
+        });
+      }
+      return;
+    }
+    if (!current()) return;
+    setState(() {
+      _accepting = false;
+      if (confirmed != null) {
+        _friendship = confirmed;
+        _actionState = ProfileActionState.matched;
+      } else if (failure is ApiException &&
+          failure.data['errorCode'] == 'INTEREST_UNAVAILABLE') {
+        _interestUnavailable = true;
+      } else if (failure == null && widget.interestNotice == null) {
+        _actionState = ProfileActionState.waitingResponse;
+      } else if (failure == null) {
+        _interestUnavailable = true;
+      } else {
+        _retryAccept = true;
+      }
+    });
+    if (_interestUnavailable) {
+      ProfilePreviewPage._actionStateCacheByUserId.remove(target);
+    } else if (!_retryAccept) {
+      _rememberActionState(target, _actionState!);
+      unawaited(_syncPendingInterestedState(target, _actionState!));
+    }
+  }
+
+  Future<void> _submitProfileAction(
+    String action,
+    String targetUserId,
+    ProfileActionState previousState,
+    int session,
+    Future<MatchItem?> Function() post,
+  ) async {
+    final nextState = action == 'interested'
+        ? ProfileActionState.waitingResponse
+        : ProfileActionState.proactivePass;
+    ++_profileRequest;
+    ++_friendshipRequest;
+    final send = post();
+    _actionState = nextState;
+    _pendingSend = send;
+    if (mounted) setState(() {});
+    _rememberActionState(targetUserId, nextState);
+    unawaited(_syncPendingInterestedState(targetUserId, nextState));
+    try {
+      final confirmed = await send;
+      if (session == SecureStorage.sessionRevision &&
+          confirmed != null &&
+          !_undoing &&
+          _actionState == nextState) {
+        _friendship = confirmed;
+        _actionState = ProfileActionState.matched;
+        _rememberActionState(targetUserId, ProfileActionState.matched);
+        unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
+        return;
+      }
+    } catch (e) {
+      if (session != SecureStorage.sessionRevision) return;
+      if (e is ApiException && e.data['errorCode'] == 'INTEREST_UNAVAILABLE') {
+        ProfilePreviewPage._actionStateCacheByUserId.remove(targetUserId);
+        unawaited(SecureStorage.removePendingInterestedUserId(targetUserId));
+        if (mounted) setState(() => _interestUnavailable = true);
+      } else if (_actionState == nextState &&
+          (!_undoing || _sendWasRejected(e))) {
+        if (mounted) setState(() => _actionState = previousState);
+        _rememberActionState(targetUserId, previousState);
+        unawaited(_syncPendingInterestedState(targetUserId, previousState));
+      }
+      return;
+    } finally {
+      _pendingSend = null;
+      if (mounted) setState(() {});
+    }
+    if (mounted &&
+        session == SecureStorage.sessionRevision &&
+        !_undoing &&
+        action == 'interested') {
+      await _refreshFriendship();
+      if (mounted &&
+          session == SecureStorage.sessionRevision &&
+          _actionState == ProfileActionState.matched) {
+        await _loadProfile();
+      }
+    }
   }
 
   Future<void> _openChat() async {
@@ -676,66 +1078,56 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       return;
     }
 
-    final profile = _profile;
-    if (profile == null) {
-      final userId = widget.userId;
-      if (userId == null || userId.isEmpty) {
-        await showPremiumErrorDialog(
-          context,
-          message: 'Chat is not available.',
-        );
+    final target = _profile?.user.id ?? widget.userId;
+    if (target == null || _openingChat || !_isMatchedActionState) return;
+    final session = SecureStorage.sessionRevision;
+    setState(() => _openingChat = true);
+    try {
+      var chatId = _friendship?.chatId ?? _profile?.chatId ?? widget.chatIdHint;
+      if (chatId == null || chatId.isEmpty) {
+        chatId = (await _matchRepo.getFriendship(target))?.chatId;
+      }
+      if (!mounted ||
+          session != SecureStorage.sessionRevision ||
+          !_isMatchedActionState ||
+          _isBlocked ||
+          _blockedByOther) {
         return;
       }
-      String? fallbackChatId = widget.chatIdHint;
-      try {
-        fallbackChatId ??= await _matchRepo.getChatIdForUser(userId);
-      } catch (_) {}
-      Navigator.push(
+      if (chatId == null || chatId.isEmpty) {
+        await _refreshFriendship();
+        if (mounted && session == SecureStorage.sessionRevision) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Chat is currently unavailable.')),
+          );
+        }
+        return;
+      }
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => MessageDetailPage(
-            chatId: fallbackChatId,
-            otherUserId: userId,
-            otherName: widget.userName ?? 'User',
-            otherPhotoUrl: '',
+            chatId: chatId,
+            otherUserId: target,
+            otherName:
+                _profile?.user.fullName ??
+                _publicProfile?.fullName ??
+                widget.userName ??
+                'User',
+            otherPhotoUrl: _previewAvatarUrl() ?? '',
           ),
         ),
       );
-      return;
-    }
-
-    String? resolvedChatId = profile.chatId;
-    if ((resolvedChatId == null || resolvedChatId.isEmpty) &&
-        profile.user.id.isNotEmpty) {
-      try {
-        resolvedChatId = await _matchRepo.getChatIdForUser(profile.user.id);
-      } catch (_) {}
-    }
-    final isMatched = profile.isMatched;
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MessageDetailPage(
-          chatId: resolvedChatId,
-          otherUserId: profile.user.id,
-          otherName: profile.user.fullName,
-          otherPhotoUrl: (() {
-            if (profile.media.isEmpty) return '';
-            final first = profile.media.first;
-            if (first.mediaType == MediaType.photo) return first.url;
-            return first.thumbnailUrl ?? '';
-          })(),
-        ),
-      ),
-    );
-    if ((resolvedChatId == null || resolvedChatId.isEmpty) && mounted) {
-      await showPremiumErrorDialog(
-        context,
-        message: isMatched
-            ? 'Henüz chat açılmadı. İlk mesajı göndererek başlatabilirsin.'
-            : 'Henüz chat açılmadı / eşleşme yok.',
-      );
+    } catch (_) {
+      if (mounted && session == SecureStorage.sessionRevision) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open chat. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingChat = false);
     }
   }
 
@@ -786,6 +1178,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
           isInDb: true,
           canCheckin: true,
         );
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => VenueDetailPage(venue: resolvedVenue)),
     );
@@ -803,137 +1196,30 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       return;
     }
 
-    if (_isBlocking) return;
+    if (_isBlocking || !mounted) return;
 
-    if (!_isBlocked) {
-      await _openBlockConfirmDialog(targetUserId);
-      return;
+    final wasBlocked = _isBlocked;
+    setState(() => _isBlocking = true);
+    try {
+      final Future<bool> confirmation;
+      if (wasBlocked) {
+        confirmation = confirmAndUnblockUser(
+          context,
+          repository: _repo,
+          targetUserId: targetUserId,
+        );
+      } else {
+        confirmation = confirmAndBlockUser(
+          context,
+          repository: _repo,
+          targetUserId: targetUserId,
+        );
+      }
+      final changed = await confirmation;
+      if (changed && mounted) setState(() => _isBlocked = !wasBlocked);
+    } finally {
+      if (mounted) setState(() => _isBlocking = false);
     }
-    await _openUnblockConfirmDialog(targetUserId);
-  }
-
-  Future<void> _openBlockConfirmDialog(String targetUserId) async {
-    bool submitting = false;
-    bool submitted = false;
-    String? submitError;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.55),
-      builder: (ctx) {
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            return _PremiumConfirmDialog(
-              isDark: isDark,
-              iconColors: const [Color(0xFFF04438), Color(0xFFB42318)],
-              icon: submitted
-                  ? Icons.check_circle_rounded
-                  : Icons.block_rounded,
-              title: submitted ? 'User blocked' : 'Block user?',
-              message: submitted
-                  ? 'You will no longer see each other in the app. Your chat history stays visible.'
-                  : 'Once blocked, you will no longer see each other in the app and messaging will be paused. Your chat history will stay visible.',
-              errorText: submitError,
-              submitting: submitting,
-              submitted: submitted,
-              confirmLabel: 'Block',
-              confirmColors: const [Color(0xFFF04438), Color(0xFFB42318)],
-              onConfirm: () async {
-                setModalState(() {
-                  submitting = true;
-                  submitError = null;
-                });
-                if (mounted) setState(() => _isBlocking = true);
-                try {
-                  await _repo.blockUser(targetUserId);
-                  if (!mounted) return;
-                  setState(() => _isBlocked = true);
-                  setModalState(() {
-                    submitting = false;
-                    submitted = true;
-                  });
-                  await Future<void>.delayed(const Duration(seconds: 2));
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                } catch (_) {
-                  setModalState(() {
-                    submitting = false;
-                    submitError = 'Could not block user.';
-                  });
-                } finally {
-                  if (mounted) setState(() => _isBlocking = false);
-                }
-              },
-              onCancel: () => Navigator.of(ctx).pop(),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _openUnblockConfirmDialog(String targetUserId) async {
-    bool submitting = false;
-    bool submitted = false;
-    String? submitError;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.55),
-      builder: (ctx) {
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            return _PremiumConfirmDialog(
-              isDark: isDark,
-              iconColors: const [AppColors.blue, AppColors.teal],
-              icon: submitted
-                  ? Icons.check_circle_rounded
-                  : Icons.lock_open_rounded,
-              title: submitted ? 'User unblocked' : 'Unblock user?',
-              message: submitted
-                  ? 'You may now see each other again in the app and continue messaging.'
-                  : 'If you unblock this user, you may be able to see each other again in the app and continue messaging.',
-              errorText: submitError,
-              submitting: submitting,
-              submitted: submitted,
-              confirmLabel: 'Unblock',
-              confirmColors: const [AppColors.blue, AppColors.teal],
-              onConfirm: () async {
-                setModalState(() {
-                  submitting = true;
-                  submitError = null;
-                });
-                if (mounted) setState(() => _isBlocking = true);
-                try {
-                  await _repo.unblockUser(targetUserId);
-                  if (!mounted) return;
-                  setState(() => _isBlocked = false);
-                  setModalState(() {
-                    submitting = false;
-                    submitted = true;
-                  });
-                  await Future<void>.delayed(const Duration(seconds: 2));
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                } catch (_) {
-                  setModalState(() {
-                    submitting = false;
-                    submitError = 'Could not unblock user.';
-                  });
-                } finally {
-                  if (mounted) setState(() => _isBlocking = false);
-                }
-              },
-              onCancel: () => Navigator.of(ctx).pop(),
-            );
-          },
-        );
-      },
-    );
   }
 
   Future<void> _openReportSheet() async {
@@ -944,281 +1230,29 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     }
     if (_isReporting) return;
 
-    final options = <({String key, String label})>[
-      (key: childSafetyReportReason, label: childSafetyReportLabel),
-      (key: 'FAKE_PROFILE', label: 'Fake profile'),
-      (key: 'INAPPROPRIATE_CONTENT', label: 'Inappropriate content'),
-      (key: 'HARASSMENT', label: 'Harassment'),
-      (key: 'SPAM_SCAM', label: 'Spam / scam'),
-      (key: 'UNDERAGE_ACCOUNT', label: 'Underage account'),
-      (key: 'OTHER', label: 'Other'),
-    ];
-
-    String selected = 'FAKE_PROFILE';
-    final otherCtrl = TextEditingController();
-    bool submitting = false;
-    var reportSucceeded = false;
-    String? submitError;
-
-    if (mounted) setState(() => _isReporting = true);
+    setState(() => _isReporting = true);
     try {
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        barrierColor: AppSheetPalette.of(context).barrier,
-        builder: (ctx) {
-          final palette = AppSheetPalette.of(ctx);
-          final isDark = palette.isDark;
-
-          return StatefulBuilder(
-            builder: (ctx, setModalState) {
-              final isOther = selected == 'OTHER';
-              final canSubmit =
-                  !submitting && (!isOther || otherCtrl.text.trim().isNotEmpty);
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: palette.surface,
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(26),
-                    ),
-                    border: Border.all(color: palette.border),
-                  ),
-                  child: SafeArea(
-                    top: false,
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(22, 10, 22, 18),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const AppSheetHeader(),
-                          const ReportHeaderIcon(),
-                          const SizedBox(height: 14),
-                          Text(
-                            'Report this user',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: palette.title,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Tell us what went wrong. Reporting also blocks this user.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: palette.muted,
-                              fontSize: 13,
-                              height: 1.35,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          for (final o in options)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: ReportReasonTile(
-                                label: o.label,
-                                selected: selected == o.key,
-                                onTap: submitting
-                                    ? null
-                                    : () =>
-                                          setModalState(() => selected = o.key),
-                              ),
-                            ),
-                          if (selected == childSafetyReportReason)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Text(
-                                childSafetyReportHelp,
-                                style: TextStyle(
-                                  color: palette.muted,
-                                  fontSize: 13,
-                                  height: 1.35,
-                                ),
-                              ),
-                            ),
-                          if (isOther) ...[
-                            const SizedBox(height: 4),
-                            TextField(
-                              controller: otherCtrl,
-                              enabled: !submitting,
-                              maxLines: 3,
-                              inputFormatters: [
-                                LengthLimitingTextInputFormatter(150),
-                              ],
-                              style: TextStyle(color: palette.title),
-                              decoration: InputDecoration(
-                                hintText: 'Help us understand what happened',
-                                hintStyle: TextStyle(color: palette.muted),
-                                filled: true,
-                                fillColor: isDark
-                                    ? Colors.white.withValues(alpha: 0.04)
-                                    : Colors.black.withValues(alpha: 0.03),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                              onChanged: (_) => setModalState(() {}),
-                            ),
-                            const SizedBox(height: 6),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                '${otherCtrl.text.characters.length}/150',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: palette.muted,
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (submitError != null) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              submitError!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFFF04438),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 16),
-                          ReportSubmitButton(
-                            label: 'Report & block',
-                            loading: submitting,
-                            onPressed: canSubmit
-                                ? () async {
-                                    setModalState(() {
-                                      submitting = true;
-                                      submitError = null;
-                                    });
-                                    try {
-                                      await _repo.reportUser(
-                                        targetUserId: targetUserId,
-                                        reason: selected,
-                                        details: selected == 'OTHER'
-                                            ? otherCtrl.text.trim()
-                                            : null,
-                                      );
-                                      reportSucceeded = true;
-                                    } catch (_) {
-                                      setModalState(() {
-                                        submitting = false;
-                                        submitError =
-                                            'Could not submit report. Please try again.';
-                                      });
-                                    }
-                                    if (!reportSucceeded) return;
-
-                                    // Report başarılıysa block adımı
-                                    // best-effort: block hata verse bile
-                                    // kullanıcıya report hatası gösterme.
-                                    if (!_isBlocked) {
-                                      try {
-                                        await _repo.blockUser(targetUserId);
-                                      } catch (_) {}
-                                      if (mounted) {
-                                        setState(() => _isBlocked = true);
-                                      }
-                                    }
-                                    // Teşekkür mesajı uygulamanın standart
-                                    // bilgilendirme penceresinde gösterilir.
-                                    if (ctx.mounted) Navigator.of(ctx).pop();
-                                  }
-                                : null,
-                          ),
-                          const SizedBox(height: 6),
-                          TextButton(
-                            onPressed: submitting
-                                ? null
-                                : () => Navigator.pop(ctx),
-                            style: TextButton.styleFrom(
-                              minimumSize: const Size.fromHeight(44),
-                              foregroundColor: palette.muted,
-                            ),
-                            child: const Text(
-                              'Cancel',
-                              style: TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
+      final reported = await showReportUserSheet(
+        context,
+        targetUserId: targetUserId,
+        repository: _repo,
       );
-      if (reportSucceeded && mounted) {
-        await showReportThanksDialog(context, contentReport: false);
-      }
+      if (reported && mounted) setState(() => _isBlocked = true);
     } finally {
-      otherCtrl.dispose();
       if (mounted) setState(() => _isReporting = false);
     }
   }
 
   Future<void> _openTopActionsSheet() async {
-    if (_isReporting || _isBlocking) return;
-    await showAppSheet<void>(
+    if (_isReporting || _isBlocking || _removingFriend) return;
+    await showUserActionsSheet(
       context,
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const AppSheetHeader(),
-              AppSheetCard(
-                children: [
-                  AppSheetRow(
-                    leading: const AppSheetIconTile(
-                      icon: Icons.flag_outlined,
-                      color: AppColors.orange,
-                    ),
-                    title: 'Report',
-                    onTap: () async {
-                      Navigator.of(ctx).pop();
-                      await _openReportSheet();
-                    },
-                  ),
-                  AppSheetRow(
-                    leading: AppSheetIconTile(
-                      icon: Icons.block_rounded,
-                      color: _isBlocked
-                          ? AppColors.teal
-                          : const Color(0xFFEF4444),
-                    ),
-                    title: _isBlocked ? 'Unblock' : 'Block',
-                    onTap: () async {
-                      Navigator.of(ctx).pop();
-                      await _toggleBlock();
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+      isBlocked: _isBlocked,
+      onRemoveFriend: _friendship != null && !_isBlocked && !_blockedByOther
+          ? () => unawaited(_removeFriend())
+          : null,
+      onReport: () => unawaited(_openReportSheet()),
+      onToggleBlock: () => unawaited(_toggleBlock()),
     );
   }
 
@@ -1286,6 +1320,28 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    if (_interestUnavailable ||
+        (widget.interestNotice != null && (_isBlocked || _blockedByOther))) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.person_off_outlined, size: 32),
+              const SizedBox(height: 12),
+              const Text('This request is no longer available.'),
+              if (Navigator.canPop(context))
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Go back'),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
 
     /// LOADING STATE
     if (_loading) {
@@ -1387,7 +1443,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         _buildMatchedMessageButton(),
       ] else if (_actionState != null) ...[
         const SizedBox(height: 18),
-        _buildActionBar(),
+        _buildAnimatedActionBar(),
       ],
       if (_isMatchedActionState) ...[
         const SizedBox(height: 18),
@@ -1529,10 +1585,6 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
             subColor: subColor,
             onSurface: onSurface,
           ),
-          // "Suggested for you" bölümü gizlendi.
-          // ignore: dead_code
-          if (false && _showSuggestedForYou && moments.isEmpty)
-            _buildSuggestedForYou(onSurface, subColor, isDark),
         ] else if (visitedPlaces.isEmpty)
           _buildVisitedPlacesEmptyState(
             isDark: isDark,
@@ -1568,7 +1620,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
                     ),
                   ),
                   IconButton(
-                    onPressed: (_isReporting || _isBlocking)
+                    onPressed: (_isReporting || _isBlocking || _removingFriend)
                         ? null
                         : _openTopActionsSheet,
                     icon: Icon(Icons.more_horiz_rounded, color: onSurface),
@@ -1615,9 +1667,61 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
     );
   }
 
+  /// Durum değişince butonlar yerini yumuşakça durum çubuğuna bırakır.
+  Widget _buildAnimatedActionBar() {
+    if (_accepting) {
+      return const SizedBox(
+        height: 48,
+        child: Center(child: Text('Connecting…')),
+      );
+    }
+    if (_retryAccept) {
+      return TextButton.icon(
+        onPressed: () => _handleAction('interested'),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Couldn’t confirm your connection. Try again'),
+      );
+    }
+    // Do not render notification hints as actionable choices before the server
+    // confirms the relationship. An existing match stays visually unchanged.
+    // Drop any outgoing animated controls on the first frame of Undo.
+    if ((_undoing || _isSendingAction) && _hasUndoableAction) {
+      return _buildActionBar();
+    }
+    final keepUndoBar = _hasUndoableAction && _hasCheckedFriendship;
+    if (_checkingFriendship &&
+        _actionState != ProfileActionState.matched &&
+        !keepUndoBar) {
+      return const SizedBox(
+        height: 48,
+        child: Center(
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    const duration = Duration(milliseconds: 180);
+    final currentKey = ValueKey<Object?>(_isBlocked ? 'blocked' : _actionState);
+    return AnimatedSize(
+      duration: duration,
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: AnimatedSwitcher(
+        duration: duration,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          // Kaybolan durum dokunuş almaz: Undo iki kez gönderilmesin.
+          child: IgnorePointer(ignoring: child.key != currentKey, child: child),
+        ),
+        child: KeyedSubtree(key: currentKey, child: _buildActionBar()),
+      ),
+    );
+  }
+
   Widget _buildActionBar() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final onSurface = isDark ? Colors.white : Colors.black;
     final subColor = isDark ? Colors.white70 : Colors.black54;
     if (_isBlocked) {
       return Text(
@@ -1626,41 +1730,31 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       );
     }
 
-    switch (_actionState!) {
+    switch (_visibleAction!) {
       case ProfileActionState.incomingInterested:
       case ProfileActionState.showActions:
         return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_actionState == ProfileActionState.incomingInterested)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  'You caught their attention.',
-                  style: TextStyle(
-                    color: onSurface,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+            if (_visibleAction == ProfileActionState.incomingInterested) ...[
+              _buildIncomingInterestPrompt(isDark),
+              const SizedBox(height: 12),
+            ],
+            // Eşit genişlik: seçimi boyut değil, Interested'ın rengi öne çıkarır.
             Row(
               children: [
-                // PASS — nötr buzlu cam (ikincil, kibar).
                 Expanded(
-                  child: _GlassActionButton(
+                  child: _ProfileActionButton(
                     label: 'Pass',
                     icon: Icons.close_rounded,
                     onTap: () => _handleAction('pass'),
-                    isDark: isDark,
                   ),
                 ),
-                const SizedBox(width: 12),
-                // INTERESTED — marka gradyanlı, öne çıkan birincil aksiyon.
+                const SizedBox(width: 10),
                 Expanded(
-                  child: _BrandActionButton(
+                  child: _ProfileActionButton(
                     label: 'Interested',
                     icon: Icons.favorite_rounded,
+                    primary: true,
                     onTap: () => _handleAction('interested'),
                   ),
                 ),
@@ -1675,59 +1769,36 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
         // reactive: onlar interested attıktan sonra ben pass attım). Bu yüzden
         // Undo her zaman gösterilir — optimistic pass'te _profile henüz
         // reload edilmediğinden myActionAtThisVenue'ye güvenmiyoruz.
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'You passed.',
-              style: TextStyle(color: subColor, fontSize: 16),
-            ),
-            const SizedBox(width: 10),
-            TextButton.icon(
-              onPressed: _isSendingAction ? null : _undoAction,
-              icon: const Icon(Icons.undo_rounded, size: 18),
-              label: const Text('Undo'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppTheme.brandPrimary,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-              ),
-            ),
-          ],
+        return _ProfileActionStatusBar(
+          label: 'You passed',
+          icon: Icons.close_rounded,
+          onUndo: _undoPhase == _UndoPhase.awaitingConfirmation
+              ? null
+              : _undoAction,
         );
 
       case ProfileActionState.waitingResponse:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
+        return Column(
           children: [
-            const Icon(
-              Icons.check_circle_rounded,
-              size: 18,
-              color: Color(0xFF22C55E),
-            ),
-            const SizedBox(width: 6),
-            const Text(
-              'Interest sent',
-              style: TextStyle(
-                color: Color(0xFF22C55E),
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 10),
             // Rewind: henüz match olmadan gönderilen interested geri alınabilir.
-            TextButton.icon(
-              onPressed: _isSendingAction ? null : _undoAction,
-              icon: const Icon(Icons.undo_rounded, size: 18),
-              label: const Text('Undo'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppTheme.brandPrimary,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
+            _ProfileActionStatusBar(
+              label: 'Interest sent',
+              icon: Icons.check_rounded,
+              highlighted: true,
+              onUndo: _undoPhase == _UndoPhase.awaitingConfirmation
+                  ? null
+                  : _undoAction,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'If they choose Interested too, you can start chatting.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark
+                    ? AppColors.darkTextSecondary
+                    : AppColors.lightTextSecondary,
+                fontSize: 12.5,
+                height: 1.4,
               ),
             ),
           ],
@@ -1736,6 +1807,44 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       case ProfileActionState.matched:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildIncomingInterestPrompt(bool isDark) {
+    final accent = isDark ? AppColors.blueDark : AppColors.blueLight;
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.favorite_rounded, size: 15, color: accent),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                'Interested in you',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Choose Interested to match and start chatting.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: isDark
+                ? AppColors.darkTextSecondary
+                : AppColors.lightTextSecondary,
+            fontSize: 12.5,
+            height: 1.4,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildMatchedMessageButton() {
@@ -1747,7 +1856,7 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       width: 184,
       height: 44,
       child: FilledButton.icon(
-        onPressed: blocked ? null : _openChat,
+        onPressed: blocked || _openingChat ? null : _openChat,
         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 17),
         label: const Text('Message'),
         style: FilledButton.styleFrom(
@@ -2622,545 +2731,149 @@ class _ProfilePreviewPageState extends State<ProfilePreviewPage> {
       ),
     );
   }
+}
 
-  /// Instagram tarzı "Suggested for you" — içeriği olmayan profillerde alttaki
-  /// boşluğu dolduran, yatay kayan büyük persona öneri kartları (mock).
-  Widget _buildSuggestedForYou(Color onSurface, Color subColor, bool isDark) {
-    const personas = _kSuggestedPersonas;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 24),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Suggested for you',
+/// Pass / Interested sonrası aynı yerde, aynı ölçüde duran durum çubuğu.
+/// [highlighted] gönderilen ilgiyi Interested'ın mavisiyle gösterir; Undo hep
+/// sakindir, çünkü ana işlem bitmiştir.
+class _ProfileActionStatusBar extends StatelessWidget {
+  const _ProfileActionStatusBar({
+    required this.label,
+    required this.icon,
+    required this.onUndo,
+    this.highlighted = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onUndo;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final muted = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+    final accent = !highlighted
+        ? muted
+        : (isDark ? AppColors.blueDark : AppColors.blueLight);
+    return Container(
+      constraints: const BoxConstraints(minHeight: 48),
+      padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: highlighted
+            ? AppColors.blue.withValues(alpha: isDark ? 0.14 : 0.10)
+            : (isDark ? const Color(0xFF0D1525) : const Color(0xFFF4F7FB)),
+        border: Border.all(
+          color: highlighted
+              ? AppColors.blue.withValues(alpha: 0.30)
+              : (isDark
+                    ? const Color(0xFF162040)
+                    : Colors.black.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: accent),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: onSurface,
-                fontSize: 16,
+                color: accent,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            Text(
-              'See all',
-              style: TextStyle(
-                color: AppColors.blue,
+          ),
+          TextButton.icon(
+            onPressed: onUndo,
+            icon: const Icon(Icons.undo_rounded, size: 16),
+            label: Text(onUndo == null ? 'Undoing…' : 'Undo'),
+            style: TextButton.styleFrom(
+              foregroundColor: muted,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              textStyle: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          height: 250,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            padding: EdgeInsets.zero,
-            itemCount: personas.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (_, index) {
-              final p = personas[index];
-              return _SuggestedPersonaCard(
-                persona: p,
-                isDark: isDark,
-                onTap: () => _openPersonaProfile(p),
-              );
-            },
           ),
-        ),
-        const SizedBox(height: 8),
-      ],
-    );
-  }
-
-  void _openPersonaProfile(_SuggestedPersona persona) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfilePreviewPage(
-          userId: persona.id,
-          userName: persona.fullName,
-          userUsername: persona.username,
-          userPhoto: persona.photo,
-        ),
+        ],
       ),
     );
   }
 }
 
-/// Suggested for you için mock persona verisi.
-class _SuggestedPersona {
-  const _SuggestedPersona({
-    required this.id,
-    required this.fullName,
-    required this.username,
-    required this.photo,
-  });
-
-  final String id;
-  final String fullName;
-  final String username;
-  final String photo;
-}
-
-const List<_SuggestedPersona> _kSuggestedPersonas = [
-  _SuggestedPersona(
-    id: 'persona_ayla',
-    fullName: 'Ayla Toprak',
-    username: 'ayla_tprk',
-    photo: 'https://i.pravatar.cc/300?img=47',
-  ),
-  _SuggestedPersona(
-    id: 'persona_nurtac',
-    fullName: 'Nurtaç Kaya',
-    username: 'tcnurtackaya',
-    photo: 'https://i.pravatar.cc/300?img=32',
-  ),
-  _SuggestedPersona(
-    id: 'persona_deniz',
-    fullName: 'Deniz Mutlu',
-    username: 'denizdekibalik',
-    photo: 'https://i.pravatar.cc/300?img=12',
-  ),
-  _SuggestedPersona(
-    id: 'persona_selin',
-    fullName: 'Selin Aydın',
-    username: 'selin.ayd',
-    photo: 'https://i.pravatar.cc/300?img=45',
-  ),
-  _SuggestedPersona(
-    id: 'persona_mert',
-    fullName: 'Mert Yıldırım',
-    username: 'mrt.yldrm',
-    photo: 'https://i.pravatar.cc/300?img=15',
-  ),
-];
-
-/// Büyük, kibar persona öneri kartı — foto + full name + username; basınca
-/// o profile gider.
-class _SuggestedPersonaCard extends StatelessWidget {
-  const _SuggestedPersonaCard({
-    required this.persona,
-    required this.isDark,
+/// Profildeki Pass / Interested butonu. İkisi aynı ölçüde; [primary] düz mavi
+/// birincil aksiyonu, diğeri venue detayındaki sade ikincil butonu çizer.
+class _ProfileActionButton extends StatelessWidget {
+  const _ProfileActionButton({
+    required this.label,
+    required this.icon,
     required this.onTap,
+    this.primary = false,
   });
 
-  final _SuggestedPersona persona;
-  final bool isDark;
+  final String label;
+  final IconData icon;
   final VoidCallback onTap;
+  final bool primary;
 
   @override
   Widget build(BuildContext context) {
-    final cardColor = isDark
-        ? Colors.white.withValues(alpha: 0.05)
-        : Colors.black.withValues(alpha: 0.03);
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.10)
-        : Colors.black.withValues(alpha: 0.08);
-    final onSurface = isDark ? Colors.white : Colors.black;
-    final subColor = isDark ? Colors.white60 : Colors.black54;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 168,
-        padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: borderColor),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.magenta.withValues(alpha: 0.5),
-                  width: 2,
-                ),
-              ),
-              child: ClipOval(
-                child: CachedImage(
-                  persona.photo,
-                  fit: BoxFit.cover,
-                  errorWidget: (_) => Container(
-                    color: isDark ? Colors.white12 : const Color(0xFFEDEFF3),
-                    child: Icon(
-                      Icons.person,
-                      size: 44,
-                      color: isDark ? Colors.white38 : Colors.black26,
-                    ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = primary || isDark
+        ? Colors.white
+        : AppColors.lightTextPrimary;
+    final radius = BorderRadius.circular(14);
+    return Material(
+      color: Colors.transparent,
+      borderRadius: radius,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: radius,
+        child: Ink(
+          height: 48,
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            color: primary
+                ? AppColors.blue
+                : (isDark ? const Color(0xFF0D1525) : const Color(0xFFF4F7FB)),
+            border: primary
+                ? null
+                : Border.all(
+                    color: isDark
+                        ? const Color(0xFF162040)
+                        : Colors.black.withValues(alpha: 0.08),
                   ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              persona.fullName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: onSurface,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '@${persona.username}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: subColor, fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: 140,
-              height: 34,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  gradient: const LinearGradient(
-                    colors: [AppColors.magenta, AppColors.blue],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: const Center(
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: foreground, size: 18),
+                const SizedBox(width: 6),
+                // Büyük yazı boyutunda da butondan taşmasın.
+                Flexible(
                   child: Text(
-                    'View profile',
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
+                      color: foreground,
+                      fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Marka gradyanlı, öne çıkan birincil aksiyon butonu (Interested).
-/// Uygulama geneli gradient (magenta→blue) + yumuşak gölge — kibar ve belirgin.
-class _BrandActionButton extends StatelessWidget {
-  const _BrandActionButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          height: 54,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            // Gölge yok: Material içindeki Ink'te gölge yuvarlak köşeyi takip
-            // etmiyor, butonun altında dikdörtgen bir leke gibi görünüyordu.
-            gradient: const LinearGradient(
-              colors: [AppColors.magenta, AppColors.blue],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, color: Colors.white, size: 19),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.2,
-                  ),
-                ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Nötr buzlu cam ikincil buton (Pass). Şeffaf yüzey + blur + ince kenarlık —
-/// uygulama geneli glassmorphism dili.
-class _GlassActionButton extends StatelessWidget {
-  const _GlassActionButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-    required this.isDark,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool isDark;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = isDark ? Colors.white : Colors.black87;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Material(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : Colors.black.withValues(alpha: 0.04),
-          child: InkWell(
-            onTap: onTap,
-            child: Container(
-              height: 54,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: fg.withValues(alpha: 0.16)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: fg.withValues(alpha: 0.85), size: 19),
-                  const SizedBox(width: 8),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Uygulama diline uygun premium onay dialog'u (block / unblock için).
-/// Gradient ikon tile'ı + gradient ana buton + submitting/submitted/error state.
-class _PremiumConfirmDialog extends StatelessWidget {
-  const _PremiumConfirmDialog({
-    required this.isDark,
-    required this.iconColors,
-    required this.icon,
-    required this.title,
-    required this.message,
-    required this.errorText,
-    required this.submitting,
-    required this.submitted,
-    required this.confirmLabel,
-    required this.confirmColors,
-    required this.onConfirm,
-    required this.onCancel,
-  });
-
-  final bool isDark;
-  final List<Color> iconColors;
-  final IconData icon;
-  final String title;
-  final String message;
-  final String? errorText;
-  final bool submitting;
-  final bool submitted;
-  final String confirmLabel;
-  final List<Color> confirmColors;
-  final Future<void> Function() onConfirm;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final surface = isDark ? const Color(0xFF121A2B) : Colors.white;
-    final titleColor = isDark ? Colors.white : AppColors.lightTextPrimary;
-    final bodyColor = isDark
-        ? const Color(0xFFB4C2D8)
-        : AppColors.lightTextSecondary;
-
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Container(
-        decoration: BoxDecoration(
-          color: surface,
-          borderRadius: BorderRadius.circular(26),
-          border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.black.withValues(alpha: 0.05),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
-              blurRadius: 34,
-              offset: const Offset(0, 16),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Gradient ikon tile'ı
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: submitted
-                        ? const [Color(0xFF22C55E), Color(0xFF15803D)]
-                        : iconColors,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color:
-                          (submitted
-                                  ? const Color(0xFF22C55E)
-                                  : iconColors.last)
-                              .withValues(alpha: 0.32),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Icon(icon, color: Colors.white, size: 30),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: titleColor,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: bodyColor,
-                  fontSize: 14,
-                  height: 1.4,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (errorText != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  errorText!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFFF04438),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              if (!submitted) ...[
-                const SizedBox(height: 22),
-                // Ana aksiyon (gradient)
-                Opacity(
-                  opacity: submitting ? 0.6 : 1,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      gradient: LinearGradient(colors: confirmColors),
-                      boxShadow: submitting
-                          ? null
-                          : [
-                              BoxShadow(
-                                color: confirmColors.last.withValues(
-                                  alpha: 0.30,
-                                ),
-                                blurRadius: 18,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: submitting ? null : () => onConfirm(),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          child: Center(
-                            child: submitting
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text(
-                                    confirmLabel,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15.5,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                TextButton(
-                  onPressed: submitting ? null : onCancel,
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size.fromHeight(44),
-                    foregroundColor: bodyColor,
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ],
           ),
         ),
       ),

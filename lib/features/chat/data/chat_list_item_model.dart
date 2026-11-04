@@ -14,6 +14,7 @@ class ChatListItem {
   /// Taraflardan biri diğerini engellemişse true. Bloklu sohbetlere mesaj
   /// gönderilemez → forward hedef listesinde gizlenir.
   final bool isBlocked;
+  final bool canSendMessages;
 
   ChatListItem({
     required this.id,
@@ -24,6 +25,7 @@ class ChatListItem {
     this.user1,
     this.user2,
     this.isBlocked = false,
+    this.canSendMessages = true,
   });
 
   /// The other participant (for display). Prefer [otherUser]; else derive from user1/user2 by [currentUserId].
@@ -65,6 +67,12 @@ class ChatListItem {
     final isBlocked =
         json['is_blocked'] as bool? ?? json['isBlocked'] as bool? ?? false;
 
+    final canSend =
+        !isBlocked &&
+        (json['can_send_messages'] as bool? ??
+            json['is_active'] as bool? ??
+            true);
+
     if (otherUserRaw == null && json['participants'] != null) {
       final participants = json['participants'] as List?;
       if (participants != null && participants.isNotEmpty) {
@@ -81,6 +89,7 @@ class ChatListItem {
             user1: u1,
             user2: u2,
             isBlocked: isBlocked,
+            canSendMessages: canSend,
           );
         }
       }
@@ -97,6 +106,7 @@ class ChatListItem {
       user1: u1,
       user2: u2,
       isBlocked: isBlocked,
+      canSendMessages: canSend,
     );
   }
 }

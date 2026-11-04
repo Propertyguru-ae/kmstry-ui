@@ -156,6 +156,7 @@ class AppSheetRow extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.showLink = false,
+    this.trailing,
     this.onTap,
   });
   final Widget leading;
@@ -164,6 +165,9 @@ class AppSheetRow extends StatelessWidget {
 
   /// Uygulama dışına (ör. Google Maps) götüren satırlarda sağda link ikonu.
   final bool showLink;
+
+  /// Satırın sağındaki isteğe bağlı gösterge (ör. seçili satırdaki tik).
+  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -207,6 +211,7 @@ class AppSheetRow extends StatelessWidget {
               const SizedBox(width: 8),
               Icon(Icons.open_in_new_rounded, size: 18, color: palette.muted),
             ],
+            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
           ],
         ),
       ),
@@ -232,4 +237,71 @@ class AppSheetIconTile extends StatelessWidget {
       child: Icon(icon, size: 21, color: color),
     );
   }
+}
+
+class AppSortOption<T> {
+  const AppSortOption({
+    required this.value,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+  });
+
+  final T value;
+  final String label;
+  final String subtitle;
+  final IconData icon;
+}
+
+/// Standart "Sort by" alt sayfası. Seçilen değeri döner; kapatılırsa `null`.
+Future<T?> showAppSortSheet<T>(
+  BuildContext context, {
+  required T selected,
+  required List<AppSortOption<T>> options,
+}) {
+  return showAppSheet<T>(
+    context,
+    builder: (ctx) {
+      final palette = AppSheetPalette.of(ctx);
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const AppSheetHeader(title: 'Sort by'),
+              AppSheetCard(
+                children: [
+                  for (final option in options)
+                    Semantics(
+                      selected: option.value == selected,
+                      child: AppSheetRow(
+                        leading: AppSheetIconTile(
+                          icon: option.icon,
+                          color: option.value == selected
+                              ? AppColors.blue
+                              : palette.muted,
+                        ),
+                        title: option.label,
+                        subtitle: option.subtitle,
+                        trailing: option.value == selected
+                            ? const Icon(
+                                Icons.check_rounded,
+                                size: 22,
+                                color: AppColors.blue,
+                              )
+                            : null,
+                        onTap: () => Navigator.of(ctx).pop(option.value),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }

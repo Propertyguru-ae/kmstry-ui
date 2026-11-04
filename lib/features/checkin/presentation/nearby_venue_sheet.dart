@@ -290,121 +290,127 @@ class _QuickCheckinVenueCard extends StatelessWidget {
     final liveLabel = _liveLabel(venue);
     final photoUrl = _photoUrl(venue);
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+    return DecoratedBox(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF101A2A) : const Color(0xFFF8FBFD),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: isActiveCheckin
-                  ? _brandTeal.withValues(alpha: 0.72)
-                  : _brandBlue.withValues(alpha: isDark ? 0.16 : 0.12),
-            ),
-            boxShadow: [
-              BoxShadow(
-                blurRadius: isActiveCheckin ? 18 : 10,
-                offset: const Offset(0, 7),
-                color: isActiveCheckin
-                    ? _brandTeal.withValues(alpha: 0.14)
-                    : Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
-              ),
-            ],
+        boxShadow: [
+          BoxShadow(
+            blurRadius: isActiveCheckin ? 18 : 10,
+            offset: const Offset(0, 7),
+            color: isActiveCheckin
+                ? _brandTeal.withValues(alpha: 0.14)
+                : Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
           ),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  width: 68,
-                  height: 68,
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.06)
-                      : const Color(0xFFEAF1F6),
-                  child: photoUrl == null
-                      ? Icon(
-                          Icons.storefront_rounded,
-                          color: _brandBlue.withValues(alpha: 0.85),
-                          size: 28,
-                        )
-                      : CachedImage(
-                          photoUrl,
-                          fit: BoxFit.cover,
-                          errorWidget: (_) => Icon(
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF101A2A) : const Color(0xFFF8FBFD),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isActiveCheckin
+                    ? _brandTeal.withValues(alpha: 0.72)
+                    : _brandBlue.withValues(alpha: isDark ? 0.16 : 0.12),
+              ),
+            ),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: 68,
+                    height: 68,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.06)
+                        : const Color(0xFFEAF1F6),
+                    child: photoUrl == null
+                        ? Icon(
                             Icons.storefront_rounded,
                             color: _brandBlue.withValues(alpha: 0.85),
                             size: 28,
+                          )
+                        : CachedImage(
+                            photoUrl,
+                            fit: BoxFit.cover,
+                            errorWidget: (_) => Icon(
+                              Icons.storefront_rounded,
+                              color: _brandBlue.withValues(alpha: 0.85),
+                              size: 28,
+                            ),
                           ),
-                        ),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      venue.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isDark ? Colors.white : Colors.black87,
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if (type.isNotEmpty) type,
-                        if (distance != null) distance,
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.58)
-                            : Colors.black.withValues(alpha: 0.52),
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 5,
-                      children: [
-                        _QuickBadge(
-                          icon: isActiveCheckin
-                              ? Icons.check_circle_rounded
-                              : Icons.waving_hand_rounded,
-                          label: isActiveCheckin ? "You're here" : liveLabel,
-                          color: isActiveCheckin ? _brandTeal : _brandOrange,
-                          isDark: isDark,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        venue.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black87,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w800,
                         ),
-                        if (venue.openNow == true)
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        [
+                          if (type.isNotEmpty) type,
+                          ?distance,
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isDark
+                              ? Colors.white.withValues(alpha: 0.58)
+                              : Colors.black.withValues(alpha: 0.52),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 5,
+                        children: [
                           _QuickBadge(
-                            icon: Icons.schedule_rounded,
-                            label: 'Open now',
-                            color: _brandTeal,
+                            icon: isActiveCheckin
+                                ? Icons.check_circle_rounded
+                                : Icons.waving_hand_rounded,
+                            label: isActiveCheckin ? "You're here" : liveLabel,
+                            color: isActiveCheckin ? _brandTeal : _brandOrange,
                             isDark: isDark,
                           ),
-                      ],
-                    ),
-                  ],
+                          if (venue.openNow == true)
+                            _QuickBadge(
+                              icon: Icons.schedule_rounded,
+                              label: 'Open now',
+                              color: _brandTeal,
+                              isDark: isDark,
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              _CheckinActionButton(
-                isActiveCheckin: isActiveCheckin,
-                onTap: onTap,
-              ),
-            ],
+                const SizedBox(width: 10),
+                _CheckinActionButton(
+                  isActiveCheckin: isActiveCheckin,
+                  onTap: onTap,
+                ),
+              ],
+            ),
           ),
         ),
       ),

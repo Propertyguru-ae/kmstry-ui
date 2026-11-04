@@ -4,6 +4,7 @@ import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
 import 'package:kmstry_frontend/core/venue/visible_venue_read.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/core/ui/app_back_button.dart';
+import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_follower_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
 
@@ -143,62 +144,31 @@ class _VenueFollowersPageState extends State<VenueFollowersPage> {
   };
 
   Future<void> _openSortSheet() async {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: isDark
-          ? const Color(0xFF161C28)
-          : theme.colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        Widget option(String key, String label) {
-          final selected = _sort == key;
-          return ListTile(
-            title: Text(label),
-            trailing: selected
-                ? Icon(Icons.check_rounded, color: theme.colorScheme.primary)
-                : null,
-            onTap: () {
-              setState(() => _sort = key);
-              Navigator.pop(ctx);
-            },
-          );
-        }
-
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Sort by',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-              option('latest', 'Latest'),
-              option('earliest', 'Earliest'),
-              option('name', 'Name (A–Z)'),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+    final sort = await showAppSortSheet<String>(
+      context,
+      selected: _sort,
+      options: const [
+        AppSortOption(
+          value: 'latest',
+          label: 'Latest',
+          subtitle: 'Newest followers first',
+          icon: Icons.update_rounded,
+        ),
+        AppSortOption(
+          value: 'earliest',
+          label: 'Earliest',
+          subtitle: 'Oldest followers first',
+          icon: Icons.history_rounded,
+        ),
+        AppSortOption(
+          value: 'name',
+          label: 'Name (A–Z)',
+          subtitle: 'Alphabetical order',
+          icon: Icons.sort_by_alpha_rounded,
+        ),
+      ],
     );
+    if (sort != null && mounted) setState(() => _sort = sort);
   }
 
   @override
