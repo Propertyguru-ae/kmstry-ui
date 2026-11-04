@@ -1,21 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:kmstry_frontend/core/theme/app_colors.dart';
+import 'package:kmstry_frontend/core/ui/app_sheet.dart';
+import 'package:kmstry_frontend/core/ui/branded_notice.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_list_item.dart';
 import 'package:kmstry_frontend/core/network/network_error.dart';
+import 'package:kmstry_frontend/core/ui/empty_state_message.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 
 enum _VenueSort { latest, earliest }
 
+/// Sayfa `true` ile kapanırsa kullanıcı haritaya gitmek istemiştir. Bu sayfa
+/// shell'in üstünde açıldığı için sekmeyi kendisi değil, açan sayfa değiştirir.
 class FollowedVenuesPage extends StatefulWidget {
-  const FollowedVenuesPage({super.key});
+  const FollowedVenuesPage({super.key, this.repository});
+
+  final VenueContextRepository? repository;
 
   @override
   State<FollowedVenuesPage> createState() => _FollowedVenuesPageState();
 }
 
 class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
-  final VenueContextRepository _repository = VenueContextRepository();
+  late final VenueContextRepository _repository =
+      widget.repository ?? VenueContextRepository();
   final TextEditingController _searchController = TextEditingController();
 
   List<Venue> _venues = const [];
@@ -24,6 +34,11 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
   bool _errorOffline = false;
   String _query = '';
   _VenueSort _sort = _VenueSort.latest;
+
+  /// Bu oturumda takibi bırakılan mekanlar. Kart bir sonraki yüklemeye kadar
+  /// listede kalır; yanlış dokunuş tek dokunuşla geri alınır, liste de kaymaz.
+  final _unfollowedIds = <String>{};
+  final _followRequests = <String>{};
 
   @override
   void initState() {
@@ -47,6 +62,8 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
       if (!mounted) return;
       setState(() {
         _venues = venues;
+        // Liste artık sunucudan geldi; yalnız süren isteklerin durumu korunur.
+        _unfollowedIds.removeWhere((id) => !_followRequests.contains(id));
         _loading = false;
       });
     } catch (e) {
@@ -59,6 +76,33 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
             : 'Followed venues could not be loaded.';
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _toggleFollow(Venue venue) async {
+    final id = venue.id;
+    if (!_followRequests.add(id)) return;
+    final follow = _unfollowedIds.contains(id);
+    setState(() {
+      follow ? _unfollowedIds.remove(id) : _unfollowedIds.add(id);
+    });
+    try {
+      follow
+          ? await _repository.followVenue(id)
+          : await _repository.unfollowVenue(id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        follow ? _unfollowedIds.add(id) : _unfollowedIds.remove(id);
+      });
+      showBrandedNotice(
+        context,
+        title: follow ? 'Could not follow venue' : 'Could not unfollow venue',
+        message: 'Please try again.',
+        tone: BrandedNoticeTone.error,
+      );
+    } finally {
+      _followRequests.remove(id);
     }
   }
 
@@ -94,61 +138,25 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
   }
 
   Future<void> _openSortSheet() async {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: isDark
-          ? const Color(0xFF161C28)
-          : theme.colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        Widget option(_VenueSort key, String label) {
-          final selected = _sort == key;
-          return ListTile(
-            title: Text(label),
-            trailing: selected
-                ? Icon(Icons.check_rounded, color: theme.colorScheme.primary)
-                : null,
-            onTap: () {
-              setState(() => _sort = key);
-              Navigator.pop(ctx);
-            },
-          );
-        }
-
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Sort by',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-              option(_VenueSort.latest, 'Latest'),
-              option(_VenueSort.earliest, 'Earliest'),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+    final sort = await showAppSortSheet<_VenueSort>(
+      context,
+      selected: _sort,
+      options: const [
+        AppSortOption(
+          value: _VenueSort.latest,
+          label: 'Latest',
+          subtitle: 'Newest follows first',
+          icon: Icons.update_rounded,
+        ),
+        AppSortOption(
+          value: _VenueSort.earliest,
+          label: 'Earliest',
+          subtitle: 'Oldest follows first',
+          icon: Icons.history_rounded,
+        ),
+      ],
     );
+    if (sort != null && mounted) setState(() => _sort = sort);
   }
 
   @override
@@ -178,53 +186,56 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.zero,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: _buildSearchField(isDark, onSurface),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
-              child: Row(
-                children: [
-                  Text(
-                    'Sort by: ',
-                    style: TextStyle(
-                      color: onSurface.withValues(alpha: 0.6),
-                      fontSize: 13.5,
-                    ),
-                  ),
-                  Text(
-                    _sortLabel,
-                    style: TextStyle(
-                      color: onSurface,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Sort',
-                    icon: Icon(Icons.swap_vert_rounded, color: onSurface),
-                    onPressed: _openSortSheet,
-                  ),
-                ],
+            // Liste boşken arama ve sıralamanın işlevi yok; CTA öne çıkar.
+            if (_venues.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: _buildSearchField(isDark, onSurface),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: Text(
-                '${visibleVenues.length} ${visibleVenues.length == 1 ? 'venue' : 'venues'}',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: onSurface.withValues(alpha: 0.6),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+                child: Row(
+                  children: [
+                    Text(
+                      'Sort by: ',
+                      style: TextStyle(
+                        color: onSurface.withValues(alpha: 0.6),
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    Text(
+                      _sortLabel,
+                      style: TextStyle(
+                        color: onSurface,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Sort',
+                      icon: Icon(Icons.swap_vert_rounded, color: onSurface),
+                      onPressed: _openSortSheet,
+                    ),
+                  ],
                 ),
               ),
-            ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Text(
+                  '${visibleVenues.length} ${visibleVenues.length == 1 ? 'venue' : 'venues'}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+            ],
             if (_loading)
-              const Padding(
-                padding: EdgeInsets.only(top: 90),
-                child: Center(child: CircularProgressIndicator()),
+              Padding(
+                padding: EdgeInsets.only(top: _venues.isEmpty ? 150 : 90),
+                child: const Center(child: CircularProgressIndicator()),
               )
             else if (_error != null)
               _buildMessageState(
@@ -235,21 +246,23 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
                 subtitle: _errorOffline
                     ? 'Check your connection and pull to refresh.'
                     : 'Pull to refresh and try again.',
-                isDark: isDark,
               )
             else if (_venues.isEmpty)
               _buildMessageState(
                 icon: Icons.location_city_rounded,
                 title: 'No followed venues yet',
-                subtitle: 'Follow venues to see them here.',
-                isDark: isDark,
+                subtitle:
+                    'Find venues on the map and follow them to see them here.',
+                action: PrimaryButton(
+                  label: 'Discover on map',
+                  onPressed: () => Navigator.pop(context, true),
+                ),
               )
             else if (visibleVenues.isEmpty)
               _buildMessageState(
                 icon: Icons.search_off_rounded,
                 title: 'No venues found',
                 subtitle: 'Try another venue name.',
-                isDark: isDark,
               )
             else
               for (final venue in visibleVenues)
@@ -257,6 +270,12 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: VenueListItem(
                     venue: venue,
+                    showDescriptionInsteadOfCheckInPrompt: true,
+                    headerAction: _FollowToggleButton(
+                      venueName: venue.name,
+                      following: !_unfollowedIds.contains(venue.id),
+                      onTap: () => _toggleFollow(venue),
+                    ),
                     onTap: (selectedVenue) async {
                       await Navigator.push(
                         context,
@@ -310,37 +329,101 @@ class _FollowedVenuesPageState extends State<FollowedVenuesPage> {
     required IconData icon,
     required String title,
     required String subtitle,
-    required bool isDark,
+    Widget? action,
   }) {
     return Padding(
-      padding: const EdgeInsets.only(top: 110),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            size: 50,
-            color: isDark ? Colors.white24 : const Color(0xFFCBD5E1),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-              color: isDark ? Colors.white70 : const Color(0xFF334155),
+      padding: EdgeInsets.only(top: _venues.isEmpty ? 150 : 110, bottom: 32),
+      child: EmptyStateMessage(
+        icon: icon,
+        title: title,
+        subtitle: subtitle,
+        action: action,
+      ),
+    );
+  }
+}
+
+/// Takip ediliyorken sade, bırakılınca düz mavi. En az genişliği iki etiketi de
+/// sığdırır, böylece normal yazı boyutunda durum değişince başlık kaymaz; büyük
+/// yazı boyutunda ise genişliği sınırlıdır ve mekan adına yer bırakır.
+class _FollowToggleButton extends StatelessWidget {
+  const _FollowToggleButton({
+    required this.venueName,
+    required this.following,
+    required this.onTap,
+  });
+
+  final String venueName;
+  final bool following;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = !following || isDark
+        ? Colors.white
+        : AppColors.lightTextPrimary;
+    final radius = BorderRadius.circular(12);
+    return Semantics(
+      button: true,
+      label: following ? 'Unfollow $venueName' : 'Follow $venueName',
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: radius,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: radius,
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              color: following ? null : AppColors.blue,
+              // İki durumda da kenarlık var; yoksa genişlik 2 piksel değişirdi.
+              border: Border.all(
+                color: !following
+                    ? AppColors.blue
+                    : isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.black.withValues(alpha: 0.12),
+              ),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                minWidth: 108,
+                maxWidth: 134,
+                minHeight: 36,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      following ? Icons.check_rounded : Icons.add_rounded,
+                      size: 15,
+                      color: foreground,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        following ? 'Following' : 'Follow',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13,
-              color: isDark ? Colors.white38 : const Color(0xFF94A3B8),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

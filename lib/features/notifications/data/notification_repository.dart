@@ -2,10 +2,71 @@ import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/features/notifications/data/notification_model.dart';
 
+typedef ConnectionNoticeTarget = ({
+  String otherUserId,
+  String otherName,
+  String? chatId,
+});
+
 class NotificationRepository {
   final ApiClient _api = ApiClient();
 
   Future<String?> _token() => SecureStorage.getAccessToken();
+
+  Future<ConnectionNoticeTarget?> resolveConnectionNotice(
+    String id, {
+    String? version,
+    DateTime? seenAt,
+  }) async {
+    final token = await _token();
+    if (token == null) throw StateError('Not authenticated');
+    final path = Uri(
+      pathSegments: ['', 'notifications', 'connections', id],
+      queryParameters: {
+        'version': ?version,
+        if (seenAt != null) 'seenAt': seenAt.toUtc().toIso8601String(),
+      },
+    );
+    final data = await _api.get(
+      path.toString(),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (data is! Map || !data.containsKey('connection')) {
+      throw const FormatException('Invalid connection response');
+    }
+    final row = data['connection'];
+    if (row == null) return null;
+    if (row is! Map ||
+        row['otherUserId'] is! String ||
+        (row['otherUserId'] as String).isEmpty) {
+      throw const FormatException('Missing connection participant');
+    }
+    return (
+      otherUserId: row['otherUserId'] as String,
+      otherName: row['otherName'] as String? ?? 'Your connection',
+      chatId: row['chatId'] as String?,
+    );
+  }
+
+  Future<bool> isPendingInterest(
+    String sender, {
+    String? id,
+    DateTime? version,
+  }) async {
+    final token = await _token();
+    if (token == null) throw StateError('Not authenticated');
+    final path = Uri(
+      pathSegments: ['', 'notifications', 'interests', sender],
+      queryParameters: id == null
+          ? null
+          : {'id': id, 'version': version!.toUtc().toIso8601String()},
+    );
+    final data = await _api.get(
+      path.toString(),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return data is Map && data['available'] == true;
+  }
 
   /// GET /notifications?limit=... — list for current user (JWT), created_at desc.
   Future<List<NotificationModel>> getNotifications({int limit = 50}) async {

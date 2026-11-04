@@ -13,6 +13,14 @@ class VenueListItem extends StatelessWidget {
   final bool isActiveCheckin;
   final ValueChanged<Venue>? onTap;
 
+  /// İsim ve adresin sağında gösterilen isteğe bağlı aksiyon. Kendi dokunuşunu
+  /// karşılamalıdır, yoksa dokunuş karta geçip detay sayfasını açar.
+  final Widget? headerAction;
+
+  /// İlk check-in daveti yerine mekanın açıklaması düz metin olarak gösterilir;
+  /// açıklama yoksa o alan tamamen kalkar. Takip edilen mekanlar listesi içindir.
+  final bool showDescriptionInsteadOfCheckInPrompt;
+
   /// "You're checked in" vurgusu — logo turkuazı (AppColors.teal).
   static const Color _checkedInColor = Color(0xFF1FD9A8);
   static const Color _brandBlue = Color(0xFF1A9FE8);
@@ -24,6 +32,8 @@ class VenueListItem extends StatelessWidget {
     this.isSelected = false,
     this.isActiveCheckin = false,
     this.onTap,
+    this.headerAction,
+    this.showDescriptionInsteadOfCheckInPrompt = false,
   });
 
   @override
@@ -37,6 +47,71 @@ class VenueListItem extends StatelessWidget {
     final distance = _formatDistance(venue.distanceMeters);
     final galleryPhotos = _galleryPhotos(venue);
     final about = _aboutText(venue);
+    final statsRow = VenueCheckinStatsRow(
+      venue: venue,
+      isDark: isDark,
+      iconSize: 14,
+      fontSize: 12,
+      treatMissingStatsAsCheckInPrompt: true,
+      hideCheckInPrompt: showDescriptionInsteadOfCheckInPrompt,
+    );
+    final badges = <Widget>[
+      if (isActiveCheckin)
+        _MiniBadge(
+          icon: Icons.check_circle_rounded,
+          label: "You're checked in",
+          color: _checkedInColor,
+          isDark: isDark,
+        ),
+      if (venue.openNow == true)
+        _MiniBadge(
+          icon: Icons.schedule_rounded,
+          label: 'Open now',
+          color: const Color(0xFF1FD9A8),
+          isDark: isDark,
+        ),
+      if (activeCount > 0)
+        _MiniBadge(
+          icon: Icons.local_fire_department_rounded,
+          label: 'Busy now',
+          color: _brandOrange,
+          isDark: isDark,
+        ),
+      if (!statsRow.rendersNothing) statsRow,
+      for (final platform in venue.partnershipPlatforms.take(2))
+        _MiniBadge(
+          icon: Icons.handshake_outlined,
+          label: _partnershipLabel(platform),
+          color: _brandBlue,
+          isDark: isDark,
+        ),
+    ];
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          venue.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          displayAddress,
+          style: TextStyle(
+            color: isDark ? Colors.white60 : Colors.grey,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
 
     return Material(
       color: Colors.transparent,
@@ -84,27 +159,17 @@ class VenueListItem extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                venue.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
-                  color: isDark ? Colors.white : Colors.black87,
+              if (headerAction == null)
+                identity
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: identity),
+                    const SizedBox(width: 10),
+                    headerAction!,
+                  ],
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                displayAddress,
-                style: TextStyle(
-                  color: isDark ? Colors.white60 : Colors.grey,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
               const SizedBox(height: 9),
               _VenueMetadataLine(
                 venue: venue,
@@ -120,50 +185,28 @@ class VenueListItem extends StatelessWidget {
                   coverReference: venue.photoReference,
                 ),
               ],
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  if (isActiveCheckin)
-                    _MiniBadge(
-                      icon: Icons.check_circle_rounded,
-                      label: "You're checked in",
-                      color: _checkedInColor,
-                      isDark: isDark,
-                    ),
-                  if (venue.openNow == true)
-                    _MiniBadge(
-                      icon: Icons.schedule_rounded,
-                      label: 'Open now',
-                      color: const Color(0xFF1FD9A8),
-                      isDark: isDark,
-                    ),
-                  if (activeCount > 0)
-                    _MiniBadge(
-                      icon: Icons.local_fire_department_rounded,
-                      label: 'Busy now',
-                      color: _brandOrange,
-                      isDark: isDark,
-                    ),
-                  VenueCheckinStatsRow(
-                    venue: venue,
-                    isDark: isDark,
-                    iconSize: 14,
-                    fontSize: 12,
-                    treatMissingStatsAsCheckInPrompt: true,
+              if (badges.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: badges,
+                ),
+              ],
+              if (about != null && showDescriptionInsteadOfCheckInPrompt) ...[
+                const SizedBox(height: 10),
+                Text(
+                  about,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark ? Colors.white70 : Colors.black54,
+                    fontSize: 12.5,
+                    height: 1.35,
                   ),
-                  for (final platform in venue.partnershipPlatforms.take(2))
-                    _MiniBadge(
-                      icon: Icons.handshake_outlined,
-                      label: _partnershipLabel(platform),
-                      color: _brandBlue,
-                      isDark: isDark,
-                    ),
-                ],
-              ),
-              if (about != null) ...[
+                ),
+              ] else if (about != null) ...[
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,

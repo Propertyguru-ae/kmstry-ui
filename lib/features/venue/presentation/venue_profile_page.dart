@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:kmstry_frontend/core/media/media_network_url.dart';
 import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_phone_editor.dart';
 import 'package:kmstry_frontend/features/content_moderation/presentation/sharing_permission_hint.dart';
 import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
 import 'package:kmstry_frontend/core/performance/performance_diagnostics.dart';
@@ -810,6 +811,44 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     'restaurant': Icons.restaurant_outlined,
   };
 
+  Future<void> _showPhoneEditor() async {
+    final venue = _venue;
+    if (venue == null) return;
+    final member = _meContext?.memberVenues
+        .where((v) => v.id == venue.id)
+        .firstOrNull;
+    if (member?.isPendingOwnerSetup == true ||
+        member?.isRejectedOwnerClaim == true ||
+        !(_session.isOwner || _session.can(VenuePermission.venueEdit))) {
+      return;
+    }
+    final generation = PendingPublicMediaService.instance.sessionGeneration;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => VenuePhoneEditor(
+        initialPhone: venue.reservationPhone,
+        onSave: (phone) async {
+          if (!PendingPublicMediaService.instance.isCurrentSession(
+            generation,
+          )) {
+            throw StateError('Account changed');
+          }
+          final updated = await _ownerRepo.updateVenue(
+            venue.id,
+            reservationPhone: phone,
+          );
+          if (mounted &&
+              _venue?.id == venue.id &&
+              PendingPublicMediaService.instance.isCurrentSession(generation)) {
+            setState(() => _venue = updated);
+          }
+        },
+      ),
+    );
+  }
+
   Future<void> _showTypePicker() async {
     final venueId = _venue?.id;
     if (venueId == null || _updatingType) return;
@@ -1353,6 +1392,15 @@ class _VenueProfilePageState extends State<VenueProfilePage>
     final isPendingClaim = activeMemberVenue?.isPendingOwnerSetup ?? false;
     final isRejectedClaim = activeMemberVenue?.isRejectedOwnerClaim ?? false;
     final isClaimLocked = isPendingClaim || isRejectedClaim;
+    final canEditPhone =
+        !isClaimLocked &&
+        (session.isOwner || session.can(VenuePermission.venueEdit));
+    final canShowPhone =
+        venue != null &&
+        (canEditPhone ||
+            (venue.reservationPhone != null &&
+                (!isClaimLocked ||
+                    activeMemberVenue?.isPendingOwnerClaim == true)));
     final canShowCoverPhoto = hasPhoto && !isClaimLocked;
     final hasGoogleCover =
         canShowCoverPhoto && isGooglePlacePhotoProxyUrl(venue.photo!);
@@ -1650,10 +1698,11 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                       // ── Badges ────────────────────────────────────────
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                        child: Row(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
                             _RoleBadge(role: _venueRole, colors: colors),
-                            const SizedBox(width: 8),
                             Builder(
                               builder: (_) {
                                 final canEditType =
@@ -1671,6 +1720,11 @@ class _VenueProfilePageState extends State<VenueProfilePage>
                                 );
                               },
                             ),
+                            if (canShowPhone)
+                              VenuePhoneChip(
+                                phone: venue.reservationPhone,
+                                onEdit: canEditPhone ? _showPhoneEditor : null,
+                              ),
                           ],
                         ),
                       ),

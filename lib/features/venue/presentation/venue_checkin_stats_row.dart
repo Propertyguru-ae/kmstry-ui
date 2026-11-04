@@ -13,6 +13,9 @@ class VenueCheckinStatsRow extends StatelessWidget {
   /// (avoids an empty row for [isInDb] venues with null aggregates).
   final bool treatMissingStatsAsCheckInPrompt;
 
+  /// Never shows the first-check-in prompt; real counts still appear.
+  final bool hideCheckInPrompt;
+
   const VenueCheckinStatsRow({
     super.key,
     required this.venue,
@@ -20,6 +23,7 @@ class VenueCheckinStatsRow extends StatelessWidget {
     this.iconSize = 14,
     this.fontSize = 12,
     this.treatMissingStatsAsCheckInPrompt = false,
+    this.hideCheckInPrompt = false,
   });
 
   /// Prefer server total; else sum of gender counts when both exist.
@@ -71,6 +75,13 @@ class VenueCheckinStatsRow extends StatelessWidget {
 
   bool get _showCheckInPrompt => _showFirstCheckInCta || _showNotInDbNoStatsCta;
 
+  /// Lets the caller drop the spacing around a row with nothing to draw.
+  bool get rendersNothing {
+    if (_showCheckInPrompt) return hideCheckInPrompt;
+    if (_showTotal || _showGender) return false;
+    return hideCheckInPrompt || !treatMissingStatsAsCheckInPrompt;
+  }
+
   Widget _buildCheckInPromptRow(BuildContext context) {
     final promptColor = isDark
         ? Colors.white70
@@ -101,15 +112,10 @@ class VenueCheckinStatsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (_showCheckInPrompt) {
-      return _buildCheckInPromptRow(context);
-    }
+    if (rendersNothing) return const SizedBox.shrink();
 
-    if (!_showTotal && !_showGender) {
-      if (treatMissingStatsAsCheckInPrompt) {
-        return _buildCheckInPromptRow(context);
-      }
-      return const SizedBox.shrink();
+    if (_showCheckInPrompt || (!_showTotal && !_showGender)) {
+      return _buildCheckInPromptRow(context);
     }
 
     final muted = isDark ? Colors.white54 : Colors.grey;

@@ -1,3 +1,6 @@
+import 'package:kmstry_frontend/features/people/data/friendship_changes.dart';
+import 'package:kmstry_frontend/features/people/presentation/block_user_dialog.dart';
+import 'package:kmstry_frontend/features/people/presentation/user_actions_sheet.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -17,8 +20,12 @@ import 'package:kmstry_frontend/core/ui/cached_image.dart';
 import 'package:kmstry_frontend/core/media/media_reference.dart';
 import 'package:kmstry_frontend/core/media/signed_media_resolver.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
+import 'package:kmstry_frontend/features/venue/data/reservation_phone.dart';
+import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_phone_call.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 import 'package:kmstry_frontend/core/push/push_manager.dart';
 import 'package:kmstry_frontend/core/theme/app_colors.dart';
@@ -54,6 +61,9 @@ class MessageDetailPage extends StatefulWidget {
   /// ilk okunmamış mesajın üstüne koymak için (0 = ayraç yok).
   final int initialUnreadCount;
   final ChatRepository? repository;
+  final VenueContextRepository? venueContextRepository;
+  final GooglePhotoLinkLauncher? phoneLinkLauncher;
+  final CheckinRepository? checkinRepository;
 
   const MessageDetailPage({
     super.key,
@@ -63,6 +73,9 @@ class MessageDetailPage extends StatefulWidget {
     required this.otherPhotoUrl,
     this.initialUnreadCount = 0,
     this.repository,
+    this.venueContextRepository,
+    this.phoneLinkLauncher,
+    this.checkinRepository,
   });
 
   @override
@@ -72,6 +85,9 @@ class MessageDetailPage extends StatefulWidget {
 class _MessageDetailPageState extends State<MessageDetailPage>
     with WidgetsBindingObserver {
   late final ChatRepository _repo = widget.repository ?? ChatRepository();
+  late final VenueContextRepository _venueContextRepo =
+      widget.venueContextRepository ?? VenueContextRepository();
+  String? _venuePhoneLookupId;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ChatRealtimeService _realtime = ChatRealtimeService();
@@ -143,6 +159,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
   @override
   void initState() {
     super.initState();
+    FriendshipChanges.changes.addListener(_onFriendshipChanged);
     WidgetsBinding.instance.addObserver(this);
     debugPrint('💬 [Detail] Listener baglaniyor');
     _chatId = _normalizeChatId(widget.chatId);
@@ -180,8 +197,22 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     }
   }
 
+  void _onFriendshipChanged() {
+    final change = FriendshipChanges.changes.value;
+    if (!mounted || change == null) return;
+    final target = widget.otherUserId.isNotEmpty
+        ? widget.otherUserId
+        : _chat?.otherUser?.id;
+    if (change.userId.isNotEmpty && change.userId != target) return;
+    setState(() {
+      _chat = _chat?.copyWith(isActive: false, canSendMessages: false);
+    });
+    unawaited(_loadChat(silent: true));
+  }
+
   @override
   void dispose() {
+    FriendshipChanges.changes.removeListener(_onFriendshipChanged);
     _pdfPreviews.dispose();
     _cacheChangesSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -259,7 +290,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ? widget.otherPhotoUrl
               : null,
           chatIdHint: _chatId,
-          isMatchedHint: true,
+          isMatchedHint: _chat?.isActive == true,
           hideVenueInfo: true,
         ),
       ),
@@ -1134,7 +1165,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               : 'Messaging paused',
           message: accountUnavailable
               ? 'This account can no longer receive new messages. You can still view your chat history.'
-              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
+              : 'This chat is unavailable for new messages. Your chat history is still available.',
         );
         return;
       }
@@ -1187,6 +1218,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final s = e.toString().toLowerCase();
     return s.contains('block') ||
         s.contains('not active') ||
+        s.contains('no longer friends') ||
         s.contains('403') ||
         s.contains('forbidden');
   }
@@ -1195,13 +1227,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     final s = e.toString().toLowerCase();
     return s.contains('recipient_account_unavailable') ||
         s.contains('cannot receive new messages');
-  }
-
-  bool _isTooManyRequestsError(Object e) {
-    final s = e.toString().toLowerCase();
-    return s.contains('too many requests') ||
-        s.contains('throttlerexception') ||
-        s.contains('429');
   }
 
   /// Alıntı balonuna dokununca yapısal reply_to_id ile orijinal mesaja zıplar
@@ -1437,353 +1462,361 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
-        return FutureBuilder<List<ChatListItem>>(
-          future: chatsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return SizedBox(
-                height: 260,
-                child: Center(
-                  child: CircularProgressIndicator(
-                    color: AppTheme.brandPrimary,
-                  ),
-                ),
-              );
-            }
-            if (snapshot.hasError) {
-              return SizedBox(
-                height: 200,
-                child: Center(
-                  child: Text(
-                    'Could not load chats.',
-                    style: TextStyle(color: _mutedTextColor),
-                  ),
-                ),
-              );
-            }
-            final chats = (snapshot.data ?? const <ChatListItem>[])
-                // Bloklu sohbetlere mesaj gönderilemez → forward hedefi olarak
-                // hiç gösterme (mevcut sohbeti de listeden çıkar).
-                .where((c) => c.id != _chatId && !c.isBlocked)
-                .toList();
-            if (chats.isEmpty) {
-              return SizedBox(
-                height: 200,
-                child: Center(
-                  child: Text(
-                    'No other chats to forward to.',
-                    style: TextStyle(color: _mutedTextColor),
-                  ),
-                ),
-              );
-            }
-            return StatefulBuilder(
-              builder: (context, setSheetState) {
-                final filteredChats = chats.where((chat) {
-                  final name = _forwardChatName(chat).toLowerCase();
-                  final preview = (chat.lastMessagePreview ?? '').toLowerCase();
-                  final q = query.trim().toLowerCase();
-                  return q.isEmpty || name.contains(q) || preview.contains(q);
-                }).toList();
-                final selectedChats = chats
-                    .where((chat) => selectedIds.contains(chat.id))
-                    .toList();
-
-                void toggle(ChatListItem chat) {
-                  setSheetState(() {
-                    if (!selectedIds.add(chat.id)) {
-                      selectedIds.remove(chat.id);
-                    }
-                  });
-                }
-
-                return FractionallySizedBox(
-                  heightFactor: 0.94,
-                  child: SafeArea(
-                    child: Column(
-                      children: [
-                        Container(
-                          margin: const EdgeInsets.only(top: 10, bottom: 2),
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: _mutedTextColor.withValues(alpha: 0.35),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                          child: Row(
-                            children: [
-                              _buildForwardCircleButton(
-                                icon: Icons.close_rounded,
-                                onPressed: () {
-                                  FocusManager.instance.primaryFocus?.unfocus();
-                                  Navigator.pop(sheetContext);
-                                },
-                              ),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    ShaderMask(
-                                      shaderCallback: (rect) =>
-                                          const LinearGradient(
-                                            colors: [
-                                              AppColors.blue,
-                                              AppColors.magenta,
-                                            ],
-                                          ).createShader(rect),
-                                      child: const Text(
-                                        'Forward to',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 19,
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: -0.2,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      messages.length == 1
-                                          ? '1 message selected'
-                                          : '${messages.length} messages selected',
-                                      style: TextStyle(
-                                        color: _mutedTextColor,
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.all(9),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: AppColors.blue.withValues(
-                                    alpha: _isDarkMode ? 0.16 : 0.10,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.forward_rounded,
-                                  color: AppColors.blue,
-                                  size: 20,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(18, 4, 18, 16),
-                          child: TextField(
-                            controller: searchController,
-                            onChanged: (value) =>
-                                setSheetState(() => query = value),
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              fontSize: 16,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: 'Search',
-                              hintStyle: TextStyle(color: _mutedTextColor),
-                              prefixIcon: Icon(
-                                Icons.search_rounded,
-                                color: _mutedTextColor,
-                              ),
-                              filled: true,
-                              fillColor: _isDarkMode
-                                  ? Colors.white.withValues(alpha: 0.1)
-                                  : const Color(0xFFF0F4F8),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 14,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(26),
-                                borderSide: BorderSide(color: _dividerColor),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(26),
-                                borderSide: BorderSide(color: _dividerColor),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(26),
-                                borderSide: BorderSide(
-                                  color: AppTheme.brandPrimary.withValues(
-                                    alpha: 0.75,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: ListView(
-                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-                            children: [
-                              _buildForwardSectionTitle('Recent chats'),
-                              DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: _isDarkMode
-                                      ? Colors.white.withValues(alpha: 0.06)
-                                      : Colors.white,
-                                  borderRadius: BorderRadius.circular(22),
-                                  border: Border.all(color: _dividerColor),
-                                ),
-                                child: Column(
-                                  children: [
-                                    for (
-                                      var i = 0;
-                                      i < filteredChats.length;
-                                      i++
-                                    )
-                                      _buildForwardChatTile(
-                                        filteredChats[i],
-                                        selected: selectedIds.contains(
-                                          filteredChats[i].id,
-                                        ),
-                                        showDivider:
-                                            i != filteredChats.length - 1,
-                                        onTap: () => toggle(filteredChats[i]),
-                                      ),
-                                    if (filteredChats.isEmpty)
-                                      Padding(
-                                        padding: const EdgeInsets.all(22),
-                                        child: Text(
-                                          'Sohbet bulunamadi.',
-                                          style: TextStyle(
-                                            color: _mutedTextColor,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: EdgeInsets.fromLTRB(
-                            18,
-                            selectedChats.isEmpty ? 0 : 12,
-                            18,
-                            selectedChats.isEmpty ? 0 : 14,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _composerBackground,
-                            border: selectedChats.isEmpty
-                                ? null
-                                : Border(top: BorderSide(color: _dividerColor)),
-                          ),
-                          child: selectedChats.isEmpty
-                              ? const SizedBox.shrink()
-                              : Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SizedBox(
-                                      height: 66,
-                                      child: ListView.separated(
-                                        scrollDirection: Axis.horizontal,
-                                        padding: const EdgeInsets.only(
-                                          bottom: 2,
-                                        ),
-                                        itemCount: selectedChats.length,
-                                        separatorBuilder: (_, index) =>
-                                            const SizedBox(width: 14),
-                                        itemBuilder: (_, i) {
-                                          final chat = selectedChats[i];
-                                          final chatName = _forwardChatName(
-                                            chat,
-                                          );
-                                          return _buildForwardSelectedChip(
-                                            name: chatName,
-                                            photoUrl:
-                                                chat
-                                                    .getDisplayUser(
-                                                      _currentUserId,
-                                                    )
-                                                    ?.photo ??
-                                                '',
-                                            onRemove: () => toggle(chat),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.end,
-                                      children: [
-                                        Expanded(
-                                          child: TextField(
-                                            controller: noteController,
-                                            minLines: 1,
-                                            maxLines: 3,
-                                            style: TextStyle(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                              fontSize: 15.5,
-                                            ),
-                                            decoration: InputDecoration(
-                                              hintText: 'Add a message...',
-                                              hintStyle: TextStyle(
-                                                color: _mutedTextColor,
-                                              ),
-                                              filled: true,
-                                              fillColor: _isDarkMode
-                                                  ? Colors.white.withValues(
-                                                      alpha: 0.08,
-                                                    )
-                                                  : const Color(0xFFF0F4F8),
-                                              border: OutlineInputBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(24),
-                                                borderSide: BorderSide.none,
-                                              ),
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 18,
-                                                    vertical: 13,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        _buildForwardSendButton(
-                                          count: selectedChats.length,
-                                          onTap: () {
-                                            // Odaklı not alanı hâlâ ağaçtayken
-                                            // sheet pop + pushReplacement,
-                                            // InheritedWidget teardown'ında
-                                            // "_dependents.isEmpty" assert'ine
-                                            // yol açıyordu. Önce klavyeyi kapat.
-                                            FocusManager.instance.primaryFocus
-                                                ?.unfocus();
-                                            Navigator.pop(
-                                              sheetContext,
-                                              selectedChats,
-                                            );
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ],
+        return AnimatedBuilder(
+          animation: FriendshipChanges.changes,
+          builder: (_, _) => FutureBuilder<List<ChatListItem>>(
+            future: chatsFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return SizedBox(
+                  height: 260,
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: AppTheme.brandPrimary,
                     ),
                   ),
                 );
-              },
-            );
-          },
+              }
+              if (snapshot.hasError) {
+                return SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Text(
+                      'Could not load chats.',
+                      style: TextStyle(color: _mutedTextColor),
+                    ),
+                  ),
+                );
+              }
+              final chats = (snapshot.data ?? const <ChatListItem>[])
+                  // Bloklu sohbetlere mesaj gönderilemez → forward hedefi olarak
+                  // hiç gösterme (mevcut sohbeti de listeden çıkar).
+                  .where((c) => c.id != _chatId && _repo.canMessage(c))
+                  .toList();
+              if (chats.isEmpty) {
+                return SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Text(
+                      'No other chats to forward to.',
+                      style: TextStyle(color: _mutedTextColor),
+                    ),
+                  ),
+                );
+              }
+              return StatefulBuilder(
+                builder: (context, setSheetState) {
+                  final filteredChats = chats.where((chat) {
+                    final name = _forwardChatName(chat).toLowerCase();
+                    final preview = (chat.lastMessagePreview ?? '')
+                        .toLowerCase();
+                    final q = query.trim().toLowerCase();
+                    return q.isEmpty || name.contains(q) || preview.contains(q);
+                  }).toList();
+                  final selectedChats = chats
+                      .where((chat) => selectedIds.contains(chat.id))
+                      .toList();
+
+                  void toggle(ChatListItem chat) {
+                    setSheetState(() {
+                      if (!selectedIds.add(chat.id)) {
+                        selectedIds.remove(chat.id);
+                      }
+                    });
+                  }
+
+                  return FractionallySizedBox(
+                    heightFactor: 0.94,
+                    child: SafeArea(
+                      child: Column(
+                        children: [
+                          Container(
+                            margin: const EdgeInsets.only(top: 10, bottom: 2),
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: _mutedTextColor.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                            child: Row(
+                              children: [
+                                _buildForwardCircleButton(
+                                  icon: Icons.close_rounded,
+                                  onPressed: () {
+                                    FocusManager.instance.primaryFocus
+                                        ?.unfocus();
+                                    Navigator.pop(sheetContext);
+                                  },
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      ShaderMask(
+                                        shaderCallback: (rect) =>
+                                            const LinearGradient(
+                                              colors: [
+                                                AppColors.blue,
+                                                AppColors.magenta,
+                                              ],
+                                            ).createShader(rect),
+                                        child: const Text(
+                                          'Forward to',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 19,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: -0.2,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        messages.length == 1
+                                            ? '1 message selected'
+                                            : '${messages.length} messages selected',
+                                        style: TextStyle(
+                                          color: _mutedTextColor,
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.all(9),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: AppColors.blue.withValues(
+                                      alpha: _isDarkMode ? 0.16 : 0.10,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.forward_rounded,
+                                    color: AppColors.blue,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 4, 18, 16),
+                            child: TextField(
+                              controller: searchController,
+                              onChanged: (value) =>
+                                  setSheetState(() => query = value),
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                fontSize: 16,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Search',
+                                hintStyle: TextStyle(color: _mutedTextColor),
+                                prefixIcon: Icon(
+                                  Icons.search_rounded,
+                                  color: _mutedTextColor,
+                                ),
+                                filled: true,
+                                fillColor: _isDarkMode
+                                    ? Colors.white.withValues(alpha: 0.1)
+                                    : const Color(0xFFF0F4F8),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(26),
+                                  borderSide: BorderSide(color: _dividerColor),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(26),
+                                  borderSide: BorderSide(color: _dividerColor),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(26),
+                                  borderSide: BorderSide(
+                                    color: AppTheme.brandPrimary.withValues(
+                                      alpha: 0.75,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: ListView(
+                              padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                              children: [
+                                _buildForwardSectionTitle('Recent chats'),
+                                DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: _isDarkMode
+                                        ? Colors.white.withValues(alpha: 0.06)
+                                        : Colors.white,
+                                    borderRadius: BorderRadius.circular(22),
+                                    border: Border.all(color: _dividerColor),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      for (
+                                        var i = 0;
+                                        i < filteredChats.length;
+                                        i++
+                                      )
+                                        _buildForwardChatTile(
+                                          filteredChats[i],
+                                          selected: selectedIds.contains(
+                                            filteredChats[i].id,
+                                          ),
+                                          showDivider:
+                                              i != filteredChats.length - 1,
+                                          onTap: () => toggle(filteredChats[i]),
+                                        ),
+                                      if (filteredChats.isEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.all(22),
+                                          child: Text(
+                                            'Sohbet bulunamadi.',
+                                            style: TextStyle(
+                                              color: _mutedTextColor,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            padding: EdgeInsets.fromLTRB(
+                              18,
+                              selectedChats.isEmpty ? 0 : 12,
+                              18,
+                              selectedChats.isEmpty ? 0 : 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _composerBackground,
+                              border: selectedChats.isEmpty
+                                  ? null
+                                  : Border(
+                                      top: BorderSide(color: _dividerColor),
+                                    ),
+                            ),
+                            child: selectedChats.isEmpty
+                                ? const SizedBox.shrink()
+                                : Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        height: 66,
+                                        child: ListView.separated(
+                                          scrollDirection: Axis.horizontal,
+                                          padding: const EdgeInsets.only(
+                                            bottom: 2,
+                                          ),
+                                          itemCount: selectedChats.length,
+                                          separatorBuilder: (_, index) =>
+                                              const SizedBox(width: 14),
+                                          itemBuilder: (_, i) {
+                                            final chat = selectedChats[i];
+                                            final chatName = _forwardChatName(
+                                              chat,
+                                            );
+                                            return _buildForwardSelectedChip(
+                                              name: chatName,
+                                              photoUrl:
+                                                  chat
+                                                      .getDisplayUser(
+                                                        _currentUserId,
+                                                      )
+                                                      ?.photo ??
+                                                  '',
+                                              onRemove: () => toggle(chat),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Expanded(
+                                            child: TextField(
+                                              controller: noteController,
+                                              minLines: 1,
+                                              maxLines: 3,
+                                              style: TextStyle(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                                fontSize: 15.5,
+                                              ),
+                                              decoration: InputDecoration(
+                                                hintText: 'Add a message...',
+                                                hintStyle: TextStyle(
+                                                  color: _mutedTextColor,
+                                                ),
+                                                filled: true,
+                                                fillColor: _isDarkMode
+                                                    ? Colors.white.withValues(
+                                                        alpha: 0.08,
+                                                      )
+                                                    : const Color(0xFFF0F4F8),
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(24),
+                                                  borderSide: BorderSide.none,
+                                                ),
+                                                contentPadding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 18,
+                                                      vertical: 13,
+                                                    ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          _buildForwardSendButton(
+                                            count: selectedChats.length,
+                                            onTap: () {
+                                              // Odaklı not alanı hâlâ ağaçtayken
+                                              // sheet pop + pushReplacement,
+                                              // InheritedWidget teardown'ında
+                                              // "_dependents.isEmpty" assert'ine
+                                              // yol açıyordu. Önce klavyeyi kapat.
+                                              FocusManager.instance.primaryFocus
+                                                  ?.unfocus();
+                                              Navigator.pop(
+                                                sheetContext,
+                                                selectedChats,
+                                              );
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
         );
       },
     );
@@ -1855,7 +1888,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     if (isOfflineError(error)) {
       return "You're offline. Check your connection and try again.";
     }
-    if (raw.contains('not active') || raw.contains('chat is not active')) {
+    if (raw.contains('not active') || raw.contains('no longer friends')) {
       return who != null
           ? "You can't message $who anymore — you're no longer matched."
           : "Some chats are no longer active, so the message wasn't sent.";
@@ -2411,6 +2444,18 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     );
   }
 
+  Future<void> _openSafetyActions() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final blockedByMe = _chat?.blockedByMe == true;
+    return showUserActionsSheet(
+      context,
+      isBlocked: blockedByMe,
+      onReport: () => unawaited(_openReportMessageSheet()),
+      onToggleBlock: () =>
+          unawaited(blockedByMe ? _unblockChatUser() : _blockChatUser()),
+    );
+  }
+
   Future<void> _openReportMessageSheet({ChatMessage? message}) async {
     final targetUserId = _effectiveOtherUserId;
     if (targetUserId.isEmpty || _safetyActionBusy) return;
@@ -2421,6 +2466,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
         context,
         targetUserId: targetUserId,
         messageId: message?.id,
+        repository: widget.checkinRepository,
       );
       if (!mounted || !reported) return;
       if (message == null) _applySafetyBlock();
@@ -2449,26 +2495,28 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _safetyActionBusy = true);
     try {
-      final confirmed = await showDestructiveConfirmationDialog(
+      final blocked = await confirmAndBlockUser(
         context,
-        title: 'Block this user?',
-        message:
-            'You will no longer be able to message each other. Your chat history will stay available. You can unblock this person in Settings → Blocked users.',
-        confirmLabel: 'Block user',
-        icon: Icons.block_rounded,
+        repository: widget.checkinRepository ?? CheckinRepository(),
+        targetUserId: targetUserId,
       );
-      if (!confirmed || !mounted) return;
-      await CheckinRepository().blockUser(targetUserId);
-      if (mounted) _applySafetyBlock();
-    } catch (error) {
-      if (mounted) {
-        await showPremiumErrorDialog(
-          context,
-          message: _isTooManyRequestsError(error)
-              ? 'Please wait a moment before trying again.'
-              : 'We could not block this user. Please try again.',
-        );
-      }
+      if (blocked && mounted) _applySafetyBlock();
+    } finally {
+      if (mounted) setState(() => _safetyActionBusy = false);
+    }
+  }
+
+  /// Sohbet, engel kalkınca arkadaşlık yenilemesiyle sunucudan tekrar yüklenir.
+  Future<void> _unblockChatUser() async {
+    final targetUserId = _effectiveOtherUserId;
+    if (targetUserId.isEmpty || _safetyActionBusy) return;
+    setState(() => _safetyActionBusy = true);
+    try {
+      await confirmAndUnblockUser(
+        context,
+        repository: widget.checkinRepository ?? CheckinRepository(),
+        targetUserId: targetUserId,
+      );
     } finally {
       if (mounted) setState(() => _safetyActionBusy = false);
     }
@@ -3386,10 +3434,12 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                 const SizedBox(width: 8),
               ]
             : [
-                PopupMenuButton<String>(
+                IconButton(
                   tooltip: 'Conversation options',
-                  enabled:
-                      !_safetyActionBusy && _effectiveOtherUserId.isNotEmpty,
+                  onPressed:
+                      !_safetyActionBusy && _effectiveOtherUserId.isNotEmpty
+                      ? () => unawaited(_openSafetyActions())
+                      : null,
                   icon: _safetyActionBusy
                       ? const SizedBox(
                           width: 20,
@@ -3397,45 +3447,6 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.more_horiz_rounded),
-                  color: _headerBackground,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  onSelected: (action) {
-                    if (action == 'report') {
-                      unawaited(_openReportMessageSheet());
-                    }
-                    if (action == 'block') {
-                      unawaited(_blockChatUser());
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
-                      value: 'report',
-                      child: Row(
-                        children: [
-                          Icon(Icons.flag_outlined, color: colors.error),
-                          const SizedBox(width: 12),
-                          const Text('Report user'),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'block',
-                      enabled: _chat?.blockedByMe != true,
-                      child: Row(
-                        children: [
-                          Icon(Icons.block_rounded, color: colors.error),
-                          const SizedBox(width: 12),
-                          Text(
-                            _chat?.blockedByMe == true
-                                ? 'User blocked'
-                                : 'Block user',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
                 ),
                 const SizedBox(width: 8),
               ],
@@ -4038,48 +4049,54 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ),
             ),
             const Spacer(),
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
+            // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+            DecoratedBox(
+              decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
-                onTap: count == 0 ? null : _forwardSelectedMessages,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 150),
-                  opacity: count == 0 ? 0.5 : 1,
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      color: AppColors.blue,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.blue.withValues(alpha: 0.30),
-                          blurRadius: 14,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Container(
-                      height: 40,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      alignment: Alignment.center,
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Forward',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w800,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.blue.withValues(alpha: 0.30),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: count == 0 ? null : _forwardSelectedMessages,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 150),
+                    opacity: count == 0 ? 0.5 : 1,
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        color: AppColors.blue,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Container(
+                        height: 40,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        alignment: Alignment.center,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Forward',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 8),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            color: Colors.white,
-                            size: 17,
-                          ),
-                        ],
+                            SizedBox(width: 8),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Colors.white,
+                              size: 17,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -4223,30 +4240,41 @@ class _MessageDetailPageState extends State<MessageDetailPage>
                   ],
                   if (showActions) ...[
                     const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _venueCardAction(
-                            label: 'View details',
-                            icon: Icons.storefront_rounded,
-                            isMe: isMe,
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => VenueDetailPage(venue: venue),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _venueCardAction(
+                              label: 'View details',
+                              icon: Icons.storefront_rounded,
+                              isMe: isMe,
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => VenueDetailPage(venue: venue),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: _venueCardAction(
+                          const SizedBox(width: 7),
+                          _venueCardAction(
                             label: 'Directions',
                             icon: Icons.directions_rounded,
                             isMe: isMe,
+                            iconOnly: true,
                             onTap: () => unawaited(_openVenueDirections(venue)),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 7),
+                          _venueCardAction(
+                            label: 'Call',
+                            icon: Icons.call_rounded,
+                            isMe: isMe,
+                            iconOnly: true,
+                            busy: _venuePhoneLookupId == venue.id,
+                            onTap: () => unawaited(_callSharedVenue(venue)),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                   const SizedBox(height: 6),
@@ -4273,38 +4301,74 @@ class _MessageDetailPageState extends State<MessageDetailPage>
     required IconData icon,
     required bool isMe,
     required VoidCallback onTap,
+    bool iconOnly = false,
+    bool busy = false,
   }) {
     final color = isMe ? _outgoingTextColor : AppColors.blue;
-    return Material(
+    final indicator = busy
+        ? SizedBox(
+            width: 15,
+            height: 15,
+            child: CircularProgressIndicator(strokeWidth: 2, color: color),
+          )
+        : Icon(icon, color: color, size: iconOnly ? 17 : 15);
+    final button = Material(
       color: color.withValues(alpha: 0.10),
       borderRadius: BorderRadius.circular(11),
       child: InkWell(
+        // Meşgulken de null olmaz: dokunuş karta geçip detay sayfasını açardı.
         onTap: onTap,
         borderRadius: BorderRadius.circular(11),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 15),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+          child: iconOnly
+              ? Center(child: indicator)
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    indicator,
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );
+    if (!iconOnly) return button;
+    return SizedBox(
+      width: 44,
+      child: Tooltip(message: label, child: button),
+    );
+  }
+
+  /// Numara dokununca sorulur: sohbetteki her kart için Google'a istek atılmaz.
+  Future<void> _callSharedVenue(Venue venue) async {
+    if (_venuePhoneLookupId != null) return;
+    setState(() => _venuePhoneLookupId = venue.id);
+    VenuePhone? phone;
+    try {
+      phone = await _venueContextRepo.getVenuePhone(venueId: venue.id);
+    } catch (_) {
+      /* Reported below; a failed lookup must not look like a missing number. */
+    }
+    if (!mounted) return;
+    setState(() => _venuePhoneLookupId = null);
+    if (phone?.phone == null) {
+      showVenuePhoneUnavailable(context, failed: phone == null);
+      return;
+    }
+    await dialVenuePhone(context, phone!, launcher: widget.phoneLinkLauncher);
   }
 
   Future<void> _openVenueDirections(Venue venue) async {
@@ -5015,7 +5079,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               ? 'Messaging is paused because one of you blocked the other. You can still view your chat history.'
               : _chat?.otherUserUnavailable == true
               ? 'This account can no longer receive new messages. You can still view your chat history.'
-              : 'This chat is no longer active. You can still view your chat history.',
+              : 'You’re no longer friends. Your chat history is still available. Connect again to send messages.',
           textAlign: TextAlign.center,
           style: TextStyle(color: _mutedTextColor, fontSize: 13),
         ),
@@ -5476,7 +5540,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               : 'Messaging paused',
           message: accountUnavailable
               ? 'This account can no longer receive new messages. You can still view your chat history.'
-              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
+              : 'This chat is unavailable for new messages. Your chat history is still available.',
         );
         return;
       }
@@ -5713,7 +5777,7 @@ class _MessageDetailPageState extends State<MessageDetailPage>
               : 'Messaging paused',
           message: accountUnavailable
               ? 'This account can no longer receive new messages. You can still view your chat history.'
-              : 'You can\'t message this user right now. This happens when one of you has blocked the other.',
+              : 'This chat is unavailable for new messages. Your chat history is still available.',
         );
         return;
       }

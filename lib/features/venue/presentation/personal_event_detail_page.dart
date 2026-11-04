@@ -699,65 +699,71 @@ class _PersonalEventDetailPageState extends State<PersonalEventDetailPage> {
 
     return SizedBox(
       height: 54,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+      // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          onTap: disabled
-              ? null
-              : earlyLocked
-              ? _openEarlyAccessUpsell
-              : _toggleRsvp,
-          child: Ink(
-            decoration: BoxDecoration(
-              gradient: showGradient
-                  ? const LinearGradient(
-                      colors: [Color(0xFF8B10C0), _kMagenta],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : null,
-              color: showGradient ? null : kCard,
-              borderRadius: BorderRadius.circular(16),
-              border: showGradient ? null : Border.all(color: kBorder),
-              boxShadow: showGradient
-                  ? [
-                      BoxShadow(
-                        color: _kMagenta.withValues(alpha: 0.32),
-                        blurRadius: 22,
-                        offset: const Offset(0, 6),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Center(
-              child: _rsvping
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(icon, size: 18, color: fg),
-                        const SizedBox(width: 9),
-                        Flexible(
-                          child: Text(
-                            label,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                              color: fg,
+          boxShadow: showGradient
+              ? [
+                  BoxShadow(
+                    color: _kMagenta.withValues(alpha: 0.32),
+                    blurRadius: 22,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: disabled
+                ? null
+                : earlyLocked
+                ? _openEarlyAccessUpsell
+                : _toggleRsvp,
+            child: Ink(
+              decoration: BoxDecoration(
+                gradient: showGradient
+                    ? const LinearGradient(
+                        colors: [Color(0xFF8B10C0), _kMagenta],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: showGradient ? null : kCard,
+                borderRadius: BorderRadius.circular(16),
+                border: showGradient ? null : Border.all(color: kBorder),
+              ),
+              child: Center(
+                child: _rsvping
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon, size: 18, color: fg),
+                          const SizedBox(width: 9),
+                          Flexible(
+                            child: Text(
+                              label,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: fg,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+              ),
             ),
           ),
         ),

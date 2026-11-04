@@ -1,4 +1,9 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
+// Official platform adapter for the active notice opening MessageDetailPage.
+// ignore: depend_on_referenced_packages
+import 'package:firebase_core_platform_interface/test.dart';
+import 'package:kmstry_frontend/features/messageDetail/presentation/message_detail.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +35,21 @@ class _Auth extends AuthRepository {
 class _Notifications extends NotificationRepository {
   int calls = 0;
   int receipts = 0;
+  Future<ConnectionNoticeTarget?> Function(String, String?, DateTime?)?
+  connection;
+  @override
+  Future<ConnectionNoticeTarget?> resolveConnectionNotice(
+    String id, {
+    String? version,
+    DateTime? seenAt,
+  }) => connection!(id, version, seenAt);
+  Future<bool> Function(String, String?, DateTime?)? check;
+  @override
+  Future<bool> isPendingInterest(
+    String sender, {
+    String? id,
+    DateTime? version,
+  }) => check!(sender, id, version);
   Future<List<NotificationModel>> Function() read = () async => [
     _item('First update'),
   ];
@@ -86,6 +106,9 @@ Widget _page(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setupFirebaseCoreMocks();
+  setUpAll(() async => Firebase.initializeApp());
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
@@ -315,6 +338,189 @@ void main() {
       expect(find.text('Current venue'), findsOneWidget);
       expect(find.text('Other venue'), findsNothing);
       expect(find.text('Personal'), findsNothing);
+    },
+  );
+
+  testWidgets('an incoming interest shows its text with a heart', (
+    tester,
+  ) async {
+    final repo = _Notifications()
+      ..read = () async => [
+        NotificationModel(
+          id: 'interest',
+          type: 'liked_you',
+          title: 'zeynep cilantro',
+          body: 'Interested in you',
+          contextType: 'PERSONAL',
+          createdAt: DateTime.now(),
+        ),
+      ];
+    await tester.pumpWidget(_page(_Auth(), repo, _Matches()));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Interested in you'), findsOneWidget);
+    expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.visibility_rounded), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('a withdrawn cached request shows only the unavailable message', (
+    tester,
+  ) async {
+    final sent = DateTime.now().toUtc().subtract(const Duration(days: 25));
+    final row = NotificationModel(
+      id: 'old',
+      type: 'liked_you',
+      title: 'Zeynep',
+      body: 'Interested in you',
+      data: {'actor_user_id': 'z'},
+      createdAt: sent,
+    );
+    var active = true;
+    final repo = _Notifications();
+    repo.read = () async => active ? [row] : [];
+    repo.check = (sender, id, version) async {
+      expect(sender, 'z');
+      expect(id, 'old');
+      expect(version, sent);
+      return active;
+    };
+    await tester.pumpWidget(_page(_Auth(), repo, _Matches()));
+    await tester.pumpAndSettle();
+    active = false;
+    await tester.tap(find.text('Interested in you'));
+    await tester.pumpAndSettle();
+    expect(find.text('This request is no longer available.'), findsOneWidget);
+    expect(find.text('Zeynep'), findsNothing);
+    expect(find.text('Pass'), findsNothing);
+  });
+  for (final active in [false, true]) {
+    testWidgets(
+      'a cached Connection made opens chat only while its own match is active ($active)',
+      (tester) async {
+        final now = DateTime.now().toUtc();
+        final row = NotificationModel(
+          id: 'notice',
+          type: 'match_created',
+          title: 'Connection made',
+          body: 'Connected',
+          createdAt: now,
+          data: {
+            'userId': 'peer',
+            'matchId': 'match',
+            'connection_version': 'first',
+            'relatedUser': {'id': 'peer', 'fullName': 'Handan'},
+          },
+        );
+        final repo = _Notifications();
+        repo.read = () async => [row];
+        final validation = Completer<void>();
+        int checks = 0;
+        repo.connection = (id, version, seenAt) async {
+          checks++;
+          await validation.future;
+          expect(id, 'notice');
+          expect(version, 'first');
+          expect(seenAt, now);
+          repo.read = () async => [];
+          return active
+              ? (chatId: 'chat', otherUserId: 'peer', otherName: 'Handan')
+              : null;
+        };
+        await tester.pumpWidget(_page(_Auth(), repo, _Matches()));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('You and Handan'), findsOneWidget);
+        expect(find.textContaining('You and Connection made'), findsNothing);
+        await tester.tap(find.text('Connection made'));
+        await tester.pump();
+        expect(
+          find.byWidgetPredicate(
+            (w) =>
+                w is CircularProgressIndicator &&
+                w.semanticsLabel == 'Opening notification',
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Connection made'));
+        expect(checks, 1);
+        validation.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        if (active) {
+          final page = tester.widget<MessageDetailPage>(
+            find.byType(MessageDetailPage),
+          );
+          expect(page.chatId, 'chat');
+          expect(page.otherUserId, 'peer');
+        } else {
+          expect(find.byType(MessageDetailPage), findsNothing);
+          expect(
+            find.text('This connection is no longer active.'),
+            findsOneWidget,
+          );
+          expect(find.text('Connection made'), findsNothing);
+        }
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets(
+    'removal removes the card immediately; a delayed match event cannot restore it',
+    (tester) async {
+      final events = StreamController<NotificationRealtimeEnvelope>.broadcast();
+      addTearDown(events.close);
+      final repo = _Notifications();
+      repo.read = () async => [
+        NotificationModel(
+          id: 'old',
+          type: 'match_created',
+          title: 'Connection made',
+          body: '',
+          createdAt: DateTime.now(),
+          data: {'userId': 'peer', 'matchId': 'match'},
+        ),
+      ];
+      await tester.pumpWidget(
+        _page(
+          _Auth(),
+          repo,
+          _Matches(),
+          realtime: NotificationRealtimeService.forTest(
+            events: events.stream,
+            connectionState: const Stream.empty(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('You and Connection made'), findsNothing);
+      final refresh = Completer<List<NotificationModel>>();
+      repo.read = () => refresh.future;
+      events.add(
+        const NotificationRealtimeEnvelope(
+          event: 'friendship.changed',
+          payload: {'otherUserId': 'peer', 'active': false},
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Connection made'), findsNothing);
+      events.add(
+        const NotificationRealtimeEnvelope(
+          event: 'notification.created',
+          payload: {
+            'id': 'old',
+            'type': 'match_created',
+            'title': 'Connection made',
+            'data': {'userId': 'peer'},
+            'unreadCount': 1,
+          },
+        ),
+      );
+      await tester.pump();
+      refresh.complete([]);
+      await tester.pumpAndSettle();
+      expect(find.text('Connection made'), findsNothing);
     },
   );
 }

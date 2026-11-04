@@ -1,3 +1,5 @@
+import 'package:kmstry_frontend/features/venue/data/reservation_phone.dart';
+import 'package:kmstry_frontend/core/theme/app_theme.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -26,6 +28,10 @@ import 'package:kmstry_frontend/features/venue_stories/data/venue_story_model.da
 import 'package:kmstry_frontend/features/venue_stories/data/venue_story_repository.dart';
 
 class _Context extends VenueContextRepository {
+  Future<VenuePhone> Function()? readPhone;
+  @override
+  Future<VenuePhone> getVenuePhone({String? venueId, String? placeId}) =>
+      readPhone?.call() ?? Future.value(const VenuePhone());
   late Future<Map<String, dynamic>> Function() identity;
   late Future<List<VenueUpcomingEvent>> Function() events;
   Future<Map<String, dynamic>> Function()? google;
@@ -198,9 +204,12 @@ Future<void> _pump(
   _Gallery? gallery,
   _VenueStories? stories,
   GooglePhotoLinkLauncher? reportLinkLauncher,
+  GooglePhotoLinkLauncher? phoneLinkLauncher,
+  ThemeData? theme,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       home: VenueDetailPage(
         venue: venue ?? _venue(),
         venueContextRepository: repo,
@@ -211,6 +220,7 @@ Future<void> _pump(
         storyRepository: _Stories(),
         galleryRepository: gallery ?? _Gallery(),
         reportLinkLauncher: reportLinkLauncher,
+        phoneLinkLauncher: phoneLinkLauncher,
       ),
     ),
   );
@@ -231,6 +241,305 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     PendingPublicMediaService.instance.clear();
   });
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'Call follows Directions, Share sits below Report; dark=$dark',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final repo = _Context()
+          ..identity = (() async => _identity())
+          ..events = (() async => [])
+          ..readPhone = (() async =>
+              const VenuePhone(phone: '+442079460001', fromGoogle: true));
+        Uri? dialed;
+        await _pump(
+          tester,
+          repo,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+          phoneLinkLauncher: (uri) async {
+            dialed = uri;
+            return true;
+          },
+        );
+        expect(find.text('Call'), findsOneWidget);
+        expect(find.text('Phone · Google Maps'), findsOneWidget);
+        expect(
+          tester.getCenter(find.text('Call')).dx,
+          greaterThan(tester.getCenter(find.text('Directions')).dx),
+        );
+        expect(
+          tester.getCenter(find.text('Directions')).dx,
+          greaterThan(tester.getCenter(find.text('Follow')).dx),
+        );
+        expect(
+          tester.getCenter(find.byTooltip('Share')).dy,
+          greaterThan(tester.getCenter(find.byTooltip('Report')).dy),
+        );
+        await tester.ensureVisible(find.text('Call'));
+        await tester.tap(find.text('Call'));
+        await tester.pump();
+        expect(dialed.toString(), 'tel:+442079460001');
+        expect(tester.takeException(), isNull);
+        await _close(tester);
+      },
+    );
+
+    testWidgets(
+      'action buttons keep their colour inside the rounded corners; dark=$dark',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final repo = _Context()
+          ..identity = (() async => _identity())
+          ..events = (() async => [])
+          ..readPhone = (() async =>
+              const VenuePhone(phone: '+442079460001', fromGoogle: true));
+        await _pump(
+          tester,
+          repo,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+        );
+        for (final label in ['Follow', 'Directions', 'Call']) {
+          // Material clips Ink to a rectangle, so an Ink shadow would show as
+          // square coloured corners outside the 14px radius.
+          final ink = tester.widget<Ink>(
+            find
+                .ancestor(of: find.text(label), matching: find.byType(Ink))
+                .first,
+          );
+          final decoration = ink.decoration! as BoxDecoration;
+          expect(decoration.boxShadow, isNull, reason: label);
+          expect(decoration.borderRadius, BorderRadius.circular(14));
+          final outer = tester.widget<DecoratedBox>(
+            find
+                .ancestor(
+                  of: find.byWidget(ink),
+                  matching: find.byType(DecoratedBox),
+                )
+                .first,
+          );
+          expect(
+            (outer.decoration as BoxDecoration).boxShadow,
+            isNull,
+            reason: '$label stays a flat card like its row neighbours',
+          );
+        }
+        expect(tester.takeException(), isNull);
+        await _close(tester);
+      },
+    );
+
+    testWidgets(
+      'slow phone keeps action widths stable and Follow usable; dark=$dark',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final pendingPhone = Completer<VenuePhone>();
+        final repo = _Context()
+          ..identity = (() async => _identity())
+          ..events = (() async => [])
+          ..readPhone = (() => pendingPhone.future);
+        Uri? dialed;
+        await _pump(
+          tester,
+          repo,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+          phoneLinkLauncher: (uri) async {
+            dialed = uri;
+            return true;
+          },
+        );
+        Finder action(String label) => find
+            .ancestor(of: find.text(label), matching: find.byType(InkWell))
+            .first;
+        final callSpinner = find.byWidgetPredicate(
+          (widget) =>
+              widget is CircularProgressIndicator &&
+              widget.semanticsLabel == 'Loading phone number',
+        );
+        // The icon never waits for the lookup.
+        expect(find.text('Call'), findsOneWidget);
+        expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+        expect(callSpinner, findsNothing);
+        expect(tester.widget<InkWell>(action('Call')).onTap, isNotNull);
+        expect(find.text('Phone · Google Maps'), findsNothing);
+        await tester.ensureVisible(find.text('Call'));
+        await tester.tap(find.text('Follow'));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Following'), findsOneWidget);
+        final before = [
+          for (final label in ['Following', 'Directions', 'Call'])
+            tester.getRect(action(label)),
+        ];
+
+        // A tap during the lookup waits and dials once the number arrives.
+        await tester.tap(find.text('Call'));
+        await tester.pump();
+        expect(dialed, isNull);
+        expect(find.byIcon(Icons.call_outlined), findsNothing);
+        expect(callSpinner, findsOneWidget);
+        expect(tester.widget<InkWell>(action('Call')).onTap, isNull);
+
+        pendingPhone.complete(
+          const VenuePhone(phone: '+442079460001', fromGoogle: true),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(dialed.toString(), 'tel:+442079460001');
+        expect([
+          for (final label in ['Following', 'Directions', 'Call'])
+            tester.getRect(action(label)),
+        ], before);
+        expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+        expect(tester.widget<InkWell>(action('Call')).onTap, isNotNull);
+        expect(find.text('Phone · Google Maps'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await _close(tester);
+      },
+    );
+  }
+
+  for (final fails in [false, true]) {
+    testWidgets('a tap during a lookup without a number explains why; '
+        'error=$fails', (tester) async {
+      final pendingPhone = Completer<VenuePhone>();
+      final repo = _Context()
+        ..identity = (() async => _identity())
+        ..events = (() async => [])
+        ..readPhone = (() => pendingPhone.future);
+      Uri? dialed;
+      await _pump(
+        tester,
+        repo,
+        phoneLinkLauncher: (uri) async {
+          dialed = uri;
+          return true;
+        },
+      );
+      await tester.ensureVisible(find.text('Call'));
+      await tester.tap(find.text('Call'));
+      await tester.pump();
+      if (fails) {
+        pendingPhone.completeError(StateError('unavailable'));
+      } else {
+        pendingPhone.complete(const VenuePhone());
+      }
+      await tester.pump();
+      await tester.pump();
+      expect(dialed, isNull);
+      expect(find.text('Call'), findsNothing);
+      expect(
+        find.text(
+          fails
+              ? 'Could not get the phone number. Please try again.'
+              : 'No phone number available for this venue.',
+        ),
+        findsOneWidget,
+      );
+      await _close(tester);
+    });
+  }
+
+  for (final fails in [false, true]) {
+    testWidgets('missing phone hides the loading Call; error=$fails', (
+      tester,
+    ) async {
+      final pendingPhone = Completer<VenuePhone>();
+      final repo = _Context()
+        ..identity = (() async => _identity())
+        ..events = (() async => [])
+        ..readPhone = (() => pendingPhone.future);
+      await _pump(tester, repo);
+      expect(find.text('Call'), findsOneWidget);
+      if (fails) {
+        pendingPhone.completeError(StateError('unavailable'));
+      } else {
+        pendingPhone.complete(const VenuePhone());
+      }
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Call'), findsNothing);
+      expect(find.text('Phone · Google Maps'), findsNothing);
+      expect(find.text('Directions'), findsOneWidget);
+      expect(find.byTooltip('Share'), findsOneWidget);
+      await _close(tester);
+    });
+  }
+
+  testWidgets(
+    'owned phone has no Google label; a missing dialer still shows the number',
+    (tester) async {
+      final repo = _Context()
+        ..identity = (() async => _identity())
+        ..events = (() async => [])
+        ..readPhone = (() async => const VenuePhone(phone: '+442079460001'));
+      await _pump(tester, repo, phoneLinkLauncher: (_) async => false);
+      expect(find.text('Phone · Google Maps'), findsNothing);
+      await tester.ensureVisible(find.text('Call'));
+      await tester.tap(find.text('Call'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SelectableText), findsOneWidget);
+      expect(find.text('Phone · Google Maps'), findsNothing);
+      await _close(tester);
+    },
+  );
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'Google phone popup keeps source and provider beside the number; dark=$dark',
+      (tester) async {
+        final repo = _Context()
+          ..identity = (() async => _identity())
+          ..events = (() async => [])
+          ..readPhone = (() async => VenuePhone(
+            phone: '+442079460001',
+            fromGoogle: true,
+            attributions: [
+              (
+                name: 'Example data provider',
+                uri: Uri.parse('https://example.test/provider'),
+              ),
+            ],
+          ));
+        await _pump(
+          tester,
+          repo,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+          phoneLinkLauncher: (_) async => false,
+        );
+        await tester.ensureVisible(find.text('Call'));
+        await tester.tap(find.text('Call'));
+        await tester.pumpAndSettle();
+        final dialog = find.byType(AlertDialog);
+        expect(
+          find.descendant(of: dialog, matching: find.text('+442079460001')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: dialog,
+            matching: find.text('Phone · Google Maps'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: dialog,
+            matching: find.text('Example data provider'),
+          ),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await _close(tester);
+      },
+    );
+  }
 
   testWidgets(
     'venue detail keeps Google credits below the cover and above identity',

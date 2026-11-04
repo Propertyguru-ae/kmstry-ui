@@ -1,3 +1,4 @@
+import '../../people/data/friendship_changes.dart';
 import 'dart:async';
 import 'package:kmstry_frontend/features/media/text_overlay_composer.dart';
 import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
@@ -21,6 +22,7 @@ import 'package:kmstry_frontend/features/venue/data/external_partnership_reposit
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_stats_model.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_gallery_section.dart';
 import 'package:kmstry_frontend/features/venue/presentation/google_place_photo.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_phone_call.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_report_options_sheet.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_menu_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_feature_visibility.dart';
@@ -28,6 +30,7 @@ import 'package:kmstry_frontend/features/venue/presentation/venue_deal_detail_pa
 import 'package:kmstry_frontend/features/venue/presentation/venue_content_sections.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_menu_repository.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
+import 'package:kmstry_frontend/features/venue/data/reservation_phone.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_checkin_reporsitory.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
 import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
@@ -65,6 +68,7 @@ class VenueDetailPage extends StatefulWidget {
   final VenueGalleryRepository? galleryRepository;
   final AuthRepository? authRepository;
   final GooglePhotoLinkLauncher? reportLinkLauncher;
+  final GooglePhotoLinkLauncher? phoneLinkLauncher;
 
   const VenueDetailPage({
     super.key,
@@ -77,6 +81,7 @@ class VenueDetailPage extends StatefulWidget {
     this.galleryRepository,
     this.authRepository,
     this.reportLinkLauncher,
+    this.phoneLinkLauncher,
   });
 
   @override
@@ -119,6 +124,10 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   Map<String, dynamic>? _enrichedVenueData;
   late List<VenueUpcomingEvent> _upcomingEvents;
   int _identityRequest = 0;
+  int _phoneRequest = 0;
+  bool _loadingPhone = true;
+  bool _callPending = false;
+  VenuePhone _venuePhone = const VenuePhone();
   int _eventsRequest = 0;
   int _partnershipRequest = 0;
   int _googleDetailsRequest = 0;
@@ -186,6 +195,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
   }
 
   void _startDeferredInitialLoads() {
+    unawaited(_loadVenuePhone());
     unawaited(_loadVenueDetails());
     unawaited(_loadActiveCheckin());
     unawaited(_loadEnrichedVenueData());
@@ -217,6 +227,7 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       });
     }
     await Future.wait<void>([
+      _loadVenuePhone(),
       _loadVenueDetails(),
       _loadEnrichedVenueData(),
       _loadUpcomingEvents(),
@@ -227,6 +238,55 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       _loadAnonymousStatus(),
       _checkProximity(useFreshGps: true),
     ]);
+  }
+
+  Future<void> _loadVenuePhone() async {
+    final request = ++_phoneRequest;
+    final session = PendingPublicMediaService.instance.sessionGeneration;
+    if (mounted && !_loadingPhone) setState(() => _loadingPhone = true);
+    try {
+      final phone = await _venueContextRepo.getVenuePhone(
+        venueId: widget.venue.isInDb ? widget.venue.id : null,
+        placeId: widget.venue.isInDb
+            ? null
+            : (widget.venue.placeId ?? widget.venue.id),
+      );
+      if (_isCurrentRead(request, _phoneRequest, session)) {
+        _applyPhoneResult(phone);
+      }
+    } catch (_) {
+      if (_isCurrentRead(request, _phoneRequest, session)) {
+        _applyPhoneResult(const VenuePhone(), failed: true);
+      }
+    }
+  }
+
+  void _applyPhoneResult(VenuePhone phone, {bool failed = false}) {
+    final callPending = _callPending;
+    setState(() {
+      _venuePhone = phone;
+      _loadingPhone = false;
+      _callPending = false;
+    });
+    if (!callPending) return;
+    if (phone.phone != null) {
+      unawaited(_callVenue());
+    } else {
+      showVenuePhoneUnavailable(context, failed: failed);
+    }
+  }
+
+  Future<void> _callVenue() async {
+    // Numara henüz gelmediyse dokunuş kaybolmaz; sonuç gelince aranır.
+    if (_loadingPhone && _venuePhone.phone == null) {
+      setState(() => _callPending = true);
+      return;
+    }
+    await dialVenuePhone(
+      context,
+      _venuePhone,
+      launcher: widget.phoneLinkLauncher,
+    );
   }
 
   Future<void> _reportVenue() async {
@@ -978,24 +1038,35 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     List<BoxShadow>? boxShadow,
     double height = 46,
   }) {
+    final radius = BorderRadius.circular(14);
     return SizedBox(
       height: height,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Ink(
-            decoration: BoxDecoration(
-              color: gradient == null ? background : null,
-              gradient: gradient,
-              borderRadius: BorderRadius.circular(14),
-              border: borderColor != null
-                  ? Border.all(color: borderColor, width: 1.4)
-                  : null,
-              boxShadow: boxShadow,
+      // Material, Ink'i kendi dikdörtgenine kırpar; gölge Ink'te olursa yuvarlak
+      // köşelerin dışında dikdörtgen renk gibi görünür. Bu yüzden Material'in
+      // dışında çizilir.
+      child: DecoratedBox(
+        decoration: BoxDecoration(borderRadius: radius, boxShadow: boxShadow),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: onTap,
+            child: Ink(
+              decoration: BoxDecoration(
+                color: gradient == null ? background : null,
+                gradient: gradient,
+                borderRadius: radius,
+                border: borderColor != null
+                    ? Border.all(color: borderColor, width: 1.4)
+                    : null,
+              ),
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: FittedBox(fit: BoxFit.scaleDown, child: child),
+                ),
+              ),
             ),
-            child: Center(child: child),
           ),
         ),
       ),
@@ -1010,14 +1081,6 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
       // buton zıplamaz, yalnızca ikon ve metin güncellenir.
       background: AppColors.teal.withValues(alpha: 0.12),
       borderColor: AppColors.teal.withValues(alpha: 0.34),
-      boxShadow: [
-        BoxShadow(
-          color: AppColors.teal.withValues(alpha: _isDark ? 0.30 : 0.20),
-          blurRadius: 17,
-          spreadRadius: 0.5,
-          offset: const Offset(0, 5),
-        ),
-      ],
       child: _followLoading
           ? SizedBox(
               width: 16,
@@ -1113,22 +1176,35 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
     );
   }
 
-  Widget _buildShareButton() {
+  Widget _buildCallButton() {
     return _actionButton(
-      onTap: () => unawaited(_shareVenue()),
+      onTap: _callPending ? null : () => unawaited(_callVenue()),
       background: _cardSurface,
       borderColor: _cardBorder,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.ios_share_rounded, size: 16, color: AppColors.blue),
+          // İkon telefon cevabını beklemez; spinner yalnızca kullanıcı dokunup
+          // numarayı beklerken görünür.
+          if (_callPending)
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: _textFaint,
+                semanticsLabel: 'Loading phone number',
+              ),
+            )
+          else
+            const Icon(Icons.call_outlined, size: 16, color: AppColors.blue),
           const SizedBox(width: 6),
           Text(
-            'Share',
+            'Call',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
-              color: _textMuted,
+              color: _callPending ? _textFaint : _textMuted,
             ),
           ),
         ],
@@ -1259,144 +1335,152 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                       ),
                     ),
                     Expanded(
-                      child: FutureBuilder<List<ChatListItem>>(
-                        future: chatsFuture,
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState !=
-                              ConnectionState.done) {
-                            return const Center(
-                              child: CircularProgressIndicator(
-                                color: AppColors.blue,
-                                strokeWidth: 2.4,
-                              ),
-                            );
-                          }
-                          if (snapshot.hasError) {
-                            return Center(
-                              child: Text(
-                                'Conversations could not be loaded.',
-                                style: TextStyle(color: _textMuted),
-                              ),
-                            );
-                          }
-                          final chats =
-                              (snapshot.data ?? const <ChatListItem>[])
-                                  .where((chat) => !chat.isBlocked)
-                                  .where((chat) {
-                                    final user =
-                                        chat.otherUser ??
-                                        chat.user1 ??
-                                        chat.user2;
-                                    return query.isEmpty ||
-                                        (user?.fullName ?? '')
-                                            .toLowerCase()
-                                            .contains(query);
-                                  })
-                                  .toList();
-                          if (chats.isEmpty) {
-                            return Center(
-                              child: Text(
-                                query.isEmpty
-                                    ? 'Start a conversation to share this venue.'
-                                    : 'No conversation found.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: _textMuted),
-                              ),
-                            );
-                          }
-                          return ListView.separated(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            itemCount: chats.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(height: 3),
-                            itemBuilder: (context, index) {
-                              final chat = chats[index];
-                              final user =
-                                  chat.otherUser ?? chat.user1 ?? chat.user2;
-                              final photo = user?.photo?.trim() ?? '';
-                              return ListTile(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
+                      child: AnimatedBuilder(
+                        animation: FriendshipChanges.changes,
+                        builder: (_, _) => FutureBuilder<List<ChatListItem>>(
+                          future: chatsFuture,
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState !=
+                                ConnectionState.done) {
+                              return const Center(
+                                child: CircularProgressIndicator(
+                                  color: AppColors.blue,
+                                  strokeWidth: 2.4,
                                 ),
-                                onTap: () async {
-                                  if (sendingChatId.isNotEmpty) return;
-                                  FocusManager.instance.primaryFocus?.unfocus();
-                                  setSheetState(() => sendingChatId = chat.id);
-                                  try {
-                                    final venueId = await venueIdFuture;
-                                    await _chatRepo.sendMessage(
-                                      chat.id,
-                                      messageType: 'venue',
-                                      venueId: venueId,
-                                      clientMessageId:
-                                          'venue-${DateTime.now().microsecondsSinceEpoch}',
-                                    );
-                                    venueSent = true;
-                                    if (sheetContext.mounted) {
-                                      Navigator.pop(sheetContext, chat);
-                                    }
-                                  } catch (_) {
-                                    if (sheetContext.mounted) {
-                                      setSheetState(() => sendingChatId = '');
-                                      await showPremiumErrorDialog(
-                                        sheetContext,
-                                        title: 'Could not share venue',
-                                        message:
-                                            'The venue was not sent. Please try again.',
-                                      );
-                                    }
-                                  }
-                                },
-                                leading: CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: AppColors.blue.withValues(
-                                    alpha: 0.15,
+                              );
+                            }
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Text(
+                                  'Conversations could not be loaded.',
+                                  style: TextStyle(color: _textMuted),
+                                ),
+                              );
+                            }
+                            final chats =
+                                (snapshot.data ?? const <ChatListItem>[])
+                                    .where(_chatRepo.canMessage)
+                                    .where((chat) {
+                                      final user =
+                                          chat.otherUser ??
+                                          chat.user1 ??
+                                          chat.user2;
+                                      return query.isEmpty ||
+                                          (user?.fullName ?? '')
+                                              .toLowerCase()
+                                              .contains(query);
+                                    })
+                                    .toList();
+                            if (chats.isEmpty) {
+                              return Center(
+                                child: Text(
+                                  query.isEmpty
+                                      ? 'Start a conversation to share this venue.'
+                                      : 'No conversation found.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: _textMuted),
+                                ),
+                              );
+                            }
+                            return ListView.separated(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              itemCount: chats.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(height: 3),
+                              itemBuilder: (context, index) {
+                                final chat = chats[index];
+                                final user =
+                                    chat.otherUser ?? chat.user1 ?? chat.user2;
+                                final photo = user?.photo?.trim() ?? '';
+                                return ListTile(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
                                   ),
-                                  backgroundImage: photo.isNotEmpty
-                                      ? NetworkImage(photo)
-                                      : null,
-                                  child: photo.isEmpty
-                                      ? Text(
-                                          (user?.fullName?.trim().isNotEmpty ??
-                                                  false)
-                                              ? user!.fullName!
-                                                    .trim()[0]
-                                                    .toUpperCase()
-                                              : '?',
-                                          style: const TextStyle(
+                                  onTap: () async {
+                                    if (sendingChatId.isNotEmpty) return;
+                                    FocusManager.instance.primaryFocus
+                                        ?.unfocus();
+                                    setSheetState(
+                                      () => sendingChatId = chat.id,
+                                    );
+                                    try {
+                                      final venueId = await venueIdFuture;
+                                      await _chatRepo.sendMessage(
+                                        chat.id,
+                                        messageType: 'venue',
+                                        venueId: venueId,
+                                        clientMessageId:
+                                            'venue-${DateTime.now().microsecondsSinceEpoch}',
+                                      );
+                                      venueSent = true;
+                                      if (sheetContext.mounted) {
+                                        Navigator.pop(sheetContext, chat);
+                                      }
+                                    } catch (_) {
+                                      if (sheetContext.mounted) {
+                                        setSheetState(() => sendingChatId = '');
+                                        await showPremiumErrorDialog(
+                                          sheetContext,
+                                          title: 'Could not share venue',
+                                          message:
+                                              'The venue was not sent. Please try again.',
+                                        );
+                                      }
+                                    }
+                                  },
+                                  leading: CircleAvatar(
+                                    radius: 22,
+                                    backgroundColor: AppColors.blue.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                    backgroundImage: photo.isNotEmpty
+                                        ? NetworkImage(photo)
+                                        : null,
+                                    child: photo.isEmpty
+                                        ? Text(
+                                            (user?.fullName
+                                                        ?.trim()
+                                                        .isNotEmpty ??
+                                                    false)
+                                                ? user!.fullName!
+                                                      .trim()[0]
+                                                      .toUpperCase()
+                                                : '?',
+                                            style: const TextStyle(
+                                              color: AppColors.blue,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  title: Text(
+                                    user?.fullName?.trim().isNotEmpty == true
+                                        ? user!.fullName!.trim()
+                                        : 'KMSTRY user',
+                                    style: TextStyle(
+                                      color: _textPrimary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  trailing: sendingChatId == chat.id
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
                                             color: AppColors.blue,
-                                            fontWeight: FontWeight.w800,
                                           ),
                                         )
-                                      : null,
-                                ),
-                                title: Text(
-                                  user?.fullName?.trim().isNotEmpty == true
-                                      ? user!.fullName!.trim()
-                                      : 'KMSTRY user',
-                                  style: TextStyle(
-                                    color: _textPrimary,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                trailing: sendingChatId == chat.id
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2.2,
+                                      : const Icon(
+                                          Icons.send_rounded,
                                           color: AppColors.blue,
+                                          size: 20,
                                         ),
-                                      )
-                                    : const Icon(
-                                        Icons.send_rounded,
-                                        color: AppColors.blue,
-                                        size: 20,
-                                      ),
-                              );
-                            },
-                          );
-                        },
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ),
                     Container(
@@ -2596,17 +2680,32 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
 
                             const SizedBox(height: 14),
 
-                            /// ACTIONS — Follow · Directions · Share (satır), ardından
+                            /// Reserve Call while loading so a returned phone
+                            /// does not resize or shift Follow and Directions.
                             /// Menu ve Check in tam genişlikte.
                             Row(
                               children: [
                                 Expanded(child: _buildFollowButton()),
                                 const SizedBox(width: 9),
                                 Expanded(child: _buildDirectionsButton()),
-                                const SizedBox(width: 9),
-                                Expanded(child: _buildShareButton()),
+                                if (_loadingPhone ||
+                                    _venuePhone.phone != null) ...[
+                                  const SizedBox(width: 9),
+                                  Expanded(child: _buildCallButton()),
+                                ],
                               ],
                             ),
+                            if (_venuePhone.phone != null &&
+                                _venuePhone.fromGoogle)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: VenuePhoneAttribution(
+                                    phone: _venuePhone,
+                                  ),
+                                ),
+                              ),
                             if (VenueFeatureVisibility.menu) ...[
                               const SizedBox(height: 9),
                               SizedBox(
@@ -2828,6 +2927,23 @@ class _VenueDetailPageState extends State<VenueDetailPage> {
                   ),
                 ),
               ),
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              right: 12,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Share',
+                  onPressed: () => unawaited(_shareVenue()),
+                  icon: const Icon(
+                    Icons.ios_share_rounded,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
           ], // Stack children
         ), // Stack
       ), // Scaffold

@@ -4,6 +4,7 @@ import '../../../core/media/media_reference.dart';
 /// Backend returns: match_id, chat_id, user_id, full_name.
 class MatchItem {
   final String matchId;
+  final String? connectionVersion;
   final String? chatId;
   final String userId;
   final String? username;
@@ -21,6 +22,7 @@ class MatchItem {
 
   MatchItem({
     required this.matchId,
+    this.connectionVersion,
     this.chatId,
     required this.userId,
     this.username,
@@ -109,6 +111,7 @@ class MatchItem {
 
     return MatchItem(
       matchId: matchId,
+      connectionVersion: json['connection_version'] as String?,
       chatId: chatId,
       userId: userId,
       username: username,

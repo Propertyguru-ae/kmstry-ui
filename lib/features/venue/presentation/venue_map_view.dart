@@ -671,7 +671,9 @@ class _VenueMapViewState extends State<VenueMapView> {
                   ),
                 ],
               ),
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+              // Yatay boşluk içerikte: liste sheet kenarına kadar uzanır, böylece
+              // seçili tile'ın gölgesi liste sınırında kesilmez.
+              padding: const EdgeInsets.only(top: 14, bottom: 20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -692,12 +694,15 @@ class _VenueMapViewState extends State<VenueMapView> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      color: colors.onSurface,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: colors.onSurface,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -724,22 +729,24 @@ class _VenueMapViewState extends State<VenueMapView> {
           height: sheetHeight,
           child: Column(
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Select one or more partner benefits.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                    color: textColor.withValues(alpha: isDark ? 0.66 : 0.58),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Select one or more partner benefits.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: textColor.withValues(alpha: isDark ? 0.66 : 0.58),
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
               Expanded(
                 child: ListView.separated(
-                  padding: EdgeInsets.zero,
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
                   itemCount: _partnershipOptions.length,
                   separatorBuilder: (_, index) => const SizedBox(height: 8),
                   itemBuilder: (_, index) {
@@ -762,7 +769,6 @@ class _VenueMapViewState extends State<VenueMapView> {
                   },
                 ),
               ),
-              const SizedBox(height: 12),
               _sheetDoneButton(),
             ],
           ),
@@ -789,22 +795,24 @@ class _VenueMapViewState extends State<VenueMapView> {
       height: sheetHeight,
       child: Column(
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                fontWeight: FontWeight.w600,
-                color: textColor.withValues(alpha: isDark ? 0.66 : 0.58),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                  color: textColor.withValues(alpha: isDark ? 0.66 : 0.58),
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 12),
           Expanded(
             child: ListView.separated(
-              padding: EdgeInsets.zero,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
               itemCount: options.length,
               separatorBuilder: (_, index) => const SizedBox(height: 8),
               itemBuilder: (_, index) {
@@ -821,7 +829,6 @@ class _VenueMapViewState extends State<VenueMapView> {
               },
             ),
           ),
-          const SizedBox(height: 12),
           _sheetDoneButton(),
         ],
       ),
@@ -829,35 +836,44 @@ class _VenueMapViewState extends State<VenueMapView> {
   }
 
   Widget _sheetDoneButton() {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => Navigator.of(context).pop(),
-          child: Ink(
-            width: 56,
-            height: 46,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [_kKmstryBlue, _kKmstryTeal],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Align(
+        alignment: Alignment.centerRight,
+        // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+                color: _kKmstryBlue.withValues(alpha: 0.22),
               ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
               borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
-                  color: _kKmstryBlue.withValues(alpha: 0.22),
+              onTap: () => Navigator.of(context).pop(),
+              child: Ink(
+                width: 56,
+                height: 46,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [_kKmstryBlue, _kKmstryTeal],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-              ],
-            ),
-            child: const Icon(
-              Icons.arrow_forward_rounded,
-              color: Colors.white,
-              size: 24,
+                child: const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
             ),
           ),
         ),
@@ -3393,6 +3409,9 @@ class _VenueMapViewState extends State<VenueMapView> {
     return SizedBox(
       height: 38,
       child: ListView(
+        // Liste chip yüksekliğinde; kırparsa seçili chip gölgesi üstten/alttan
+        // kesilir.
+        clipBehavior: Clip.none,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -3840,42 +3859,48 @@ class _ResultFilterChip extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(right: 8),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+      // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(19),
-          onTap: onTap,
-          child: Ink(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(19),
-              border: Border.all(color: border),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        blurRadius: 14,
-                        offset: const Offset(0, 5),
-                        color: accent.withValues(alpha: isDark ? 0.20 : 0.10),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: fg),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: fg,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
+                    color: accent.withValues(alpha: isDark ? 0.20 : 0.10),
                   ),
-                ),
-              ],
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(19),
+            onTap: onTap,
+            child: Ink(
+              height: 36,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(19),
+                border: Border.all(color: border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 16, color: fg),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: fg,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -3966,82 +3991,88 @@ class _PartnershipOptionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).colorScheme.onSurface;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected
-                ? _kKmstryBlue.withValues(alpha: isDark ? 0.16 : 0.10)
-                : isDark
-                ? const Color(0xFF111C2B)
-                : const Color(0xFFF7FAFD),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
+    // Gölge Ink'te olursa Material dikdörtgenine kırpılır.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                  color: _kKmstryBlue.withValues(alpha: 0.16),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
               color: selected
-                  ? _kKmstryBlue.withValues(alpha: 0.62)
-                  : textColor.withValues(alpha: isDark ? 0.08 : 0.10),
-              width: selected ? 1.2 : 1,
+                  ? _kKmstryBlue.withValues(alpha: isDark ? 0.16 : 0.10)
+                  : isDark
+                  ? const Color(0xFF111C2B)
+                  : const Color(0xFFF7FAFD),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected
+                    ? _kKmstryBlue.withValues(alpha: 0.62)
+                    : textColor.withValues(alpha: isDark ? 0.08 : 0.10),
+                width: selected ? 1.2 : 1,
+              ),
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                      color: _kKmstryBlue.withValues(alpha: 0.16),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    gradient: selected
+                        ? const LinearGradient(
+                            colors: [_kKmstryBlue, _kKmstryTeal],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: selected ? null : Colors.transparent,
+                    border: Border.all(
+                      color: selected
+                          ? Colors.transparent
+                          : textColor.withValues(alpha: isDark ? 0.42 : 0.28),
+                      width: 1.6,
                     ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: selected
-                      ? const LinearGradient(
-                          colors: [_kKmstryBlue, _kKmstryTeal],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+                  ),
+                  child: selected
+                      ? const Icon(
+                          Icons.check_rounded,
+                          color: Colors.white,
+                          size: 17,
                         )
                       : null,
-                  color: selected ? null : Colors.transparent,
-                  border: Border.all(
-                    color: selected
-                        ? Colors.transparent
-                        : textColor.withValues(alpha: isDark ? 0.42 : 0.28),
-                    width: 1.6,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: selected
+                          ? textColor
+                          : textColor.withValues(alpha: isDark ? 0.78 : 0.72),
+                      fontSize: 14.5,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                    ),
                   ),
                 ),
-                child: selected
-                    ? const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
-                        size: 17,
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: selected
-                        ? textColor
-                        : textColor.withValues(alpha: isDark ? 0.78 : 0.72),
-                    fontSize: 14.5,
-                    fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                  ),
-                ),
-              ),
-              if (selected)
-                const Icon(Icons.done_rounded, color: _kKmstryTeal, size: 18),
-            ],
+                if (selected)
+                  const Icon(Icons.done_rounded, color: _kKmstryTeal, size: 18),
+              ],
+            ),
           ),
         ),
       ),

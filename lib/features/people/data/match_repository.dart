@@ -1,3 +1,5 @@
+import 'friendship_changes.dart';
+import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/features/people/data/nearby_venue_user_item_model.dart';
@@ -21,14 +23,21 @@ class MatchListResult {
 }
 
 class MatchRepository {
-  final ApiClient _api = ApiClient();
-
-  Future<String?> _token() => SecureStorage.getAccessToken();
+  MatchRepository({ApiClient? api, Future<String?> Function()? tokenProvider})
+    : _api = api ?? ApiClient(),
+      _token = tokenProvider ?? SecureStorage.getAccessToken;
+  final ApiClient _api;
+  final Future<String?> Function() _token;
 
   /// GET /matches — list people the current user has matched with.
   Future<List<MatchItem>> getMatches() async {
-    final result = await getMatchesPage();
-    return result.items;
+    final token = await _token();
+    if (token == null) throw Exception('Not authenticated');
+    final data = await _api.get(
+      '/matches',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return _parseMatchListResult(data).items;
   }
 
   /// GET /matches with optional query + keyset pagination.
@@ -286,15 +295,47 @@ class MatchRepository {
     StoryVisibility.changed(userId, blocked: false);
   }
 
-  Future<void> deleteMatch(String matchId) async {
+  Future<MatchItem?> getFriendship(String userId) async {
     final token = await _token();
     if (token == null) throw Exception('Not authenticated');
-    final normalized = matchId.trim();
-    if (normalized.isEmpty) throw Exception('Invalid match id');
-
-    await _api.delete(
-      '/matches/$normalized',
+    final data = await _api.get(
+      '/matches/user/${Uri.encodeComponent(userId)}',
       headers: {'Authorization': 'Bearer $token'},
     );
+    if (data is! Map || !data.containsKey('friendship')) {
+      throw const FormatException('Missing friendship response');
+    }
+    final raw = data['friendship'];
+    if (raw == null) return null;
+    if (raw is! Map || raw['match_id'] is! String || raw['match_id'] == '') {
+      throw const FormatException('Invalid friendship response');
+    }
+    return MatchItem.fromJson({...Map<String, dynamic>.from(raw), 'user_id': userId});
+  }
+
+  Future<void> removeFriend(MatchItem match) async {
+    final sessions = PendingPublicMediaService.instance;
+    final session = sessions.sessionGeneration;
+    final token = await _token();
+    if (token == null || !sessions.isCurrentSession(session)) {
+      throw Exception('Not authenticated');
+    }
+    final version = match.connectionVersion;
+    if (match.matchId.isEmpty || version == null || version.isEmpty) {
+      throw StateError('Refresh your friends list and try again.');
+    }
+    final data = await _api.delete(
+      '/matches/${Uri.encodeComponent(match.matchId)}?connectionVersion=${Uri.encodeQueryComponent(version)}',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (data is! Map || data['success'] != true) {
+      throw StateError('Removal was not confirmed.');
+    }
+    if (sessions.isCurrentSession(session)) {
+      await SecureStorage.removePendingInterestedUserId(match.userId);
+      if (sessions.isCurrentSession(session)) {
+        FriendshipChanges.changed(match.userId, active: false);
+      }
+    }
   }
 }

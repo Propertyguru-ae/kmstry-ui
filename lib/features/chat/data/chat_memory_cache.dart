@@ -15,12 +15,56 @@ class ChatMemoryCache {
   final _changes = StreamController<String>.broadcast();
   Stream<String> get changes => _changes.stream;
   int generation = 0;
+  int relationshipRevision = 0;
+  final _relationshipChanges = <String, int>{};
 
   List<ChatListItem>? get chats => _chats == null ? null : List.of(_chats!);
   ChatDetail? detail(String id) => _details[id];
 
+  void invalidateFriendship(String userId) {
+    _relationshipChanges[userId] = ++relationshipRevision;
+    for (final entry in _details.entries.toList()) {
+      final d = entry.value;
+      if (d.otherUser?.id == userId ||
+          (d.participants?.any((u) => u.id == userId) ?? false)) {
+        _details[entry.key] = d.copyWith(
+          isActive: false,
+          canSendMessages: false,
+        );
+        _changes.add(entry.key);
+      }
+    }
+    _chats = _chats?.map((row) {
+      if (row.otherUser?.id != userId &&
+          row.user1?.id != userId &&
+          row.user2?.id != userId) {
+        return row;
+      }
+      return ChatListItem(
+        id: row.id,
+        lastMessageAt: row.lastMessageAt,
+        unreadCount: row.unreadCount,
+        lastMessagePreview: row.lastMessagePreview,
+        otherUser: row.otherUser,
+        user1: row.user1,
+        user2: row.user2,
+        isBlocked: row.isBlocked,
+        canSendMessages: false,
+      );
+    }).toList();
+  }
+
+  bool relationshipChangedSince(ChatDetail detail, int revision) {
+    final ids = [
+      detail.otherUser?.id,
+      ...?detail.participants?.map((u) => u.id),
+    ];
+    return ids.any((id) => (_relationshipChanges[id] ?? 0) > revision);
+  }
+
   void clear() {
     generation++;
+    _relationshipChanges.clear();
     _details.clear();
     _recentConfirmations.clear();
     _chats = null;
@@ -56,6 +100,7 @@ class ChatMemoryCache {
           user1: row.user1,
           user2: row.user2,
           isBlocked: row.isBlocked,
+          canSendMessages: row.canSendMessages,
         );
       }),
     );
@@ -166,6 +211,7 @@ class ChatMemoryCache {
                 user1: row.user1,
                 user2: row.user2,
                 isBlocked: row.isBlocked,
+                canSendMessages: row.canSendMessages,
               );
             }),
           );

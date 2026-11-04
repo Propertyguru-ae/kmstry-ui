@@ -36,6 +36,16 @@ class PremiumGate {
     return false;
   }
 
+  /// The Undo endpoint has already confirmed the daily limit.
+  static Future<void> showDailyUndoLimit(BuildContext context) =>
+      _showUpsellSheet(
+        context,
+        PremiumFeature.unlimitedRewinds,
+        title: 'Daily undo limit reached',
+        message: "You've used all 3 daily undos included with your account. Try again tomorrow.",
+        icon: Icons.undo_rounded,
+      );
+
   /// Runs [onAllowed] when unlocked; otherwise shows access information.
   static Future<void> ensureWithUpsell(
     BuildContext context,

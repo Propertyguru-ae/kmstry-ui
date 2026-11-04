@@ -1,3 +1,4 @@
+import 'package:kmstry_frontend/features/people/data/friendship_changes.dart';
 import 'package:flutter/material.dart';
 import '../../auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/features/auth/presentation/logout_flow.dart';
@@ -19,6 +20,7 @@ import 'package:kmstry_frontend/core/layout/app_shell.dart';
 import 'package:kmstry_frontend/features/venue/presentation/moments_viewer_page.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_context_repository.dart';
+import 'package:kmstry_frontend/features/venue/presentation/venue_home_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/venue_detail_page.dart';
 import 'package:kmstry_frontend/features/venue/presentation/followed_venues_page.dart';
 import 'package:kmstry_frontend/features/stories/data/story_upload_coordinator.dart';
@@ -60,6 +62,7 @@ class ProfilePage extends StatefulWidget {
     this.checkinRepository,
     this.statsRepository,
     this.storyRepository,
+    this.venueContextRepository,
   });
 
   final bool isActive;
@@ -67,6 +70,7 @@ class ProfilePage extends StatefulWidget {
   final CheckinRepository? checkinRepository;
   final ProfileStatsRepository? statsRepository;
   final StoryRepository? storyRepository;
+  final VenueContextRepository? venueContextRepository;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -109,8 +113,8 @@ class _ProfilePageState extends State<ProfilePage>
         .toList();
   }
 
-  final VenueContextRepository _venueContextRepository =
-      VenueContextRepository();
+  late final VenueContextRepository _venueContextRepository =
+      widget.venueContextRepository ?? VenueContextRepository();
   late final ProfileStatsRepository _statsRepo =
       widget.statsRepository ?? ProfileStatsRepository();
   int _statsRequest = 0;
@@ -340,6 +344,8 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   void initState() {
     super.initState();
+    FriendshipChanges.changes.addListener(_onFriendshipChanged);
+    VenueContextRepository.followChanges.addListener(_onVenueFollowChanged);
     WidgetsBinding.instance.addObserver(this);
     // Quick check-in can finish several routes above this page (capture →
     // moderation → Who's Here). Listen to the shared source of truth so the
@@ -378,8 +384,32 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
+  void _onFriendshipChanged() {
+    if (mounted) unawaited(_loadFriendCount());
+  }
+
+  // Profile sekmesi arkada canlı kalır; haritadan yapılan takip sayıya yansısın.
+  void _onVenueFollowChanged() {
+    if (mounted) unawaited(_loadFollowedVenueCount());
+  }
+
+  void _openDiscoverMap() {
+    final nav = AppShellNav.of(context);
+    if (nav != null) {
+      nav.selectTabId(kPersonalDiscoverTabId);
+      return;
+    }
+    // Profile shell dışında açıldıysa harita tek başına açılır.
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const Scaffold(body: VenueHomePage())),
+    );
+  }
+
   @override
   void dispose() {
+    FriendshipChanges.changes.removeListener(_onFriendshipChanged);
+    VenueContextRepository.followChanges.removeListener(_onVenueFollowChanged);
     ActiveCheckinService.changes.removeListener(_onActiveCheckinChanged);
     ActiveCheckinService.avatarChanges.removeListener(_onFeaturedAvatarChanged);
     StoryRepository.changes.removeListener(_onStoryChanged);
@@ -1619,15 +1649,26 @@ class _ProfilePageState extends State<ProfilePage>
                                     lastActiveContext: 'PERSONAL',
                                   );
                                   if (!context.mounted) return;
-                                  final me = await AuthRepository().getMe(forceRefresh: true);
+                                  final me = await AuthRepository().getMe(
+                                    forceRefresh: true,
+                                  );
                                   if (!context.mounted) return;
-                                  if (MeContextModel.fromMe(me).personalSetupIncomplete) {
-                                    Navigator.of(context).pushNamedAndRemoveUntil(
-                                      AuthRoutes.authGate, (r) => false,
+                                  if (MeContextModel.fromMe(
+                                    me,
+                                  ).personalSetupIncomplete) {
+                                    Navigator.of(
+                                      context,
+                                    ).pushNamedAndRemoveUntil(
+                                      AuthRoutes.authGate,
+                                      (r) => false,
                                     );
                                   } else {
                                     Navigator.of(context).pushAndRemoveUntil(
-                                      MaterialPageRoute(builder: (_) => const AppShell(openProfileTab: true)),
+                                      MaterialPageRoute(
+                                        builder: (_) => const AppShell(
+                                          openProfileTab: true,
+                                        ),
+                                      ),
                                       (r) => false,
                                     );
                                   }
@@ -1683,7 +1724,9 @@ class _ProfilePageState extends State<ProfilePage>
                                   borderRadius: BorderRadius.circular(20),
                                 ),
                                 child: Text(
-                                  venue.isRegistrationDraft ? 'Documents needed' : 'Pending',
+                                  venue.isRegistrationDraft
+                                      ? 'Documents needed'
+                                      : 'Pending',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -1930,15 +1973,17 @@ class _ProfilePageState extends State<ProfilePage>
                               subColor,
                               inactive: _followedVenueCount == null,
                               onTap: () async {
-                                await Navigator.push(
+                                final openMap = await Navigator.push<bool>(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => const FollowedVenuesPage(),
+                                    builder: (_) => FollowedVenuesPage(
+                                      repository: _venueContextRepository,
+                                    ),
                                   ),
                                 );
-                                if (mounted) {
-                                  unawaited(_loadFollowedVenueCount());
-                                }
+                                if (!mounted) return;
+                                unawaited(_loadFollowedVenueCount());
+                                if (openMap == true) _openDiscoverMap();
                               },
                             ),
                           ],
