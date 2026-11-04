@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../storage/secure_storage.dart';
 import 'push_audience.dart';
+import '../../features/notifications/data/notification_repository.dart';
 
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/messageDetail/presentation/message_detail.dart';
@@ -27,13 +28,17 @@ import '../../features/notifications/presentation/moderation_warning_page.dart';
 /// - `liked_you` → Notifications sayfası
 /// - `report_update` → Moderation warning details sayfası
 class PushDeepLinkHandler {
-  PushDeepLinkHandler._() {
+  PushDeepLinkHandler._() : _notifications = NotificationRepository() {
     SecureStorage.sessionEnded.listen((_) {
       _sessionGeneration++;
       _pendingColdStart = null;
     });
   }
   static final PushDeepLinkHandler instance = PushDeepLinkHandler._();
+
+  @visibleForTesting
+  PushDeepLinkHandler.forTest(this._notifications);
+  final NotificationRepository _notifications;
 
   final VenueRepository _venueRepo = VenueRepository();
 
@@ -119,10 +124,80 @@ class PushDeepLinkHandler {
         _openChat(nav, chatId, otherUserId: otherUserId, otherName: otherName);
 
       case 'match_created':
-        nav.pushNamed(AuthRoutes.people);
+        final session = _sessionGeneration;
+        final id = _readString(data, const [
+          'notification_id',
+          'notificationId',
+        ]);
+        try {
+          final target = id.isEmpty
+              ? null
+              : await _notifications.resolveConnectionNotice(
+                  id,
+                  version: data['connection_version'] as String?,
+                );
+          if (!nav.mounted || session != _sessionGeneration) return;
+          if (target == null) {
+            ScaffoldMessenger.maybeOf(nav.context)?.showSnackBar(
+              const SnackBar(
+                content: Text('This connection is no longer active.'),
+              ),
+            );
+          } else {
+            nav.pushNamed(AuthRoutes.people);
+          }
+        } catch (_) {
+          if (nav.mounted && session == _sessionGeneration) {
+            ScaffoldMessenger.maybeOf(nav.context)?.showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Could not check this connection. Please try again.',
+                ),
+              ),
+            );
+          }
+        }
 
       case 'liked_you':
-        nav.pushNamed(AuthRoutes.notifications);
+        final session = _sessionGeneration;
+        final actor = _readString(data, const ['actor_user_id', 'actorUserId']);
+        final id = _readString(data, const [
+          'notification_id',
+          'notificationId',
+        ]);
+        final version = DateTime.tryParse(
+          _readString(data, const ['interest_version']),
+        );
+        try {
+          final available =
+              actor.isNotEmpty &&
+              (id.isEmpty || version != null) &&
+              await _notifications.isPendingInterest(
+                actor,
+                id: id.isEmpty ? null : id,
+                version: version,
+              );
+          if (!nav.mounted || session != _sessionGeneration) return;
+          if (available) {
+            nav.pushNamed(AuthRoutes.notifications);
+          } else {
+            ScaffoldMessenger.maybeOf(nav.context)?.showSnackBar(
+              const SnackBar(
+                content: Text('This request is no longer available.'),
+              ),
+            );
+          }
+        } catch (_) {
+          if (nav.mounted && session == _sessionGeneration) {
+            ScaffoldMessenger.maybeOf(nav.context)?.showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Could not check this request. Please try again.',
+                ),
+              ),
+            );
+          }
+        }
 
       case 'report_update':
         nav.push(

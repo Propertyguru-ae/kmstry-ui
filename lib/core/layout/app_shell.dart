@@ -449,6 +449,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     _notificationEventsSub = _notificationRealtime.events.listen((envelope) {
       if (!mounted) return;
+      // A late socket delivery may describe an already removed connection.
+      // Fetch its current badge count instead of replaying an old count.
+      if (envelope.isConnectionNotice) {
+        _scheduleNotificationRefresh();
+        return;
+      }
       switch (envelope.event) {
         case 'notification.created':
           if (!_applyNotificationUnreadPatch(envelope.payload)) {
@@ -460,6 +466,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             }
           }
           return;
+        case 'friendship.changed':
+        case 'notification.invalidated':
         case 'notification.updated':
         case 'notification.read':
         case 'socket.reconnected':

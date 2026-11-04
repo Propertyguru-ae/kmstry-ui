@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
 import 'package:kmstry_frontend/core/theme/app_theme.dart';
+import 'package:kmstry_frontend/core/ui/primary_button.dart';
 import 'package:kmstry_frontend/features/auth/presentation/auth_routes.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/network/public_content_permission.dart';
@@ -31,6 +32,8 @@ class _Auth extends AuthRepository {
 
 class _Venues extends VenueRepository {
   int step = 4;
+  String? businessPhone = '+442079460001';
+  String? submittedPhone;
   int submissions = 0;
   String? submittedName;
   String? submittedDob;
@@ -39,11 +42,13 @@ class _Venues extends VenueRepository {
   String? licence = 'https://fixture.example/licence.pdf';
   bool failSave = false;
   String? savedBirthdate;
+  String? savedPrivatePhone;
   @override
   Future<Map<String, dynamic>> upsertClaimDraft({
     String? venueId,
     String? ownerFullName,
     String? ownerPhone,
+    String? reservationPhone,
     String? ownerBirthdate,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
@@ -52,6 +57,8 @@ class _Venues extends VenueRepository {
     if (failSave) throw StateError('fixture save unavailable');
     step = currentStep ?? step;
     savedBirthdate = ownerBirthdate;
+    savedPrivatePhone = ownerPhone;
+    businessPhone = reservationPhone;
     licence = tradeLicenceUrl?.isNotEmpty == true ? tradeLicenceUrl : null;
     return {};
   }
@@ -64,7 +71,8 @@ class _Venues extends VenueRepository {
   @override
   Future<Map<String, dynamic>?> getClaimDraft() async => {
     'current_step': step,
-    'owner_phone': '+971501234567',
+    'owner_phone': savedPrivatePhone ?? '+971501234567',
+    'reservation_phone': businessPhone,
     'trade_licence_url': licence,
     'venue': {
       'id': 'venue',
@@ -79,6 +87,8 @@ class _Venues extends VenueRepository {
     required String ownerNote,
     String? ownerFullName,
     String? ownerBirthdate,
+    String? reservationPhone,
+    String? ownerPhone,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
     bool hasDocuments = false,
@@ -86,6 +96,7 @@ class _Venues extends VenueRepository {
     submissions++;
     submittedName = ownerFullName;
     submittedDob = ownerBirthdate;
+    submittedPhone = reservationPhone;
     // Remain on the form, without shell navigation or real network writes.
     if (fail) throw StateError('fixture server unavailable');
     return {'claimId': 'fixture', 'status': 'PENDING'};
@@ -128,11 +139,195 @@ void main() {
   }
 
   Future<void> tap(WidgetTester tester, String label) async {
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text(label));
+    await tester.pumpAndSettle();
     await tester.tap(find.text(label));
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Use a different account uses the standard popup; Cancel stays', (
+    tester,
+  ) async {
+    await open(tester, _Auth(), _Venues()..step = 2);
+    await tap(tester, 'Use a different account →');
+    expect(find.text('Use a different account?'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.widgetWithText(PrimaryButton, 'Sign out'), findsOneWidget);
+    expect(find.byIcon(Icons.logout_rounded), findsOneWidget);
+    await tap(tester, 'Cancel');
+    expect(find.text('Use a different account?'), findsNothing);
+    expect(find.text('Use a different account →'), findsOneWidget);
+    expect(await SecureStorage.getAccessToken(), 'fixture');
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'Contact requires a separate public phone before Documents (dark=$dark)',
+      (tester) async {
+        final venues = _Venues()
+          ..step = 2
+          ..businessPhone = null;
+        await open(
+          tester,
+          _Auth(),
+          venues,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+          size: const Size(390, 844),
+        );
+        await tap(tester, 'Continue');
+        expect(
+          find.text('Please enter your reservations phone number.'),
+          findsOneWidget,
+        );
+        expect(venues.step, 2);
+        final input = find.byKey(const ValueKey('reservation-phone-input'));
+        await tester.enterText(input, '12');
+        await tap(tester, 'Continue');
+        expect(
+          find.text(
+            'Enter a valid reservations phone number for the selected country.',
+          ),
+          findsOneWidget,
+        );
+        for (final invalid in ['+97150123456', '+971111111111']) {
+          await tester.enterText(input, invalid);
+          await tap(tester, 'Continue');
+          expect(venues.step, 2);
+          expect(
+            find.text(
+              'Enter a valid reservations phone number for the selected country.',
+            ),
+            findsOneWidget,
+          );
+        }
+        final privateInput = find.descendant(
+          of: find.byKey(const ValueKey('private-phone-input')),
+          matching: find.byType(TextField),
+        );
+        await tester.enterText(input, '+44 20 7946 0001');
+        await tester.enterText(privateInput, '+97112345');
+        await tap(tester, 'Continue');
+        expect(venues.step, 2);
+        expect(
+          find.text(
+            'Enter a valid contact phone number for the selected country.',
+          ),
+          findsOneWidget,
+        );
+        await tester.enterText(privateInput, '+97142345678');
+        await tap(tester, 'Continue');
+        expect(find.text('STEP 3 OF 4'), findsOneWidget);
+        expect(venues.businessPhone, '+442079460001');
+        expect(venues.savedPrivatePhone, '+97142345678');
+        expect(venues.submissions, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'legacy draft missing public phone resumes at Contact instead of submitting',
+    (tester) async {
+      final venues = _Venues()..businessPhone = null;
+      await open(tester, _Auth(), venues);
+      expect(find.text('STEP 2 OF 4'), findsOneWidget);
+      expect(find.text('Provider Name'), findsOneWidget);
+      expect(venues.submissions, 0);
+    },
+  );
+
+  testWidgets(
+    'reservation country is independent of private phone and restores from the draft',
+    (tester) async {
+      final venues = _Venues()..step = 2;
+      await open(tester, _Auth(), venues);
+      final businessCountry = find.byKey(
+        const ValueKey('reservation-phone-country'),
+      );
+      final privateCountry = find.byKey(
+        const ValueKey('private-phone-country'),
+      );
+      expect(
+        find.descendant(of: businessCountry, matching: find.text('+44')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: privateCountry, matching: find.text('+971')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey('reservation-phone-input')),
+            )
+            .controller!
+            .text,
+        '2079460001',
+      );
+      Future<void> choose(Finder field, String name) async {
+        await tester.ensureVisible(field);
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byWidgetPredicate(
+            (w) =>
+                w is TextField &&
+                w.decoration?.hintText == 'Search country or code...',
+          ),
+          name,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(ListTile, name));
+        await tester.pumpAndSettle();
+      }
+
+      await choose(businessCountry, 'Lebanon');
+      expect(
+        find.descendant(of: privateCountry, matching: find.text('+971')),
+        findsOneWidget,
+      );
+      await choose(privateCountry, 'Turkey');
+      expect(
+        find.descendant(of: businessCountry, matching: find.text('+961')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.descendant(
+          of: find.byKey(const ValueKey('private-phone-input')),
+          matching: find.byType(TextField),
+        ),
+        '0212 555 1234',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('reservation-phone-input')),
+        '01 234 567',
+      );
+      await tap(tester, 'Continue');
+      expect(venues.businessPhone, '+9611234567');
+      expect(venues.savedPrivatePhone, '+902125551234');
+      expect(venues.submissions, 0);
+      await tester.pumpWidget(const SizedBox());
+      venues.step = 2;
+      await open(tester, _Auth(), venues);
+      expect(
+        find.descendant(of: businessCountry, matching: find.text('+961')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey('reservation-phone-input')),
+            )
+            .controller!
+            .text,
+        '1234567',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('provider/private registration name and DOB prefill contact', (
     tester,
@@ -252,6 +447,7 @@ void main() {
     expect(venues.submissions, 1);
     expect(venues.submittedName, 'Provider Name');
     expect(venues.submittedDob, '1990-01-02');
+    expect(venues.submittedPhone, '+442079460001');
     expect(find.textContaining('Could not submit'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

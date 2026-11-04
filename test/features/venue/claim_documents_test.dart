@@ -13,6 +13,7 @@ class _ClaimApi extends ApiClient {
     'venue_id': 'venue-a',
     'owner_full_name': 'Registered Owner',
     'owner_phone': '+971501234567',
+    'reservation_phone': '+442079460001',
   };
   bool failRead = false;
   bool failSubmit = false;
@@ -77,6 +78,8 @@ void main() {
     await VenueRepository(apiClient: api).claimVenue(
       venueId: 'venue-a',
       ownerNote: 'Owner contact',
+      reservationPhone: '+44 20 7946 0001',
+      ownerPhone: '+971501234567',
       tradeLicenceUrl: 'https://fixture.example/licence.pdf',
       ownerVideoUrl: 'https://fixture.example/old.mp4',
       hasDocuments: true,

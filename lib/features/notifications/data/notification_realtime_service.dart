@@ -8,6 +8,11 @@ class NotificationRealtimeEnvelope {
   final String event;
   final Map<String, dynamic> payload;
 
+  bool get isConnectionNotice {
+    final item = payload['notification'];
+    return (item is Map ? item['type'] : payload['type']) == 'match_created';
+  }
+
   const NotificationRealtimeEnvelope({
     required this.event,
     required this.payload,
@@ -84,6 +89,8 @@ class NotificationRealtimeService {
 
   bool _isNotificationEvent(String event) {
     return event == 'notification.created' ||
+        event == 'friendship.changed' ||
+        event == 'notification.invalidated' ||
         event == 'notification.updated' ||
         event == 'notification.read' ||
         event == 'socket.reconnected';

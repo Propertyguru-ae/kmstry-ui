@@ -7,6 +7,7 @@ class VenueOwnerStatsVenue {
   final String name;
   final String? photo;
   final String? description;
+  final String? reservationPhone;
   final String? type;
   final String? address;
   final String? city;
@@ -18,6 +19,7 @@ class VenueOwnerStatsVenue {
     required this.name,
     this.photo,
     this.description,
+    this.reservationPhone,
     this.type,
     this.address,
     this.city,
@@ -33,6 +35,7 @@ class VenueOwnerStatsVenue {
       name: json['name']?.toString() ?? '',
       photo: json['photo']?.toString(),
       description: json['description']?.toString(),
+      reservationPhone: json['reservation_phone']?.toString(),
       type: json['type']?.toString(),
       address: json['address']?.toString(),
       city: json['city']?.toString(),

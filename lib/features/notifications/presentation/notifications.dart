@@ -51,6 +51,7 @@ class _NotificationPageState extends State<NotificationPage> {
       widget.realtimeService ?? NotificationRealtimeService();
   List<NotificationModel> _list = [];
   bool _loading = true;
+  String? _openingNotice;
   String? _error;
   String _activeContextType = 'PERSONAL';
   String? _activeVenueId;
@@ -59,6 +60,7 @@ class _NotificationPageState extends State<NotificationPage> {
   StreamSubscription<ChatRealtimeConnectionState>? _stateSub;
   Future<void>? _readFlight;
   Future<void>? _markReadFlight;
+  bool _reloadAfterRead = false;
   final _eventsDuringRead = <String, NotificationModel>{};
   int _unreadEventRevision = 0;
 
@@ -94,6 +96,10 @@ class _NotificationPageState extends State<NotificationPage> {
           isMounted: () => mounted,
         ).whenComplete(() {
           if (identical(_readFlight, read)) _readFlight = null;
+          if (_reloadAfterRead && mounted) {
+            _reloadAfterRead = false;
+            unawaited(_loadNotifications());
+          }
         });
     return _readFlight = read;
   }
@@ -114,7 +120,7 @@ class _NotificationPageState extends State<NotificationPage> {
         _repo.getNotifications(limit: 50),
         _optionalMatches(),
       ]);
-      if (!_currentRead(generation, venueId)) return;
+      if (!_currentRead(generation, venueId) || _reloadAfterRead) return;
       final me = results[0] as Map<String, dynamic>;
       final lastContext = (me['lastActiveContext'] ?? me['last_active_context'])
           ?.toString()
@@ -143,16 +149,8 @@ class _NotificationPageState extends State<NotificationPage> {
             (n) => NotificationModel(
               id: n.id,
               type: n.type,
-              title: _enrichedTitle(
-                n,
-                matchById: matchById,
-                matchByUserId: matchByUserId,
-              ),
-              body: _enrichedBody(
-                n,
-                matchById: matchById,
-                matchByUserId: matchByUserId,
-              ),
+              title: n.title,
+              body: n.body,
               data: _enrichedData(
                 n,
                 matchById: matchById,
@@ -273,7 +271,7 @@ class _NotificationPageState extends State<NotificationPage> {
     _eventsSub = _realtime.events.listen((envelope) {
       if (!mounted) return;
       final unread = _readUnreadCount(envelope.payload);
-      if (unread != null) {
+      if (unread != null && !envelope.isConnectionNotice) {
         _unreadEventRevision++;
         NotificationUnreadScope.of(context)?.updateUnreadCount(unread);
       }
@@ -283,6 +281,30 @@ class _NotificationPageState extends State<NotificationPage> {
         case 'notification.updated':
         case 'notification.read':
           if (!_applyNotificationEvent(envelope.payload)) {
+            unawaited(_loadNotifications());
+          }
+          return;
+        case 'friendship.changed':
+        case 'notification.invalidated':
+          final peer = envelope.payload['otherUserId'];
+          if (envelope.payload['active'] == false &&
+              peer is String &&
+              peer.isNotEmpty) {
+            setState(
+              () => _list.removeWhere(
+                (n) =>
+                    n.type == 'match_created' &&
+                    _firstNonEmptyString(_profileContextData(n), const [
+                          'userId',
+                          'user_id',
+                        ]) ==
+                        peer,
+              ),
+            );
+          }
+          if (_readFlight != null) {
+            _reloadAfterRead = true;
+          } else {
             unawaited(_loadNotifications());
           }
           return;
@@ -309,6 +331,10 @@ class _NotificationPageState extends State<NotificationPage> {
     // via unreadCount field above; nothing to insert into the list.
     if (notificationMap['id'] == null) return true;
     final model = NotificationModel.fromJson(notificationMap);
+    if (model.type == 'match_created') {
+      if (_readFlight != null) _reloadAfterRead = true;
+      return false; // Refresh from the same visibility rule as the badge.
+    }
     // 'system' type entries are internal signals, not displayable notifications.
     if (model.type == 'system') return true;
     if (model.type == 'new_message') return true;
@@ -332,6 +358,21 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   Future<void> _onNotificationTap(NotificationModel n) async {
+    if (_openingNotice != null) return;
+    final verifiesRelationship =
+        n.type == 'match_created' ||
+        n.type == 'liked_you' ||
+        n.type == 'interested';
+    if (!verifiesRelationship) return _openNotification(n);
+    setState(() => _openingNotice = n.id);
+    try {
+      await _openNotification(n);
+    } finally {
+      if (mounted) setState(() => _openingNotice = null);
+    }
+  }
+
+  Future<void> _openNotification(NotificationModel n) async {
     final data = _profileContextData(n);
 
     if (n.type == 'report_update') {
@@ -459,34 +500,51 @@ class _NotificationPageState extends State<NotificationPage> {
     }
 
     if (n.type == 'match_created') {
-      final chatId = _firstNonEmptyString(data, const ['chat_id', 'chatId']);
-      final userId = _firstNonEmptyString(data, const [
-        'user_id',
-        'target_user_id',
-        'sender_id',
-        'requester_id',
-        'actor_user_id',
-        'userId',
-        'targetUserId',
-        'senderId',
-        'requesterId',
-        'actorUserId',
-      ]);
-      final matchedName = _matchedName(n);
-
-      if (userId != null && userId.isNotEmpty) {
-        Navigator.of(context).push(
+      final generation = PendingPublicMediaService.instance.sessionGeneration;
+      final venueId = VenueSession.instance.venueId;
+      try {
+        final target = await _repo.resolveConnectionNotice(
+          n.id,
+          version: data['connection_version'] as String?,
+          seenAt: n.createdAt,
+        );
+        if (!mounted ||
+            !_currentRead(generation, venueId) ||
+            ModalRoute.of(context)?.isCurrent == false) {
+          return;
+        }
+        if (target == null) {
+          setState(() => _list.removeWhere((item) => item.id == n.id));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This connection is no longer active.'),
+            ),
+          );
+          unawaited(_loadNotifications());
+          return;
+        }
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => MessageDetailPage(
-              chatId: chatId,
-              otherUserId: userId,
-              otherName: matchedName,
+              chatId: target.chatId,
+              otherUserId: target.otherUserId,
+              otherName: target.otherName,
               otherPhotoUrl: '',
             ),
           ),
         );
-        return;
+      } catch (_) {
+        if (mounted && _currentRead(generation, venueId)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not check this connection. Please try again.',
+              ),
+            ),
+          );
+        }
       }
+      return;
     }
 
     // Interested / liked_you: open requester's profile (checkin context)
@@ -509,6 +567,40 @@ class _NotificationPageState extends State<NotificationPage> {
         'actorUserId',
         'targetUserId',
       ]);
+      final generation = PendingPublicMediaService.instance.sessionGeneration;
+      final venue = VenueSession.instance.venueId;
+      bool available;
+      try {
+        available =
+            userId != null &&
+            await _repo.isPendingInterest(
+              userId,
+              id: n.id,
+              version: n.createdAt,
+            );
+      } catch (_) {
+        if (mounted && _currentRead(generation, venue)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not check this request. Please try again.'),
+            ),
+          );
+        }
+        return;
+      }
+      if (!mounted ||
+          !_currentRead(generation, venue) ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      if (!available) {
+        setState(() => _list.removeWhere((item) => item.id == n.id));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This request is no longer available.')),
+        );
+        unawaited(_loadNotifications());
+        return;
+      }
       final userName = _firstNonEmptyString(data, const [
         'fullName',
         'full_name',
@@ -522,7 +614,7 @@ class _NotificationPageState extends State<NotificationPage> {
         'senderUsername',
       ]);
       if (checkinId != null && checkinId.isNotEmpty) {
-        Navigator.of(context).push(
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => ProfilePreviewPage(
               checkinId: checkinId,
@@ -530,26 +622,30 @@ class _NotificationPageState extends State<NotificationPage> {
               userId: userId,
               userName: userName,
               userUsername: username,
+              interestNotice: (id: n.id, version: n.createdAt),
               actionStateHint:
                   actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
+        if (mounted) unawaited(_loadNotifications());
         return;
       }
 
-      if (userId != null && userId.isNotEmpty) {
-        Navigator.of(context).push(
+      if (userId.isNotEmpty) {
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => ProfilePreviewPage(
               userId: userId,
               userName: userName ?? n.title,
               userUsername: username,
+              interestNotice: (id: n.id, version: n.createdAt),
               actionStateHint:
                   actionHint ?? ProfileActionState.incomingInterested,
             ),
           ),
         );
+        if (mounted) unawaited(_loadNotifications());
         return;
       }
 
@@ -714,17 +810,6 @@ class _NotificationPageState extends State<NotificationPage> {
     return '${diff.inDays} days ago';
   }
 
-  String _matchedName(NotificationModel n) {
-    final data = n.data ?? const <String, dynamic>{};
-    debugPrint('data ne geliyir: $data');
-    return (data['full_name'] as String? ??
-            data['sender_name'] as String? ??
-            data['name'] as String? ??
-            data['fullName'] as String? ??
-            n.title)
-        .trim();
-  }
-
   Map<String, dynamic>? _enrichedData(
     NotificationModel n, {
     required Map<String, MatchItem> matchById,
@@ -753,46 +838,24 @@ class _NotificationPageState extends State<NotificationPage> {
     return source;
   }
 
-  String _enrichedTitle(
-    NotificationModel n, {
-    required Map<String, MatchItem> matchById,
-    required Map<String, MatchItem> matchByUserId,
-  }) {
-    if (n.type != 'match_created') return n.title;
-    return 'Connection made';
-  }
-
-  String _enrichedBody(
-    NotificationModel n, {
-    required Map<String, MatchItem> matchById,
-    required Map<String, MatchItem> matchByUserId,
-  }) {
-    if (n.type != 'match_created') return n.body;
-    final enriched = _enrichedData(
-      n,
-      matchById: matchById,
-      matchByUserId: matchByUserId,
-    );
-    final name =
-        (enriched?['fullName'] as String? ??
-                enriched?['full_name'] as String? ??
-                enriched?['sender_name'] as String? ??
-                enriched?['name'] as String? ??
-                '')
-            .trim();
-    final safeName = name.isEmpty ? 'your match' : name;
-    return "You and $safeName are now connected. Say hi when you're ready.";
-  }
-
-  String _displayTitle(NotificationModel n) {
-    return n.title;
-  }
+  String _displayTitle(NotificationModel n) =>
+      n.type == 'match_created' ? 'Connection made' : n.title;
 
   String _displayBody(NotificationModel n) {
-    if (n.type == 'match_created') {
-      return "You and ${_matchedName(n)} are now connected. Say hi when you're ready.";
-    }
-    return n.body;
+    if (n.type != 'match_created') return n.body;
+    final data = _profileContextData(n);
+    final related = _asMap(data['relatedUser']);
+    final name =
+        _firstNonEmptyString(related ?? {}, const ['fullName', 'username']) ??
+        _firstNonEmptyString(data, const [
+          'fullName',
+          'full_name',
+          'sender_name',
+          'name',
+        ]);
+    return name == null
+        ? "You're now connected. Say hi when you're ready."
+        : "You and $name are now connected. Say hi when you're ready.";
   }
 
   IconData _iconForType(String type) {
@@ -802,7 +865,7 @@ class _NotificationPageState extends State<NotificationPage> {
       case 'new_message':
         return Icons.chat_bubble_outline;
       case 'liked_you':
-        return Icons.visibility_rounded;
+        return Icons.favorite_rounded;
       case 'venue_claim_approved':
         return Icons.store_rounded;
       case 'venue_claim_rejected':
@@ -973,7 +1036,17 @@ class _NotificationPageState extends State<NotificationPage> {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: _kKmstryBlue.withValues(alpha: 0.22)),
               ),
-              child: Icon(icon, size: 26, color: _kKmstryBlue),
+              child: _openingNotice == n.id
+                  ? const Center(
+                      child: SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          semanticsLabel: 'Opening notification',
+                        ),
+                      ),
+                    )
+                  : Icon(icon, size: 26, color: _kKmstryBlue),
             ),
             const SizedBox(width: 12),
             Expanded(

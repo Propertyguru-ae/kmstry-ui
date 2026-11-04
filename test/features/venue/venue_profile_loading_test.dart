@@ -1,3 +1,4 @@
+import 'package:kmstry_frontend/features/venue/presentation/venue_phone_editor.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -70,6 +71,18 @@ class _StoryPermissions extends VenueMemberRepository {
   );
 }
 
+class _PhonePermissions extends VenueMemberRepository {
+  final bool editable;
+  _PhonePermissions(this.editable);
+  @override
+  Future<MyVenueAccess> getMyPermissions(String id) async => MyVenueAccess(
+    permissions: [if (editable) VenuePermission.venueEdit],
+    plan: VenuePlan.free,
+    planUntil: null,
+    features: {},
+  );
+}
+
 class _Partnerships extends ExternalPartnershipRepository {
   _Partnerships([this.read]);
   final Future<List<ExternalPartnershipModel>> Function(String)? read;
@@ -100,6 +113,7 @@ class _Owner extends VenueOwnerRepository {
   final weeks = <String>[];
   int legacy = 0;
   Future<VenueOwnerStatsVenue> Function(String, String?)? saveAbout;
+  Future<VenueOwnerStatsVenue> Function(String, String)? savePhone;
 
   @override
   Future<VenueOwnerStatsVenue> updateVenue(
@@ -108,7 +122,9 @@ class _Owner extends VenueOwnerRepository {
     String? description,
     String? photo,
     String? type,
+    String? reservationPhone,
   }) {
+    if (reservationPhone != null) return savePhone!(venueId, reservationPhone);
     return saveAbout!(venueId, description);
   }
 
@@ -134,24 +150,26 @@ class _Owner extends VenueOwnerRepository {
   }
 }
 
-Map<String, dynamic> _me({String status = 'ACTIVE'}) => {
+Map<String, dynamic> _me({String status = 'ACTIVE', String role = 'OWNER'}) => {
   'username': 'owner',
   'hasPersonalProfile': true,
   'lastActiveContext': 'VENUE',
   'memberVenues': [
     for (final id in ['a', 'b'])
-      {'id': id, 'name': 'Cafe $id', 'role': 'OWNER', 'status': status},
+      {'id': id, 'name': 'Cafe $id', 'role': role, 'status': status},
   ],
 };
 VenueOwnerStatsVenue _identity(
   String id, {
   String about = 'Full About',
+  String? phone = '+442079460001',
   String? photo,
 }) => VenueOwnerStatsVenue(
   id: id,
   name: 'Cafe $id',
   photo: photo,
   description: about,
+  reservationPhone: phone,
   address: 'Venue Address',
   type: 'CAFE',
   city: 'Dubai',
@@ -231,6 +249,157 @@ Future<void> _pump(
 );
 
 void main() {
+  for (final dark in [false, true]) {
+    testWidgets(
+      'pending owner sees only their submitted phone and cannot edit it (dark=$dark)',
+      (tester) async {
+        final account = _me(status: 'PENDING');
+        for (final member in account['memberVenues'] as List) {
+          member['claimReservationPhone'] = member['id'] == 'a'
+              ? '+442079460002'
+              : '+442079460003';
+        }
+        final auth = _Auth(() async => account);
+        final owner = _Owner((id) async => _identity(id), (_) async => []);
+        await _pump(
+          tester,
+          auth,
+          owner,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+        );
+        await tester.pumpAndSettle();
+        final chip = tester.widget<VenuePhoneChip>(find.byType(VenuePhoneChip));
+        expect(chip.phone, '+442079460002');
+        expect(chip.onEdit, isNull);
+        expect(find.text('+442079460001'), findsNothing);
+        expect(
+          find.descendant(
+            of: find.byType(VenuePhoneChip),
+            matching: find.byIcon(Icons.edit_outlined),
+          ),
+          findsNothing,
+        );
+        await tester.ensureVisible(find.byType(VenuePhoneChip));
+        await tester.tap(find.byType(VenuePhoneChip));
+        await tester.pumpAndSettle();
+        expect(find.byType(VenuePhoneEditor), findsNothing);
+        expect(owner.weeks, isEmpty);
+
+        await _pump(
+          tester,
+          auth,
+          owner,
+          id: 'b',
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('+442079460002'), findsNothing);
+        expect(find.text('+442079460003'), findsOneWidget);
+        expect(
+          tester.widget<VenuePhoneChip>(find.byType(VenuePhoneChip)).onEdit,
+          isNull,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final allowed in [true, false]) {
+    testWidgets(
+      'staff phone chip follows existing VENUE_EDIT permission: $allowed',
+      (tester) async {
+        final session = VenueSession.forTest(
+          repository: _PhonePermissions(allowed),
+        );
+        await _pump(
+          tester,
+          _Auth(() async => _me(role: 'STAFF')),
+          _Owner((id) async => _identity(id), (_) async => []),
+          session: session,
+        );
+        await tester.pumpAndSettle();
+        final chip = tester.widget<VenuePhoneChip>(find.byType(VenuePhoneChip));
+        expect(chip.onEdit != null, allowed);
+        if (!allowed) {
+          await tester.ensureVisible(find.byType(VenuePhoneChip));
+          await tester.tap(find.byType(VenuePhoneChip));
+          await tester.pumpAndSettle();
+          expect(find.byType(VenuePhoneEditor), findsNothing);
+        }
+        expect(find.text('+442079460001'), findsOneWidget);
+      },
+    );
+  }
+
+  testWidgets(
+    'a rejected phone save leaves the editor and typed number available',
+    (tester) async {
+      final owner = _Owner((id) async => _identity(id), (_) async => []);
+      owner.savePhone = (_, __) =>
+          Future.error(StateError('permission revoked'));
+      await _pump(tester, _Auth(() async => _me()), owner);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(VenuePhoneChip));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('edit-reservation-phone')),
+        '+442079460002',
+      );
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
+      expect(find.byType(VenuePhoneEditor), findsOneWidget);
+      expect(find.text('2079460002'), findsOneWidget);
+      expect(find.textContaining('Could not update the phone'), findsOneWidget);
+    },
+  );
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'owner phone chip opens editor and saves without altering other identity (dark=$dark)',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final owner = _Owner((id) async => _identity(id), (_) async => []);
+        String? saved;
+        owner.savePhone = (id, phone) async {
+          saved = phone;
+          return _identity(id, phone: phone);
+        };
+        await _pump(
+          tester,
+          _Auth(() async => _me()),
+          owner,
+          theme: dark ? AppTheme.darkTheme : AppTheme.lightTheme,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<VenuePhoneChip>(find.byType(VenuePhoneChip)).onEdit,
+          isNotNull,
+        );
+        await tester.ensureVisible(find.byType(VenuePhoneChip));
+        await tester.tap(find.byType(VenuePhoneChip));
+        await tester.pumpAndSettle();
+        final input = find.byKey(const ValueKey('edit-reservation-phone'));
+        await tester.enterText(input, '');
+        await tester.tap(find.text('Save changes'));
+        await tester.pumpAndSettle();
+        expect(saved, isNull);
+        expect(
+          find.text('Please enter your reservations phone number.'),
+          findsOneWidget,
+        );
+        await tester.enterText(input, '+44 20 7946 0002');
+        await tester.tap(find.text('Save changes'));
+        await tester.pumpAndSettle();
+        expect(saved, '+442079460002');
+        expect(find.text('+442079460002'), findsOneWidget);
+        expect(find.text('Full About'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final dark in [false, true]) {
     for (final scale in [1.0, 1.8]) {
       testWidgets(
@@ -790,6 +959,7 @@ void main() {
         );
         expect(owner.weeks, isEmpty);
         expect(find.text('Full About'), findsNothing);
+        expect(find.byType(VenuePhoneChip), findsNothing);
         identity.completeError(StateError('VIEW_STATS denied'));
         await tester.pumpAndSettle();
         expect(owner.weeks, isEmpty);

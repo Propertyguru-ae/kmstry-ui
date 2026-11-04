@@ -1,3 +1,8 @@
+import 'package:kmstry_frontend/core/ui/app_confirmation_dialog.dart';
+import 'package:kmstry_frontend/core/ui/phone_country_picker.dart';
+import 'package:kmstry_frontend/core/utils/phone_number_validation.dart';
+import 'reservation_phone_field.dart';
+import '../data/reservation_phone.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -77,12 +82,12 @@ class _VenueContextOnboardingPageState
 
   // ── Step 2: İletişim ─────────────────────────────────────────────────────
   final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
+  final _privatePhoneCtrl = ReservationPhoneController();
+  TextEditingController get _phoneCtrl => _privatePhoneCtrl.number;
+  final _reservationPhoneCtrl = ReservationPhoneController();
   // Varsayılan telefon kodu UAE (KMSTRY birincil pazarı). Kullanıcı isterse
   // dropdown'dan değiştirebilir.
-  _CountryCode _selectedCountry = _countryCodes.firstWhere(
-    (c) => c.code == 'AE',
-  );
+  PhoneCountry get _selectedCountry => _privatePhoneCtrl.country;
 
   String _lastNameText = '';
   String _lastPhoneText = '';
@@ -118,7 +123,7 @@ class _VenueContextOnboardingPageState
     _permission.addListener(_permissionChanged);
     _searchCtrl.addListener(_onSearchChanged);
     _nameCtrl.addListener(_clearErrorOnType);
-    _phoneCtrl.addListener(_clearErrorOnType);
+    _privatePhoneCtrl.addListener(_onPrivatePhoneChanged);
     _loadDraft();
   }
 
@@ -129,7 +134,9 @@ class _VenueContextOnboardingPageState
     _debounce?.cancel();
     _searchCtrl.dispose();
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
+    _privatePhoneCtrl.removeListener(_onPrivatePhoneChanged);
+    _privatePhoneCtrl.dispose();
+    _reservationPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -152,7 +159,10 @@ class _VenueContextOnboardingPageState
       // Kullanıcı Step 2'de dilerse düzenleyebilir.
       await _prefillOwnerName();
       // Old/resumed drafts cannot bypass the newly required age check.
-      if (_step.index > _Step.contact.index && _birthdate == null) {
+      if (_step.index > _Step.contact.index &&
+          (_birthdate == null ||
+              normalizedValidPhone(_reservationPhoneCtrl.fullNumber) == null ||
+              normalizedValidPhone(_fullPhone) == null)) {
         _step = _Step.contact;
       }
     } catch (e) {
@@ -201,7 +211,12 @@ class _VenueContextOnboardingPageState
       _dbVenueId = venueData['id']?.toString();
     }
     _nameCtrl.text = draft['owner_full_name']?.toString() ?? '';
-    _phoneCtrl.text = draft['owner_phone']?.toString() ?? '';
+    _privatePhoneCtrl.setInternationalNumber(
+      draft['owner_phone']?.toString() ?? '',
+    );
+    _reservationPhoneCtrl.setInternationalNumber(
+      draft['reservation_phone']?.toString() ?? '',
+    );
     _tradeLicenceUrl = draft['trade_licence_url']?.toString();
     _ownerVideoUrl = ClaimDocumentPolicy.ownershipVideoEnabled
         ? draft['owner_video_url']?.toString()
@@ -227,6 +242,10 @@ class _VenueContextOnboardingPageState
             ? _nameCtrl.text.trim()
             : null,
         ownerPhone: _phoneCtrl.text.trim().isNotEmpty ? _fullPhone : null,
+        reservationPhone: _reservationPhoneCtrl.fullNumber.trim().isEmpty
+            ? ''
+            : (normalizeReservationPhone(_reservationPhoneCtrl.fullNumber) ??
+                  _reservationPhoneCtrl.fullNumber.trim()),
         ownerBirthdate: _birthdate?.toIso8601String().split('T').first,
         // An explicit empty reference clears a removed document in the draft.
         tradeLicenceUrl: _tradeLicenceUrl ?? '',
@@ -337,6 +356,7 @@ class _VenueContextOnboardingPageState
   void _onVenueSelected(Venue venue) {
     _debounce?.cancel();
     _searchRevision++;
+    if (_selectedVenue?.id != venue.id) _reservationPhoneCtrl.clear();
     setState(() {
       _searching = false;
       _selectedVenue = venue;
@@ -382,25 +402,31 @@ class _VenueContextOnboardingPageState
 
   // ── Step 2: İletişim ──────────────────────────────────────────────────────
 
-  String get _fullPhone {
-    final raw = _phoneCtrl.text.trim();
-    if (raw.startsWith('+')) return raw; // kullanıcı zaten tam numara girmiş
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    return '${_selectedCountry.dial}$digits';
+  String get _fullPhone => _privatePhoneCtrl.fullNumber;
+
+  void _onPrivatePhoneChanged() {
+    if (!mounted) return;
+    _clearErrorOnType();
+    setState(() {});
   }
 
   Future<void> _onContactContinue() async {
     final name = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
     if (name.isEmpty) {
       setState(() => _error = 'Please enter your full name.');
       return;
     }
-    if (phone.isEmpty) {
-      setState(() => _error = 'Please enter your phone number.');
+    final privateError = contactPhoneError(_fullPhone);
+    if (privateError != null) {
+      setState(() => _error = privateError);
       return;
     }
     if (!_validateBirthdate()) return;
+    final phoneError = reservationPhoneError(_reservationPhoneCtrl.fullNumber);
+    if (phoneError != null) {
+      setState(() => _error = phoneError);
+      return;
+    }
     setState(() => _error = null);
     if (!await _saveDraft(stepNumber: 3)) return;
     if (mounted) setState(() => _step = _Step.documents);
@@ -562,6 +588,22 @@ class _VenueContextOnboardingPageState
   Future<void> _submitClaim() async {
     final venue = _selectedVenue;
     if (venue == null) return;
+    final privateError = contactPhoneError(_fullPhone);
+    if (privateError != null) {
+      setState(() {
+        _step = _Step.contact;
+        _error = privateError;
+      });
+      return;
+    }
+    final phoneError = reservationPhoneError(_reservationPhoneCtrl.fullNumber);
+    if (phoneError != null) {
+      setState(() {
+        _step = _Step.contact;
+        _error = phoneError;
+      });
+      return;
+    }
     if (!_validateBirthdate()) {
       setState(() => _step = _Step.contact);
       return;
@@ -597,13 +639,17 @@ class _VenueContextOnboardingPageState
               : await _repo.ensureVenueDbId(venue.placeId ?? venue.id));
       await _repo.claimVenue(
         venueId: dbVenueId,
+        reservationPhone: normalizeReservationPhone(
+          _reservationPhoneCtrl.fullNumber,
+        ),
         ownerBirthdate: _birthdate!.toIso8601String().split('T').first,
         ownerFullName: _nameCtrl.text.trim().isNotEmpty
             ? _nameCtrl.text.trim()
             : null,
+        ownerPhone: normalizedValidPhone(_fullPhone),
         ownerNote: [
           'Owner: ${_nameCtrl.text.trim()}',
-          'Phone: ${_phoneCtrl.text.trim()}',
+          'Phone: ${normalizedValidPhone(_fullPhone)}',
           if (hasDocuments) 'Trade licence uploaded.',
           if (_ownerVideoUrl != null) 'Ownership video uploaded.',
         ].join('\n'),
@@ -689,11 +735,12 @@ class _VenueContextOnboardingPageState
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       isScrollControlled: true,
-      builder: (ctx) => _CountryPickerSheet(
+      builder: (ctx) => PhoneCountryPickerSheet(
         selected: _selectedCountry,
         colors: colors,
         onSelected: (c) {
-          setState(() => _selectedCountry = c);
+          _privatePhoneCtrl.selectCountry(c);
+          setState(() => _error = null);
           Navigator.pop(ctx);
         },
       ),
@@ -724,26 +771,15 @@ class _VenueContextOnboardingPageState
   // ── "Use a different account" ─────────────────────────────────────────────
 
   Future<void> _useDifferentAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Use a different account?'),
-        content: const Text(
+    final confirmed = await showAppConfirmationDialog(
+      context,
+      title: 'Use a different account?',
+      message:
           'You will be signed out. Your progress has been saved and you can continue later by signing in again.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sign out'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Sign out',
+      icon: Icons.logout_rounded,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     await AuthRepository().logout();
     if (!mounted) return;
     Navigator.of(context).pushReplacementNamed(AuthRoutes.login);
@@ -1899,7 +1935,7 @@ class _VenueContextOnboardingPageState
                     const SizedBox(height: 16),
                     // Phone
                     Text(
-                      'PHONE NUMBER',
+                      'YOUR CONTACT PHONE · PRIVATE',
                       style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w700,
@@ -1914,6 +1950,7 @@ class _VenueContextOnboardingPageState
                       children: [
                         // Country selector
                         GestureDetector(
+                          key: const ValueKey('private-phone-country'),
                           onTap: () => _showCountryPicker(colors),
                           child: Container(
                             height: 52,
@@ -1939,7 +1976,9 @@ class _VenueContextOnboardingPageState
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  _selectedCountry.dial,
+                                  _selectedCountry.dial.isEmpty
+                                      ? 'Intl.'
+                                      : _selectedCountry.dial,
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
@@ -1963,8 +2002,9 @@ class _VenueContextOnboardingPageState
                         const SizedBox(width: 8),
                         Expanded(
                           child: _ContactField(
+                            key: const ValueKey('private-phone-input'),
                             controller: _phoneCtrl,
-                            hint: '5XX XXX XX XX',
+                            hint: 'Phone number',
                             keyboardType: TextInputType.phone,
                             isDark: isDark,
                           ),
@@ -1974,6 +2014,34 @@ class _VenueContextOnboardingPageState
                     const SizedBox(height: 14),
 
                     const SizedBox(height: 4),
+
+                    Text(
+                      'RESERVATIONS / BUSINESS PHONE',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    ReservationPhoneField(
+                      controller: _reservationPhoneCtrl,
+                      inputKey: const ValueKey('reservation-phone-input'),
+                      countryKey: const ValueKey('reservation-phone-country'),
+                      onChanged: () {
+                        if (_error != null) setState(() => _error = null);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'This number will be displayed on your venue page so customers can call you.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
 
                     // Error
                     if (_error != null) ...[
@@ -2064,7 +2132,9 @@ class _VenueContextOnboardingPageState
                                   height: 1.45,
                                 ),
                                 children: [
-                                  const TextSpan(text: 'Your details are '),
+                                  const TextSpan(
+                                    text: 'Your personal contact details are ',
+                                  ),
                                   const TextSpan(
                                     text: 'never shared publicly',
                                     style: TextStyle(
@@ -2074,7 +2144,7 @@ class _VenueContextOnboardingPageState
                                   ),
                                   const TextSpan(
                                     text:
-                                        ' and only used for ownership verification.',
+                                        ' and only used for ownership verification. Your reservations phone is shown on the venue page after approval.',
                                   ),
                                 ],
                               ),
@@ -2680,6 +2750,13 @@ class _VenueContextOnboardingPageState
                           sub: 'Phone number',
                           isDark: isDark,
                         ),
+                        const SizedBox(height: 8),
+                        _RevContactRow(
+                          icon: Icons.call_outlined,
+                          label: _reservationPhoneCtrl.fullNumber.trim(),
+                          sub: 'Public reservations phone',
+                          isDark: isDark,
+                        ),
                       ],
                     ),
                   ),
@@ -2887,6 +2964,7 @@ class _ContactField extends StatelessWidget {
   final bool isDark;
 
   const _ContactField({
+    super.key,
     required this.controller,
     required this.hint,
     this.keyboardType = TextInputType.text,
@@ -3049,7 +3127,9 @@ class _UploadCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    runSpacing: 5,
                     children: [
                       Text(
                         label,
@@ -3313,20 +3393,22 @@ class _RevContactRow extends StatelessWidget {
             child: Icon(icon, size: 14, color: const Color(0xFF4A7ADF)),
           ),
           const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 12.5, color: kLabel)),
-              Text(
-                sub,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: isDark
-                      ? const Color(0xFF9DB0CD)
-                      : const Color(0xFF556376),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 12.5, color: kLabel)),
+                Text(
+                  sub,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: isDark
+                        ? const Color(0xFF9DB0CD)
+                        : const Color(0xFF556376),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -3402,208 +3484,3 @@ class _RevDocRow extends StatelessWidget {
     );
   }
 }
-
-// ── Ülke seçici bottom sheet ───────────────────────────────────────────────
-
-class _CountryPickerSheet extends StatefulWidget {
-  final _CountryCode selected;
-  final ColorScheme colors;
-  final void Function(_CountryCode) onSelected;
-
-  const _CountryPickerSheet({
-    required this.selected,
-    required this.colors,
-    required this.onSelected,
-  });
-
-  @override
-  State<_CountryPickerSheet> createState() => _CountryPickerSheetState();
-}
-
-class _CountryPickerSheetState extends State<_CountryPickerSheet> {
-  final _searchCtrl = TextEditingController();
-  List<_CountryCode> _filtered = _countryCodes;
-
-  @override
-  void initState() {
-    super.initState();
-    _searchCtrl.addListener(_onSearch);
-  }
-
-  @override
-  void dispose() {
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onSearch() {
-    final q = _searchCtrl.text.trim().toLowerCase();
-    setState(() {
-      _filtered = q.isEmpty
-          ? _countryCodes
-          : _countryCodes
-                .where(
-                  (c) =>
-                      c.name.toLowerCase().contains(q) ||
-                      c.dial.contains(q) ||
-                      c.code.toLowerCase().contains(q),
-                )
-                .toList();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = widget.colors;
-    return DraggableScrollableSheet(
-      initialChildSize: 0.65,
-      minChildSize: 0.4,
-      maxChildSize: 0.9,
-      expand: false,
-      builder: (_, scrollCtrl) => Column(
-        children: [
-          // Handle
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.only(top: 12, bottom: 12),
-            decoration: BoxDecoration(
-              color: colors.onSurface.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              'Select country',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: colors.onSurface,
-              ),
-            ),
-          ),
-          // Arama kutusu
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: TextField(
-              controller: _searchCtrl,
-              autofocus: false,
-              decoration: InputDecoration(
-                hintText: 'Search country or code...',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                suffixIcon: _searchCtrl.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () => _searchCtrl.clear(),
-                      )
-                    : null,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-          const Divider(height: 1),
-          // Liste
-          Expanded(
-            child: _filtered.isEmpty
-                ? Center(
-                    child: Text(
-                      'No results',
-                      style: TextStyle(
-                        color: colors.onSurface.withValues(alpha: 0.45),
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: scrollCtrl,
-                    itemCount: _filtered.length,
-                    itemBuilder: (_, i) {
-                      final c = _filtered[i];
-                      final selected = c.code == widget.selected.code;
-                      return ListTile(
-                        leading: Text(
-                          c.flag,
-                          style: const TextStyle(fontSize: 22),
-                        ),
-                        title: Text(
-                          c.name,
-                          style: TextStyle(
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                            color: selected ? colors.primary : colors.onSurface,
-                          ),
-                        ),
-                        trailing: Text(
-                          c.dial,
-                          style: TextStyle(
-                            color: selected
-                                ? colors.primary
-                                : colors.onSurface.withValues(alpha: 0.50),
-                            fontWeight: selected
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                          ),
-                        ),
-                        onTap: () => widget.onSelected(c),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Ülke kodu modeli ve listesi ────────────────────────────────────────────
-
-class _CountryCode {
-  final String code;
-  final String name;
-  final String dial;
-  final String flag;
-  const _CountryCode({
-    required this.code,
-    required this.name,
-    required this.dial,
-    required this.flag,
-  });
-}
-
-const _countryCodes = [
-  _CountryCode(code: 'TR', name: 'Turkey', dial: '+90', flag: '🇹🇷'),
-  _CountryCode(
-    code: 'AE',
-    name: 'United Arab Emirates',
-    dial: '+971',
-    flag: '🇦🇪',
-  ),
-  _CountryCode(code: 'SA', name: 'Saudi Arabia', dial: '+966', flag: '🇸🇦'),
-  _CountryCode(code: 'QA', name: 'Qatar', dial: '+974', flag: '🇶🇦'),
-  _CountryCode(code: 'KW', name: 'Kuwait', dial: '+965', flag: '🇰🇼'),
-  _CountryCode(code: 'BH', name: 'Bahrain', dial: '+973', flag: '🇧🇭'),
-  _CountryCode(code: 'OM', name: 'Oman', dial: '+968', flag: '🇴🇲'),
-  _CountryCode(code: 'EG', name: 'Egypt', dial: '+20', flag: '🇪🇬'),
-  _CountryCode(code: 'GB', name: 'United Kingdom', dial: '+44', flag: '🇬🇧'),
-  _CountryCode(code: 'US', name: 'United States', dial: '+1', flag: '🇺🇸'),
-  _CountryCode(code: 'DE', name: 'Germany', dial: '+49', flag: '🇩🇪'),
-  _CountryCode(code: 'FR', name: 'France', dial: '+33', flag: '🇫🇷'),
-  _CountryCode(code: 'NL', name: 'Netherlands', dial: '+31', flag: '🇳🇱'),
-  _CountryCode(code: 'BE', name: 'Belgium', dial: '+32', flag: '🇧🇪'),
-  _CountryCode(code: 'CH', name: 'Switzerland', dial: '+41', flag: '🇨🇭'),
-  _CountryCode(code: 'AT', name: 'Austria', dial: '+43', flag: '🇦🇹'),
-  _CountryCode(code: 'SE', name: 'Sweden', dial: '+46', flag: '🇸🇪'),
-  _CountryCode(code: 'NO', name: 'Norway', dial: '+47', flag: '🇳🇴'),
-  _CountryCode(code: 'DK', name: 'Denmark', dial: '+45', flag: '🇩🇰'),
-  _CountryCode(code: 'RU', name: 'Russia', dial: '+7', flag: '🇷🇺'),
-  _CountryCode(code: 'JP', name: 'Japan', dial: '+81', flag: '🇯🇵'),
-  _CountryCode(code: 'CN', name: 'China', dial: '+86', flag: '🇨🇳'),
-  _CountryCode(code: 'IN', name: 'India', dial: '+91', flag: '🇮🇳'),
-  _CountryCode(code: 'AU', name: 'Australia', dial: '+61', flag: '🇦🇺'),
-  _CountryCode(code: 'CA', name: 'Canada', dial: '+1', flag: '🇨🇦'),
-];

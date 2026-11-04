@@ -15,6 +15,7 @@ class MemberVenue {
   final bool hasDocuments;
   final String? address;
   final String? inviterName;
+  final String? claimReservationPhone;
 
   const MemberVenue({
     required this.id,
@@ -27,6 +28,7 @@ class MemberVenue {
     this.hasDocuments = false,
     this.address,
     this.inviterName,
+    this.claimReservationPhone,
   });
 
   bool get isActive => status == 'ACTIVE';
@@ -118,6 +120,10 @@ class MeContextModel {
               isVerifiedOwner: isVerifiedOwner,
               status: status,
               hasDocuments: hasDocuments,
+              claimReservationPhone:
+                  status == 'PENDING' && role?.toUpperCase() == 'OWNER'
+                  ? _nonEmptyPhone(map['claimReservationPhone'])
+                  : null,
               address: (address != null && address.isNotEmpty) ? address : null,
               inviterName: (inviterName != null && inviterName.isNotEmpty)
                   ? inviterName
@@ -156,5 +162,10 @@ class MeContextModel {
           me['can_delete_current_context_profile'] == true,
       memberVenues: venues,
     );
+  }
+
+  static String? _nonEmptyPhone(dynamic value) {
+    final phone = value?.toString().trim();
+    return phone == null || phone.isEmpty ? null : phone;
   }
 }

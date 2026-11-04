@@ -3,9 +3,8 @@ import 'package:kmstry_frontend/core/theme/app_colors.dart';
 import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
 
-/// Rapor akışlarının ortak görsel dili (profil "Report this user" sayfası ile
-/// aynı): turuncu→pembe bayrak ikonu; seçim ve gönder butonu uygulamanın
-/// standart mavisi.
+/// Rapor akışlarının ortak görsel dili: turuncu→pembe bayrak ikonu; seçim ve
+/// gönder butonu uygulamanın standart mavisi.
 const reportGradient = [AppColors.orange, AppColors.magenta];
 
 class ReportHeaderIcon extends StatelessWidget {

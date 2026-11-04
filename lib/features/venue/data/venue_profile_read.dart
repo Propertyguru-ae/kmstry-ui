@@ -110,6 +110,9 @@ class VenueProfileRead {
           name: ctx.member?.name ?? venueName ?? 'Venue',
           photo: ctx.member?.photoUrl,
           address: ctx.member?.address,
+          reservationPhone: ctx.member?.isPendingOwnerClaim == true
+              ? ctx.member?.claimReservationPhone
+              : null,
         ),
       );
     }

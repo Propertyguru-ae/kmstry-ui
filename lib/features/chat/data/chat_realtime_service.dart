@@ -1,3 +1,5 @@
+import '../../people/data/match_item_model.dart';
+import 'package:kmstry_frontend/features/people/data/friendship_changes.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -332,6 +334,7 @@ class ChatRealtimeService {
     socket.onReconnect((_) {
       if (_disposed || !identical(_socket, socket)) return;
       debugPrint('💬 [Realtime] Socket yeniden baglandi');
+      FriendshipChanges.refresh();
       _connectionController.add(ChatRealtimeConnectionState.connected);
       _joinAllChats();
       _startPresenceHeartbeat();
@@ -384,9 +387,11 @@ class ChatRealtimeService {
       'message.reaction',
       'notification.created',
       'notification.updated',
+      'notification.invalidated',
       'notification.read',
       'chat.unread.updated',
       'chat.updated',
+      'friendship.changed',
       'chat.read',
       'presence.online',
       'presence.offline',
@@ -423,6 +428,16 @@ class ChatRealtimeService {
       }
     }
 
+    if (event == 'friendship.changed') {
+      final peer = payload['otherUserId']?.toString() ?? '';
+      final raw = payload['friendship'];
+      FriendshipChanges.changed(
+        peer,
+        active: payload['active'] == true,
+        friendship: raw is Map && raw['match_id'] is String
+            ? MatchItem.fromJson({...Map<String, dynamic>.from(raw), 'user_id': peer}) : null,
+      );
+    }
     debugPrint('💬 [Realtime] Event alindi: $event');
     _eventsController.add(ChatRealtimeEnvelope(event: event, payload: payload));
   }

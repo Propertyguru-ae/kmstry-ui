@@ -1,9 +1,23 @@
+import 'package:kmstry_frontend/features/notifications/data/notification_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kmstry_frontend/core/push/push_deep_link_handler.dart';
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:kmstry_frontend/core/push/push_audience.dart';
+
+class _Unavailable extends NotificationRepository {
+  @override
+  Future<ConnectionNoticeTarget?> resolveConnectionNotice(
+    String id, {
+    String? version,
+    DateTime? seenAt,
+  }) async {
+    expect(id, 'notice');
+    expect(version, 'old');
+    return null;
+  }
+}
 
 void main() {
   setUp(() {
@@ -17,6 +31,28 @@ void main() {
     });
     PushAudience.resume();
   });
+  testWidgets('an old Connection made push stays on the current screen', (
+    tester,
+  ) async {
+    final key = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: key,
+        home: const Scaffold(body: Text('Home')),
+      ),
+    );
+    await PushDeepLinkHandler.forTest(_Unavailable()).routeFromData(key, {
+      'type': 'match_created',
+      'recipientUserId': 'reviewer',
+      'pushSessionId': 'login-one',
+      'notification_id': 'notice',
+      'connection_version': 'old',
+    });
+    await tester.pump();
+    expect(find.text('This connection is no longer active.'), findsOneWidget);
+    expect(find.text('Home'), findsOneWidget);
+  });
+
   for (final type in const ['data_export_ready', 'data_export_failed']) {
     testWidgets('$type opens Download your data', (tester) async {
       final navigatorKey = GlobalKey<NavigatorState>();

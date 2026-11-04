@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:kmstry_frontend/core/ui/premium_feedback.dart';
+import 'package:kmstry_frontend/features/checkin/data/checkin_repository.dart';
 import 'package:kmstry_frontend/features/people/data/blocked_user_model.dart';
 import 'package:kmstry_frontend/features/people/data/match_repository.dart';
+import 'package:kmstry_frontend/features/people/presentation/block_user_dialog.dart';
 import 'package:kmstry_frontend/features/venue/presentation/profile_preview_page.dart';
 
 class BlockedUsersPage extends StatefulWidget {
-  const BlockedUsersPage({super.key});
+  const BlockedUsersPage({super.key, this.repository, this.checkinRepository});
+
+  final MatchRepository? repository;
+  final CheckinRepository? checkinRepository;
 
   @override
   State<BlockedUsersPage> createState() => _BlockedUsersPageState();
 }
 
 class _BlockedUsersPageState extends State<BlockedUsersPage> {
-  final MatchRepository _repo = MatchRepository();
+  late final MatchRepository _repo = widget.repository ?? MatchRepository();
+  late final CheckinRepository _checkinRepo =
+      widget.checkinRepository ?? CheckinRepository();
   final Set<String> _unblockingUserIds = <String>{};
   bool _loading = true;
   List<BlockedUser> _blockedUsers = [];
@@ -40,16 +46,17 @@ class _BlockedUsersPageState extends State<BlockedUsersPage> {
 
   Future<void> _unblock(BlockedUser user) async {
     if (_unblockingUserIds.contains(user.userId)) return;
-    setState(() => _unblockingUserIds.add(user.userId));
     try {
-      await _repo.unblockUser(user.userId);
-      if (!mounted) return;
+      final unblocked = await confirmAndUnblockUser(
+        context,
+        repository: _checkinRepo,
+        targetUserId: user.userId,
+        onConfirmed: () => setState(() => _unblockingUserIds.add(user.userId)),
+      );
+      if (!unblocked || !mounted) return;
       setState(() {
         _blockedUsers.removeWhere((u) => u.userId == user.userId);
       });
-    } catch (_) {
-      if (!mounted) return;
-      await showPremiumErrorDialog(context, message: 'Could not unblock user.');
     } finally {
       if (mounted) {
         setState(() => _unblockingUserIds.remove(user.userId));

@@ -46,61 +46,69 @@ class PrimaryButton extends StatelessWidget {
     final enabled = onPressed != null && !loading;
     return Opacity(
       opacity: enabled ? 1 : 0.5,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+      // Material, Ink'i kendi dikdörtgenine kırpar; gölge Ink'te olursa yuvarlak
+      // köşelerin dışında dikdörtgen renk gibi görünür. Bu yüzden Material'in
+      // dışında çizilir.
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          onTap: enabled ? onPressed : null,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: _blue,
-              boxShadow: [
-                BoxShadow(
-                  color: _blue.withValues(alpha: 0.30),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+          boxShadow: [
+            BoxShadow(
+              color: _blue.withValues(alpha: 0.30),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
-            child: Container(
-              height: 52,
-              alignment: Alignment.center,
-              child: loading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Büyük yazı boyutunda da butondan taşmasın.
-                        Flexible(
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: enabled ? onPressed : null,
+            child: Ink(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: _blue,
+              ),
+              child: Container(
+                height: 52,
+                alignment: Alignment.center,
+                child: loading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Büyük yazı boyutunda da butondan taşmasın.
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                        ),
-                        if (trailingArrow) ...[
-                          const SizedBox(width: 9),
-                          const Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 18,
-                            color: Colors.white,
-                          ),
+                          if (trailingArrow) ...[
+                            const SizedBox(width: 9),
+                            const Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 18,
+                              color: Colors.white,
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
+                      ),
+              ),
             ),
           ),
         ),

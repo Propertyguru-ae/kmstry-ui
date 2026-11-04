@@ -1,3 +1,4 @@
+import 'package:kmstry_frontend/features/people/data/friendship_changes.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -53,6 +54,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    FriendshipChanges.changes.addListener(_onFriendshipChanged);
     WidgetsBinding.instance.addObserver(this);
     debugPrint('💬 [Messages] Listener baglaniyor');
     final cachedChats = _repo.cachedChats;
@@ -78,8 +80,13 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
     unawaited(_loadCurrentUser().whenComplete(loadChats));
   }
 
+  void _onFriendshipChanged() {
+    if (mounted) unawaited(loadChats(silent: true, force: true));
+  }
+
   @override
   void dispose() {
+    FriendshipChanges.changes.removeListener(_onFriendshipChanged);
     WidgetsBinding.instance.removeObserver(this);
     debugPrint('💬 [Messages] Listener temizleniyor');
     _realtimeEventsSub?.cancel();
@@ -271,6 +278,7 @@ class DmListPageState extends State<DmListPage> with WidgetsBindingObserver {
       user1: current.user1,
       user2: current.user2,
       isBlocked: current.isBlocked,
+      canSendMessages: current.canSendMessages,
     );
 
     if (!mounted) return true;

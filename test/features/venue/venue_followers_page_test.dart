@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:kmstry_frontend/core/ui/app_sheet.dart';
 import 'package:kmstry_frontend/features/content_moderation/data/pending_public_media.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_follower_model.dart';
 import 'package:kmstry_frontend/features/venue/data/venue_owner_repository.dart';
@@ -99,5 +100,65 @@ void main() {
       lessThan(tester.getTopLeft(find.text('Zoe')).dy),
     );
     expect(tester.takeException(), isNull);
+  });
+
+  group('Sort by', () {
+    Finder checkIn(String label) => find.descendant(
+      of: find.widgetWithText(AppSheetRow, label),
+      matching: find.byIcon(Icons.check_rounded),
+    );
+
+    for (final brightness in Brightness.values) {
+      testWidgets('uses the standard sheet with three choices; '
+          '${brightness.name}', (tester) async {
+        await _pump(tester, brightness: brightness);
+        await tester.tap(find.byTooltip('Sort'));
+        await tester.pumpAndSettle();
+        expect(find.text('Sort by'), findsOneWidget);
+        expect(
+          tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+          brightness == Brightness.dark
+              ? const Color(0xFF121A2B)
+              : Colors.white,
+        );
+        expect(
+          [
+            for (final row in tester.widgetList<AppSheetRow>(
+              find.byType(AppSheetRow),
+            ))
+              row.title,
+          ],
+          ['Latest', 'Earliest', 'Name (A–Z)'],
+        );
+        expect(find.text('Newest followers first'), findsOneWidget);
+        expect(find.text('Oldest followers first'), findsOneWidget);
+        expect(find.text('Alphabetical order'), findsOneWidget);
+        expect(checkIn('Latest'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('Name sorts the list and keeps the tick on reopening', (
+      tester,
+    ) async {
+      await _pump(tester);
+      expect(
+        tester.getTopLeft(find.text('Zoe')).dy,
+        lessThan(tester.getTopLeft(find.text('Alex')).dy),
+      );
+      await tester.tap(find.byTooltip('Sort'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Name (A–Z)'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(
+        tester.getTopLeft(find.text('Alex')).dy,
+        lessThan(tester.getTopLeft(find.text('Zoe')).dy),
+      );
+      await tester.tap(find.byTooltip('Sort'));
+      await tester.pumpAndSettle();
+      expect(checkIn('Name (A–Z)'), findsOneWidget);
+      expect(checkIn('Latest'), findsNothing);
+    });
   });
 }

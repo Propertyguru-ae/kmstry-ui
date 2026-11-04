@@ -1,3 +1,4 @@
+import 'reservation_phone.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -95,6 +96,22 @@ class VenueContextRepository {
       headers: {'Authorization': 'Bearer $token'},
     );
     return data as Map<String, dynamic>;
+  }
+
+  Future<VenuePhone> getVenuePhone({String? venueId, String? placeId}) async {
+    final token = await SecureStorage.getAccessToken();
+    if (token == null) throw Exception('Not authenticated');
+    final query = Uri(
+      queryParameters: {
+        if (venueId != null) 'venueId': venueId,
+        if (venueId == null && placeId != null) 'placeId': placeId,
+      },
+    ).query;
+    final data = await _api.get(
+      '/venues/contact-phone?$query',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return VenuePhone.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
   Future<Map<String, dynamic>> getVenueDetailIdentity(String venueId) async {

@@ -1,3 +1,5 @@
+import 'reservation_phone.dart';
+import 'package:kmstry_frontend/core/utils/phone_number_validation.dart';
 import 'package:kmstry_frontend/core/network/api_client.dart';
 import 'package:kmstry_frontend/core/network/api_exception.dart';
 import 'package:kmstry_frontend/core/storage/secure_storage.dart';
@@ -370,6 +372,8 @@ class VenueRepository {
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
     bool hasDocuments = false,
+    String? reservationPhone,
+    String? ownerPhone,
   }) async {
     if (!ClaimDocumentPolicy.hasRequiredDocuments(tradeLicenceUrl)) {
       throw ApiException(
@@ -381,6 +385,14 @@ class VenueRepository {
         },
       );
     }
+    final businessPhone = normalizedValidPhone(reservationPhone ?? '');
+    if (businessPhone == null) {
+      throw ArgumentError(reservationPhoneError(reservationPhone));
+    }
+    final privatePhone = normalizedValidPhone(ownerPhone ?? '');
+    if (privatePhone == null) {
+      throw ArgumentError(contactPhoneError(ownerPhone ?? ''));
+    }
     final token = await SecureStorage.getAccessToken();
     if (token == null) throw Exception('Not authenticated');
 
@@ -388,6 +400,8 @@ class VenueRepository {
       '/venues/claim',
       body: {
         'venueId': venueId,
+        'reservationPhone': businessPhone,
+        'ownerPhone': privatePhone,
         'ownerNote': ownerNote,
         if (ownerBirthdate != null) 'ownerBirthdate': ownerBirthdate,
         'hasDocuments': true,
@@ -489,7 +503,9 @@ class VenueRepository {
     await claimVenue(
       venueId: venueId,
       ownerFullName: name,
+      ownerPhone: phone,
       ownerNote: 'Owner: $name\nPhone: $phone\nTrade licence uploaded.',
+      reservationPhone: draft?['reservation_phone']?.toString(),
       tradeLicenceUrl: tradeLicenceUrl,
       hasDocuments: true,
     );
@@ -500,6 +516,7 @@ class VenueRepository {
     String? venueId,
     String? ownerFullName,
     String? ownerPhone,
+    String? reservationPhone,
     String? ownerBirthdate,
     String? tradeLicenceUrl,
     String? ownerVideoUrl,
@@ -512,6 +529,7 @@ class VenueRepository {
       if (venueId != null) 'venue_id': venueId,
       if (ownerFullName != null) 'owner_full_name': ownerFullName,
       if (ownerPhone != null) 'owner_phone': ownerPhone,
+      if (reservationPhone != null) 'reservation_phone': reservationPhone,
       if (ownerBirthdate != null) 'owner_birthdate': ownerBirthdate,
       if (tradeLicenceUrl != null) 'trade_licence_url': tradeLicenceUrl,
       if (ClaimDocumentPolicy.ownershipVideoEnabled && ownerVideoUrl != null)
